@@ -48,10 +48,10 @@ SAVE_EVERY = 5000
 LOG_EVERY = 100
 VOCAB_SIZE = 50257
 
-# Grokfast config (Chrome-validated: +11% BPT)
-GROKFAST_ALPHA = 0.95
-GROKFAST_LAMBDA = 2.0
-GROKFAST_DELAY = 200      # Enable after 200 warm-start steps
+# Grokfast DISABLED at dim=768 (diverges at all lambdas 0.05-2.0)
+# Chrome dim=128 result was false positive for production scale.
+# Save for scratch training at dim=1024.
+USE_GROKFAST = False
 
 import sys
 sys.path.insert(0, str(REPO / "code"))
@@ -121,7 +121,7 @@ def generate_sample(model, test_tokens, tokenizer, max_new=100):
 
 def main():
     print(f"SUTRA v0.5.4 PRODUCTION TRAINING")
-    print(f"  Peri-LN + Delayed Pheromone + Grokfast(a={GROKFAST_ALPHA}, l={GROKFAST_LAMBDA})")
+    print(f"  Gated Peri-LN + Delayed Pheromone (no Grokfast at dim=768)")
     print(f"Device: {DEVICE}, bf16: True")
     print(f"Config: dim={DIM}, ff={FF_DIM}, max_steps={MAX_STEPS_PER_POSITION}")
     print(f"Training: bs={BATCH_SIZE}x{GRAD_ACCUM}={BATCH_SIZE*GRAD_ACCUM}, seq={SEQ_LEN}")
@@ -180,10 +180,8 @@ def main():
         opt.load_state_dict(ckpt["optimizer"])
 
     # v0.5.4: Grokfast filter (only on matrix params per Codex design)
-    gf = GrokfastFilter(model, alpha=GROKFAST_ALPHA, lam=GROKFAST_LAMBDA)
-    if latest_054 and "grokfast" in ckpt:
-        gf.load_state_dict(ckpt["grokfast"])
-        print("Loaded Grokfast EMA state")
+    # Grokfast disabled at dim=768 (diverges at all lambdas)
+    gf = None
 
     # Training
     model.train()
@@ -228,9 +226,7 @@ def main():
                 running_loss = 0
                 continue
 
-            # v0.5.4: Grokfast (delayed, matrix params only)
-            if step >= GROKFAST_DELAY:
-                gf.apply()
+            # Grokfast disabled at dim=768
 
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -242,7 +238,7 @@ def main():
                 elapsed = time.time() - start
                 tps = step * BATCH_SIZE * GRAD_ACCUM * SEQ_LEN / max(elapsed, 1)
                 mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
-                gf_status = "ON" if step >= GROKFAST_DELAY else "warmup"
+                gf_status = "OFF"
                 msg = (f"Step {step:>6d}/{MAX_STEPS}: loss={avg:.4f} "
                        f"lr={lr:.2e} {tps:.0f}tok/s {mem:.1f}GB "
                        f"avg_steps={aux['avg_steps']} gf={gf_status}")
@@ -273,7 +269,7 @@ def main():
                         "step": step, "test_bpt": round(bpt, 4),
                         "best_bpt": round(best_bpt, 4), "is_best": is_best,
                         "lr": lr, "avg_steps": aux["avg_steps"],
-                        "grokfast": step >= GROKFAST_DELAY,
+                        "grokfast": False,
                         "generation": gen,
                         "timestamp": datetime.now().isoformat(),
                     }
@@ -292,7 +288,6 @@ def main():
                 ckpt = {
                     "model": model.state_dict(),
                     "optimizer": opt.state_dict(),
-                    "grokfast": gf.state_dict(),
                     "step": step, "best_bpt": best_bpt,
                     "metrics": metrics_history,
                 }
