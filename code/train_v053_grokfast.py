@@ -46,10 +46,13 @@ SAVE_EVERY = 5000
 LOG_EVERY = 100
 VOCAB_SIZE = 50257
 
-# Grokfast config (Chrome-validated: +11% BPT)
+# Grokfast config
+# Chrome at dim=128: lambda=2.0 worked. At dim=768: lambda=2.0 DIVERGED (loss 4.26->4.63).
+# Fix: start lambda=0 and ramp to 1.0 over 500 steps.
 GROKFAST_ALPHA = 0.95
-GROKFAST_LAMBDA = 2.0
-GROKFAST_DELAY = 200  # steps after resume before enabling Grokfast
+GROKFAST_LAMBDA_MAX = 1.0   # reduced from 2.0 (diverged at production scale)
+GROKFAST_DELAY = 200         # steps after resume before enabling
+GROKFAST_RAMP = 500          # steps to ramp lambda from 0 to max
 
 import sys
 sys.path.insert(0, str(REPO / "code"))
@@ -117,7 +120,7 @@ def generate_sample(model, test_tokens, tokenizer, max_new=100):
 
 def main():
     print(f"SUTRA v0.5.3 + GROKFAST TRAINING")
-    print(f"  Grokfast(alpha={GROKFAST_ALPHA}, lambda={GROKFAST_LAMBDA})")
+    print(f"  Grokfast(alpha={GROKFAST_ALPHA}, lambda_max={GROKFAST_LAMBDA_MAX}, ramp={GROKFAST_RAMP})")
     print(f"  Same v0.5.3 architecture, gradient filter only")
     print(f"Device: {DEVICE}, bf16: True")
     print(f"{'='*60}")
@@ -156,9 +159,10 @@ def main():
     if "optimizer" in ckpt:
         opt.load_state_dict(ckpt["optimizer"])
 
-    # Grokfast filter
-    gf = GrokfastFilter(model, alpha=GROKFAST_ALPHA, lam=GROKFAST_LAMBDA)
+    # Grokfast filter (starts at lam=0, ramps to GROKFAST_LAMBDA_MAX)
+    gf = GrokfastFilter(model, alpha=GROKFAST_ALPHA, lam=0.0)  # start at 0
     grokfast_start_step = start_step + GROKFAST_DELAY
+    grokfast_full_step = grokfast_start_step + GROKFAST_RAMP
 
     model.train()
     step = start_step
@@ -198,8 +202,14 @@ def main():
                 running_loss = 0
                 continue
 
-            # GROKFAST: apply after delay
+            # GROKFAST: apply after delay with lambda ramp
             if step >= grokfast_start_step:
+                # Ramp lambda from 0 to max over GROKFAST_RAMP steps
+                if step < grokfast_full_step:
+                    ramp_frac = (step - grokfast_start_step) / GROKFAST_RAMP
+                    gf.lam = GROKFAST_LAMBDA_MAX * ramp_frac
+                else:
+                    gf.lam = GROKFAST_LAMBDA_MAX
                 gf.apply()
 
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -212,7 +222,12 @@ def main():
                 elapsed = time.time() - start
                 tps = (step - start_step) * BATCH_SIZE * GRAD_ACCUM * SEQ_LEN / max(elapsed, 1)
                 mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
-                gf_status = "ON" if step >= grokfast_start_step else f"in {grokfast_start_step - step}"
+                if step >= grokfast_full_step:
+                    gf_status = f"ON(l={GROKFAST_LAMBDA_MAX})"
+                elif step >= grokfast_start_step:
+                    gf_status = f"ramp(l={gf.lam:.2f})"
+                else:
+                    gf_status = f"in {grokfast_start_step - step}"
                 msg = (f"Step {step:>6d}/{MAX_STEPS}: loss={avg:.4f} "
                        f"lr={lr:.2e} {tps:.0f}tok/s {mem:.1f}GB "
                        f"gf={gf_status}")
