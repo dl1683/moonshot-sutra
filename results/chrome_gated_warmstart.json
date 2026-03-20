@@ -1,0 +1,20 @@
+{
+  "v053_control": {
+    "name": "v0.5.3 continued",
+    "test_bpt": 7.4628,
+    "time": 29.6,
+    "params": 7558877
+  },
+  "gated_v054": {
+    "name": "Gated v0.5.4",
+    "test_bpt": 7.4597,
+    "time": 35.5,
+    "params": 7560419
+  },
+  "gated_v054_gf": {
+    "name": "Gated v0.5.4 + Grokfast",
+    "test_bpt": 7.1319,
+    "time": 35.0,
+    "params": 7560419
+  }
+}
