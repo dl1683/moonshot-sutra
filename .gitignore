@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data artifacts
+*.npz
+*.npy
+*.h5
+*.hdf5
+*.ckpt
+*.pt
+*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+*.log
+
+# Codex review outputs (ingested into RESEARCH.md then deleted)
+# Keep codex_v054_master_design.md and codex_master_prompt.md (active design docs)
+
+# Large text data
+data/*.txt
+
+# Logs (regenerated during training)
+results/*_log.txt
+
+# Temporary
+*.tmp
+*.bak

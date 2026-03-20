@@ -1,0 +1,9 @@
+{
+  "model": "EleutherAI/pythia-160m",
+  "params_M": 160,
+  "bpt": 3.8545,
+  "bpb": 1.063,
+  "bytes_per_token": 3.63,
+  "test_chars": 50000,
+  "test_tokens": 13824
+}
