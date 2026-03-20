@@ -15,7 +15,7 @@ import sys, json, random, torch, torch.nn.functional as F
 sys.path.insert(0, 'code')
 
 random.seed(42)
-with open('eval/sutra_eval_500.jsonl') as f:
+with open('eval/sutra_eval_500.jsonl', encoding='utf-8') as f:
     questions = [json.loads(line) for line in f]
 sample = random.sample(questions, 10)
 
