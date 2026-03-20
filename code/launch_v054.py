@@ -1,4 +1,4 @@
-"""Launch v0.5.4: v0.5.3 + Peri-LN + Delayed Pheromone.
+"""Launch v0.5.4: v0.5.3 + Gated Peri-LN + Delayed Pheromone.
 
 v0.5.3 improvements (retained):
   - 2-mode switching transition kernel (+4.1%)
@@ -6,7 +6,10 @@ v0.5.3 improvements (retained):
   - 8-slot scratchpad memory (+10.2% BPT)
 
 v0.5.4 additions (Chrome-validated):
-  - Peri-LN: LayerNorm before+after StageBank, Router, Writer (+5.9% BPT)
+  - GATED Peri-LN: LayerNorm with bypass gate, starts as identity for warm-start
+    Gate init alpha=-5 (sigmoid~0.007), ramps up during training
+    Fixes warm-start bug: standard LN destroys v0.5.3 activation statistics
+    Chrome-validated: +5.9% BPT (from-scratch), warm-start BPT=6.08 (vs 5.96)
   - Delayed Pheromone: scalar position trace in global retrieval (best late-step 2.6x)
   - Training: Grokfast(alpha=0.95, lambda=2.0) applied in trainer (+13.6% combined)
 
@@ -28,6 +31,26 @@ import torch.nn.functional as F
 from sutra_v05_ssm import (SutraV05, N_STAGES, STAGE_GRAPH, top2_project,
                             StageBank, BayesianWrite, LocalRouter, Verifier)
 from scratchpad import Scratchpad
+
+
+class GatedLayerNorm(nn.Module):
+    """LayerNorm with a learnable bypass gate for warm-start compatibility.
+
+    At init (alpha=-5, sigmoid~0.007): output ≈ input (identity)
+    During training: gate opens, normalization activates gradually.
+
+    This fixes the warm-start bug where standard LayerNorm destroys
+    learned activation statistics from the previous version.
+    """
+
+    def __init__(self, dim, init_alpha=-5.0):
+        super().__init__()
+        self.ln = nn.LayerNorm(dim)
+        self.alpha = nn.Parameter(torch.tensor(init_alpha))
+
+    def forward(self, x):
+        a = torch.sigmoid(self.alpha)
+        return (1 - a) * x + a * self.ln(x)
 
 
 class SwitchingKernel2(nn.Module):
@@ -91,13 +114,13 @@ class SutraV054(nn.Module):
         self.verifier = Verifier(dim, vocab_size)
         self.scratchpad = Scratchpad(dim, n_slots=n_scratch_slots)
 
-        # v0.5.4: Peri-LN (pre+post normalization for each recurrent operator)
-        self.pre_bank_ln = nn.LayerNorm(dim)
-        self.post_bank_ln = nn.LayerNorm(dim)
-        self.pre_route_ln = nn.LayerNorm(dim)
-        self.post_route_ln = nn.LayerNorm(dim)
-        self.pre_write_ln = nn.LayerNorm(dim)
-        self.post_write_ln = nn.LayerNorm(dim)
+        # v0.5.4: GATED Peri-LN (starts as identity for warm-start!)
+        self.pre_bank_ln = GatedLayerNorm(dim)
+        self.post_bank_ln = GatedLayerNorm(dim)
+        self.pre_route_ln = GatedLayerNorm(dim)
+        self.post_route_ln = GatedLayerNorm(dim)
+        self.pre_write_ln = GatedLayerNorm(dim)
+        self.post_write_ln = GatedLayerNorm(dim)
 
         # Output
         self.ln = nn.LayerNorm(dim)
