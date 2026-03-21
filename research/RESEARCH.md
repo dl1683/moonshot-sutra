@@ -6067,8 +6067,8 @@ If the answer is no, kill the entire LDPC branch instead of building a larger su
 
 1. **Shadow-only scalar head**: the first test predicts only a scalar `syndrome_energy(i, p)`. It never acts on routing, writing, or halting.
 2. **No fake Stage 7**: stop calling this a Stage 7 verifier. It is a lightweight consistency scorer attached to existing recurrent state.
-3. **CPU canary = fixed cached batches**: no pseudo-production run, no online acting arm. Cache a fixed dim=768 batch set once, then train/evaluate the scalar head on those frozen tensors only.
-4. **Matched control**: same added parameters, same optimizer, same loss coefficient, but train the control head on fixed shuffled targets from the same cached tensors.
+3. **CPU canary = fixed cached train/eval batches**: no pseudo-production run, no online acting arm. Cache fixed dim=768 train batches and held-out eval batches once, then train on the train cache only and report Spearman on the eval cache only.
+4. **Matched control**: same added parameters, same optimizer, same loss coefficient, but train the control head on a single fixed permutation of the cached train targets rather than reshuffling each step.
 5. **No recurrence interference**: the recurrent core is frozen for this canary. `L_final`, `L_step`, `L_probe`, proceed thresholds, and pass dynamics remain untouched.
 6. **Narrow novelty claim**: do not claim neural syndrome memory is new. The only defensible novelty claim is an **LDPC-inspired syndrome side-channel probe inside a causal recurrent LM / Sutra scratchpad context**.
 
@@ -6114,6 +6114,7 @@ The only evaluation set for this probe is:
 - hard tokens: token-pass pairs whose `future_gain` is in the top quartile of all late-pass pairs in the cached evaluation set
 
 This keeps the metric aligned with the intended role of a syndrome signal: unresolved structure that still matters late in the recurrent trajectory.
+Probe fitting still happens on cached train batches only. The hard/easy cutoff is computed once from the held-out cached eval set and then frozen for all train/eval masking.
 
 ### Exact PyTorch pseudocode for the minimal probe
 
@@ -6202,15 +6203,27 @@ def build_probe_inputs(cached_batch: dict[str, torch.Tensor]) -> dict[str, torch
     }
 
 
-def hard_late_mask(future_gain: torch.Tensor) -> torch.Tensor:
-    """future_gain: (B, T, P)."""
+def late_mask(future_gain: torch.Tensor) -> torch.Tensor:
     B, T, P = future_gain.shape
     pass_ids = torch.arange(P).view(1, 1, P).expand(B, T, P)
-    late_mask = (pass_ids >= 3) & (pass_ids < (P - 1))
+    return (pass_ids >= 3) & (pass_ids < (P - 1))
 
-    late_vals = future_gain[late_mask]
-    threshold = torch.quantile(late_vals, 0.75)
-    return late_mask & (future_gain >= threshold)
+
+@torch.no_grad()
+def compute_eval_hard_threshold(cached_eval_batches) -> float:
+    late_vals = []
+    for batch in cached_eval_batches:
+        inputs = build_probe_inputs(batch)
+        batch_late_mask = late_mask(inputs["future_gain"])
+        late_vals.append(inputs["future_gain"][batch_late_mask])
+    late_vals = torch.cat(late_vals)
+    return float(torch.quantile(late_vals, 0.75))
+
+
+def hard_late_mask(future_gain: torch.Tensor, hard_threshold: float) -> torch.Tensor:
+    """future_gain: (B, T, P). hard_threshold is fixed from cached eval data."""
+    batch_late_mask = late_mask(future_gain)
+    return batch_late_mask & (future_gain >= hard_threshold)
 
 
 def spearmanr_torch(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -6234,12 +6247,18 @@ def spearmanr_torch(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def cache_fixed_batches(model, dataset, n_batches: int = 64, seq_len: int = 96):
+def cache_fixed_batches(
+    model,
+    dataset,
+    split: str,
+    n_batches: int = 64,
+    seq_len: int = 96,
+):
     """CPU-only cache. Core weights are frozen; cache is reused across all arms."""
     model.eval()
     cached = []
     for _ in range(n_batches):
-        x, y = dataset.sample_batch(batch_size=1, seq_len=seq_len, device="cpu", split="train")
+        x, y = dataset.sample_batch(batch_size=1, seq_len=seq_len, device="cpu", split=split)
         _, aux = model(x, y=y, collect_history=True)
         cached.append({
             "mu_hist": aux["mu_hist"].detach().cpu(),
@@ -6250,8 +6269,19 @@ def cache_fixed_batches(model, dataset, n_batches: int = 64, seq_len: int = 96):
     return cached
 
 
+def make_fixed_ctrl_perms(cached_train_batches, hard_threshold: float, seed: int):
+    g = torch.Generator().manual_seed(seed)
+    perms = []
+    for batch in cached_train_batches:
+        inputs = build_probe_inputs(batch)
+        mask = hard_late_mask(inputs["future_gain"], hard_threshold)
+        perms.append(torch.randperm(int(mask.sum().item()), generator=g))
+    return perms
+
+
 def train_shadow_probe(
-    cached_batches,
+    cached_train_batches,
+    hard_threshold: float,
     dim: int = 768,
     steps: int = 300,
     lr: float = 1e-3,
@@ -6263,12 +6293,15 @@ def train_shadow_probe(
     opt_probe = torch.optim.AdamW(probe.parameters(), lr=lr, weight_decay=0.01)
     opt_ctrl = torch.optim.AdamW(control.parameters(), lr=lr, weight_decay=0.01)
 
-    g = torch.Generator().manual_seed(seed)
+    ctrl_perms = make_fixed_ctrl_perms(cached_train_batches, hard_threshold, seed)
 
     for step in range(steps):
-        batch = cached_batches[step % len(cached_batches)]
+        batch_idx = step % len(cached_train_batches)
+        batch = cached_train_batches[batch_idx]
         inputs = build_probe_inputs(batch)
-        mask = hard_late_mask(inputs["future_gain"])
+        mask = hard_late_mask(inputs["future_gain"], hard_threshold)
+        if not mask.any():
+            continue
 
         pred = probe(
             inputs["mu"],
@@ -6295,7 +6328,7 @@ def train_shadow_probe(
             inputs["pass_frac"],
         )
         ctrl_target = target[mask]
-        ctrl_perm = torch.randperm(ctrl_target.numel(), generator=g)
+        ctrl_perm = ctrl_perms[batch_idx]
         ctrl_loss = loss_coef * F.smooth_l1_loss(ctrl_pred[mask], ctrl_target[ctrl_perm])
         opt_ctrl.zero_grad()
         ctrl_loss.backward()
@@ -6305,12 +6338,12 @@ def train_shadow_probe(
 
 
 @torch.no_grad()
-def evaluate_probe(probe: nn.Module, cached_batches) -> float:
+def evaluate_probe(probe: nn.Module, cached_eval_batches, hard_threshold: float) -> float:
     pred_all = []
     gain_all = []
-    for batch in cached_batches:
+    for batch in cached_eval_batches:
         inputs = build_probe_inputs(batch)
-        mask = hard_late_mask(inputs["future_gain"])
+        mask = hard_late_mask(inputs["future_gain"], hard_threshold)
         pred = probe(
             inputs["mu"],
             inputs["pi"],
@@ -6329,10 +6362,11 @@ def evaluate_probe(probe: nn.Module, cached_batches) -> float:
 
 # Canonical canary:
 # 1. Freeze the dim=768 recurrent core.
-# 2. Cache fixed CPU batches once.
-# 3. Train only the shadow scalar head for 300 steps.
-# 4. Report Spearman on hard late tokens.
-# 5. If Spearman < 0.10, kill the entire LDPC branch.
+# 2. Cache fixed CPU train/eval batches once.
+# 3. Compute the hard-late threshold once from the held-out eval cache.
+# 4. Train only the shadow scalar head for 300 steps on train batches.
+# 5. Report Spearman on held-out eval hard-late tokens.
+# 6. If Spearman < 0.10, kill the entire LDPC branch.
 ```
 
 ### Chrome canary protocol at `dim=768`
@@ -6344,9 +6378,10 @@ Run only this:
 - `batch_size=1`
 - `seq_len=96`
 - fixed seed
-- fixed cached batch set reused for all probe/control evaluations
+- fixed cached train set plus fixed held-out eval set reused for all probe/control evaluations
+- hard-late split computed once from the cached eval set and then frozen
 - frozen recurrent core
-- `300` optimizer steps on the probe head only
+- `300` optimizer steps on the probe head only, using train batches only
 
 There is no acting arm in the first test. There is no pseudo-production branch. There is no recurrence edit.
 
@@ -6354,7 +6389,7 @@ There is no acting arm in the first test. There is no pseudo-production branch. 
 
 The **only** metric for the first test is:
 
-`Spearman(syndrome_energy_hat, future_gain)` on hard late token-pass pairs at `dim=768`
+`Spearman(syndrome_energy_hat, future_gain)` on held-out eval hard late token-pass pairs at `dim=768`
 
 Decision:
 
@@ -6369,8 +6404,8 @@ The control arm exists to catch self-deception, but it is not a second product m
 
 - the exact same `SyndromeEnergyProbe` architecture
 - the exact same optimizer and loss coefficient
-- the exact same cached inputs
-- fixed shuffled future-gain targets from the same cached tensors
+- the exact same cached train inputs
+- fixed shuffled future-gain targets from the same cached train tensors, with one permutation frozen per cached batch
 
 This fixes the earlier invalid control. "Extra gist slots" was not parameter matched and is abandoned.
 
