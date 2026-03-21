@@ -6522,3 +6522,21 @@ This is the highest-EV warm-startable scratchpad extension because it uses the s
 - attached-history late-pass supervision
 
 Nothing is copied from transformer attention. The mechanism is a true syndrome-space side channel: Stage 7 measures consistency, scratchpad stores only the residual code, Stage 4 routes the repair, Stage 5 integrates it.
+
+---
+
+## Chrome: Grokfast Extended 300-Step at dim=768 (2026-03-21)
+
+**NEUTRAL on test BPT. Training loss consistently lower.**
+
+| Arm | Train avg50@300 | Test BPT | Separation |
+|-----|----------------|---------|-----------|
+| Baseline | 10.647 | 16.301 | -0.0627 |
+| Grokfast lambda=0.5 | **10.402** | 16.301 | -0.0628 |
+
+Train loss: -2.3% better throughout (12.097 vs 12.196 at step 100, 10.402 vs 10.647 at step 300).
+Test BPT: identical (16.301 both). The training advantage hasn't translated to test yet.
+
+**Verdict:** NOT KILL but not proven either. Grokfast helps training optimization but may need 1000+ steps to show test benefit at dim=768. The 50-step -1.0% was a measurement artifact of early convergence speed, not sustained generalization gain.
+
+**Decision:** Keep as candidate for 5K fork test (longer run). Don't add mid-training.
