@@ -44,7 +44,8 @@ WARMUP_STEPS = 500        # v0.5.4: shorter re-warmup (Codex design)
 REWARMUP_LR_START = 3e-4  # v0.5.4: start LR lower for norm adaptation
 MAX_STEPS = 100000
 EVAL_EVERY = 1000         # v0.5.4: more frequent eval (Codex design)
-SAVE_EVERY = 5000
+SAVE_EVERY = 5000         # Permanent checkpoints (never overwritten)
+ROLLING_SAVE = 1000       # Rolling checkpoint (overwritten each time, crash recovery)
 LOG_EVERY = 100
 VOCAB_SIZE = 50257
 
@@ -142,10 +143,25 @@ def main():
     best_bpt = float("inf")
     metrics_history = []
 
-    # Try resume from v0.5.4 checkpoint first
+    # Try resume: rolling checkpoint first (most recent), then permanent, then warm-start
+    rolling_ckpt = ckpt_dir / "rolling_latest.pt"
     latest_054 = sorted(ckpt_dir.glob("step_*.pt"), key=lambda p: int(p.stem.split("_")[1]))
-    if latest_054:
-        ckpt = torch.load(latest_054[-1], weights_only=False, map_location=DEVICE)
+
+    resume_path = None
+    if rolling_ckpt.exists():
+        # Rolling is most recent (model-only, no optimizer)
+        r = torch.load(rolling_ckpt, weights_only=False, map_location=DEVICE)
+        if latest_054:
+            p = torch.load(latest_054[-1], weights_only=False, map_location=DEVICE)
+            # Use whichever is further along
+            resume_path = rolling_ckpt if r["step"] > p["step"] else latest_054[-1]
+        else:
+            resume_path = rolling_ckpt
+    elif latest_054:
+        resume_path = latest_054[-1]
+
+    if resume_path:
+        ckpt = torch.load(resume_path, weights_only=False, map_location=DEVICE)
         model = _create_model(dim=DIM, ff_dim=FF_DIM,
                               max_steps=MAX_STEPS_PER_POSITION,
                               window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
@@ -153,7 +169,10 @@ def main():
         start_step = ckpt["step"]
         best_bpt = ckpt.get("best_bpt", float("inf"))
         metrics_history = ckpt.get("metrics", [])
-        print(f"RESUMED v0.5.4 from step {start_step}, best BPT={best_bpt:.4f}")
+        has_optimizer = "optimizer" in ckpt
+        print(f"RESUMED v0.5.4 from step {start_step} ({resume_path.name}), best BPT={best_bpt:.4f}")
+        if not has_optimizer:
+            print(f"  (rolling checkpoint — optimizer state reset)")
     else:
         # Warm-start from v0.5.3 checkpoint
         v053_ckpt_dir = REPO / "results" / "checkpoints_v053"
@@ -284,6 +303,13 @@ def main():
                 except Exception as e:
                     print(f"EVAL FAILED at step {step}: {e}", flush=True)
 
+            # Rolling checkpoint: model-only, overwrites each time (crash recovery)
+            if step % ROLLING_SAVE == 0:
+                rolling = {"model": model.state_dict(), "step": step,
+                           "best_bpt": best_bpt}
+                torch.save(rolling, ckpt_dir / "rolling_latest.pt")
+
+            # Permanent checkpoint: full state, never overwritten
             if step % SAVE_EVERY == 0:
                 ckpt = {
                     "model": model.state_dict(),
@@ -292,10 +318,6 @@ def main():
                     "metrics": metrics_history,
                 }
                 torch.save(ckpt, ckpt_dir / f"step_{step}.pt")
-                old = sorted(ckpt_dir.glob("step_*.pt"),
-                             key=lambda p: int(p.stem.split("_")[1]))
-                for o in old[:-3]:
-                    o.unlink()
 
     elapsed_h = (time.time() - start) / 3600
     print(f"\nDone. {step} steps, {elapsed_h:.1f}h, best BPT={best_bpt:.4f}")
