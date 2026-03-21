@@ -5898,3 +5898,21 @@ v0.6.1: acting controller + frozen cache → 1024-dim from scratch on 20B+ diver
 - NCA pre-pre-training (biggest cold-start accelerator)
 - Criticality + stochastic resonance (stabilize deep recurrence)
 - Reversible message passing (Landauer: deeper recurrence without overwrite)
+
+---
+
+## Chrome Probe: Attached vs Detached History Convergence (2026-03-21)
+
+**Question:** Does attached-history training (L_step backprops into recurrent core) create more convergence separation than final-only training?
+
+**Setup:** dim=128, 200 steps, bs=4, seq=64, 12 passes, CPU.
+
+**Results:**
+| Arm | Easy Late Gain | Hard Late Gain | SEPARATION |
+|-----|---------------|---------------|------------|
+| ATTACHED (L_final + 0.25*L_step) | -0.0006 | -0.0203 | **-0.0197** |
+| FINAL-ONLY | +0.0050 | -0.0103 | -0.0153 |
+
+**Conclusion:** Attached history creates 29% MORE separation than final-only. Hard tokens benefit more from late passes when inter-step loss is active. This is a positive signal for the v0.6.0a elastic compute thesis at small scale.
+
+**Caveat:** dim=128 Chrome is triage only (per CLAUDE.md). Production validation at dim=768 needed. But the direction is right.
