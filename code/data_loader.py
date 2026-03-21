@@ -154,11 +154,11 @@ class ShardedDataset:
             if span is None:
                 continue
             start, end = span
-            n_windows = end - start - seq_len
-            if n_windows < 0:
+            valid_starts = end - start - seq_len
+            if valid_starts <= 0:
                 continue
             candidates.append((meta, start, end))
-            weights.append(n_windows + 1)
+            weights.append(valid_starts)
         if not candidates:
             raise RuntimeError(f"No valid {split} shards available for seq_len={seq_len}")
         return candidates, weights

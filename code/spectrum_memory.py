@@ -104,7 +104,7 @@ class ContinuousSpectrumMemory(nn.Module):
 
         return levels
 
-    def _retrieve_at_level(self, query, level_kvw, beam_size):
+    def _retrieve_at_level(self, query, level_kvw, beam_size, level_idx=0):
         """Retrieve top-k from a single tree level."""
         keys, values, weights = level_kvw
         B, T, M = query.shape
@@ -116,13 +116,18 @@ class ContinuousSpectrumMemory(nn.Module):
         # Causal scores
         scores = torch.bmm(query, keys.transpose(1, 2)) / math.sqrt(M)
 
-        # Causal mask: can only attend to positions before current
-        # For tree levels, position j covers span [j*2^l, (j+1)*2^l)
-        # Simplified: just use position ordering
-        if N_level <= T:
-            causal = torch.triu(torch.ones(T, N_level, device=query.device) * float('-inf'),
-                                diagonal=1)
-            scores = scores + causal[:T, :N_level]
+        # Causal mask: node j at level l covers span [j*2^l, (j+1)*2^l).
+        # Query at position i can only attend to nodes whose span_end <= i.
+        span_size = max(1, 2 ** level_idx)
+        # Build causal mask based on span boundaries
+        # Node j covers tokens [j*span_size, (j+1)*span_size)
+        # Query i can see node j only if (j+1)*span_size <= i+1 (span ends before or at query)
+        node_ends = torch.arange(1, N_level + 1, device=query.device).float() * span_size
+        query_pos = torch.arange(T, device=query.device).float().unsqueeze(1) + 1  # (T, 1)
+        causal = torch.where(node_ends.unsqueeze(0) <= query_pos,
+                             torch.zeros(T, N_level, device=query.device),
+                             torch.full((T, N_level), float('-inf'), device=query.device))
+        scores = scores + causal.unsqueeze(0)  # (1, T, N_level) broadcast over batch
 
         # Top-k sparse attention
         k = min(beam_size, N_level)
@@ -176,7 +181,7 @@ class ContinuousSpectrumMemory(nn.Module):
         n_levels = len(tree_state)
         level_ctx = []
         for l, lvl in enumerate(tree_state):
-            ctx = self._retrieve_at_level(q, lvl, self.beam_size)
+            ctx = self._retrieve_at_level(q, lvl, self.beam_size, level_idx=l)
             level_ctx.append(ctx)
 
         # Stack: (B, T, n_levels, mem_dim)
