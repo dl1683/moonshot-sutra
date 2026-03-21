@@ -70,11 +70,15 @@ class ShardedDataset:
                 return
             raise FileNotFoundError(f"No data in {self.shard_dir}")
 
+        MAX_SHARD_BYTES = 4 * 1024 * 1024 * 1024  # 4GB max shard — skip giant unsplit originals
         total = 0
+        skipped_giant = 0
         for f in shard_files:
-            # Estimate token count from file size WITHOUT loading into RAM
-            # PyTorch .pt files for 1D int64 tensors: ~137 byte header + 8 bytes/token
             file_bytes = os.path.getsize(f)
+            if file_bytes > MAX_SHARD_BYTES:
+                skipped_giant += 1
+                continue  # Skip giant shards — use the split versions instead
+            # Estimate token count from file size WITHOUT loading into RAM
             size = max(0, (file_bytes - 200) // 8)  # conservative header estimate
             if size < 2:
                 continue
@@ -106,6 +110,8 @@ class ShardedDataset:
         for source in sorted(self.sources.keys()):
             t = self.sources[source]
             print(f"  {source}: ~{t/1e9:.2f}B tokens")
+        if skipped_giant:
+            print(f"  Skipped {skipped_giant} giant shards (>{MAX_SHARD_BYTES//1e9:.0f}GB) — use split versions")
         print(f"  TOTAL: ~{total/1e9:.2f}B tokens from {len(self.sources)} sources, {len(self.index)} shards")
         self._total = total
 
@@ -165,16 +171,33 @@ class ShardedDataset:
         Picks shard weighted by size, loads it (cached), samples random positions.
         """
         candidates, weights = self._split_candidates(seq_len, split)
-        meta, span_start, span_end = random.choices(candidates, weights=weights, k=1)[0]
-        tokens = self._load_shard(meta["path"])
-        if tokens is None:
-            raise RuntimeError(f"Failed to load shard {meta['path']}")
 
-        max_start = span_end - seq_len - 1
-        idx = torch.randint(span_start, max_start + 1, (batch_size,))
-        x = torch.stack([tokens[i:i + seq_len] for i in idx])
-        y = torch.stack([tokens[i + 1:i + seq_len + 1] for i in idx])
-        return x.to(device), y.to(device)
+        # Retry loop in case estimated n_tokens doesn't match actual shard size
+        for _ in range(10):
+            meta, span_start, span_end = random.choices(candidates, weights=weights, k=1)[0]
+            tokens = self._load_shard(meta["path"])
+            if tokens is None:
+                continue
+
+            # Clamp span to actual tensor size (file-size estimate can be off)
+            actual_size = tokens.numel()
+            span_end = min(span_end, actual_size)
+            span_start = min(span_start, actual_size)
+
+            # Update meta with actual size on first load (self-correcting)
+            if meta["n_tokens"] != actual_size:
+                meta["n_tokens"] = actual_size
+
+            max_start = span_end - seq_len - 1
+            if max_start < span_start:
+                continue  # Shard too small for this seq_len, try another
+
+            idx = torch.randint(span_start, max_start + 1, (batch_size,))
+            x = torch.stack([tokens[i:i + seq_len] for i in idx])
+            y = torch.stack([tokens[i + 1:i + seq_len + 1] for i in idx])
+            return x.to(device), y.to(device)
+
+        raise RuntimeError(f"Failed to sample valid batch after 10 retries (seq_len={seq_len})")
 
     def get_test_tokens(self, n_tokens=None):
         """Get the fixed held-out tail from the test shard."""
