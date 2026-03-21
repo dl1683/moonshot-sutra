@@ -1,5 +1,23 @@
-The full design is now in [research/RESEARCH.md](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6044). It covers the exact module layout, `Scratchpad` integration, `L_syndrome`, zero-influence birth init (`alpha=-7`, zero-init projections), delayed activation after pass 3, a proceed-safe shadow schedule for `v0.6.0a`, the acting `v0.6.1-ldpc` schedule, the `dim=768` CPU Chrome probe, kill criteria, and the future elastic-compute connection.
+The round-1 multi-slot acting design is superseded.
 
-I also updated [research/SCRATCHPAD.md](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/SCRATCHPAD.md) so the queue now ranks LDPC syndrome scratchpad as the top scratchpad branch, and I deleted the superseded `results/codex_warmstart_brainstorm.md` artifact after ingesting it into the canonical docs.
+Canonical plan now lives in [research/RESEARCH.md](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md) under the revised LDPC syndrome probe section.
 
-No model code was changed this turn. Verification was doc readback and diff only. One unrelated live-training file, [results/v060a_metrics.json](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/results/v060a_metrics.json), changed in the background and was left untouched.
+The stripped-down first test is:
+
+- one shadow-only scalar `syndrome_energy` head
+- fixed cached CPU batches at `dim=768`
+- frozen recurrent core
+- matched-parameter control with shuffled targets
+- no acting read/write path
+- no Stage 7 claim
+- no proceed-gate coupling
+
+Only metric:
+
+- `Spearman(syndrome_energy, future_gain)` on hard late token-pass pairs
+
+Kill rule:
+
+- if `Spearman < 0.10`, kill the entire LDPC branch
+
+This file remains only as a pointer so the round-2 review chain has a stable target.

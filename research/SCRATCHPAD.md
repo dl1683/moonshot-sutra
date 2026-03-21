@@ -5,13 +5,13 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 ---
 
-## PRIORITY 1: LDPC Syndrome Scratchpad (v0.6.1)
+## PRIORITY 1: LDPC Syndrome Probe Gate
 
-**Bottleneck**: Scratchpad stores gist, but it does not explicitly represent what is still inconsistent in a form Stage 4 can route on.
-**Mechanism**: Keep the existing 8-slot gist bank. Add 4 low-rank check slots inside `Scratchpad`. Stage 7 writes a learned syndrome after pass 3. Stage 4 reads that syndrome as a routing-demand shift. Stage 5 receives a tiny residual correction prior.
-**Success signal**: At `dim=768`, shadow-mode syndrome energy correlates with future residual gain (`Spearman >= 0.25`), and acting mode improves late-pass separation by `>=5%` relative or BPT by `>=0.02`.
-**Failure signal**: Birth parity breaks, slots collapse, or the branch only helps after changing the residual-gain probe/proceed thresholds.
-**Status**: Full design is now in `research/RESEARCH.md`. First probe should be shadow-only and proceed-safe.
+**Bottleneck**: We do not know whether the current dim=768 recurrent state even contains a distinct syndrome-like inconsistency scalar worth building a scratchpad branch around.
+**Mechanism**: Before any scratchpad/module work, attach a shadow-only scalar `syndrome_energy` head to frozen `v0.6.0a` token-pass histories on fixed cached CPU batches. No acting read, no write path, no proceed-gate coupling.
+**Success signal**: On hard late token-pass pairs at `dim=768`, `Spearman(syndrome_energy, future_gain) >= 0.10`.
+**Failure signal**: `Spearman < 0.10` on the fixed cached-batch canary -> kill the entire LDPC branch.
+**Status**: Canonical stripped-down design is now in `research/RESEARCH.md`. This is a pre-scratchpad falsification gate, not a `v0.6.1` acting branch yet.
 
 ---
 
@@ -59,7 +59,7 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 ### Tier 1: Solves a diagnosed bottleneck
 | Mechanism | Bottleneck it solves | Why it might work at 105M | Test order |
 |-----------|---------------------|--------------------------|------------|
-| **LDPC syndrome scratchpad** | Scratchpad has no explicit residual-consistency code | Uses Stage 7 -> Stage 4/5 loop directly, warm-start-safe | 1st |
+| **LDPC syndrome probe gate** | Unknown if a syndrome-like scalar even exists in current recurrent state | Cheap falsification test before any new acting mechanism | 1st |
 | **Error scratchpad (delayed)** | Scratchpad carries raw state not errors | Late steps were 2.2x better - needs capacity to exploit | 2nd |
 | **nGPT hypersphere** | Scale-dependent hyperparameters | Angles/norms are scale-invariant by construction | 3rd |
 
@@ -109,4 +109,4 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 2. Will Net2Net widening actually activate the extra dimensions, or stay dead?
 3. The delayed-start principle: is step 3 universal or should the delay adapt per mechanism?
 4. Continuous-spectrum memory: can we derive the optimal resolution from information theory?
-5. Syndrome specialization: do the 4 learned check slots converge to distinct consistency families, or collapse into one generic hard-token detector?
+5. Does a scalar syndrome-energy probe capture anything beyond the existing residual-gain geometry, or is the LDPC analogy empty at dim=768?
