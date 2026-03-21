@@ -79,10 +79,22 @@ Before ANY production training run (>1000 steps), ALL must pass:
 2. **Codex pipeline audit** — data loading, loss, checkpointing, eval
 3. **Checkpoint resume test** — save step 10, kill, resume, verify
 4. **500-step smoke test** — loss drops, no NaN/Inf
-5. **Generation sanity** — greedy decode produces real words (ASCII-safe!). Run 3-5 diverse prompts, visually inspect output for coherence. BPT can be deceptive — low BPT does NOT guarantee coherent generation. This check is non-negotiable after ANY model change.
+5. **Generation sanity** — greedy decode produces real words (ASCII-safe!)
 6. **Causality formal test** — changing token N has zero effect on logits 0..N-1
 7. **LR stability test** — validate at production dim, not just small-scale
 8. **NaN guard active** — training loop catches and skips NaN loss/gradients
+
+### Codex Pre-Training Audit (MANDATORY — learned from detached-history bug)
+**Training is the most expensive operation. Never start without deep review.**
+Before ANY training run, run ALL of these Codex reviewers and resolve every HIGH finding:
+1. **Correctness Engineer** — full code review of model + trainer + data loader
+2. **Performance Engineer** — memory profile, throughput estimate, OOM risk assessment
+3. **Scaling Expert** — LR scaling for depth, warm-start compatibility, VRAM budget
+
+Each reviewer must return CLEAN (no HIGH findings) before training starts.
+**The detached-history bug would have been caught here** — Correctness Engineer would have flagged that L_step gradients don't reach the recurrent core. The NaN at step 762 would have been caught — Performance Engineer would have flagged LR too high for 12-pass depth. These cost hours of wasted GPU each time.
+
+**Rule: the cost of one extra hour of Codex review is ALWAYS less than the cost of restarting a failed training run.**
 
 ### Multi-Codex Review Panel (MANDATORY at every eval checkpoint + major releases)
 
