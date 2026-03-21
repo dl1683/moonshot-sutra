@@ -96,13 +96,15 @@ class ShardedDataset:
         if not self.index:
             raise FileNotFoundError(f"No valid token shards found in {self.shard_dir}")
 
-        last_meta = self.index[-1]
-        held_out = min(self.test_tokens, last_meta["n_tokens"] - 1)
-        if held_out <= 0:
-            raise ValueError(f"Last shard {last_meta['path'].name} is too small for held-out eval")
-        last_meta["held_out_tokens"] = held_out
-        for meta in self.index[:-1]:
-            meta["held_out_tokens"] = 0
+        # Pick the LARGEST shard for held-out test (not the last/smallest)
+        test_meta = max(self.index, key=lambda m: m["n_tokens"])
+        held_out = min(self.test_tokens, test_meta["n_tokens"] // 10)  # max 10% of shard
+        if held_out < 1000:
+            raise ValueError(f"No shard large enough for held-out eval")
+        test_meta["held_out_tokens"] = held_out
+        for meta in self.index:
+            if meta is not test_meta:
+                meta["held_out_tokens"] = 0
 
         # Print summary
         for source in sorted(self.sources.keys()):
@@ -179,14 +181,17 @@ class ShardedDataset:
         return x.to(device), y.to(device)
 
     def get_test_tokens(self, n_tokens=None):
-        """Get the fixed held-out tail from the last shard."""
+        """Get the fixed held-out tail from the test shard."""
         if self._test_tokens is not None:
             if n_tokens is None or self._test_tokens.numel() <= n_tokens:
                 return self._test_tokens
             return self._test_tokens[-n_tokens:]
 
-        meta = self.index[-1]
-        held_out = meta.get("held_out_tokens", 0)
+        # Find the shard with held-out tokens
+        meta = next((m for m in self.index if m.get("held_out_tokens", 0) > 0), None)
+        if meta is None:
+            raise RuntimeError("No held-out test tokens configured")
+        held_out = meta["held_out_tokens"]
         if held_out <= 0:
             raise RuntimeError("No held-out test tokens configured")
 

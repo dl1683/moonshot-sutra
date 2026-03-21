@@ -112,12 +112,12 @@ By iteration 8:
 #### Final: Output
 The hidden state `mu` has been refined through 8 iterations of evidence accumulation. It's projected through the output head to produce logits for the next token prediction.
 
-**The key insight**: this isn't a fixed 8-layer network. It's a dynamical system where each token finds its own path through the stage graph. Some tokens converge in 3 iterations. Others need all 8. The computation is **adaptive and content-dependent**, not uniform.
+**The key insight**: this isn't a fixed 8-layer network. It's a dynamical system where each token follows its own path through the stage graph. The stage probabilities evolve differently per token — some concentrate on readout quickly while others spend more mass on routing and memory. In v0.5.4, all tokens still run through 8 recurrent steps (true early-exit and verify/reroute are design goals for v0.5.5+), but the stage distributions already create **content-dependent processing** within that fixed loop.
 
 ### Why This Matters
 
 In a transformer, every token gets the same 32 or 64 layers of computation regardless of difficulty. In Sutra:
-- **Function words** ("the", "a", "is") can exit early
+- **Function words** ("the", "a", "is") concentrate on readout stages faster
 - **Content words** spend more time in local construction
 - **Connectives and references** ("because", "it", "however") spend more time routing
 - **Ambiguous or complex tokens** loop through more iterations

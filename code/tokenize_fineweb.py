@@ -90,14 +90,11 @@ def main():
         torch.save(torch.tensor(shard_tokens, dtype=torch.long), shard_path)
         print(f"  -> Saved final shard {shard_num}: {len(shard_tokens):,} tokens")
 
-    # Concatenate all shards
-    print(f"\nConcatenating {shard_num + 1} shards...")
-    all_shards = sorted(SHARD_DIR.glob("shard_*.pt"))
-    all_tensors = [torch.load(sp, weights_only=True) for sp in all_shards]
-    full = torch.cat(all_tensors)
-    torch.save(full, out)
-    print(f"Total: {len(full):,} tokens ({len(full)/1e9:.2f}B)")
-    print(f"Saved to {out} ({out.stat().st_size/1e9:.1f}GB)")
+    # No concatenation — shards are used directly by the streaming data loader.
+    # Symlink into data/shards/ via: python code/data_loader.py --migrate
+    total_shards = len(list(SHARD_DIR.glob("shard_*.pt")))
+    print(f"\nDone: {total_shards} shards in {SHARD_DIR}")
+    print(f"Run 'python code/data_loader.py --migrate' to add to training.")
 
 
 if __name__ == "__main__":
