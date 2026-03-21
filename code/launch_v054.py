@@ -30,7 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sutra_v05_ssm import (SutraV05, N_STAGES, STAGE_GRAPH, top2_project,
                             SwitchingKernel2, StageBank, BayesianWrite,
-                            LocalRouter, Verifier)
+                            LocalRouter)
 from scratchpad import Scratchpad
 
 
@@ -92,7 +92,6 @@ class SutraV054(nn.Module):
         self.stage_bank = StageBank(dim, ff_dim)
         self.router = LocalRouter(dim, window=window, k=k_retrieval)
         self.writer = BayesianWrite(dim)
-        self.verifier = Verifier(dim, vocab_size)
         self.scratchpad = Scratchpad(dim, n_slots=n_scratch_slots)
 
         # v0.5.4: GATED Peri-LN (starts as identity for warm-start!)

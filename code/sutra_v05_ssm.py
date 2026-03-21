@@ -178,37 +178,6 @@ class BayesianWrite(nn.Module):
         return mu_new, lam_new
 
 
-class Verifier(nn.Module):
-    """Stage 7: Decode, verify, and potentially reroute.
-
-    Produces a verification score. Low scores trigger loopback to Stage 4.
-    """
-
-    def __init__(self, dim, vocab_size):
-        super().__init__()
-        self.verify_net = nn.Sequential(
-            nn.Linear(dim * 2, dim),
-            nn.SiLU(),
-            nn.Linear(dim, 1),
-        )
-        self.reroute_proj = nn.Linear(dim, dim)  # error signal for rerouting
-
-    def forward(self, mu, logits_emb):
-        """Verify the current readout proposal.
-
-        mu: (B, N, D) current state
-        logits_emb: (B, N, D) embedding of the argmax prediction
-
-        Returns:
-            v_score: (B, N, 1) verification confidence in [0, 1]
-            reroute_signal: (B, N, D) error signal for failed positions
-        """
-        combined = torch.cat([mu, logits_emb], dim=-1)
-        v_score = torch.sigmoid(self.verify_net(combined))
-        reroute_signal = self.reroute_proj(mu - logits_emb)  # prediction error
-        return v_score, reroute_signal
-
-
 class LocalRouter(nn.Module):
     """Stage 4: Causal local message passing + sparse retrieval."""
 
@@ -286,7 +255,6 @@ class SutraV05(nn.Module):
         self.stage_bank = StageBank(dim, ff_dim)
         self.router = LocalRouter(dim, window=window, k=k_retrieval)
         self.writer = BayesianWrite(dim)
-        self.verifier = Verifier(dim, vocab_size)
 
         # Output
         self.ln = nn.LayerNorm(dim)

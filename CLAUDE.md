@@ -225,10 +225,9 @@ Every Codex review produces an output file. After Claude reads it:
 MANDATORY FIRST STEP: Read CLAUDE.md in this repository root. Every rule there is binding.
 
 CONTEXT YOU MUST KNOW:
-- We are in a CHROME WORKFLOW: theory + experiments alternate. Currently in THEORY-HEAVY
-  mode because a 475M-param production model is training on GPU in the background.
-  We cannot do heavy compute experiments right now — only theoretical analysis and
-  lightweight CPU prototyping.
+- We are in a CHROME WORKFLOW: theory + experiments alternate.
+  v0.5.4 (69.4M params, Gated Peri-LN + Delayed Pheromone) is training on GPU.
+  Building diverse 25B-token corpus in parallel. Next milestone: dim=1024 scale-up.
 - The architecture vision is a STAGE-SUPERPOSITION STATE MACHINE with 7 stages that
   form a state graph (not a pipeline). See research/STAGE_ANALYSIS.md for full details.
 - DO NOT recommend copying existing architectures (e.g., "just add attention layers").
