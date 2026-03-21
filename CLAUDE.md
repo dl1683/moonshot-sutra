@@ -88,7 +88,7 @@ Before ANY production training run (>1000 steps), ALL must pass:
 
 Run parallel Codex reviews using these 8 specialized personas. Not all are needed every time — use judgment, but ALL must review before any public-facing release (README update, paper, benchmark claim).
 
-**ALWAYS run at eval checkpoints (every 5K steps):** 1, 2, 3, 8
+**ALWAYS run at eval checkpoints (every 5K steps):** 1, 2, 3, 6, 8
 **ALWAYS run before public claims:** 4, 5, 8
 **Run at architecture changes:** 6, 7
 **Run at major milestones:** ALL 8
@@ -101,14 +101,14 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 
 **TIER 2 — EVERY CHECKPOINT (5K training steps):**
 - **3. Scaling Skeptic** — At every eval, check if results transfer across scales.
-- **8. Competitive Analyst** — At every eval, update positioning vs baselines.
+- **6. Architecture Theorist** — At every eval, review current design + propose next mechanisms from cross-domain research. Ensures we're always thinking ahead, not just maintaining.
+- **8. Competitive Analyst** — At every eval, update positioning vs baselines + research-forward recommendations.
 
 **TIER 3 — BEFORE PUBLIC CLAIMS (README, paper, benchmark):**
 - **4. Research Integrity Auditor** — Before any public number. Non-negotiable.
 - **5. Novelty Challenger** — Before any novelty claim.
 
 **TIER 4 — AT DESIGN GATES ONLY:**
-- **6. Architecture Theorist** — At Chrome round design decisions.
 - **7. Edge Deployment Engineer** — At major milestones, before deployment claims.
 
 **THE LOOP RULE:** Tier 1 reviewers (Correctness + Performance) run in a loop. If they find issues, fix them, then re-run the SAME reviewer. Repeat until the reviewer returns CLEAN. Do not assume one pass catches everything — fixing one issue often introduces another.
