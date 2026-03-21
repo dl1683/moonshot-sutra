@@ -171,6 +171,19 @@ There are no separate "research" and "implementation" phases. Research drives da
 ### Pivot Criteria
 The data tells us. Codex reviews artifacts and decides whether to continue or pivot. No approach is sacred — if the probes say it's dead, it's dead.
 
+### Resource Management: GPU Priority + Secondary Experiments
+**GPU is for production training. Everything else yields to it.**
+
+When training is running:
+- Chrome probes and secondary experiments run on **CPU only** (`CUDA_VISIBLE_DEVICES=""`)
+- If CPU experiments interfere with training throughput, pause them immediately
+- Never load giant tensors (>4GB) on CPU while training uses >20GB VRAM
+
+When training is stopped (audit loops, checkpoints, shard operations):
+- GPU is free for Chrome probes, quick experiments, benchmarks
+- **Pause/resume**: all secondary experiments must be designed to save state and resume. Use checkpoint files, not in-memory state. When training needs to start, kill experiments → start training → restart experiments on CPU when training is stable.
+- Run multiple CPU experiments in parallel when RAM allows (we have 68GB total)
+
 ### Autonomy — ELITE SCIENTIST MODE
 Fully autonomous operation. User is monitoring and will provide feedback directly.
 

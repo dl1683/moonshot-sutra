@@ -152,13 +152,14 @@ def main():
     model = create_v060a(dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
                          window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
 
-    # Pick best checkpoint: compare rolling vs permanent, take larger step
+    # Pick best checkpoint: try rolling + ALL permanents in descending step order
     ckpt = None
     resume_candidates = []
     if rolling.exists():
         resume_candidates.append(rolling)
-    if permanent:
-        resume_candidates.append(permanent[-1])
+    # Add ALL permanent checkpoints (descending by step) for robustness
+    for p in reversed(permanent):
+        resume_candidates.append(p)
 
     for cand in resume_candidates:
         try:
