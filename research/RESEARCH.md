@@ -5916,3 +5916,42 @@ v0.6.1: acting controller + frozen cache → 1024-dim from scratch on 20B+ diver
 **Conclusion:** Attached history creates 29% MORE separation than final-only. Hard tokens benefit more from late passes when inter-step loss is active. This is a positive signal for the v0.6.0a elastic compute thesis at small scale.
 
 **Caveat:** dim=128 Chrome is triage only (per CLAUDE.md). Production validation at dim=768 needed. But the direction is right.
+
+---
+
+## Chrome: Error Scratchpad v2 (Delayed Start) (2026-03-21)
+
+**Hypothesis:** Writing prediction error deltas to scratchpad ONLY after pass 3 improves late-step quality without the early-noise problem of v1.
+
+**Results (dim=128, 300 steps):**
+| Arm | Final Loss | Test BPT | Late Separation |
+|-----|-----------|---------|----------------|
+| Baseline | 12.620 | 9.233 | -0.0260 |
+| Error Scratch v2 | 12.335 | 9.233 | -0.0283 |
+
+**Verdict:** NOT KILL. Lower training loss, same test BPT, 9% better convergence separation. Weak positive signal. Needs more steps and larger scale. Retest candidate at dim=768/1024 per Codex recommendation.
+
+---
+
+## Chrome: Grokfast Lambda Sweep at dim=768 (2026-03-21)
+
+**REVERSAL: Grokfast IS stable at dim=768 with lower LR/clip.**
+
+Previous conclusion (wrong): "Grokfast fails at dim=768 at ALL lambdas."
+Root cause: LR=8e-4 was too high. With LR=3.5e-4 + clip=0.5, ALL lambdas stable.
+
+| Lambda | Loss (50 steps) | vs Baseline | Stable? |
+|--------|----------------|------------|---------|
+| 0 (baseline) | 11.886 | — | Yes |
+| 0.05 | 11.872 | -0.1% | Yes |
+| 0.10 | 11.861 | -0.2% | Yes |
+| 0.20 | 11.837 | -0.4% | Yes |
+| **0.50** | **11.763** | **-1.0%** | **Yes** |
+
+**Implication:** Grokfast lambda=0.5 is a candidate for v0.6.0a production training.
+Needs Codex sign-off before adding to active training. The +11% Chrome result from dim=128
+may partially transfer — the 50-step dim=768 probe shows direction is correct.
+
+**Key learning:** dim=128 Chrome was NOT a false positive for Grokfast — the production
+failure was caused by LR instability, not Grokfast itself. The Scaling Expert rule applies:
+always retest killed mechanisms when hyperparameters change.
