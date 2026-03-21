@@ -183,6 +183,8 @@ if __name__ == "__main__":
         model=model,
         tasks=task_list,
         batch_size=args.batch_size,
+        bootstrap_iters=0,  # Skip 100K bootstrap resampling — was causing OOM/hang
+        log_samples=False,   # Don't hold all samples in memory
     )
 
     print("\n" + "=" * 60)

@@ -84,12 +84,32 @@ Before ANY production training run (>1000 steps), ALL must pass:
 7. **LR stability test** — validate at production dim, not just small-scale
 8. **NaN guard active** — training loop catches and skips NaN loss/gradients
 
-### Multi-Codex Review at Every Eval Checkpoint (MANDATORY)
-At every eval step (every 5K steps), run parallel Codex reviews:
-1. **Code Reviewer** — any new bugs, regressions, or issues since last eval?
-2. **Chrome Experimenter** — given these results, what CPU experiments next?
-3. **Competitive Analyst** — where do we stand now vs Pythia/SmolLM2?
-4. **Architecture Designer** — should we change anything for the next phase?
+### Multi-Codex Review Panel (MANDATORY at every eval checkpoint + major releases)
+
+Run parallel Codex reviews using these 8 specialized personas. Not all are needed every time — use judgment, but ALL must review before any public-facing release (README update, paper, benchmark claim).
+
+**ALWAYS run at eval checkpoints (every 5K steps):** 1, 2, 3, 8
+**ALWAYS run before public claims:** 4, 5, 8
+**Run at architecture changes:** 6, 7
+**Run at major milestones:** ALL 8
+
+#### The 8 Reviewer Personas
+
+1. **Correctness Engineer** — Bugs, edge cases, pipeline integrity, data leakage, off-by-one errors. "Does the code do what you think it does?" Reviews: training loop, eval pipeline, data loading, checkpoint save/load.
+
+2. **Performance Engineer** — Memory profiling, GPU/CPU utilization, throughput bottlenecks, batch sizing, framework overhead. "Will this OOM? What's the peak memory? Where's the bottleneck?" Must profile before any long-running job. Would have caught: bootstrap_iters=100K OOM, zombie process contention.
+
+3. **Scaling Skeptic** — Does this result at dim=128 transfer to dim=768? At 200M params? Challenges whether Chrome probe results generalize across scales. Demands dim=768 canary runs before production decisions. Would have caught: Grokfast divergence at production scale, Peri-LN warm-start failure.
+
+4. **Research Integrity Auditor** — Statistical methodology, benchmark validity, sample sizes, fair comparisons, overclaims. "Can you defend this number if someone adversarial reads your README?" Checks: sample sizes, answer-position bias, proper evaluation harness, confidence intervals, comparison fairness. Would have caught: 10-question ARC claim, answer-always-at-index-0 bias.
+
+5. **Novelty Challenger** — Searches for prior art aggressively. "Who else has done this? What's ACTUALLY new vs. rediscovered?" Compares every mechanism against existing work: AdaPonderLM, Universal Transformer, PonderNet, Latent Reasoning, etc. Forces honest novelty claims. Would have caught: "elastic compute is novel" overclaim.
+
+6. **Architecture Theorist** — The Chrome round reviewer. Derives from first principles, validates mathematical arguments, ensures system coherence between stages. Challenges whether components are justified by theory or just intuition. Already used in Chrome workflow.
+
+7. **Edge Deployment Engineer** — Quantization readiness, inference latency, memory footprint on target hardware (phones, laptops, embedded). "Can this actually run on edge? What's the latency of 8 recurrent steps vs. a single-pass transformer?" Validates that architecture choices serve the deployment goal, not just training convenience.
+
+8. **Competitive Analyst** — Where does Sutra actually stand vs. Pythia, SmolLM2, Phi, Gemma, Qwen at the same param class? Real numbers on real benchmarks. Tracks the moving target — what baselines have improved since we last checked? Forces honest positioning.
 
 ### Sutra = Infrastructure, Not a Model
 **Full vision: research/VISION.md** — read this document every session.
