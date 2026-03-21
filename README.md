@@ -44,12 +44,146 @@ Sutra isn't a transformer. It's a **Stage-Superposition State Machine** — a sy
 - **Recurrent processing**: 8 iterations of the stage graph per forward pass. Each iteration refines the representation. Late iterations are the most valuable — this is where reasoning happens.
 - **Bayesian state updates**: Precision-weighted evidence accumulation, not simple residual addition. The model tracks confidence.
 
-### Key Innovations
+### How It Actually Works: A Concrete Walkthrough
 
-- **Switching Kernel**: 2-mode content-dependent transition (+4.1% over baseline)
-- **Scratchpad Memory**: Shared discourse state validated at 2-4x training speedup
-- **Gated Peri-LN**: LayerNorm with learned bypass gates for safe warm-starting between versions
-- **Delayed Pheromone Routing**: Stigmergic position traces that improve late-step recurrence by 2.6x
+Let's trace what happens when Sutra processes the sentence: **"The cat sat on the mat because it was tired"**
+
+#### Step 0: Initialization
+Each token gets embedded and enters the stage graph at **Stage 3 (Local Construction)**. Every token starts with a stage probability vector:
+
+```
+"The"     → pi = [0, 0, 1.0, 0, 0, 0, 0]  (100% in Stage 3)
+"cat"     → pi = [0, 0, 1.0, 0, 0, 0, 0]
+"sat"     → pi = [0, 0, 1.0, 0, 0, 0, 0]
+"because" → pi = [0, 0, 1.0, 0, 0, 0, 0]
+"it"      → pi = [0, 0, 1.0, 0, 0, 0, 0]
+...
+```
+
+The scratchpad memory is initialized — 8 empty slots of shared working memory.
+
+#### Iteration 1: Local Understanding
+The **content-dependent transition kernel** looks at each token's hidden state and decides where it should move. Simple tokens advance quickly:
+
+```
+"The"     → pi = [0, 0, 0.3, 0.6, 0.1, 0, 0]  (mostly Stage 4: ready to route)
+"cat"     → pi = [0, 0, 0.4, 0.5, 0.1, 0, 0]  (moving toward routing)
+"because" → pi = [0, 0, 0.7, 0.2, 0.1, 0, 0]  (still constructing — it's a complex connective)
+"it"      → pi = [0, 0, 0.6, 0.3, 0.1, 0, 0]  (needs context to resolve the reference)
+```
+
+**Top-2 projection** keeps only the 2 most active stages per token — bounding compute. The **stage bank** applies stage-specific transforms (each stage has its own small MLP), weighted by probability.
+
+Then **routing** happens: tokens in Stage 4 send messages to other tokens. "cat" sends information to nearby positions. "it" starts looking for its antecedent.
+
+The **scratchpad** gets its first write: a blurry summary of what's happening in the sequence. All tokens can read this shared context.
+
+#### Iterations 2-4: Building Context
+The transition kernel keeps evolving each token's stage distribution based on what it has learned:
+
+```
+"The"     → pi = [0, 0, 0, 0.1, 0.3, 0.1, 0.5]  (arriving at Stage 7: ready to output)
+"cat"     → pi = [0, 0, 0, 0.2, 0.4, 0, 0.4]     (writing to memory, approaching output)
+"because" → pi = [0, 0, 0.1, 0.5, 0.3, 0.1, 0]    (still routing heavily — connecting clauses)
+"it"      → pi = [0, 0, 0, 0.6, 0.3, 0.1, 0]      (routing intensively — resolving "it" → "cat")
+"tired"   → pi = [0, 0, 0.2, 0.3, 0.4, 0, 0.1]    (writing the reason to memory)
+```
+
+Notice: **easy tokens ("The") reach output stage fast. Hard tokens ("because", "it") spend more time routing.** The model allocates compute where it's needed — no wasted processing on words it already understands.
+
+The scratchpad now contains a discourse summary: roughly "there's a cat, it did something, and there's a causal relationship."
+
+#### Iterations 5-8: Refinement and Reasoning
+**This is where the magic happens.** Late iterations are 2-4x more valuable than early ones.
+
+The **pheromone traces** (activated at iteration 3+) mark which positions changed most during previous iterations. "because" and "it" have high pheromone — the routing system now prioritizes these hard positions.
+
+"it" finally locks onto "cat" through the routing mechanism. The causal chain "because → tired → cat" gets encoded. The scratchpad memory provides global context that helps resolve long-range dependencies.
+
+By iteration 8:
+```
+"The"     → pi = [0, 0, 0, 0, 0, 0, 1.0]  (Stage 7: output ready)
+"cat"     → pi = [0, 0, 0, 0, 0, 0, 1.0]  (output ready)
+"because" → pi = [0, 0, 0, 0, 0.1, 0, 0.9] (output ready, still tracking state)
+"it"      → pi = [0, 0, 0, 0, 0, 0, 1.0]  (resolved: it=cat, output ready)
+"tired"   → pi = [0, 0, 0, 0, 0, 0, 1.0]  (output ready)
+```
+
+#### Final: Output
+The hidden state `mu` has been refined through 8 iterations of evidence accumulation. It's projected through the output head to produce logits for the next token prediction.
+
+**The key insight**: this isn't a fixed 8-layer network. It's a dynamical system where each token finds its own path through the stage graph. Some tokens converge in 3 iterations. Others need all 8. The computation is **adaptive and content-dependent**, not uniform.
+
+### Why This Matters
+
+In a transformer, every token gets the same 32 or 64 layers of computation regardless of difficulty. In Sutra:
+- **Function words** ("the", "a", "is") can exit early
+- **Content words** spend more time in local construction
+- **Connectives and references** ("because", "it", "however") spend more time routing
+- **Ambiguous or complex tokens** loop through more iterations
+
+This is how humans read. You don't spend equal time on every word. You skim the easy parts and slow down for the hard parts. Sutra does this naturally through the stage-superposition mechanism.
+
+---
+
+## Modular Intelligence: The Warm-Start Architecture
+
+This is one of Sutra's most underappreciated features. The architecture isn't just a model — it's **infrastructure for evolving intelligence**.
+
+### Every Version Builds on the Last
+
+```
+v0.5.0 (base)                     → 67M params
+  ↓ warm-start (91% transfer)
+v0.5.2 (+switching kernel)         → 67M params, +4.1%
+  ↓ warm-start (91% transfer)
+v0.5.3 (+scratchpad memory)        → 69M params, +10.2%
+  ↓ warm-start (81% transfer)
+v0.5.4 (+gated norms + pheromone)  → 69M params, training now
+  ↓ Net2Net widening (65% transfer)
+v0.6.0 (dim=1024, on FineWeb)      → 105M params, planned
+```
+
+Nothing is thrown away. Each version inherits everything the previous version learned. This is **compound intelligence** — each improvement builds on all prior improvements.
+
+### The Gated Warm-Start Trick
+
+When you add new components to a trained model, you can't just splice them in — they destroy the learned representations. We solved this with **GatedLayerNorm**:
+
+```python
+# Standard LayerNorm: DESTROYS warm-start (BPT 5.96 → 11.39)
+output = LayerNorm(x)
+
+# Gated LayerNorm: PRESERVES warm-start (BPT 5.96 → 5.96)
+alpha = sigmoid(learnable_gate)  # starts at ~0 (identity)
+output = (1 - alpha) * x + alpha * LayerNorm(x)
+```
+
+The gate starts nearly closed (identity function). During training, it gradually opens, allowing normalization to activate without disrupting learned representations. This means we can **add ANY new component to a running model** by gating it through a bypass.
+
+### The Scaling Vision: Net2Net Widening
+
+When we scale from dim=768 to dim=1024, we don't start over. We **widen** the existing model:
+
+- Copy the `[:768, :768]` block of every weight matrix
+- The new dimensions start near-zero (inactive)
+- 65% of the larger model is already trained
+- The model keeps all its learned language understanding and just gains capacity
+
+This is the difference between evolution and creation from scratch. Evolution works.
+
+### Why This is Infrastructure, Not Just a Model
+
+Imagine Sutra at scale, open-sourced. The 7-stage architecture means:
+
+- **A memory researcher** can improve Stage 5 (memory write) without touching anything else
+- **A routing expert** can redesign Stage 4 (communication) independently
+- **A compression specialist** can optimize Stage 1 (segmentation) in isolation
+- **Domain specialists** can fine-tune specific stages for medicine, law, or code
+
+Each stage has a clean interface: `(mu, lambda, pi) in → (mu, lambda, pi) out`. Stages are **modular, independently improvable components**. This is how Linux works — thousands of contributors improving specific subsystems. Sutra is designed for the same pattern.
+
+The warm-start chain means every improvement from every contributor compounds automatically. **This is modular intelligence infrastructure, not a monolithic model.**
 
 ---
 
