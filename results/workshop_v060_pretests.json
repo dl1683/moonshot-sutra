@@ -1,0 +1,13 @@
+{
+  "workshop_1_token_convergence": {
+    "finding": "Tokens show U-shaped entropy: improve through depth 4, degrade at depth 8",
+    "implication": "Later steps may overwrite good intermediate results. Inter-step loss is MANDATORY."
+  },
+  "workshop_2_more_recurrence": {
+    "depth_4_bpt": 10.36,
+    "depth_8_bpt": 3.63,
+    "depth_16_bpt": 15.06,
+    "finding": "More steps HURTS with current model (trained for exactly 8)",
+    "implication": "v0.6 must be trained from scratch with variable depth, not bolted onto v0.5.4"
+  }
+}
