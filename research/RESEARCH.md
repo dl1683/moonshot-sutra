@@ -6022,3 +6022,19 @@ always retest killed mechanisms when hyperparameters change.
 **Implication:** This should be tested at dim=768 on GPU. If the 13.5% advantage holds at production scale, NCA pre-pre-training becomes mandatory for all future from-scratch training runs. It costs only 200 extra steps (trivial compute) for a massive quality boost.
 
 **Connection to research:** Validates the NCA finding from the 15-domain sweep: "164M NCA tokens give 6% LM improvement, beats 1.6B tokens of CommonCrawl." Our probe shows the same effect with just 200 steps at dim=128.
+
+---
+
+## Chrome: NCA Warm-Start at dim=768 (2026-03-21)
+
+**NEUTRAL: NCA warm-start shows no BPT improvement at production scale.**
+
+| Arm | BPT | Separation | vs Control |
+|-----|-----|-----------|------------|
+| Control (LM only) | 16.328 | -0.1018 | — |
+| Option A (Stage-3 NCA then LM) | 16.327 | -0.0873 | 0.0% |
+| Option C (continuous NCA alpha=0.02) | 16.328 | -0.0925 | 0.0% |
+
+**Conclusion:** NCA's -13.5% BPT win at dim=128 was an initialization effect for from-scratch training. Once a model has learned representations, NCA warm-start doesn't improve them. NCA remains valuable for FROM-SCRATCH runs only.
+
+**Key learning:** dim=128 results continue to NOT transfer directly to dim=768. Always validate at production scale. The Scaling Expert persona exists for this reason.
