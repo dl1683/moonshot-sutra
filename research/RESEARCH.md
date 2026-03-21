@@ -6467,3 +6467,22 @@ Test BPT: identical (16.301 both). The training advantage hasn't translated to t
 **Verdict:** NOT KILL but not proven either. Grokfast helps training optimization but may need 1000+ steps to show test benefit at dim=768. The 50-step -1.0% was a measurement artifact of early convergence speed, not sustained generalization gain.
 
 **Decision:** Keep as candidate for 5K fork test (longer run). Don't add mid-training.
+
+---
+
+## Chrome: Grokfast 1000-Step KILL at dim=768 (2026-03-21)
+
+**KILL: Grokfast overfits. +16.2% train advantage, -0.3% worse test BPT.**
+
+| Metric | Baseline | Grokfast lambda=0.5 | Delta |
+|--------|----------|---------------------|-------|
+| Test BPT | 16.576 | 16.630 | -0.3% (worse) |
+| Train loss | 5.926 | 4.966 | +16.2% better |
+| Separation | -0.1845 | -0.2170 | +17.6% |
+
+The gradient EMA amplification helps memorize training data but doesn't generalize.
+At 1000 steps the train-test divergence is clear and growing.
+
+**Decision:** KILL Grokfast for near-term warm-start use. The +11% dim=128 result and the -1.0% 50-step result were artifacts of short runs where train and test hadn't diverged yet. At production scale with enough steps, it's pure overfitting.
+
+**Lesson:** Short probes at any dimension can be misleading. The 50-step and 300-step probes both looked positive because overfitting hadn't manifested yet. 1000 steps was the right length to see the truth.
