@@ -5753,3 +5753,70 @@ The brain stores and processes information using **noise as a computational reso
 
 ### Status
 Research only. Not on immediate roadmap. Will revisit when v0.6.0a elastic compute thesis is validated — stochastic resonance could inform the noise/threshold calibration of the elastic controller.
+
+---
+
+## v0.6.0a NaN RCA: Dense-12 Warmup Instability (2026-03-21)
+
+**Observed failure:** `v0.6.0a` from-scratch dense-12 training hit NaN/Inf at step `762` during warmup. Last clean log was step `700` at `lr=5.6e-4`. No rolling checkpoint existed because `ROLLING_SAVE=1000`, so the run failed before the first recoverable save.
+
+### Code Audit Findings
+
+1. **`8e-4` does not transfer from 8 passes to 12 passes.**
+   - `v0.5.4` was stable at `8e-4` with `8` recurrent passes after the BayesianWrite gain clamp.
+   - If the stable LR radius shrinks roughly with recurrent depth, the 12-pass analogue is:
+     - `8e-4 * (8 / 12) = 5.33e-4`
+   - The actual crash arrived at `5.6e-4` during warmup, which matches this scaling surprisingly well.
+   - Conclusion: the failure is not "warmup too short"; warmup merely delayed hitting an LR that is already above the dense-12 stability boundary.
+
+2. **The 3-part loss is structurally asymmetric.**
+   - In `code/launch_v060a.py`, history is stored with `.detach()`:
+     - `mu_hist[:, :, p, :] = mu.detach()`
+     - `pi_hist[:, :, p, :] = pi.detach()`
+   - Therefore:
+     - `L_final` trains the recurrent core + readout
+     - `L_step` trains only the final `LayerNorm` and tied embedding matrix
+     - `L_probe` trains only `ResidualGainProbe`
+   - This means the auxiliary loss does **not** stabilize the 12-pass core. It mainly increases pressure on the shared decoder/input embedding stack.
+
+3. **Gradient trace confirmed the split.**
+   - Inline diagnostic on the full `dim=768`, `12`-pass model:
+     - `L_final` total grad norm: `15.45`
+     - `L_step` total grad norm: `0.28`, on `ln.*` and `emb.weight` only
+     - `L_probe` total grad norm: `0.29`, on `gain_probe.*` only
+   - At initialization, raw `L_step` already adds roughly:
+     - `~33%` of `L_final`'s LN gradient norm
+     - `~24%` of `L_final`'s embedding gradient norm
+   - Since embeddings are tied, this decoder-side pressure also perturbs the input interface seen by the recurrent core.
+
+### Decision
+
+For the next stability canary, use the following exact hyperparameters:
+
+| Knob | Old | New | Why |
+|------|-----|-----|-----|
+| Peak LR | `8e-4` | **`4.5e-4`** | Gives margin below the observed `5.6e-4` failure point |
+| Warmup | `1000` | **`1500`** | Slower norm/logit adaptation for dense-12 |
+| `L_step` coefficient | `0.50` | **`0.25`** | Halves decoder-only pressure while keeping the signal |
+| `L_probe` coefficient | `0.20` | **`0.20`** | Probe is not the instability source |
+| Grad clip | `1.0` | **`0.5`** | Adds a second safety margin at the optimizer step |
+| Rolling checkpoint | `1000` | **`100`** | Failure happened before the first saved recovery point |
+
+### Minimal Fix Recommendation
+
+The minimal fix to get past step `1000` is:
+
+- lower peak LR to **`4.5e-4`**
+- warm up for **`1500`** steps
+- keep the 3-part loss, but reduce **`L_step` to `0.25`**
+- tighten gradient clipping to **`0.5`**
+- save rolling checkpoints every **`100`** steps
+
+Warmup change **alone** is not enough. Checkpoint frequency **alone** is not enough. The primary fix is reducing the effective optimizer aggression for a deeper recurrent system whose auxiliary loss is over-concentrated on the tied readout stack.
+
+### Follow-up
+
+- If this recipe is stable through step `2000`, test `LR=5.0e-4` as the next speed canary.
+- Do **not** raise `L_step` again until either:
+  - history is allowed to backprop into the recurrent core, or
+  - step supervision gets its own untied readout head.

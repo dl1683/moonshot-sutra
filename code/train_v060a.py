@@ -3,7 +3,7 @@
 Tests: does 12-pass inter-step supervision create convergence separation?
 Trains from scratch on diverse 17B+ token corpus.
 
-Loss = L_final + 0.50 * L_step + 0.20 * L_probe
+Loss = L_final + 0.25 * L_step + 0.20 * L_probe
 
 L_final: full-vocab CE on final pass
 L_step: weighted sampled CE over all 12 passes
@@ -36,14 +36,17 @@ K_RETRIEVAL = 8
 SEQ_LEN = 512
 BATCH_SIZE = 4          # Reduced from 8: 12 passes + history = more VRAM
 GRAD_ACCUM = 16         # Effective batch = 64 (same)
-LR = 8e-4
-WARMUP_STEPS = 1000
+LR = 4.5e-4
+WARMUP_STEPS = 1500
 MAX_TRAIN_STEPS = 100000
 EVAL_EVERY = 1000
 SAVE_EVERY = 5000
-ROLLING_SAVE = 1000
+ROLLING_SAVE = 100
 LOG_EVERY = 100
 VOCAB_SIZE = 50257
+STEP_LOSS_COEF = 0.25
+PROBE_LOSS_COEF = 0.20
+GRAD_CLIP_NORM = 0.5
 
 # Step weights for sampled inter-step CE
 STEP_WEIGHTS = [0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.00]
@@ -93,7 +96,9 @@ def compute_v060a_losses(logits, aux, y):
         # Final pass target = 0 (already initialized)
     L_probe = F.smooth_l1_loss(probe_pred, targets.detach())
 
-    L_total = L_final + 0.50 * L_step + 0.20 * L_probe
+    # History is detached in launch_v060a, so L_step primarily trains the
+    # shared readout stack (final LN + tied embeddings), not the recurrent core.
+    L_total = L_final + STEP_LOSS_COEF * L_step + PROBE_LOSS_COEF * L_probe
 
     return L_total, {
         "L_final": L_final.item(),
@@ -190,6 +195,13 @@ def main():
             loss, loss_parts = compute_v060a_losses(logits[:, :Tc], aux, y[:, :Tc])
             loss = loss / GRAD_ACCUM
 
+        if not torch.isfinite(loss):
+            print(f"WARNING: Non-finite loss at step {step}, skipping microbatch", flush=True)
+            opt.zero_grad()
+            loss_count = 0
+            running_losses = {k: 0 for k in running_losses}
+            continue
+
         loss.backward()
         for k, v in loss_parts.items():
             running_losses[k] += v
@@ -206,7 +218,7 @@ def main():
                 running_losses = {k: 0 for k in running_losses}
                 continue
 
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
             opt.step()
             opt.zero_grad()
             step += 1
