@@ -1,0 +1,14 @@
+Not clean. `6/7` original issues are fixed. Issue `1` is not, and there is one new/reintroduced documentation issue.
+
+1. Issue 1, Holes: NOT FIXED. [RESEARCH.md:5928](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5928) adds prerequisite bullets, but it still does not give the exact `StageBank` / `LocalRouter` / `BayesianWrite` interface changes, a concrete raw-text/span alignment path, or stage-specific pass/fail metrics that [review_round2.md](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/multi_model_learning/review_round2.md) asked for.
+2. Issue 2, Contradictions: FIXED. [RESEARCH.md:5923](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5923) now makes this explicitly post-`v0.6.1`, not a `v0.6.0a` feature.
+3. Issue 3, Prior art: FIXED. [RESEARCH.md:5931](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5931) narrows the claim to stage-contract distillation inside Sutra’s recurrent stage system.
+4. Issue 4, `dim=128` feasibility: FIXED. [RESEARCH.md:5942](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5942) treats `128` as kill-screen only, with real validation at `768` and claims only at `1024` plus consolidation.
+5. Issue 5, Risks: FIXED. [RESEARCH.md:5953](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5953) forbids teacher losses until elastic compute works and requires a same-compute student-only baseline.
+6. Issue 6, Simplification: FIXED. [RESEARCH.md:5934](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5934) reduces the first test to one teacher, one stage, same tokenizer, hard late-token slices, zero-gated path, and mandatory consolidation.
+7. Issue 7, Integration with current state: FIXED. [RESEARCH.md:5928](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L5928) gates the branch behind attached-history signal, acting controller, and exact-indexed `dim=1024`.
+
+New issues:
+- Canonical-doc failure is still present in a new form. [design_round3.md:1](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/multi_model_learning/design_round3.md#L1) is not an actual detailed design doc; it is a short self-referential note. So the claimed “canonical design doc restored” state is false, and the single source of truth is still broken.
+
+Remaining issues: original issue `1`, plus the canonical-doc artifact problem.
