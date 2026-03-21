@@ -6486,3 +6486,26 @@ At 1000 steps the train-test divergence is clear and growing.
 **Decision:** KILL Grokfast for near-term warm-start use. The +11% dim=128 result and the -1.0% 50-step result were artifacts of short runs where train and test hadn't diverged yet. At production scale with enough steps, it's pure overfitting.
 
 **Lesson:** Short probes at any dimension can be misleading. The 50-step and 300-step probes both looked positive because overfitting hadn't manifested yet. 1000 steps was the right length to see the truth.
+
+---
+
+## Chrome: Error Scratchpad v2 at dim=768 (1000 steps) (2026-03-21)
+
+**NEUTRAL BPT, POSITIVE separation. Consistent across scales.**
+
+| Metric | Baseline | Error Scratch v2 | Delta |
+|--------|----------|-----------------|-------|
+| Test BPT | 16.574 | 16.587 | -0.1% |
+| Train loss | 5.887 | 6.039 | -2.6% |
+| Separation | -0.1737 | **-0.1895** | **+9.1%** |
+
+Separation improvement (+9%) is consistent with dim=128 result (+9%).
+Unlike Grokfast (which overfits), Error Scratch v2 doesn't diverge train/test.
+
+**Decision:** NOT KILL. Keep for v0.6.1 elastic controller where separation
+is the actual controller signal. The mechanism doesn't improve prediction
+but makes hard/easy tokens more distinguishable — exactly what elastic compute needs.
+
+**Key insight:** Some mechanisms don't improve BPT directly but improve the
+SUBSTRATE for future mechanisms. Error Scratch v2 improves separation,
+which is the signal the elastic controller will consume.
