@@ -79,7 +79,7 @@ Before ANY production training run (>1000 steps), ALL must pass:
 2. **Codex pipeline audit** — data loading, loss, checkpointing, eval
 3. **Checkpoint resume test** — save step 10, kill, resume, verify
 4. **500-step smoke test** — loss drops, no NaN/Inf
-5. **Generation sanity** — greedy decode produces real words (ASCII-safe!)
+5. **Generation sanity** — greedy decode produces real words (ASCII-safe!). Run 3-5 diverse prompts, visually inspect output for coherence. BPT can be deceptive — low BPT does NOT guarantee coherent generation. This check is non-negotiable after ANY model change.
 6. **Causality formal test** — changing token N has zero effect on logits 0..N-1
 7. **LR stability test** — validate at production dim, not just small-scale
 8. **NaN guard active** — training loop catches and skips NaN loss/gradients
@@ -125,11 +125,11 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 
 5. **Novelty Challenger** — Searches for prior art aggressively. "Who else has done this? What's ACTUALLY new vs. rediscovered?" Compares every mechanism against existing work: AdaPonderLM, Universal Transformer, PonderNet, Latent Reasoning, etc. Forces honest novelty claims. Would have caught: "elastic compute is novel" overclaim.
 
-6. **Architecture Theorist** — The Chrome round reviewer. Derives from first principles, validates mathematical arguments, ensures system coherence between stages. Challenges whether components are justified by theory or just intuition. Already used in Chrome workflow.
+6. **Architecture Theorist** — The Chrome round reviewer. Derives from first principles, validates mathematical arguments, ensures system coherence between stages. Challenges whether components are justified by theory or just intuition. **Also forward-looking:** proposes new mechanisms derived from math/physics/biology that could improve the architecture, identifies theoretical gaps in the current design, and connects findings from one Chrome cycle to hypotheses for the next. Not just "is this right" but "what should we try next and why."
 
 7. **Edge Deployment Engineer** — Quantization readiness, inference latency, memory footprint on target hardware (phones, laptops, embedded). "Can this actually run on edge? What's the latency of 8 recurrent steps vs. a single-pass transformer?" Validates that architecture choices serve the deployment goal, not just training convenience.
 
-8. **Competitive Analyst** — Where does Sutra actually stand vs. Pythia, SmolLM2, Phi, Gemma, Qwen at the same param class? Real numbers on real benchmarks. Tracks the moving target — what baselines have improved since we last checked? Forces honest positioning.
+8. **Competitive Analyst** — Where does Sutra actually stand vs. Pythia, SmolLM2, Phi, Gemma, Qwen at the same param class? Real numbers on real benchmarks. Tracks the moving target — what baselines have improved since we last checked? Forces honest positioning. **Also research-forward:** identifies what the field is doing that we should consider, flags gaps in our architecture that new research could fill, and recommends what to build next based on competitive landscape. Not just "where are we" but "where should we go."
 
 ### Sutra = Infrastructure, Not a Model
 **Full vision: research/VISION.md** — read this document every session.
