@@ -72,11 +72,10 @@ class ShardedDataset:
 
         total = 0
         for f in shard_files:
-            tokens = self._load_shard(f)
-            if tokens is None:
-                continue
-
-            size = int(tokens.numel())
+            # Estimate token count from file size WITHOUT loading into RAM
+            # PyTorch .pt files for 1D int64 tensors: ~137 byte header + 8 bytes/token
+            file_bytes = os.path.getsize(f)
+            size = max(0, (file_bytes - 200) // 8)  # conservative header estimate
             if size < 2:
                 continue
 
@@ -89,9 +88,6 @@ class ShardedDataset:
             parts = name.rsplit("_", 1)
             source = parts[0] if len(parts) == 2 and parts[1].isdigit() else name
             self.sources[source] = self.sources.get(source, 0) + size
-
-        self._hot_shard = None
-        self._hot_path = None
 
         if not self.index:
             raise FileNotFoundError(f"No valid token shards found in {self.shard_dir}")
