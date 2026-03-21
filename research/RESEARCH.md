@@ -5920,61 +5920,50 @@ v0.6.1: acting controller + frozen cache → 1024-dim from scratch on 20B+ diver
 ## Design Proposal: Multi-Model Representation Learning (2026-03-21)
 
 ### Core Decision
-Do NOT treat external pretrained models as whole-model teachers. Treat them as stage-specific measuring instruments.
+Do NOT treat external pretrained models as whole-model teachers. Treat them as stage-specific measuring instruments. After the adversarial review, the design is now explicitly a POST-`v0.6.1` branch, not a `v0.6.0a` feature.
 
-Round-1 mapping:
+### Round 2 corrections
 
-- `Mamba`-family teachers -> Stage 3 local construction / recurrent-state structure
-- embedding teachers (`EmbeddingGemma`, `BGE`, `Qwen3-Embedding`) -> Stage 4/5 routing + memory geometry
-- autoregressive teachers (`Pythia`, `Qwen`) -> Stage 7 readout / verify targets
+1. Hard gate the entire direction behind:
+   - clean attached-history convergence separation from `v0.6.0a`
+   - acting residual-gain controller in `v0.6.0` / `v0.6.1`
+   - `dim=1024` model on exact-indexed diverse corpus
+2. Narrow the novelty claim:
+   - prior art includes FitNets, Patient KD, TinyBERT, MiniLMv2, CKA, SVCCA, data2vec, cross-tokenizer KD, and multi-teacher selection
+   - the only claim here is stage-contract distillation inside Sutra's stage-superposition recurrent system, gated by residual gain, with mandatory teacher-free consolidation
+3. Reduce the first experiment to the minimum:
+   - one teacher: `Pythia-70M`
+   - one stage: Stage 7 readout / verify
+   - same tokenizer only
+   - hard-token slices only
+   - late passes only
+   - zero-gated teacher path
+   - mandatory teacher-free consolidation
+4. Treat `dim=128` as kill-screen only:
+   - allowed for wiring and leakage checks
+   - first real validation at `dim=768`
+   - claims only at `dim=1024` plus consolidation
+   - the `dim=768` run is a pre-claim de-risking pass, not branch activation
+5. Add implementation prerequisites before broader stage work:
+   - `StageBank` must expose per-stage contracts instead of only blended output
+   - `LocalRouter` must expose `source_ids` and routing metadata
+   - `BayesianWrite` must expose explicit uncertainty contract `(mean, log_var)` plus write stats
+   - data path must become exact-indexed and raw-text recoverable for any future cross-tokenizer work
+   - bidirectional teachers must satisfy strict prefix-safe leakage rules
+6. Risk mitigation is mandatory:
+   - no teacher losses until elastic compute actually works
+   - every teacher run must beat a same-compute-on-more-data student-only baseline
+7. Canonical artifact restored:
+   - `design_round1.md` is deprecated because it was clobbered
+   - canonical design doc is now `research/multi_model_learning/design_round3.md`
 
-### Mechanism
-Use offline layer-to-stage alignment first:
+### Practical interpretation
 
-- primary selector: `CKA`
-- secondary check: `SVCCA`
-- MI/InfoNCE only as a diagnostic, not the primary mapping method
-
-Distill stage contracts, not raw hidden states:
-
-- Stage 3: whitened feature loss on early passes
-- Stage 4: causal relation / Gram loss over anchor tokens
-- Stage 5: causal chunk-summary contrastive loss
-- Stage 7: KL or top-K two-term logit transfer on hard tokens
-
-Teacher use must be:
-
-- sparse
-- stage-gated by `pi`
-- hard-token-gated by residual gain
-- delayed-start by recurrent pass
-- followed by teacher-free consolidation
-
-### Why this fits current Sutra theory
-This is the practical version of the current unification thread in `RESEARCH.md`:
-
-- rate-distortion control law chooses when teacher supervision is worth its cost
-- free-energy / predictive-coding framing says teacher losses should land as structured residuals in the stage that can actually reduce them
-- LDPC / belief-propagation framing says Stage 4/5/7 should absorb better message geometry and consistency checks, not whole-model imitation
-
-### Critical warning
-The dim=128 naive dual-teacher result was negative. That does NOT kill this direction. It kills dense, global, unaligned teacher mixing.
-
-### Experiment order
-1. `dim=128` CPU: alignment scan
-2. `dim=128` CPU: Stage-7-only probe
-3. `dim=128` CPU: Stage-4/5 geometry probe
-4. `dim=128` CPU: stage-mapped multi-teacher vs naive multi-teacher
-5. `dim=768` GPU: warm-started Stage-7 + Stage-4/5
-6. `dim=768` GPU: full stage-mapped multi-teacher
-7. `dim=1024` production only if consolidation retains most of the gain
+The negative `dim=128` dual-teacher result does NOT kill the direction. It kills dense, global, unaligned teacher mixing at tiny scale. The only defensible next move is the narrow Stage 7-only experiment above, after controller-first prerequisites are satisfied.
 
 ### Canonical detailed doc
-Full design, exact losses, schedules, code integration plan, risks, and prior art:
 
-- `research/multi_model_learning/design_round1.md`
-
-**Caveat:** dim=128 Chrome is triage only (per CLAUDE.md). Production validation at dim=768 needed. But the direction is right.
+- `research/multi_model_learning/design_round3.md`
 
 ---
 
