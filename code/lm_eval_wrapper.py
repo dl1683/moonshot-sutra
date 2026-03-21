@@ -1,0 +1,185 @@
+"""lm-eval wrapper for Sutra models.
+
+Allows running standard benchmarks (ARC, HellaSwag, PIQA, etc.) on Sutra
+using EleutherAI's lm-evaluation-harness.
+
+Usage:
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v054/step_15000.pt
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v054/step_15000.pt --tasks arc_easy,arc_challenge
+"""
+
+import sys, argparse, torch
+from pathlib import Path
+
+REPO = Path(__file__).parent.parent
+sys.path.insert(0, str(REPO / "code"))
+
+import lm_eval
+from lm_eval.api.model import LM
+from lm_eval.api.registry import register_model
+from transformers import AutoTokenizer
+
+
+@register_model("sutra")
+class SutraLMEval(LM):
+    """lm-eval compatible wrapper for Sutra."""
+
+    def __init__(self, checkpoint=None, dim=768, ff_dim=1536, max_steps=8,
+                 batch_size=8, device="cuda", **kwargs):
+        super().__init__()
+        self._device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self._batch_size = batch_size
+
+        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Load model
+        from launch_v054 import create_v054
+        self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=max_steps,
+                                  window=4, k_retrieval=8)
+        if checkpoint:
+            ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
+            state = ckpt["model"] if "model" in ckpt else ckpt
+            self.model.load_state_dict(state, strict=False)
+        self.model.to(self._device).eval()
+
+    @property
+    def eot_token_id(self):
+        return self.tokenizer.eos_token_id
+
+    @property
+    def max_length(self):
+        return 512
+
+    @property
+    def max_gen_toks(self):
+        return 256
+
+    @property
+    def batch_size(self):
+        return self._batch_size
+
+    @property
+    def device(self):
+        return self._device
+
+    def tok_encode(self, string, left_truncate_len=None, add_special_tokens=None):
+        encoding = self.tokenizer.encode(string)
+        if left_truncate_len:
+            encoding = encoding[-left_truncate_len:]
+        return encoding
+
+    def tok_decode(self, tokens, skip_special_tokens=True):
+        return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
+
+    def _loglikelihood_tokens(self, requests, disable_tqdm=False):
+        results = []
+        for context, continuation in requests:
+            ctx_ids = self.tokenizer.encode(context)
+            cont_ids = self.tokenizer.encode(continuation)
+            all_ids = (ctx_ids + cont_ids)[-512:]
+            ctx_len = len(all_ids) - len(cont_ids)
+
+            input_ids = torch.tensor([all_ids], device=self._device)
+            with torch.no_grad():
+                logits, _ = self.model(input_ids)
+
+            log_probs = torch.nn.functional.log_softmax(logits[0].float(), dim=-1)
+
+            total_ll = 0.0
+            for i in range(ctx_len, len(all_ids)):
+                if i > 0 and i - 1 < log_probs.size(0):
+                    total_ll += log_probs[i - 1, all_ids[i]].item()
+
+            is_greedy = True
+            for i in range(ctx_len, len(all_ids)):
+                if i > 0 and i - 1 < log_probs.size(0):
+                    if log_probs[i - 1].argmax().item() != all_ids[i]:
+                        is_greedy = False
+                        break
+
+            results.append((total_ll, is_greedy))
+        return results
+
+    def loglikelihood(self, requests, disable_tqdm=False):
+        new_reqs = []
+        for req in requests:
+            if hasattr(req, 'args'):
+                new_reqs.append(req.args)
+            else:
+                new_reqs.append(req)
+        return self._loglikelihood_tokens(new_reqs, disable_tqdm)
+
+    def loglikelihood_rolling(self, requests, disable_tqdm=False):
+        results = []
+        for req in requests:
+            string = req.args[0] if hasattr(req, 'args') else req[0]
+            ids = self.tokenizer.encode(string)[-512:]
+            input_ids = torch.tensor([ids], device=self._device)
+            with torch.no_grad():
+                logits, _ = self.model(input_ids)
+            log_probs = torch.nn.functional.log_softmax(logits[0].float(), dim=-1)
+            total_ll = sum(log_probs[i, ids[i + 1]].item() for i in range(len(ids) - 1))
+            results.append((total_ll,))
+        return results
+
+    def generate_until(self, requests, disable_tqdm=False):
+        results = []
+        for req in requests:
+            context = req.args[0] if hasattr(req, 'args') else req[0]
+            until = req.args[1] if hasattr(req, 'args') else req[1]
+            if isinstance(until, dict):
+                until = until.get("until", ["\n"])
+
+            ids = self.tokenizer.encode(context)[-400:]
+            input_ids = torch.tensor([ids], device=self._device)
+
+            for _ in range(self.max_gen_toks):
+                with torch.no_grad():
+                    logits, _ = self.model(input_ids[:, -512:])
+                next_id = logits[0, -1].argmax().item()
+                input_ids = torch.cat([input_ids, torch.tensor([[next_id]], device=self._device)], dim=1)
+                decoded = self.tokenizer.decode(input_ids[0, len(ids):].tolist())
+                if any(s in decoded for s in (until if isinstance(until, list) else [until])):
+                    break
+
+            gen_text = self.tokenizer.decode(input_ids[0, len(ids):].tolist())
+            results.append(gen_text)
+        return results
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v054/step_15000.pt"))
+    parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--device", default="cuda")
+    args = parser.parse_args()
+
+    print(f"Running lm-eval on Sutra v0.5.4")
+    print(f"Checkpoint: {args.checkpoint}")
+    print(f"Tasks: {args.tasks}")
+    print(f"Device: {args.device}")
+
+    model = SutraLMEval(checkpoint=args.checkpoint, batch_size=args.batch_size, device=args.device)
+
+    task_list = args.tasks.split(",")
+    results = lm_eval.simple_evaluate(
+        model=model,
+        tasks=task_list,
+        batch_size=args.batch_size,
+    )
+
+    print("\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
+    for task_name, task_result in results["results"].items():
+        print(f"\n{task_name}:")
+        for metric, value in task_result.items():
+            if isinstance(value, (int, float)):
+                print(f"  {metric}: {value:.4f}" if isinstance(value, float) else f"  {metric}: {value}")
+
+    import json
+    out_path = REPO / "results" / "sutra_lm_eval_results.json"
+    json.dump(results["results"], open(out_path, "w"), indent=2, default=str)
+    print(f"\nSaved: {out_path}")

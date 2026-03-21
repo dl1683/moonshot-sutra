@@ -201,25 +201,29 @@ The warm-start chain means every improvement from every contributor compounds au
 | **SciQ (science)** | 74% | **50%** | Sutra at **2x random** |
 | **Performance/dollar** | baseline | **~960x better** | |
 
-Sutra achieves **94% of Pythia's language modeling performance at 0.1% of the cost.** On science benchmarks (SciQ), Sutra scores 50% — double random chance — having seen 610x less data.
+Full standard benchmark results via lm-evaluation-harness are pending. The model was trained on only 0.5B tokens of academic papers — 610x less than Pythia's 300B tokens. We have 17B+ diverse tokens ready for the next training run, which should dramatically improve performance across all benchmarks.
 
-The gap is **data**, not architecture. Pythia saw 300B tokens of diverse web text. Sutra has only seen 0.5B tokens of academic papers. We have 14B diverse tokens (Wikipedia, math, stories, conversations) ready for the next training run.
+The efficiency story is about **training cost**, not benchmark scores: Sutra trains on a single laptop GPU (~$10 equivalent compute) vs Pythia's 64 A100s (~$10K). Whether this translates to competitive performance at matched data remains to be proven.
 
 ### Benchmark Comparison
 
-| Benchmark | Pythia-70M | Sutra v0.5.4 | Random | Notes |
-|-----------|-----------|-------------|--------|-------|
-| **ARC-Easy** (science) | 38.5% | **40.0%** | 25% | **Sutra wins** (+1.5pp) |
-| **ARC-Challenge** (hard science) | 21.4% | **40.0%** | 25% | **Sutra wins** (+18.6pp!) |
-| **LAMBADA** (word prediction) | 32.6% | 10.0% | 0% | Above random |
-| **HellaSwag** (completion) | 27.2% | 20.0% | 25% | Needs diverse data |
-| **WinoGrande** (coreference) | 51.9% | 30.0% | 50% | Needs diverse data |
-| **PIQA** (physical intuition) | 60.5% | 30.0% | 50% | Needs diverse data |
-| **SciQ** (science MC) | 74.0% | 10.0% | 25% | Question-format sensitive |
+**Full standard benchmark evaluation running via [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness).** Results pending — we believe in proper evaluation methodology with thousands of questions per benchmark, not hand-picked samples.
 
-**Sutra beats Pythia-70M on ARC science benchmarks** — both easy and challenge — despite training on 610x less data with 1024x less compute. On ARC-Challenge specifically, Sutra scores 40% vs Pythia's 21.4%, nearly double.
+Previous preliminary results (10 hand-picked questions per benchmark) showed the model has some science knowledge from academic paper training but is not yet competitive on standard benchmarks. Honest numbers coming soon.
 
-The model is strong where its training data is strong (academic/science) and weak where it has never seen data (common sense, physical intuition). The 14B diverse token corpus will address these gaps.
+**Pythia-70M reference scores** (from official evaluation):
+
+| Benchmark | Pythia-70M | Random |
+|-----------|-----------|--------|
+| ARC-Easy | 38.5% | 25% |
+| ARC-Challenge | 21.4% | 25% |
+| HellaSwag | 27.2% | 25% |
+| WinoGrande | 51.9% | 50% |
+| PIQA | 60.5% | 50% |
+| SciQ | 74.0% | 25% |
+| LAMBADA | 32.6% | 0% |
+
+At 70M parameters, no model excels at reasoning. The competition is narrow. Sutra's advantage will come from diverse data + the efficiency of recurrent processing.
 
 ### Architecture Evolution
 
