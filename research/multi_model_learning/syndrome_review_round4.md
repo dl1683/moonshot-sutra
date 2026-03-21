@@ -1,0 +1,7 @@
+All 6 round-2 issues are fixed.
+
+Not clean.
+
+1. The canary trains and scores on the same cached `train` batches, so the only gate can be passed by probe memorization rather than a recoverable syndrome signal. See [RESEARCH.md:6242](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6242), [RESEARCH.md:6253](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6253), [RESEARCH.md:6308](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6308), [RESEARCH.md:6357](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6357).
+
+2. Two spec mismatches remain in the pseudocode: “hard late” is defined over the full cached eval set but implemented per batch, and the “fixed shuffled-target” control is actually reshuffled every step. See [RESEARCH.md:6114](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6114), [RESEARCH.md:6205](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6205), [RESEARCH.md:6373](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6373), [RESEARCH.md:6297](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6297).
