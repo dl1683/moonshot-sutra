@@ -382,9 +382,13 @@ class SutraV060a(nn.Module):
             for p in range(self.max_steps):
                 margin_p = s_margin[:, :, p].detach()
                 margin_slope = margin_p - prev_margin if p > 0 else torch.zeros_like(margin_p)
-                delta_mu = (mu_hist[:, :, p] - (mu_hist[:, :, p-1] if p > 0 else mu_hist[:, :, 0])).pow(2).mean(-1).sqrt()
+                # Detach probe inputs so L_probe is truly shadow-only (doesn't train recurrent core)
+                mu_p_det = mu_hist[:, :, p].detach()
+                pi_p_det = pi_hist[:, :, p].detach()
+                mu_prev_det = (mu_hist[:, :, p-1] if p > 0 else mu_hist[:, :, 0]).detach()
+                delta_mu = (mu_p_det - mu_prev_det).pow(2).mean(-1).sqrt()
                 pass_frac = torch.full((B, T), p / (self.max_steps - 1), device=device)
-                pred = self.gain_probe(mu_hist[:, :, p], pi_hist[:, :, p],
+                pred = self.gain_probe(mu_p_det, pi_p_det,
                                        margin_p, margin_slope, delta_mu, pass_frac)
                 probe_preds.append(pred)
                 prev_margin = margin_p

@@ -168,14 +168,36 @@ class ShardedDataset:
     def sample_batch(self, batch_size, seq_len, device='cpu', split='train'):
         """Sample a random batch from the requested split.
 
-        Picks shard weighted by size, loads it (cached), samples random positions.
+        Sticky shard: reuse the same shard for multiple batches to avoid
+        I/O thrash. Re-sample shard every _sticky_budget batches.
         """
+        # Sticky shard logic: reuse current shard for N batches before resampling
+        if not hasattr(self, '_sticky_count'):
+            self._sticky_count = 0
+            self._sticky_meta = None
+            self._sticky_budget = 64  # batches per shard before resampling
+
         candidates, weights = self._split_candidates(seq_len, split)
 
         # Retry loop in case estimated n_tokens doesn't match actual shard size
         for _ in range(10):
-            meta, span_start, span_end = random.choices(candidates, weights=weights, k=1)[0]
-            tokens = self._load_shard(meta["path"])
+            # Reuse sticky shard if budget remains and shard is still valid
+            if (self._sticky_meta is not None and self._sticky_count < self._sticky_budget
+                    and self._hot_path == self._sticky_meta["path"]):
+                meta = self._sticky_meta
+                span = self._split_span(meta, split)
+                if span is not None:
+                    span_start, span_end = span
+                    tokens = self._load_shard(meta["path"])
+                    self._sticky_count += 1
+                else:
+                    self._sticky_meta = None
+                    continue
+            else:
+                meta, span_start, span_end = random.choices(candidates, weights=weights, k=1)[0]
+                tokens = self._load_shard(meta["path"])
+                self._sticky_meta = meta
+                self._sticky_count = 0
             if tokens is None:
                 continue
 

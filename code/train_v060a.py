@@ -36,7 +36,7 @@ K_RETRIEVAL = 8
 SEQ_LEN = 512
 BATCH_SIZE = 4          # Reduced from 8: 12 passes + history = more VRAM
 GRAD_ACCUM = 16         # Effective batch = 64 (same)
-LR = 4.5e-4
+LR = 3.5e-4  # Reduced for attached-history (audit loop 1: 4.5e-4 not validated)
 WARMUP_STEPS = 1500
 MAX_TRAIN_STEPS = 100000
 EVAL_EVERY = 1000
@@ -152,24 +152,36 @@ def main():
     model = create_v060a(dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
                          window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
 
-    if rolling.exists() or permanent:
-        resume_path = rolling if rolling.exists() else permanent[-1]
+    # Pick best checkpoint: compare rolling vs permanent, take larger step
+    ckpt = None
+    resume_candidates = []
+    if rolling.exists():
+        resume_candidates.append(rolling)
+    if permanent:
+        resume_candidates.append(permanent[-1])
+
+    for cand in resume_candidates:
         try:
-            ckpt = torch.load(resume_path, weights_only=False, map_location=DEVICE)
-            model.load_state_dict(ckpt["model"])
-            start_step = ckpt["step"]
-            best_bpt = ckpt.get("best_bpt", float("inf"))
-            metrics_history = ckpt.get("metrics", [])
-            print(f"RESUMED from step {start_step} ({resume_path.name})")
+            c = torch.load(cand, weights_only=False, map_location=DEVICE)
+            if ckpt is None or c.get("step", 0) > ckpt.get("step", 0):
+                ckpt = c
+                ckpt["_path"] = cand.name
         except Exception as e:
-            print(f"Resume failed: {e}. Training from scratch.")
+            print(f"Skip corrupt checkpoint {cand.name}: {e}")
+
+    if ckpt is not None:
+        model.load_state_dict(ckpt["model"])
+        start_step = ckpt["step"]
+        best_bpt = ckpt.get("best_bpt", float("inf"))
+        metrics_history = ckpt.get("metrics", [])
+        print(f"RESUMED from step {start_step} ({ckpt['_path']})")
     else:
         print("Training from SCRATCH (v0.6.0a)")
 
     print(f"Params: {model.count_params():,} ({model.count_params()/1e6:.1f}M)")
 
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01, betas=(0.9, 0.95))
-    if (rolling.exists() or permanent) and "optimizer" in ckpt:
+    if ckpt is not None and "optimizer" in ckpt:
         opt.load_state_dict(ckpt["optimizer"])
 
     model.train()
