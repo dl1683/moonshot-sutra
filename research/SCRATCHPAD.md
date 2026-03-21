@@ -1,64 +1,75 @@
-# Sutra Scratchpad — Strategic Test Queue
+# Sutra Scratchpad - Strategic Test Queue
 
-Every experiment must target a **diagnosed bottleneck**. No random testing.
-Format: Mechanism → What bottleneck it solves → How we'd know it worked → Priority.
+Every experiment must target a diagnosed bottleneck. No random testing.
+Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Priority.
 
 ---
 
-## PRIORITY 1: Continuous-Spectrum Memory (v0.5.5)
+## PRIORITY 1: LDPC Syndrome Scratchpad (v0.6.1)
 
-**Bottleneck**: Current scratchpad is gist-only. Can't do exact recall. Router is O(n²).
-**Mechanism**: Continuous-resolution memory — learnable zoom from gist to exact per-query.
+**Bottleneck**: Scratchpad stores gist, but it does not explicitly represent what is still inconsistent in a form Stage 4 can route on.
+**Mechanism**: Keep the existing 8-slot gist bank. Add 4 low-rank check slots inside `Scratchpad`. Stage 7 writes a learned syndrome after pass 3. Stage 4 reads that syndrome as a routing-demand shift. Stage 5 receives a tiny residual correction prior.
+**Success signal**: At `dim=768`, shadow-mode syndrome energy correlates with future residual gain (`Spearman >= 0.25`), and acting mode improves late-pass separation by `>=5%` relative or BPT by `>=0.02`.
+**Failure signal**: Birth parity breaks, slots collapse, or the branch only helps after changing the residual-gain probe/proceed thresholds.
+**Status**: Full design is now in `research/RESEARCH.md`. First probe should be shadow-only and proceed-safe.
+
+---
+
+## PRIORITY 2: Continuous-Spectrum Memory (v0.5.5)
+
+**Bottleneck**: Current scratchpad is gist-only. Can't do exact recall. Router is O(n^2).
+**Mechanism**: Continuous-resolution memory - learnable zoom from gist to exact per-query.
 **Success signal**: Exact-recall probe accuracy >80% at 200+ token distance, AND BPT improves.
 **Failure signal**: Collapses to always-coarse or always-exact. Or BPT regresses.
 **Status**: Codex designing continuous-spectrum variant (not 3 discrete levels).
 
 ---
 
-## SCALE-UP IDEAS (dim=1024) — Bottleneck-Annotated
+## SCALE-UP IDEAS (dim=1024) - Bottleneck-Annotated
 
 ### Contractive Hyperspherical Core
 **Bottleneck it solves**: Training instability at scale. Warm-start fragility (Peri-LN broke warm-start). Grokfast divergence (gradient magnitudes differ across dimensions).
 **Why this specifically**: If all vectors are unit-norm, gradient magnitudes are bounded by construction. No more "works at dim=128, diverges at dim=768." Scale-invariant.
 **Success signal**: Same hyperparameters work at dim=128, 384, 768, 1024 without tuning.
-**Priority**: HIGH — solves our #1 scaling problem (things that work small break large).
+**Priority**: HIGH - solves our #1 scaling problem (things that work small break large).
 
 ### RG/MERA Stage Pyramid
 **Bottleneck it solves**: Flat sequence processing. No hierarchical structure. Can't distinguish word-level vs paragraph-level vs document-level patterns.
 **Why this specifically**: Language IS hierarchical. Current architecture treats every token at the same scale. Multi-scale processing is the most convergent finding across all 15 research domains.
 **Success signal**: Better performance on long-context tasks. Chunk-level coherence improves.
-**Priority**: MEDIUM — important for long context, but not our immediate bottleneck.
+**Priority**: MEDIUM - important for long context, but not our immediate bottleneck.
 
 ### Spatially Coupled Predictive-Coding Graph
-**Bottleneck it solves**: Scratchpad broadcasts are blurry (averaged state). Router is dense O(n²). Communication carries raw state, not prediction error.
+**Bottleneck it solves**: Scratchpad broadcasts are blurry (averaged state). Router is dense O(n^2). Communication carries raw state, not prediction error.
 **Why this specifically**: Coding theory proves sparse local iterative = near-optimal. Predictive coding says only errors should propagate. Spatial coupling says suboptimal local becomes optimal global.
 **Success signal**: Same BPT with 10x fewer communication bits. OR better BPT with sparse messages.
-**Priority**: MEDIUM-HIGH — directly improves the scratchpad/router which are our core modules.
+**Priority**: MEDIUM-HIGH - directly improves the scratchpad/router which are our core modules.
 
 ### Grokfast (from scratch only)
 **Bottleneck it solves**: Training efficiency. Slow convergence = expensive experiments.
 **Why this specifically**: +11% at dim=128 is real. Failed at dim=768 warm-start, but that might be warm-start-specific, not Grokfast-specific.
 **Success signal**: Loss improves faster than baseline in first 5K steps from scratch.
-**Failure signal**: Diverges again (even from scratch) → mechanism is fundamentally incompatible with Sutra's gradient landscape.
-**Priority**: LOW — only test from scratch, not worth warm-start debugging.
+**Failure signal**: Diverges again (even from scratch) -> mechanism is fundamentally incompatible with Sutra's gradient landscape.
+**Priority**: LOW - only test from scratch, not worth warm-start debugging.
 
 ---
 
-## MECHANISMS TO RETEST AT SCALE — Strategic Prioritization
+## MECHANISMS TO RETEST AT SCALE - Strategic Prioritization
 
 ### Tier 1: Solves a diagnosed bottleneck
 | Mechanism | Bottleneck it solves | Why it might work at 105M | Test order |
 |-----------|---------------------|--------------------------|------------|
-| **Error scratchpad (delayed)** | Scratchpad carries raw state not errors | Late steps were 2.2x better — needs capacity to exploit | 1st |
-| **nGPT hypersphere** | Scale-dependent hyperparameters | Angles/norms are scale-invariant by construction | 2nd |
+| **LDPC syndrome scratchpad** | Scratchpad has no explicit residual-consistency code | Uses Stage 7 -> Stage 4/5 loop directly, warm-start-safe | 1st |
+| **Error scratchpad (delayed)** | Scratchpad carries raw state not errors | Late steps were 2.2x better - needs capacity to exploit | 2nd |
+| **nGPT hypersphere** | Scale-dependent hyperparameters | Angles/norms are scale-invariant by construction | 3rd |
 
 ### Tier 2: Might help but bottleneck is unclear
 | Mechanism | What it does | Why it might work | Test order |
 |-----------|-------------|-------------------|------------|
-| Dendritic neurons | More expressive per-neuron | Model may be capacity-limited at 105M | 3rd |
-| Lambda halting | Adaptive compute per token | AUROC was 0.36 — model couldn't learn meta-control at 69M | 4th |
+| Dendritic neurons | More expressive per-neuron | Model may be capacity-limited at 105M | 4th |
+| Lambda halting | Adaptive compute per token | AUROC was 0.36 - model couldn't learn meta-control at 69M | 5th |
 
-### Tier 3: Unlikely to help — test only if Tier 1-2 exhaust
+### Tier 3: Unlikely to help - test only if Tier 1-2 exhaust
 | Mechanism | Why probably not | Test if |
 |-----------|-----------------|---------|
 | Complex embeddings | -36% is catastrophic, not scale-dependent | Everything else fails |
@@ -67,7 +78,7 @@ Format: Mechanism → What bottleneck it solves → How we'd know it worked → 
 
 ---
 
-## DATA EXPERIMENTS — Strategic
+## DATA EXPERIMENTS - Strategic
 
 | Experiment | Bottleneck | Success signal | Priority |
 |-----------|-----------|----------------|----------|
@@ -78,9 +89,9 @@ Format: Mechanism → What bottleneck it solves → How we'd know it worked → 
 
 ---
 
-## CHROME METHODOLOGY — Strategic Improvements
+## CHROME METHODOLOGY - Strategic Improvements
 
-**Problem**: dim=128 Chrome gave false positive for Grokfast (+11% → diverges at 768).
+**Problem**: dim=128 Chrome gave false positive for Grokfast (+11% -> diverges at 768).
 
 **Fix hierarchy**:
 1. **dim=128**: Bug-finding + obvious loser killing only. Never ship from this.
@@ -98,3 +109,4 @@ Format: Mechanism → What bottleneck it solves → How we'd know it worked → 
 2. Will Net2Net widening actually activate the extra dimensions, or stay dead?
 3. The delayed-start principle: is step 3 universal or should the delay adapt per mechanism?
 4. Continuous-spectrum memory: can we derive the optimal resolution from information theory?
+5. Syndrome specialization: do the 4 learned check slots converge to distinct consistency families, or collapse into one generic hard-token detector?

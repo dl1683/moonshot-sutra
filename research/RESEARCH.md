@@ -6038,3 +6038,487 @@ always retest killed mechanisms when hyperparameters change.
 **Conclusion:** NCA's -13.5% BPT win at dim=128 was an initialization effect for from-scratch training. Once a model has learned representations, NCA warm-start doesn't improve them. NCA remains valuable for FROM-SCRATCH runs only.
 
 **Key learning:** dim=128 results continue to NOT transfer directly to dim=768. Always validate at production scale. The Scaling Expert persona exists for this reason.
+
+---
+
+## Design: LDPC Syndrome Scratchpad for Sutra (2026-03-21)
+
+### Decision
+
+Build the LDPC idea as an extension of the existing scratchpad, not a new subsystem:
+
+- keep the current `8` gist slots unchanged
+- add `4` low-rank syndrome/check slots inside `Scratchpad`
+- Stage 7 writes only low-dimensional inconsistency codes into those slots
+- Stage 4 reads those codes as a routing-demand shift
+- Stage 5 optionally receives the same code as a tiny residual correction prior
+
+This preserves system coherence. Stage 7 does NOT try to fix content directly. It emits exactly what Stage 4 needs: a compact description of what kind of evidence is missing or inconsistent. Stage 4 then routes to prefix tokens that can repair it. Stage 5 integrates the routed repair.
+
+### Why this matches LDPC from first principles
+
+LDPC separates:
+
+- logical state: the actual information
+- syndrome state: whether local constraints are violated
+
+Sutra already has the same split available:
+
+- `mu` is the logical token belief
+- scratchpad slots are the shared medium
+- Stage 7 is the natural consistency tester
+- Stage 4 is the natural message router
+- Stage 5 is the natural belief updater
+
+The causal scratchpad already implements the LDPC "extrinsic information" rule. A position at token `i` only reads summaries from prefix positions `< i`, so the correction message excludes the current token's own write.
+
+### Exact module design
+
+Use `4` syndrome slots and `syndrome_dim = dim // 4`.
+
+- at `dim=768`: syndrome dim = `192`
+- at `dim=1024`: syndrome dim = `256`
+
+This is small enough to stay asymmetrically cheap:
+
+- gist bank state per causal position: `8 * dim`
+- syndrome bank state per causal position: `4 * (dim // 4) = dim`
+
+So the syndrome bank adds only `12.5%` of the existing causal scratchpad state.
+
+```python
+class SyndromeCheckBank(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        n_checks: int = 4,
+        check_dim: int | None = None,
+        ema_decay: float = 0.95,
+        gate_init: float = -7.0,
+    ):
+        super().__init__()
+        check_dim = check_dim or (dim // 4)
+        self.n_checks = n_checks
+        self.check_dim = check_dim
+        self.ema_decay = ema_decay
+
+        # Zero-content at birth: syndrome space starts silent.
+        self.mem_init = nn.Parameter(torch.zeros(1, n_checks, check_dim))
+
+        # Stage-7 verifier features -> error code + severity
+        self.verify_in = nn.Linear(dim + 2, dim)          # mu, log_lam, delta_mu_rms
+        self.verify_err = nn.Linear(dim, check_dim)       # zero-init
+        self.verify_score = nn.Linear(dim, 1)             # zero-init
+
+        # Token -> check incidence (soft Tanner graph)
+        self.write_slot = nn.Linear(dim, n_checks)
+
+        # Prefix-causal update gate, same pattern as Scratchpad.write()
+        self.write_gate = nn.Sequential(
+            nn.Linear(check_dim * 2, check_dim),
+            nn.Sigmoid(),
+        )
+
+        # Check -> token readout
+        self.read_query = nn.Linear(dim, check_dim)
+        self.route_proj = nn.Linear(check_dim, dim)       # zero-init
+        self.write_proj = nn.Linear(check_dim, dim)       # zero-init
+
+        # Birth gates: effectively zero influence
+        self.alpha_verify = nn.Parameter(torch.tensor(gate_init))
+        self.alpha_route = nn.Parameter(torch.tensor(gate_init))
+        self.alpha_write = nn.Parameter(torch.tensor(gate_init))
+
+        nn.init.zeros_(self.verify_err.weight)
+        nn.init.zeros_(self.verify_err.bias)
+        nn.init.zeros_(self.verify_score.weight)
+        nn.init.zeros_(self.verify_score.bias)
+        nn.init.zeros_(self.route_proj.weight)
+        nn.init.zeros_(self.route_proj.bias)
+        nn.init.zeros_(self.write_proj.weight)
+        nn.init.zeros_(self.write_proj.bias)
+
+    def init_memory(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        return self.mem_init.expand(batch_size, -1, -1).to(device)
+
+    def write(
+        self,
+        mu: torch.Tensor,              # (B, T, D)
+        check_mem: torch.Tensor,       # (B, C, Dc) or (B, T, C, Dc)
+        pi_verify: torch.Tensor,       # (B, T, 1)
+        lam: torch.Tensor,             # (B, T, D)
+        delta_mu_rms: torch.Tensor,    # (B, T, 1)
+        late_gate: float,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        log_lam = torch.log1p(lam.mean(dim=-1, keepdim=True))
+        z = F.silu(self.verify_in(torch.cat([mu, log_lam, delta_mu_rms], dim=-1)))
+
+        err = self.verify_err(z)  # (B, T, Dc)
+        sev = torch.sigmoid(self.alpha_verify) * torch.sigmoid(self.verify_score(z))
+        sev = late_gate * pi_verify * sev
+
+        slot_w = F.softmax(self.write_slot(mu), dim=-1) * sev      # (B, T, C)
+        weighted = slot_w.unsqueeze(-1) * err.unsqueeze(2)         # (B, T, C, Dc)
+
+        if check_mem.dim() == 3:
+            base = check_mem.unsqueeze(1).expand(mu.size(0), mu.size(1), self.n_checks, self.check_dim)
+        else:
+            base = check_mem
+
+        prefix_vals = weighted.cumsum(dim=1) - weighted
+        prefix_w = slot_w.cumsum(dim=1) - slot_w
+        prefix_mean = prefix_vals / prefix_w.unsqueeze(-1).clamp(min=1e-6)
+
+        gate = self.write_gate(torch.cat([base, prefix_mean], dim=-1))
+        updated = self.ema_decay * base + (1.0 - self.ema_decay) * gate * prefix_mean
+        has_prefix = prefix_w.unsqueeze(-1) > 0
+        new_mem = torch.where(has_prefix, updated, base)
+
+        aux = {
+            "slot_w": slot_w,
+            "severity": sev.squeeze(-1),
+            "slot_energy": new_mem.pow(2).mean(dim=-1).sqrt(),
+        }
+        return new_mem, aux
+
+    def read(
+        self,
+        mu: torch.Tensor,            # (B, T, D)
+        check_mem: torch.Tensor,     # (B, C, Dc) or (B, T, C, Dc)
+        pi_route: torch.Tensor,      # (B, T, 1)
+        pi_write: torch.Tensor,      # (B, T, 1)
+        late_gate: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        q = self.read_query(mu)
+        scale = math.sqrt(self.check_dim)
+
+        if check_mem.dim() == 3:
+            attn = F.softmax(torch.bmm(q, check_mem.transpose(1, 2)) / scale, dim=-1)
+            ctx = torch.bmm(attn, check_mem)
+        else:
+            attn = F.softmax(torch.einsum("btd,btcd->btc", q, check_mem) / scale, dim=-1)
+            ctx = torch.einsum("btc,btcd->btd", attn, check_mem)
+
+        route_delta = late_gate * pi_route * torch.sigmoid(self.alpha_route) * self.route_proj(ctx)
+        write_delta = late_gate * pi_write * torch.sigmoid(self.alpha_write) * self.write_proj(ctx)
+
+        aux = {
+            "read_attn": attn,
+            "syndrome_ctx": ctx,
+            "route_energy": route_delta.pow(2).mean(dim=-1).sqrt(),
+        }
+        return route_delta, write_delta, aux
+```
+
+```python
+class Scratchpad(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        n_slots: int = 8,
+        ema_decay: float = 0.9,
+        n_syndrome_slots: int = 4,
+        syndrome_dim: int | None = None,
+    ):
+        super().__init__()
+        # Existing gist bank stays intact
+        ...
+        self.syndrome = SyndromeCheckBank(
+            dim=dim,
+            n_checks=n_syndrome_slots,
+            check_dim=syndrome_dim or (dim // 4),
+            ema_decay=0.95,
+            gate_init=-7.0,
+        )
+
+    def init_state(self, batch_size, device):
+        return {
+            "gist": self.init_memory(batch_size, device),
+            "syndrome": self.syndrome.init_memory(batch_size, device),
+        }
+
+    def read(self, h, mem, pi_route, pi_write, late_gate, return_parts=False):
+        gist_ctx = self._read_gist(h, mem["gist"])  # existing read()
+        route_delta, write_delta, syn_aux = self.syndrome.read(
+            h, mem["syndrome"], pi_route, pi_write, late_gate
+        )
+        if return_parts:
+            return {
+                "gist": gist_ctx,
+                "route_delta": route_delta,
+                "write_delta": write_delta,
+                **syn_aux,
+            }
+        return gist_ctx + route_delta + write_delta
+
+    def write_gist(self, h, mem, pi_write):
+        mem["gist"] = self.write(h, mem["gist"], pi_write)  # current implementation
+        return mem
+
+    def write_syndrome(self, h, mem, pi_verify, lam, delta_mu_rms, late_gate):
+        mem["syndrome"], aux = self.syndrome.write(
+            h, mem["syndrome"], pi_verify, lam, delta_mu_rms, late_gate
+        )
+        return mem, aux
+```
+
+### Integration into `v0.6.0a`
+
+This plugs into the existing 12-pass loop with one causal cycle:
+
+1. pass `p`: Stage 4 reads the current syndrome bank
+2. pass `p`: router fetches prefix evidence using that syndrome-guided query
+3. pass `p`: writer updates `mu`
+4. end of pass `p`: Stage 7 verifier writes a new syndrome for pass `p+1`
+
+Exact forward-path splice:
+
+```python
+mem = self.scratchpad.init_state(B, device)
+mu_prev = mu.detach()
+
+for p in range(self.max_steps):
+    late_gate = 1.0 if p >= 3 else 0.0
+
+    scratch = self.scratchpad.read(
+        mu,
+        mem,
+        pi_route=pi[:, :, 3:4],
+        pi_write=pi[:, :, 4:5],
+        late_gate=late_gate,
+        return_parts=True,
+    )
+
+    mu_route = self.pre_route_ln(mu + scratch["route_delta"])
+    messages = self.router(mu_route) * pi[:, :, 3:4]
+    messages = self.post_route_ln(messages)
+    messages = messages + 0.10 * scratch["gist"] * pi[:, :, 3:4]
+    messages = messages + scratch["write_delta"]
+
+    mu_write = self.pre_write_ln(mu)
+    mu_new, lam = self.writer(mu_write, lam, messages, pi[:, :, 4:5])
+    mu_new = self.post_write_ln(mu_new)
+    mu_new = mu_new + stage_out * 0.1
+    mu = mu_new
+
+    delta_mu_rms = (mu - mu_prev).pow(2).mean(dim=-1, keepdim=True).sqrt()
+    mem = self.scratchpad.write_gist(mu.detach(), mem, pi[:, :, 4:5].detach())
+    mem, syn_aux = self.scratchpad.write_syndrome(
+        mu.detach(),
+        mem,
+        pi_verify=pi[:, :, 6:7].detach(),
+        lam=lam.detach(),
+        delta_mu_rms=delta_mu_rms.detach(),
+        late_gate=late_gate,
+    )
+    mu_prev = mu.detach()
+```
+
+### Why this does not fight the current `v0.6.0a` probe
+
+`v0.6.0a` is a probe-only dense-12 run with no acting controller. The syndrome branch must respect that.
+
+Rules:
+
+- do not change `L_final`, `L_step`, or `L_probe`
+- do not feed raw syndrome states into the residual-gain probe
+- do not add any stop/continue logic
+- do not change the proceed thresholds for convergence separation
+- keep the acting syndrome read gates shut in pure `v0.6.0a` shadow tests
+
+In other words: the syndrome branch may train in shadow mode on `v0.6.0a`, but the current convergence-separation decision must remain a clean decision about the existing dense-12 core.
+
+### `L_syndrome`: consistency loss for check slots
+
+Use the future final-pass state as the training target for what still needs repair. This is cheap because `v0.6.0a` already stores `mu_hist` and `sampled_ce_hist`.
+
+For late passes `p >= 3`:
+
+```python
+delta_target_p = stopgrad(mu_hist[:, :, -1, :] - mu_hist[:, :, p, :])   # (B, T, D)
+gain_target_p = stopgrad(
+    (sampled_ce_hist[:, :, p] - sampled_ce_hist[:, :, -1]).clamp(min=0.0, max=2.0) / 2.0
+)  # (B, T)
+hard_w = gain_target_p.unsqueeze(-1)                                      # (B, T, 1)
+```
+
+Let:
+
+- `A_p = syn_aux_p["slot_w"]` be token-to-check incidence weights, shape `(B, T, 4)`
+- `slot_energy_p = syn_aux_p["slot_energy"]`, shape `(B, T, 4)` for the causal slot state seen at each token
+- `corr_p = scratch["route_delta"] + scratch["write_delta"]`, shape `(B, T, D)`
+
+Define:
+
+```python
+slot_target_mag = (
+    (A_p * gain_target_p.unsqueeze(-1)).sum(dim=1)
+    / A_p.sum(dim=1).clamp(min=1e-6)
+)  # (B, 4)
+
+slot_pred_mag = slot_energy_p[:, -1, :] / math.sqrt(self.scratchpad.syndrome.check_dim)  # (B, 4)
+
+L_slot = F.mse_loss(slot_pred_mag, slot_target_mag)
+
+L_token = (
+    hard_w.squeeze(-1) * (corr_p - delta_target_p).pow(2).mean(dim=-1)
+    + 0.25 * (1.0 - hard_w.squeeze(-1)) * corr_p.pow(2).mean(dim=-1)
+).mean()
+
+L_final_zero = slot_pred_mag.pow(2).mean()
+
+slot_prob = A_p.clamp(min=1e-6)
+L_sparse = -(slot_prob * slot_prob.log()).sum(dim=-1).mean()
+
+L_syndrome = (
+    1.00 * L_token
+    + 0.50 * L_slot
+    + 0.10 * L_final_zero
+    + 1e-3 * L_sparse
+)
+```
+
+Interpretation:
+
+- `L_token`: hard late tokens should receive the correction they still need
+- `L_slot`: each check slot should carry the right amount of inconsistency mass
+- `L_final_zero`: when the final pass is consistent, the syndrome should go quiet
+- `L_sparse`: learned Tanner graph should specialize, not smear uniformly
+
+Recommended training coefficient:
+
+- `lambda_syndrome = 0.10` in acting runs
+- `lambda_syndrome = 0.05` in shadow-only probe runs
+
+### Birth initialization
+
+Exact birth settings:
+
+- `n_gist_slots = 8` (unchanged)
+- `n_syndrome_slots = 4`
+- `syndrome_dim = dim // 4`
+- `syndrome.mem_init = 0`
+- `verify_err.weight = 0`, `verify_err.bias = 0`
+- `verify_score.weight = 0`, `verify_score.bias = 0`
+- `route_proj.weight = 0`, `route_proj.bias = 0`
+- `write_proj.weight = 0`, `write_proj.bias = 0`
+- `alpha_verify = -7.0`
+- `alpha_route = -7.0`
+- `alpha_write = -7.0`
+- delayed pass gate: `late_gate = 1.0 if p >= 3 else 0.0`
+
+Numerically:
+
+- `sigmoid(-7.0) = 9.11e-4`
+
+So the syndrome path is effectively zero at birth. A freshly inserted checkpoint should produce logit parity with the parent model up to numerical noise.
+
+### Training schedule
+
+Two schedules are needed because the current branch is still a probe.
+
+#### 1. `v0.6.0a` proceed-safe shadow schedule
+
+Use only if this is inserted before the dense-12 proceed decision is made.
+
+- steps `0-500`: all syndrome gates frozen at `-7.0`; collect birth-parity metrics only
+- steps `500-2000`: train verifier + syndrome write path only; keep `alpha_route` and `alpha_write` frozen
+- `lambda_syndrome = 0.05`
+- acting correction remains off for the whole run
+
+This lets us ask: "Do check slots track real late-pass residuals?" without contaminating the convergence-separation decision.
+
+#### 2. `v0.6.1-ldpc` acting schedule
+
+Use only after `v0.6.0a` clears its own controller/probe gates.
+
+- resume from the clean parent checkpoint with birth init above
+- steps `0-500`: shadow only, `lambda_syndrome = 0.05`
+- steps `500-1500`: unfreeze `alpha_route` and `alpha_write`, ramp `lambda_syndrome` linearly `0.05 -> 0.10`
+- steps `1500-3000`: allow full acting read/write, keep delayed pass activation (`p >= 3`)
+- after step `3000`: optional cap `lambda_syndrome = 0.10`
+
+No changes to:
+
+- `STEP_LOSS_COEF = 0.25`
+- `PROBE_LOSS_COEF = 0.20`
+- existing sampled inter-step CE targets
+- residual-gain probe inputs
+
+### Chrome probe design at `dim=768` on CPU
+
+Do this inside the existing `train_v060a.py` path with flags/config, not a new script.
+
+Use:
+
+- `CUDA_VISIBLE_DEVICES=""`
+- `dim=768`, `ff_dim=1536`, `max_steps=12`
+- `batch_size=1`
+- `grad_accum=8`
+- `seq_len=96`
+- `train_steps=300`
+- same fixed seed and same fixed shard subset for all arms
+
+Arms:
+
+1. `baseline`: current `v0.6.0a`, no syndrome branch
+2. `syndrome-shadow`: syndrome write path + `L_syndrome`, read gates frozen at `-7`
+3. `syndrome-acting`: same module, read gates unfrozen after step `100`
+4. `extra-slots-control`: same parameter budget, extra scratchpad slots but no Stage-7 syndrome logic
+
+Log:
+
+- final test BPT
+- late separation (`hard late gain - easy late gain`)
+- `spearman(slot_energy_p, gain_target_p)` on late passes
+- mean syndrome energy on easy early tokens
+- slot utilization entropy across the `4` checks
+- birth parity: max logit diff versus parent before any training
+- causality check identical to existing scratchpad test
+
+Decision thresholds for the CPU canary:
+
+- `spearman >= 0.25` in shadow mode
+- acting run must improve late separation by at least `5%` relative over baseline, or improve BPT by at least `0.02`
+- easy-token early syndrome energy must stay below `20%` of hard late-token syndrome energy
+
+### Kill criteria
+
+Kill immediately if any of these happen:
+
+1. Birth parity fails: with all syndrome gates at init, max logit diff versus parent checkpoint exceeds `1e-6`.
+2. Shadow mode fails to align with real residuals: late-pass `spearman(slot_energy, gain_target) < 0.10` after `300` CPU steps at `dim=768`.
+3. Acting mode hurts the core signal: late separation worsens by more than `10%` relative or BPT worsens by more than `0.03` at matched compute.
+4. Check specialization collapses: one slot takes `>85%` of incidence mass, or all slots stay near-uniform entropy with no specialization after `500` steps.
+5. Easy-token pollution: average syndrome energy on easy tokens in passes `0-2` exceeds hard-token late energy by more than `0.3x`.
+6. Probe contamination is required to make it work: if the syndrome branch only helps after changing residual-gain probe inputs or proceed thresholds, abandon it on this branch.
+
+### Connection to future elastic compute
+
+Do NOT make syndrome the controller. Make it a repair signal that augments the existing residual-gain controller.
+
+Future scalar:
+
+```python
+syndrome_energy_i_p = route_delta_i_p.pow(2).mean(dim=-1).sqrt() / math.sqrt(dim)
+u_continue(i, p) = r_hat(i, p) + 0.5 * syndrome_energy_i_p - lambda_compute
+freeze iff u_continue(i, p) <= 0
+```
+
+Meaning:
+
+- `r_hat(i, p)` says how much more loss can likely be removed
+- `syndrome_energy(i, p)` says whether a structural inconsistency is still unresolved
+
+The controller should freeze only when BOTH are low. That is exactly the LDPC analogy: stop iterating when both belief improvement and parity violation are effectively zero.
+
+### Verdict
+
+This is the highest-EV warm-startable scratchpad extension because it uses the strongest thing Sutra already has:
+
+- recurrent passes
+- causal shared state
+- verify -> reroute loop
+- attached-history late-pass supervision
+
+Nothing is copied from transformer attention. The mechanism is a true syndrome-space side channel: Stage 7 measures consistency, scratchpad stores only the residual code, Stage 4 routes the repair, Stage 5 integrates it.

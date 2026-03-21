@@ -1,0 +1,5 @@
+The full design is now in [research/RESEARCH.md](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6044). It covers the exact module layout, `Scratchpad` integration, `L_syndrome`, zero-influence birth init (`alpha=-7`, zero-init projections), delayed activation after pass 3, a proceed-safe shadow schedule for `v0.6.0a`, the acting `v0.6.1-ldpc` schedule, the `dim=768` CPU Chrome probe, kill criteria, and the future elastic-compute connection.
+
+I also updated [research/SCRATCHPAD.md](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/SCRATCHPAD.md) so the queue now ranks LDPC syndrome scratchpad as the top scratchpad branch, and I deleted the superseded `results/codex_warmstart_brainstorm.md` artifact after ingesting it into the canonical docs.
+
+No model code was changed this turn. Verification was doc readback and diff only. One unrelated live-training file, [results/v060a_metrics.json](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/results/v060a_metrics.json), changed in the background and was left untouched.
