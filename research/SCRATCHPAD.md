@@ -5,6 +5,36 @@ See git history for archived ideas from earlier sessions.
 
 ---
 
+## PRIORITY 1: Telescopic Memory (Codex-designed, v0.5.5 candidate)
+
+Multi-resolution memory: discourse (gist) → chunk (paragraph) → token (exact recall).
+The model learns WHICH zoom level each position needs via successive refinement.
+
+**Codex design (results/codex_telescopic_memory.md):**
+- Level 0: current scratchpad (gist, 8 slots, EMA)
+- Level 1: chunk cache (64-token windows, compressed summaries)
+- Level 2: exact token retrieval (immutable snapshots, restricted to top-2 chunks)
+- Zoom: successive refinement — discourse picks chunks, chunks restrict exact search
+- Cost: ~1.5M params (3%), **12.8x cheaper** compute than current global router
+- Warm-startable from v0.5.4 via zero-init gates
+
+**Stage integration:**
+- Stage 4 → telescopic global read
+- Stage 5 → writes to all levels
+- Stage 6 → owns zoom depth (uncertainty-driven)
+- Stage 7 → low verify forces deeper re-read
+
+**Key Codex corrections to initial sketch:**
+- Three memories must be hierarchy (parent→child), not independent
+- Zoom query needs compute penalty or it collapses to always-coarse
+- Hidden states aren't "exact" — need immutable leaf snapshots with source IDs
+- Explains why multi-timescale scratchpad failed: fixed decays aren't query-conditional zoom
+
+**Score**: Turing 6/10 upside. Breakthrough if proven rate-distortion optimal.
+**Status**: Codex-designed. Queue for dim=1024 scale-up or v0.5.5 Chrome.
+
+---
+
 ## Scale-Up Ideas (for dim=1024)
 
 ### Contractive Hyperspherical Core
