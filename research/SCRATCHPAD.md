@@ -1,96 +1,100 @@
-# Sutra Scratchpad — Active Unvalidated Ideas
+# Sutra Scratchpad — Strategic Test Queue
 
-Ideas graduate to RESEARCH.md only after Codex validation + empirical signal.
-See git history for archived ideas from earlier sessions.
-
----
-
-## PRIORITY 1: Telescopic Memory (Codex-designed, v0.5.5 candidate)
-
-Multi-resolution memory: discourse (gist) → chunk (paragraph) → token (exact recall).
-The model learns WHICH zoom level each position needs via successive refinement.
-
-**Codex design (results/codex_telescopic_memory.md):**
-- Level 0: current scratchpad (gist, 8 slots, EMA)
-- Level 1: chunk cache (64-token windows, compressed summaries)
-- Level 2: exact token retrieval (immutable snapshots, restricted to top-2 chunks)
-- Zoom: successive refinement — discourse picks chunks, chunks restrict exact search
-- Cost: ~1.5M params (3%), **12.8x cheaper** compute than current global router
-- Warm-startable from v0.5.4 via zero-init gates
-
-**Stage integration:**
-- Stage 4 → telescopic global read
-- Stage 5 → writes to all levels
-- Stage 6 → owns zoom depth (uncertainty-driven)
-- Stage 7 → low verify forces deeper re-read
-
-**Key Codex corrections to initial sketch:**
-- Three memories must be hierarchy (parent→child), not independent
-- Zoom query needs compute penalty or it collapses to always-coarse
-- Hidden states aren't "exact" — need immutable leaf snapshots with source IDs
-- Explains why multi-timescale scratchpad failed: fixed decays aren't query-conditional zoom
-
-**Score**: Turing 6/10 upside. Breakthrough if proven rate-distortion optimal.
-**Status**: Codex-designed. Queue for dim=1024 scale-up or v0.5.5 Chrome.
+Every experiment must target a **diagnosed bottleneck**. No random testing.
+Format: Mechanism → What bottleneck it solves → How we'd know it worked → Priority.
 
 ---
 
-## Scale-Up Ideas (for dim=1024)
+## PRIORITY 1: Continuous-Spectrum Memory (v0.5.5)
+
+**Bottleneck**: Current scratchpad is gist-only. Can't do exact recall. Router is O(n²).
+**Mechanism**: Continuous-resolution memory — learnable zoom from gist to exact per-query.
+**Success signal**: Exact-recall probe accuracy >80% at 200+ token distance, AND BPT improves.
+**Failure signal**: Collapses to always-coarse or always-exact. Or BPT regresses.
+**Status**: Codex designing continuous-spectrum variant (not 3 discrete levels).
+
+---
+
+## SCALE-UP IDEAS (dim=1024) — Bottleneck-Annotated
 
 ### Contractive Hyperspherical Core
-Normalized state geometry: keep tokens on a sphere, cosine interactions, bounded updates.
-Scale-invariant because governing quantities are angles/norms, not width.
-Source: Codex architecture analysis + nGPT research.
-Status: UNTESTED. Design phase.
+**Bottleneck it solves**: Training instability at scale. Warm-start fragility (Peri-LN broke warm-start). Grokfast divergence (gradient magnitudes differ across dimensions).
+**Why this specifically**: If all vectors are unit-norm, gradient magnitudes are bounded by construction. No more "works at dim=128, diverges at dim=768." Scale-invariant.
+**Success signal**: Same hyperparameters work at dim=128, 384, 768, 1024 without tuning.
+**Priority**: HIGH — solves our #1 scaling problem (things that work small break large).
 
 ### RG/MERA Stage Pyramid
-Explicit multiscale graph: token → phrase → segment → document nodes.
-Wavelet up/down passes, shared local update rule across scales.
-Source: 15-domain research synthesis (wavelets, RG, MERA, holography).
-Status: UNTESTED. Strong theoretical support.
+**Bottleneck it solves**: Flat sequence processing. No hierarchical structure. Can't distinguish word-level vs paragraph-level vs document-level patterns.
+**Why this specifically**: Language IS hierarchical. Current architecture treats every token at the same scale. Multi-scale processing is the most convergent finding across all 15 research domains.
+**Success signal**: Better performance on long-context tasks. Chunk-level coherence improves.
+**Priority**: MEDIUM — important for long context, but not our immediate bottleneck.
 
 ### Spatially Coupled Predictive-Coding Graph
-Sparse error-only communication on expander graphs, BP-style iterative updates.
-Replace dense scratchpad broadcasts with sparse residual packets.
-Source: coding theory (LDPC/BP), predictive coding, spatial coupling.
-Status: UNTESTED. Best replacement for current scratchpad/router.
+**Bottleneck it solves**: Scratchpad broadcasts are blurry (averaged state). Router is dense O(n²). Communication carries raw state, not prediction error.
+**Why this specifically**: Coding theory proves sparse local iterative = near-optimal. Predictive coding says only errors should propagate. Spatial coupling says suboptimal local becomes optimal global.
+**Success signal**: Same BPT with 10x fewer communication bits. OR better BPT with sparse messages.
+**Priority**: MEDIUM-HIGH — directly improves the scratchpad/router which are our core modules.
 
-### Grokfast at Scratch Training
-+11% at dim=128, diverges at dim=768 warm-start. Retest from scratch at dim=1024.
-May need much lower lambda (0.01-0.1) at larger scale.
-Status: DEFERRED. Module ready at code/grokfast.py.
-
----
-
-## Mechanisms to Retest at Scale
-
-All killed at 69M but may work at 105M+ where model has capacity for learned control:
-
-| Mechanism | Result at 69M | Retest at |
-|-----------|--------------|-----------|
-| Complex embeddings | -36% | dim=1024 scratch |
-| CfC time constants | -14% | dim=1024 scratch |
-| Lambda halting | AUROC 0.36 | dim=1024 scratch |
-| Error scratchpad | -0.4% (late 2.2x better) | dim=1024 with delayed start |
-| Surprise bank | -1.7% to -2.1% | dim=1024 scratch |
-| Grokfast | +11% dim=128, diverges dim=768 | dim=1024 scratch |
-| Dendritic neurons | untested at production | dim=1024 scratch |
-| nGPT hypersphere | untested at production | dim=1024 scratch |
-| Tropical routing | untested at production | dim=1024 scratch |
+### Grokfast (from scratch only)
+**Bottleneck it solves**: Training efficiency. Slow convergence = expensive experiments.
+**Why this specifically**: +11% at dim=128 is real. Failed at dim=768 warm-start, but that might be warm-start-specific, not Grokfast-specific.
+**Success signal**: Loss improves faster than baseline in first 5K steps from scratch.
+**Failure signal**: Diverges again (even from scratch) → mechanism is fundamentally incompatible with Sutra's gradient landscape.
+**Priority**: LOW — only test from scratch, not worth warm-start debugging.
 
 ---
 
-## Data Ideas
+## MECHANISMS TO RETEST AT SCALE — Strategic Prioritization
 
-- NCA pre-pre-training: 164M NCA tokens gave 6% LM improvement in literature. Test before language data.
-- Curriculum: start with TinyStories (narrative coherence) → educational → full mix
-- Compression ratio as eval metric (r=-0.95 correlation with benchmarks per COLM 2024)
+### Tier 1: Solves a diagnosed bottleneck
+| Mechanism | Bottleneck it solves | Why it might work at 105M | Test order |
+|-----------|---------------------|--------------------------|------------|
+| **Error scratchpad (delayed)** | Scratchpad carries raw state not errors | Late steps were 2.2x better — needs capacity to exploit | 1st |
+| **nGPT hypersphere** | Scale-dependent hyperparameters | Angles/norms are scale-invariant by construction | 2nd |
+
+### Tier 2: Might help but bottleneck is unclear
+| Mechanism | What it does | Why it might work | Test order |
+|-----------|-------------|-------------------|------------|
+| Dendritic neurons | More expressive per-neuron | Model may be capacity-limited at 105M | 3rd |
+| Lambda halting | Adaptive compute per token | AUROC was 0.36 — model couldn't learn meta-control at 69M | 4th |
+
+### Tier 3: Unlikely to help — test only if Tier 1-2 exhaust
+| Mechanism | Why probably not | Test if |
+|-----------|-----------------|---------|
+| Complex embeddings | -36% is catastrophic, not scale-dependent | Everything else fails |
+| CfC time constants | -14%, theoretical basis is weak for this arch | Domain-specific need |
+| Surprise bank | Hurt EVERY arm it touched | Never, unless fundamentally redesigned |
 
 ---
 
-## Open Questions
+## DATA EXPERIMENTS — Strategic
 
-1. Why does Grokfast diverge at dim=768? Is it gradient magnitude scaling? Or warm-start specific?
-2. Can we predict dim=768 behavior from dim=128 probes? What scaling law would work?
-3. The delayed-start principle: is step 3 universal or should it adapt per mechanism?
-4. Net2Net widening: will the extra dimensions actually activate, or stay dead?
+| Experiment | Bottleneck | Success signal | Priority |
+|-----------|-----------|----------------|----------|
+| **Diverse corpus training** | Academic paper mimicry | Generation uses varied styles/topics | IMMEDIATE (step 15K restart) |
+| NCA pre-pre-training | Cold start inefficiency | Faster convergence in first 1K steps | MEDIUM |
+| Data mixing optimization | Suboptimal source ratios | BPT improves by adjusting proportions | AFTER diverse baseline |
+| Compression ratio as eval | No cheap quality metric | r>0.9 correlation with generation quality | LOW |
+
+---
+
+## CHROME METHODOLOGY — Strategic Improvements
+
+**Problem**: dim=128 Chrome gave false positive for Grokfast (+11% → diverges at 768).
+
+**Fix hierarchy**:
+1. **dim=128**: Bug-finding + obvious loser killing only. Never ship from this.
+2. **dim=768 canary (200-1000 steps)**: Decision gate for warm-start mechanisms.
+3. **Generation eval (10 random questions)**: Decision gate for shipping. BPT is secondary.
+
+**What transfers across scales**: mechanism class (simple shared state > complex control), stability properties, causality, warm-start continuity.
+**What doesn't transfer**: hyperparameter optima, absolute BPT numbers, optimizer trick effectiveness.
+
+---
+
+## OPEN QUESTIONS
+
+1. Why does Grokfast diverge at dim=768? Gradient magnitude scaling? Or warm-start specific?
+2. Will Net2Net widening actually activate the extra dimensions, or stay dead?
+3. The delayed-start principle: is step 3 universal or should the delay adapt per mechanism?
+4. Continuous-spectrum memory: can we derive the optimal resolution from information theory?
