@@ -117,27 +117,54 @@ def build_negative_set(final_logits, targets, k=32):
     """Get cheap per-pass supervision without per-pass full-vocab logits.
 
     Returns: (B, T, 33) candidate ids with target in slot 0.
+    Fully vectorized — no Python loops over B*T.
     """
     B, T, V = final_logits.shape
-    # Top-48 from final logits
-    top48_ids = final_logits.topk(48, dim=-1).indices  # (B, T, 48)
+    device = final_logits.device
 
-    candidates = torch.zeros(B, T, k + 1, dtype=torch.long, device=final_logits.device)
-    candidates[:, :, 0] = targets  # slot 0 = target
+    # Top-(k+8) from final logits (extra buffer to filter targets)
+    top_ids = final_logits.topk(k + 8, dim=-1).indices  # (B, T, k+8)
 
-    for b in range(B):
-        for t in range(T):
-            target = targets[b, t].item()
-            negs = []
-            for idx in top48_ids[b, t].tolist():
-                if idx != target and len(negs) < k:
-                    negs.append(idx)
-            # Fill remaining with random if needed
-            while len(negs) < k:
-                r = torch.randint(0, V, (1,)).item()
-                if r != target and r not in negs:
-                    negs.append(r)
-            candidates[b, t, 1:] = torch.tensor(negs, device=final_logits.device)
+    # Mask out the target from top_ids
+    target_expanded = targets.unsqueeze(-1)  # (B, T, 1)
+    not_target = top_ids != target_expanded  # (B, T, k+8)
+
+    # Gather first k non-target indices per position
+    # Use cumsum on the mask to find the first k valid entries
+    valid_cumsum = not_target.long().cumsum(dim=-1)  # (B, T, k+8)
+    # valid_cumsum[b,t,i] = how many non-target entries in top_ids[b,t,:i+1]
+    # We want entries where valid_cumsum <= k AND not_target is True
+    take_mask = (valid_cumsum <= k) & not_target  # (B, T, k+8)
+
+    # Extract the selected negative ids
+    # Flatten and use masked_select, then reshape
+    neg_ids = top_ids.masked_fill(~take_mask, 0)  # zero out non-selected
+
+    # Pack into exactly k negatives per position using a gather approach
+    # Count how many we got from top-k filtering
+    n_selected = take_mask.sum(dim=-1)  # (B, T)
+
+    # Build candidates: slot 0 = target, slots 1..k = negatives
+    candidates = torch.zeros(B, T, k + 1, dtype=torch.long, device=device)
+    candidates[:, :, 0] = targets
+
+    # For each position, gather the first k masked entries
+    # Use argsort of ~take_mask to push True entries to the front
+    sort_idx = (~take_mask).long().argsort(dim=-1, stable=True)  # True (selected) first
+    sorted_ids = top_ids.gather(-1, sort_idx)
+    candidates[:, :, 1:] = sorted_ids[:, :, :k]
+
+    # Fill any remaining slots (if top-k didn't have k non-target entries) with random
+    n_short = (k - n_selected).clamp(min=0)  # (B, T)
+    if n_short.any():
+        max_short = n_short.max().item()
+        if max_short > 0:
+            random_fill = torch.randint(0, V, (B, T, max_short), device=device)
+            for i in range(max_short):
+                fill_pos = k - max_short + i + 1  # position in candidates
+                mask = i < n_short  # (B, T) which positions need filling
+                if mask.any() and fill_pos <= k:
+                    candidates[:, :, fill_pos] = torch.where(mask, random_fill[:, :, i], candidates[:, :, fill_pos])
 
     return candidates
 

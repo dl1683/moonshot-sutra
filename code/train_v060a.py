@@ -115,6 +115,8 @@ def evaluate(model, dataset, n_batches=20):
                 loss = F.cross_entropy(logits[:, :Tc].reshape(-1, VOCAB_SIZE), y[:, :Tc].reshape(-1))
             total_loss += loss.item()
     model.train()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # Reclaim fragmented VRAM after eval
     return {"bpt": (total_loss / n_batches) / math.log(2)}
 
 

@@ -32,6 +32,8 @@ def load_model(checkpoint, device):
     model = create_v054(dim=768, ff_dim=1536, max_steps=8, window=4, k_retrieval=8)
     ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
     model.load_state_dict(ckpt["model"], strict=False)
+    del ckpt  # Free 500MB+ optimizer state immediately
+    gc.collect()
     model.to(device).eval()
     return model
 
@@ -52,6 +54,7 @@ def loglikelihood(model, tok, device, context, continuation):
     for k in range(max(ctx_len, 1), len(all_ids)):
         if k > 0 and k - 1 < lp.size(0):
             ll += lp[k - 1, all_ids[k]].item()
+    del input_ids, logits, lp
     return ll
 
 
