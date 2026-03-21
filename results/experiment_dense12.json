@@ -1,0 +1,24 @@
+{
+  "experiment": "dense_12_headroom",
+  "result": "FAIL",
+  "data": {
+    "depth_4": {
+      "hard_ce": 17.29
+    },
+    "depth_6": {
+      "hard_ce": 13.49
+    },
+    "depth_8": {
+      "hard_ce": 4.84
+    },
+    "depth_10": {
+      "hard_ce": 5.98
+    },
+    "depth_12": {
+      "hard_ce": 8.26
+    }
+  },
+  "finding": "Steps 9-12 diverge (hard CE increases 70.6%). Model is OOD beyond 8.",
+  "implication": "Cannot raise ceiling without retraining. v0.6.0 must train with higher ceiling from start.",
+  "good_news": "Steps 4->6->8 show massive improvement. Recurrence works within trained range."
+}
