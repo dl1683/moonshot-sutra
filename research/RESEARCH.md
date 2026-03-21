@@ -5821,6 +5821,17 @@ Warmup change **alone** is not enough. Checkpoint frequency **alone** is not eno
   - history is allowed to backprop into the recurrent core, or
   - step supervision gets its own untied readout head.
 
+### Critical Correctness Update
+
+- The approved `v0.6.0a` buildable spec did **not** call for detaching `mu_hist` / `pi_hist`.
+- The implementation bug in `code/launch_v060a.py` detached both histories before `L_step` and `L_probe` were computed, so the recurrent core was not receiving inter-step supervision.
+- Minimal code fix:
+  - change `mu_hist[:, :, p, :] = mu.detach()` to `mu_hist[:, :, p, :] = mu`
+  - change `pi_hist[:, :, p, :] = pi.detach()` to `pi_hist[:, :, p, :] = pi`
+- This keeps history attached only on the training path (`collect_history=True`), while eval/inference still skip history collection.
+- Scientific implication: any dense-12 run trained with detached history is **not** a valid test of the `v0.6.0a` thesis ("does inter-step supervision induce convergence separation?").
+- Restart recommendation: restart from scratch after the fix. Warm-starting from a detached-history checkpoint would confound the core question because the recurrent dynamics were optimized under a materially different objective.
+
 ---
 
 ## Data Pipeline Decision: Giant Shard Split + Exact Shard Index (2026-03-21)

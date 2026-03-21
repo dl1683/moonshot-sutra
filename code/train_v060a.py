@@ -96,8 +96,6 @@ def compute_v060a_losses(logits, aux, y):
         # Final pass target = 0 (already initialized)
     L_probe = F.smooth_l1_loss(probe_pred, targets.detach())
 
-    # History is detached in launch_v060a, so L_step primarily trains the
-    # shared readout stack (final LN + tied embeddings), not the recurrent core.
     L_total = L_final + STEP_LOSS_COEF * L_step + PROBE_LOSS_COEF * L_probe
 
     return L_total, {

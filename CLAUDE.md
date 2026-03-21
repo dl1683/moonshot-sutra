@@ -86,15 +86,29 @@ Before ANY production training run (>1000 steps), ALL must pass:
 
 ### Codex Pre-Training Audit (MANDATORY — learned from detached-history bug)
 **Training is the most expensive operation. Never start without deep review.**
-Before ANY training run, run ALL of these Codex reviewers and resolve every HIGH finding:
-1. **Correctness Engineer** — full code review of model + trainer + data loader
-2. **Performance Engineer** — memory profile, throughput estimate, OOM risk assessment
-3. **Scaling Expert** — LR scaling for depth, warm-start compatibility, VRAM budget
 
-Each reviewer must return CLEAN (no HIGH findings) before training starts.
-**The detached-history bug would have been caught here** — Correctness Engineer would have flagged that L_step gradients don't reach the recurrent core. The NaN at step 762 would have been caught — Performance Engineer would have flagged LR too high for 12-pass depth. These cost hours of wasted GPU each time.
+**THE LOOP:**
+```
+REPEAT:
+  1. Run Correctness Engineer on model + trainer + data loader
+  2. Run Performance Engineer — memory profile, throughput, OOM risk
+  3. Run Scaling Expert — LR scaling for depth, VRAM budget, warm-start
+  4. Collect ALL findings from all three
+  5. Fix every HIGH and MEDIUM issue
+  6. GOTO 1 (re-run ALL three reviewers on the fixed code)
+UNTIL: ALL three reviewers return CLEAN (zero HIGH, zero MEDIUM)
+THEN: training may begin
+```
 
-**Rule: the cost of one extra hour of Codex review is ALWAYS less than the cost of restarting a failed training run.**
+**This is NOT optional. This is NOT one-pass.** Fixing one issue often introduces another. The loop continues until convergence — all reviewers simultaneously agree the code is clean. Only then does GPU training start.
+
+**Why this matters:**
+- Detached-history bug: L_step didn't train recurrent core → entire training run wasted
+- NaN at step 762: LR too high for 12-pass depth → 762 steps wasted
+- Data loader OOM: loaded all shards into RAM → training couldn't start
+- Each bug cost hours of GPU time. Each would have been caught by one loop iteration.
+
+**Rule: the cost of N review loops is ALWAYS less than the cost of 1 failed training restart.**
 
 ### Multi-Codex Review Panel (MANDATORY at every eval checkpoint + major releases)
 

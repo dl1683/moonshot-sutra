@@ -352,8 +352,10 @@ class SutraV060a(nn.Module):
 
             # Collect history (skip during eval)
             if collect_history:
-                mu_hist[:, :, p, :] = mu.detach()
-                pi_hist[:, :, p, :] = pi.detach()
+                # Keep history attached during training so inter-step losses
+                # can backprop into the recurrent core.
+                mu_hist[:, :, p, :] = mu
+                pi_hist[:, :, p, :] = pi
 
         # Final output (full logits once)
         final = self.ln(mu)
