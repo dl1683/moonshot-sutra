@@ -5718,3 +5718,38 @@ The remaining burden is proof, not conceptual coherence.
 
 If the experiments validate it, Sutra is not just a small model with unusual modules.
 It is a candidate **operating system for cumulative intelligence**.
+
+---
+
+## Cross-Domain Research: Landauer's Principle + Stochastic Resonance (2026-03-21)
+
+### Core Finding
+The brain stores and processes information using **noise as a computational resource**. Sub-threshold neural dynamics — signals too weak to individually trigger firing — can constructively interfere when multiple weak inputs align, creating efficient computation at ~100x lower energy than spike-based processing.
+
+### Key Principles for Sutra
+
+1. **Landauer's Principle**: Erasing 1 bit costs minimum kT ln(2) energy. Maintaining soft superpositions (not collapsing to hard decisions) avoids this cost. Sutra's stage probabilities are already a form of this — keeping tokens in superposition across stages is thermodynamically cheaper than hard routing.
+
+2. **Stochastic Resonance**: Optimal noise IMPROVES signal detection in nonlinear threshold systems. At the right noise level, weak signals get amplified. Implication: our gradient noise, dropout, and training stochasticity might not be bugs to minimize — they might be features to calibrate. The Grokfast divergence at dim=768 could be a stochastic resonance sweet-spot problem (wrong noise level for that scale).
+
+3. **Sub-threshold Computation**: Dendrites perform multiplicative integration below firing threshold. Multiple weak inputs superimpose to create strong signals. For Sutra: stages could operate partially in a sub-threshold regime, activating downstream processing only when multiple stages agree (constructive interference).
+
+4. **Energy Efficiency**: Sub-threshold dendritic integration costs ~100x less energy than spike generation. If Sutra can route "easy" tokens through sub-threshold processing while reserving full-strength computation for hard tokens, this directly serves the elastic compute thesis.
+
+### Concrete Mechanisms to Explore
+
+- **Soft stage transitions**: Instead of hard binary gating, maintain sub-threshold probability for each stage. Use learned noise injection to find the stochastic resonance sweet spot.
+- **Sub-threshold memory writes**: Small updates accumulate in scratchpad, only triggering "read" when multiple stages have written to the same slot (constructive interference in memory).
+- **Noise-calibrated training**: Learn optimal noise level per layer/stage via gradient descent. The NEFTune paper showed 35% improvement from noise in embeddings during fine-tuning.
+- **Multiplicative stage interactions**: Dendrites use quadratic neurons (x^T A x + w^T x + b). Could replace additive residual connections between stages with multiplicative gates that require multiple stages to "agree."
+
+### Key Papers
+- Landauer 1961, Bennett 2003: Thermodynamic cost of information erasure
+- Berut & Lutz 2012 (Nature): First experimental verification of Landauer limit
+- Moss, Pierson, O'Gorman 1994+: Stochastic resonance in biological systems
+- NEFTune (Jang et al. 2023): Noise injection improves LLM fine-tuning by 35%
+- Bricken et al. 2023 (ICML): Sparse coding emerges from noise injection
+- Drover et al. 2024 (PNAS): Chaotic dynamics enable Bayesian sampling
+
+### Status
+Research only. Not on immediate roadmap. Will revisit when v0.6.0a elastic compute thesis is validated — stochastic resonance could inform the noise/threshold calibration of the elastic controller.
