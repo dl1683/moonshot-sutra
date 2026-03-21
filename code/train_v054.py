@@ -1,18 +1,19 @@
 """Sutra v0.5.4 Production Training.
 
-v0.5.4 = v0.5.3 + Peri-LN + Delayed Pheromone + Grokfast.
-Chrome-validated: +13.6% combined BPT improvement.
+v0.5.4 = v0.5.3 + Gated Peri-LN + Delayed Pheromone.
+Grokfast disabled at dim=768 (diverges). Module kept for future scratch training.
 
-Changes from sutra_v05_train.py:
-  1. Imports from launch_v054 (Peri-LN + Delayed Pheromone)
-  2. Grokfast EMA gradient filter (alpha=0.95, lambda=2.0)
-  3. 500-step re-warmup after warm-start (Codex design)
-  4. Grokfast only on matrix params (skip norms/biases)
-  5. Grokfast delayed 200 steps after warm-start
+Features:
+  - Streaming data loader (one shard in RAM at a time, handles 100B+ tokens)
+  - Auto-discovers shards from data/shards/ (drop file, restart, done)
+  - Rolling checkpoint every 1K steps with FULL optimizer state
+  - Permanent checkpoint every 5K steps
+  - NaN/Inf guard on loss and gradients
+  - Crash-safe resume from rolling or permanent checkpoint
 
 Usage:
     python code/train_v054.py
-    (automatically warm-starts from latest v0.5.3 checkpoint)
+    (auto-discovers checkpoints and data)
 """
 
 import json, math, os, random, time
@@ -54,31 +55,22 @@ sys.path.insert(0, str(REPO / "code"))
 from launch_v054 import create_v054 as _create_model, warmstart_v054
 
 
-def load_tokens():
-    """Load all training data via the universal data loader.
+def create_dataset():
+    """Create streaming dataset. Loads one shard at a time, never OOMs.
 
     Auto-discovers all .pt shards in data/shards/.
     Drop new shard files -> restart trainer -> they're in.
-    See code/data_loader.py for details.
     """
-    from data_loader import load_all_data
-    return load_all_data()
+    from data_loader import ShardedDataset
+    return ShardedDataset()
 
 
-def sample_batch(tokens, batch_size, seq_len):
-    max_start = len(tokens) - seq_len - 1
-    idx = torch.randint(0, max_start, (batch_size,))
-    x = torch.stack([tokens[i:i + seq_len] for i in idx])
-    y = torch.stack([tokens[i + 1:i + seq_len + 1] for i in idx])
-    return x.to(DEVICE), y.to(DEVICE)
-
-
-def evaluate(model, test_tokens, n_batches=20):
+def evaluate(model, dataset, n_batches=20):
     model.eval()
     total_loss = 0
     with torch.no_grad():
         for _ in range(n_batches):
-            x, y = sample_batch(test_tokens, min(BATCH_SIZE, 8), SEQ_LEN)
+            x, y = dataset.sample_batch(min(BATCH_SIZE, 8), SEQ_LEN, device=DEVICE)
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 logits, aux = model(x)
                 Tc = min(logits.size(1), y.size(1))
@@ -92,8 +84,9 @@ def evaluate(model, test_tokens, n_batches=20):
     return {"bpt": avg_loss / math.log(2), "loss": avg_loss}
 
 
-def generate_sample(model, test_tokens, tokenizer, max_new=100):
+def generate_sample(model, dataset, tokenizer, max_new=100):
     model.eval()
+    test_tokens = dataset.get_test_tokens()
     prompt = test_tokens[:32]
     tokens = prompt.clone().unsqueeze(0).to(DEVICE)
     with torch.no_grad():
@@ -121,7 +114,7 @@ def main():
     print(f"Training: bs={BATCH_SIZE}x{GRAD_ACCUM}={BATCH_SIZE*GRAD_ACCUM}, seq={SEQ_LEN}")
     print(f"{'='*60}")
 
-    train_tokens, test_tokens = load_tokens()
+    dataset = create_dataset()
 
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -199,7 +192,7 @@ def main():
     start = time.time()
 
     while step < MAX_STEPS:
-        x, y = sample_batch(train_tokens, BATCH_SIZE, SEQ_LEN)
+        x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE)
 
         # v0.5.4: Re-warmup schedule (500 steps from REWARMUP_LR_START to LR)
         if step < WARMUP_STEPS:
@@ -223,12 +216,12 @@ def main():
         loss_count += 1
 
         if loss_count % GRAD_ACCUM == 0:
-            # NaN guard
-            if torch.isnan(loss) or any(
-                p.grad is not None and torch.isnan(p.grad).any()
+            # NaN/Inf guard
+            if not torch.isfinite(loss) or any(
+                p.grad is not None and not torch.isfinite(p.grad).all()
                 for p in model.parameters()
             ):
-                print(f"WARNING: NaN at step {step}, skipping", flush=True)
+                print(f"WARNING: NaN/Inf at step {step}, skipping", flush=True)
                 opt.zero_grad()
                 loss_count = 0
                 running_loss = 0
@@ -255,7 +248,7 @@ def main():
 
             if step % EVAL_EVERY == 0:
                 try:
-                    metrics = evaluate(model, test_tokens)
+                    metrics = evaluate(model, dataset)
                     bpt = metrics["bpt"]
                     is_best = bpt < best_bpt
                     if is_best:
@@ -264,7 +257,7 @@ def main():
 
                     gen = {"prompt": "(eval)", "output": "(eval)"}
                     try:
-                        gen = generate_sample(model, test_tokens, tokenizer)
+                        gen = generate_sample(model, dataset, tokenizer)
                         gen = {k: v.encode("ascii", errors="replace").decode("ascii") for k, v in gen.items()}
                         print(f"\nGENERATION @ step {step}: {gen['output'][:200]}", flush=True)
                     except Exception as e:
@@ -288,10 +281,11 @@ def main():
                 except Exception as e:
                     print(f"EVAL FAILED at step {step}: {e}", flush=True)
 
-            # Rolling checkpoint: model-only, overwrites each time (crash recovery)
+            # Rolling checkpoint: FULL state, overwrites each time (crash recovery)
             if step % ROLLING_SAVE == 0:
-                rolling = {"model": model.state_dict(), "step": step,
-                           "best_bpt": best_bpt}
+                rolling = {"model": model.state_dict(),
+                           "optimizer": opt.state_dict(),
+                           "step": step, "best_bpt": best_bpt}
                 torch.save(rolling, ckpt_dir / "rolling_latest.pt")
 
             # Permanent checkpoint: full state, never overwritten

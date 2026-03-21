@@ -1,27 +1,19 @@
-"""Universal data loader for Sutra training.
+"""Universal streaming data loader for Sutra training.
 
-Auto-discovers ALL token shards in data/shards/ and loads them.
-No hardcoded paths. No version-specific loading. Drop a shard file,
-it gets picked up on next trainer restart.
+Auto-discovers ALL token shards in data/shards/ and streams from them.
+Never loads more than 1 shard into RAM at a time. Handles 100B+ tokens.
 
-Shard directory structure:
-    data/shards/
-        minipile.pt              (single file = one source)
-        wikipedia_0000.pt        (numbered = multi-shard source)
-        wikipedia_0001.pt
-        openwebmath_0000.pt
-        fineweb_0000.pt
-        tinystories_0000.pt
-        ...
-
-Any .pt file in data/shards/ is loaded. That's it.
-File naming convention: {source}_{shard_number}.pt or {source}.pt
+Shard directory: data/shards/*.pt
+Any .pt file = a source. Naming: {source}_{shard_number}.pt or {source}.pt
 
 Usage:
-    from data_loader import load_all_data
-    train_tokens, test_tokens = load_all_data()
+    from data_loader import ShardedDataset
+    dataset = ShardedDataset()  # auto-discovers shards
+    x, y = dataset.sample_batch(batch_size=8, seq_len=512, device='cuda')
 """
 
+import os
+import random
 import torch
 from pathlib import Path
 
@@ -29,68 +21,127 @@ REPO = Path(__file__).parent.parent
 SHARD_DIR = REPO / "data" / "shards"
 
 
-def load_all_data(test_fraction=0.005):
-    """Load all token shards from data/shards/.
+class ShardedDataset:
+    """Streaming dataset that samples from random shards without loading all into RAM.
 
-    Returns (train_tokens, test_tokens) as flat tensors.
-    Automatically discovers all .pt files. No config needed.
+    On init: scans shard directory, builds index of (path, length) pairs.
+    On sample: picks a random shard, loads it, samples a batch, discards it.
+    Keeps one "hot" shard cached for consecutive samples.
+
+    Peak RAM: ~400MB (one shard of 50M tokens * 8 bytes).
     """
-    if not SHARD_DIR.exists():
-        SHARD_DIR.mkdir(parents=True)
-        print(f"  Created {SHARD_DIR}. Add .pt shard files to start training.")
 
-    shard_files = sorted(SHARD_DIR.glob("*.pt"))
-    if not shard_files:
-        # Fallback to old location
-        old_path = REPO / "data" / "minipile_full_tokens.pt"
-        if old_path.exists():
-            print(f"  No shards in {SHARD_DIR}, falling back to {old_path.name}")
-            tokens = torch.load(old_path, weights_only=True)
-            n_test = max(1000, int(len(tokens) * test_fraction))
-            return tokens[:-n_test], tokens[-n_test:]
-        raise FileNotFoundError(f"No data found in {SHARD_DIR} or {old_path}")
+    def __init__(self, shard_dir=None, test_fraction=0.005):
+        self.shard_dir = Path(shard_dir) if shard_dir else SHARD_DIR
+        self.test_fraction = test_fraction
+        self.index = []  # list of (path, n_tokens)
+        self.sources = {}  # source_name -> total tokens
+        self._hot_shard = None  # cached shard tensor
+        self._hot_path = None   # path of cached shard
+        self._test_tokens = None
 
-    # Group by source name (strip _NNNN suffix)
-    sources = {}
-    for f in shard_files:
-        name = f.stem
-        # Strip shard number: "wikipedia_0042" -> "wikipedia"
-        parts = name.rsplit("_", 1)
-        if len(parts) == 2 and parts[1].isdigit():
-            source = parts[0]
-        else:
-            source = name
-        if source not in sources:
-            sources[source] = []
-        sources[source].append(f)
+        self._build_index()
 
-    # Load and report
-    all_parts = []
-    total = 0
-    for source in sorted(sources.keys()):
-        files = sorted(sources[source])
-        parts = [torch.load(f, weights_only=True) for f in files]
-        combined = torch.cat(parts) if len(parts) > 1 else parts[0]
-        all_parts.append(combined)
-        total += len(combined)
-        print(f"  {source}: {len(combined):,} tokens ({len(combined)/1e9:.2f}B) [{len(files)} shards]")
+    def _build_index(self):
+        """Scan shard directory and build index."""
+        if not self.shard_dir.exists():
+            self.shard_dir.mkdir(parents=True)
+            # Fallback
+            old = REPO / "data" / "minipile_full_tokens.pt"
+            if old.exists():
+                size = os.path.getsize(old) // 8  # int64 = 8 bytes
+                self.index.append((old, size))
+                self.sources["minipile_fallback"] = size
+                print(f"  No shards dir, falling back to {old.name} (~{size/1e9:.2f}B tokens)")
+                return
 
-    all_tokens = torch.cat(all_parts)
-    print(f"  TOTAL: {total:,} tokens ({total/1e9:.2f}B) from {len(sources)} sources")
+        shard_files = sorted(self.shard_dir.glob("*.pt"))
+        if not shard_files:
+            old = REPO / "data" / "minipile_full_tokens.pt"
+            if old.exists():
+                size = os.path.getsize(old) // 8
+                self.index.append((old, size))
+                self.sources["minipile_fallback"] = size
+                print(f"  Empty shards dir, falling back to {old.name}")
+                return
+            raise FileNotFoundError(f"No data in {self.shard_dir}")
 
-    n_test = max(1000, int(len(all_tokens) * test_fraction))
-    return all_tokens[:-n_test], all_tokens[-n_test:]
+        total = 0
+        for f in shard_files:
+            # Estimate token count from file size (int64 = 8 bytes per token)
+            # torch .pt files have overhead, but this is close enough for sampling weights
+            size = os.path.getsize(f) // 8
+            if size < 100:
+                continue  # skip tiny/corrupt files
+            self.index.append((f, size))
+            total += size
+
+            # Track source
+            name = f.stem
+            parts = name.rsplit("_", 1)
+            source = parts[0] if len(parts) == 2 and parts[1].isdigit() else name
+            self.sources[source] = self.sources.get(source, 0) + size
+
+        # Print summary
+        for source in sorted(self.sources.keys()):
+            t = self.sources[source]
+            print(f"  {source}: ~{t/1e9:.2f}B tokens")
+        print(f"  TOTAL: ~{total/1e9:.2f}B tokens from {len(self.sources)} sources, {len(self.index)} shards")
+
+        # Sampling weights proportional to shard size
+        self._weights = [s for _, s in self.index]
+        self._total = total
+
+    def _load_shard(self, path):
+        """Load a shard, caching for repeated access."""
+        if self._hot_path == path:
+            return self._hot_shard
+        try:
+            self._hot_shard = torch.load(path, weights_only=True)
+            self._hot_path = path
+            return self._hot_shard
+        except Exception as e:
+            print(f"  WARNING: Failed to load {path}: {e}")
+            return None
+
+    def sample_batch(self, batch_size, seq_len, device='cpu'):
+        """Sample a random batch from a random shard.
+
+        Picks shard weighted by size, loads it (cached), samples random positions.
+        """
+        # Pick a random shard (weighted by token count)
+        path, _ = random.choices(self.index, weights=self._weights, k=1)[0]
+        tokens = self._load_shard(path)
+        if tokens is None or len(tokens) < seq_len + 1:
+            # Retry with different shard
+            path, _ = random.choice(self.index)
+            tokens = self._load_shard(path)
+            if tokens is None or len(tokens) < seq_len + 1:
+                raise RuntimeError("No valid shard available")
+
+        max_start = len(tokens) - seq_len - 1
+        idx = torch.randint(0, max_start, (batch_size,))
+        x = torch.stack([tokens[i:i + seq_len] for i in idx])
+        y = torch.stack([tokens[i + 1:i + seq_len + 1] for i in idx])
+        return x.to(device), y.to(device)
+
+    def get_test_tokens(self, n_tokens=50000):
+        """Get a fixed test set (from last shard, deterministic)."""
+        if self._test_tokens is not None:
+            return self._test_tokens
+        # Use last shard as test source
+        path = self.index[-1][0]
+        tokens = torch.load(path, weights_only=True)
+        self._test_tokens = tokens[-n_tokens:]
+        return self._test_tokens
+
+    @property
+    def total_tokens(self):
+        return self._total
 
 
 def migrate_shards():
-    """Move existing shards from old locations into data/shards/.
-
-    Run once to consolidate:
-      data/minipile_full_tokens.pt -> data/shards/minipile.pt (symlink)
-      data/diverse_shards/wikipedia/shard_NNNN.pt -> data/shards/wikipedia_NNNN.pt
-      data/fineweb_shards/shard_NNNN.pt -> data/shards/fineweb_NNNN.pt
-    """
-    import shutil
+    """Move existing shards from old locations into data/shards/."""
     SHARD_DIR.mkdir(parents=True, exist_ok=True)
 
     # MiniPile
@@ -98,11 +149,10 @@ def migrate_shards():
     dst = SHARD_DIR / "minipile.pt"
     if mp.exists() and not dst.exists():
         print(f"  Linking {mp.name} -> shards/minipile.pt")
-        # Symlink to avoid copying 13GB
         try:
             dst.symlink_to(mp.resolve())
         except OSError:
-            # Windows may not support symlinks, copy instead
+            import shutil
             shutil.copy2(mp, dst)
 
     # Diverse shards
@@ -116,10 +166,10 @@ def migrate_shards():
                 num = shard.stem.split("_")[1]
                 dst = SHARD_DIR / f"{name}_{num}.pt"
                 if not dst.exists():
-                    print(f"  Linking {name}/{shard.name} -> shards/{dst.name}")
                     try:
                         dst.symlink_to(shard.resolve())
                     except OSError:
+                        import shutil
                         shutil.copy2(shard, dst)
 
     # FineWeb shards
@@ -129,13 +179,12 @@ def migrate_shards():
             num = shard.stem.split("_")[1]
             dst = SHARD_DIR / f"fineweb_{num}.pt"
             if not dst.exists():
-                print(f"  Linking fineweb/{shard.name} -> shards/{dst.name}")
                 try:
                     dst.symlink_to(shard.resolve())
                 except OSError:
+                    import shutil
                     shutil.copy2(shard, dst)
 
-    # Report
     total = len(list(SHARD_DIR.glob("*.pt")))
     print(f"  Migration complete: {total} shards in {SHARD_DIR}")
 
@@ -146,7 +195,8 @@ if __name__ == "__main__":
         print("=== MIGRATING SHARDS ===")
         migrate_shards()
     else:
-        print("=== LOADING ALL DATA ===")
-        train, test = load_all_data()
-        print(f"\n  Train: {len(train):,} tokens")
-        print(f"  Test:  {len(test):,} tokens")
+        print("=== TESTING STREAMING LOADER ===")
+        ds = ShardedDataset()
+        x, y = ds.sample_batch(batch_size=4, seq_len=64)
+        print(f"\n  Batch: x={x.shape}, y={y.shape}")
+        print(f"  Peak RAM: ~{ds._weights[0]*8/1e6:.0f}MB per shard (not {ds._total*8/1e9:.1f}GB)")
