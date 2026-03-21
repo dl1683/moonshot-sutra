@@ -74,31 +74,46 @@ class SutraLMEval(LM):
 
     def _loglikelihood_tokens(self, requests, disable_tqdm=False):
         results = []
-        for context, continuation in requests:
-            ctx_ids = self.tokenizer.encode(context)
-            cont_ids = self.tokenizer.encode(continuation)
-            all_ids = (ctx_ids + cont_ids)[-512:]
-            ctx_len = len(all_ids) - len(cont_ids)
 
-            input_ids = torch.tensor([all_ids], device=self._device)
+        # Batch requests by similar length for efficient GPU utilization
+        indexed = [(i, req) for i, req in enumerate(requests)]
+
+        for batch_start in range(0, len(indexed), self._batch_size):
+            batch = indexed[batch_start:batch_start + self._batch_size]
+
+            # Encode all in batch
+            batch_encoded = []
+            for _, (context, continuation) in batch:
+                ctx_ids = self.tokenizer.encode(context)
+                cont_ids = self.tokenizer.encode(continuation)
+                all_ids = (ctx_ids + cont_ids)[-512:]
+                ctx_len = len(all_ids) - len(cont_ids)
+                batch_encoded.append((all_ids, ctx_len))
+
+            # Pad to max length in batch
+            max_len = max(len(ids) for ids, _ in batch_encoded)
+            padded = torch.full((len(batch_encoded), max_len), self.tokenizer.eos_token_id,
+                                dtype=torch.long, device=self._device)
+            for j, (ids, _) in enumerate(batch_encoded):
+                padded[j, :len(ids)] = torch.tensor(ids, device=self._device)
+
+            # Forward pass — one call for entire batch
             with torch.no_grad():
-                logits, _ = self.model(input_ids)
+                logits, _ = self.model(padded)
+            log_probs = torch.nn.functional.log_softmax(logits.float(), dim=-1)
 
-            log_probs = torch.nn.functional.log_softmax(logits[0].float(), dim=-1)
+            # Score each item in batch
+            for j, (all_ids, ctx_len) in enumerate(batch_encoded):
+                lp = log_probs[j]
+                total_ll = 0.0
+                is_greedy = True
+                for i in range(ctx_len, len(all_ids)):
+                    if i > 0 and i - 1 < lp.size(0):
+                        total_ll += lp[i - 1, all_ids[i]].item()
+                        if lp[i - 1].argmax().item() != all_ids[i]:
+                            is_greedy = False
+                results.append((total_ll, is_greedy))
 
-            total_ll = 0.0
-            for i in range(ctx_len, len(all_ids)):
-                if i > 0 and i - 1 < log_probs.size(0):
-                    total_ll += log_probs[i - 1, all_ids[i]].item()
-
-            is_greedy = True
-            for i in range(ctx_len, len(all_ids)):
-                if i > 0 and i - 1 < log_probs.size(0):
-                    if log_probs[i - 1].argmax().item() != all_ids[i]:
-                        is_greedy = False
-                        break
-
-            results.append((total_ll, is_greedy))
         return results
 
     def loglikelihood(self, requests, disable_tqdm=False):
