@@ -5820,3 +5820,42 @@ Warmup change **alone** is not enough. Checkpoint frequency **alone** is not eno
 - Do **not** raise `L_step` again until either:
   - history is allowed to backprop into the recurrent core, or
   - step supervision gets its own untied readout head.
+
+---
+
+## Data Pipeline Decision: Giant Shard Split + Exact Shard Index (2026-03-21)
+
+### Observed State
+
+- `code/data_loader.py` currently skips any shard larger than `4GB`, so training is only seeing the already-small subset.
+- Current loader scan: `217` loadable shards, `~10.318B` estimated tokens, `29` giant shards skipped.
+- The `29` failed "split" outputs in `data/shards/` are still `13-17GB` each. This matches the PyTorch storage-aliasing failure mode: saving a slice without `clone().contiguous()` preserved the full underlying storage.
+- The skipped files consume `~485.7GB` on disk, so they are unusable duplicates, not just cosmetic errors.
+
+### Decision
+
+1. **Do not split on the same machine while training is live.**
+   - With `32GB` RAM and the trainer already holding memory, loading a `17GB` tensor plus clone buffers is too close to the ceiling and risks killing the run.
+2. **Preferred path: split on a separate machine with a bounded-RAM splitter.**
+   - This preserves training throughput and decouples data repair from the active run.
+3. **Fallback path on this box: stop at the next checkpoint boundary, run the bounded-RAM splitter, verify, then restart.**
+   - If no second machine exists, this is safer than trying to split "during" training.
+4. **Replace file-size token estimation with an exact cached shard index.**
+   - Exact counts should be written once and reused, not re-estimated from bytes on every startup.
+
+### Why This Tradeoff Wins
+
+- The system is currently training on an incomplete corpus mixture. That is acceptable for a short continuation, but not as a steady state.
+- Exact shard counts matter because the loader samples shards with probability proportional to `n_tokens`. Approximate byte-based counts introduce avoidable weighting drift and make held-out shard selection depend on serialization overhead.
+- The exact-count cost is a one-time sequential scan; training cost is recurring. Pay the one-time cost.
+
+### Implementation Direction
+
+- Extend `code/data_loader.py` with:
+  - a verified shard splitter that writes `chunk = tensor[start:end].clone().contiguous()` before `torch.save`
+  - an atomic shard index writer/reader (`data/shards/index.json`)
+  - index invalidation based on path, size, and modification time
+- After verified re-splitting:
+  - delete the failed giant duplicate outputs
+  - remove the `>4GB` skip from the loader
+  - train only against the indexed shard set
