@@ -45,3 +45,4 @@ results/*_log.txt
 # Temporary
 *.tmp
 *.bak
+*.txt

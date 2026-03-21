@@ -115,7 +115,7 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 
 #### The 8 Reviewer Personas
 
-1. **Correctness Engineer** — Bugs, edge cases, pipeline integrity, data leakage, off-by-one errors. "Does the code do what you think it does?" Reviews: training loop, eval pipeline, data loading, checkpoint save/load.
+1. **Correctness Engineer** — Bugs, edge cases, pipeline integrity, data leakage, off-by-one errors. "Does the code do what you think it does?" Reviews: training loop, eval pipeline, data loading, checkpoint save/load. **Also repo hygiene:** flags stale files, outdated artifacts, Codex output files that should be ingested into RESEARCH.md and deleted, dead code, unused imports, temporary scripts. The repo must never accumulate entropy from agent outputs.
 
 2. **Performance Engineer** — Memory profiling, GPU/CPU utilization, throughput bottlenecks, batch sizing, framework overhead. "Will this OOM? What's the peak memory? Where's the bottleneck?" Must profile before any long-running job. Would have caught: bootstrap_iters=100K OOM, zombie process contention.
 
