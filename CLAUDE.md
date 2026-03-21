@@ -100,7 +100,7 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 - **2. Performance Engineer** — Run after every code change. Loop: profile → fix → re-profile until clean. Non-negotiable after OOM disasters.
 
 **TIER 2 — EVERY CHECKPOINT (5K training steps):**
-- **3. Scaling Skeptic** — At every eval, check if results transfer across scales.
+- **3. Scaling Expert** — At every eval, deep analysis of scaling implications: what breaks, what improves, what emerges, what to retest.
 - **6. Architecture Theorist** — At every eval, review current design + propose next mechanisms from cross-domain research. Ensures we're always thinking ahead, not just maintaining.
 - **8. Competitive Analyst** — At every eval, update positioning vs baselines + research-forward recommendations.
 
@@ -119,7 +119,7 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 
 2. **Performance Engineer** — Memory profiling, GPU/CPU utilization, throughput bottlenecks, batch sizing, framework overhead. "Will this OOM? What's the peak memory? Where's the bottleneck?" Must profile before any long-running job. Would have caught: bootstrap_iters=100K OOM, zombie process contention.
 
-3. **Scaling Skeptic** — Does this result at dim=128 transfer to dim=768? At 200M params? Challenges whether Chrome probe results generalize across scales. Demands dim=768 canary runs before production decisions. Would have caught: Grokfast divergence at production scale, Peri-LN warm-start failure.
+3. **Scaling Expert** — Deep analysis of what happens at different scales. Not just "does this transfer?" but thinking from every angle: What mechanisms will **break** at scale (e.g., Grokfast diverged at dim=768)? What mechanisms will **improve** at scale (e.g., attention patterns need more capacity)? What **emergent behaviors** might appear at 200M+ params that don't exist at 69M? What architectural choices **prevent** scaling (e.g., O(T²) operations, fixed memory sizes)? What choices **enable** scaling (e.g., modular stages, warm-start compatibility)? Thinks about: parameter efficiency curves, compute-optimal training (Chinchilla scaling), memory footprint at target scales, warm-start vs scratch tradeoffs at each scale jump, which killed mechanisms from Chrome should be **retested** at larger scale. Constructive, not just critical — flags both risks AND opportunities that emerge with scale.
 
 4. **Research Integrity Auditor** — Statistical methodology, benchmark validity, sample sizes, fair comparisons, overclaims. "Can you defend this number if someone adversarial reads your README?" Checks: sample sizes, answer-position bias, proper evaluation harness, confidence intervals, comparison fairness. Would have caught: 10-question ARC claim, answer-always-at-index-0 bias.
 
