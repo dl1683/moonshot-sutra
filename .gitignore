@@ -27,11 +27,17 @@ Thumbs.db
 # Build
 *.log
 
-# Codex review outputs (ingested into RESEARCH.md then deleted)
-# Keep codex_v054_master_design.md and codex_master_prompt.md (active design docs)
+# Codex review outputs (transient — ingest into RESEARCH.md then delete)
+results/codex_*.md
 
 # Large text data
 data/*.txt
+
+# Claude local state
+.claude/
+
+# Ruff cache
+.ruff_cache/
 
 # Logs (regenerated during training)
 results/*_log.txt
