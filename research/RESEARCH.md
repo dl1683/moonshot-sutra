@@ -5112,3 +5112,609 @@ Deferred, not killed:
 - multi-token prediction
 
 These are either controller-heavy, topology-swapping, or too disruptive for a clean warm-start from v0.5.3.
+
+---
+
+## Chrome Cycle 5: Information Gain as Universal Controller (2026-03-21)
+
+### Core Reframe
+
+The most important unresolved control problem in Sutra is not "how do we train a halting head?" It is:
+
+**How much additional representation quality will another action buy, relative to its cost?**
+
+This suggests a single governing quantity:
+
+```text
+g(a | state) = expected representation gain from action a
+```
+
+where action `a` can mean:
+- shift probability mass toward a stage
+- do another recurrent pass
+- zoom memory finer
+- widen routing
+- freeze / emit now
+
+This is stronger than the earlier budget notes. Those notes already moved toward deterministic control from a verifier score, but they still treated quality, zoom, stage choice, and budget as partially separate controllers. The cleaner formulation is:
+
+```text
+choose action a* = argmax_a [ g(a | state) / c(a) ]
+freeze when max_a g(a | state) < tau_freeze
+```
+
+That is a rate-distortion controller, not a learned transition policy.
+
+### Why This Fits The Existing Sutra Direction
+
+The repo already contains the missing clue:
+- [results/codex_v060_design_review.md] says the verifier target should be **marginal future gain**, not current correctness.
+- [research/STAGE_ANALYSIS.md] already wants Stage 7 to either emit or loop back to Stage 4.
+- [results/codex_continuous_spectrum_memory.md] already wants one uncertainty-like signal to drive zoom, halting, and verify loops.
+
+So the new synthesis is not a new bolt-on idea. It is the principled version of the direction the design reviews were already pointing toward.
+
+### Correct Target: Stop-Worthiness, Not Confidence
+
+Old target:
+
+```text
+q_t ~= exp(-CE_t)
+```
+
+This estimates "how good is the current state?"
+
+Needed target:
+
+```text
+g_t ~= CE_t - E[min_future CE after one more allowed action]
+```
+
+This estimates "how much better can I get if I spend more compute?"
+
+That distinction is critical. A token can be confidently wrong and still have high available gain from another pass. Confidence alone will freeze it too early.
+
+### Unified Control Law
+
+Let the available actions from the current state be:
+- `emit`
+- `route`
+- `write`
+- `zoom_finer`
+- `continue_pass`
+
+For each action `a`, predict:
+
+```text
+g_a = expected drop in distortion after action a
+c_a = deterministic action cost
+u_a = g_a / c_a
+```
+
+Then:
+
+```text
+pi_next(a) = softmax(beta * u_a)
+```
+
+Interpretation:
+- high `u_route` -> mass shifts toward Stage 4
+- high `u_write` -> mass shifts toward Stage 5
+- high `u_zoom_finer` -> memory scale decreases
+- high `u_continue` -> keep processing
+- all `u_a` low except emit -> mass concentrates in Stage 7
+
+This replaces the learned transition kernel as the PRIMARY controller. A learned module can still estimate `g_a`, but the transition itself should be induced by estimated gain, not by an unconstrained Markov matrix.
+
+### Connection To Information Theory
+
+The right formal object is not hidden-state norm change. It is **predicted distortion reduction**.
+
+Best practical proxies, in order:
+1. `Delta CE`: directly aligned with language modeling objective
+2. `Delta log p(y_true)`: same signal at token level
+3. `Delta predictive entropy` or `Delta top-2 margin`: useful auxiliary features, not primary target
+4. Hidden-state movement or norm change: diagnostic only, not a quality target
+
+Interpretation:
+- Mutual information connection: expected CE drop is expected information gain about the target token under log loss.
+- Rate-distortion connection: continue iff expected distortion drop exceeds the shadow price of compute.
+- Fisher connection: local Fisher can estimate sensitivity / room for improvement, but it is a secondary geometric approximation, not the controller target itself.
+
+So the governing equation is:
+
+```text
+continue iff E[Delta distortion | best next action] > lambda_compute
+```
+
+### What This Unifies
+
+This single scalar family `g_a` unifies four previously separate mechanisms:
+
+1. **Stage controller**
+   - stage probabilities become a soft allocation over action-specific gain/cost ratios
+
+2. **Verifier**
+   - verifier becomes a gain estimator: "is more work worth it?"
+
+3. **Zoom controller**
+   - finer memory resolution is chosen only when its marginal gain justifies its higher cost
+
+4. **Freeze / halting**
+   - stop when no available action has enough positive gain
+
+This is the first Sutra control story that actually reduces theoretical surface area instead of adding another head.
+
+### Important Constraint From Current Evidence
+
+Do NOT interpret this as "hard tokens only need finer memory."
+
+The production result still matters:
+- step 7 gave the biggest single marginal gain (`+16%`) at production scale
+
+Therefore there are at least two distinct forms of gain:
+- **information gain** from better routing / retrieval / zoom
+- **compute gain** from additional serial refinement even with the same information
+
+Minimal honest formulation:
+
+```text
+g_a = gain from taking action a
+```
+
+not just
+
+```text
+g_zoom = gain from finer memory
+```
+
+Otherwise the design collapses hard reasoning into retrieval only, which earlier budget reviews already flagged as false.
+
+### Minimal Experiment
+
+Do not test this first on open-ended LM.
+
+Build a synthetic mixed-demand task with three token classes in the same sequence:
+- local-easy: solved by current local context
+- gist-needed: solved by coarse memory
+- exact-needed: solved only by fine memory or extra routing
+- multi-step-needed: solved only by additional serial passes
+
+Compare:
+1. fixed learned transition kernel
+2. quality-only verifier (`exp(-CE_t)` style)
+3. gain-driven controller (`predicted Delta CE / cost`)
+
+Success criteria:
+- better accuracy at matched average compute
+- specialization appears: easy tokens stop early, exact tokens zoom finer, multi-step tokens take extra passes
+- mutual information between token class and chosen action/compute rises
+
+Kill criterion:
+- if gain estimator collapses to present-state confidence
+- or if it does not beat a simpler fixed-kernel baseline at matched compute
+
+### Novelty Assessment
+
+This is **not** novel at the level of ingredients:
+- adaptive computation time
+- dynamic halting
+- adaptive attention span
+- rational metareasoning / value of information
+- active-inference style information-gain control
+- recent "pondering" / adaptive test-time compute LMs
+
+But it **may** be novel as a Sutra-specific synthesis if all of the following are true:
+- one gain estimator controls stage flow, zoom, and continuation
+- the target is marginal future distortion reduction, not current confidence
+- stage probabilities are derived from gain/cost ratios
+- the system shows better compute-quality frontier than learned transition kernels
+
+That is likely publishable if demonstrated cleanly. It is not a theorem-level breakthrough yet.
+
+### Score
+
+| Dimension | Score | Why |
+|----------|-------|-----|
+| Unifying power | **9.5/10** | Best control story so far; collapses multiple ad hoc controllers into one principle |
+| Mathematical coherence | **8.5/10** | Clean rate-distortion interpretation; aligns with verifier critique already found by Codex |
+| Novelty | **7/10** | Strong synthesis, but built from known adaptive-compute / value-of-information ideas |
+| Implementation tractability | **6.5/10** | Needs verifier target redesign, in-loop supervision, causal memory, and real masking |
+| Breakthrough upside | **8.5/10** | If it beats learned transition kernels at matched compute, this could become the real Sutra signature |
+
+### Bottom Line
+
+**This is the strongest candidate so far for Sutra's unifying control principle.**
+
+Not "information gain" in the vague sense of confidence increase.
+
+Precisely:
+
+```text
+marginal future distortion reduction per unit cost
+```
+
+should decide:
+- where stage mass flows
+- whether another pass happens
+- whether memory zooms finer
+- when the model freezes and emits
+
+That is the design to test next.
+
+---
+
+## Chrome Cycle 5B: Grand Unification - The Sutra Intelligence Infrastructure (2026-03-21)
+
+### Executive Claim
+
+The three strongest Sutra threads are not separate mechanisms:
+- information-gain control
+- perpetual warm-start
+- multi-teacher absorption
+
+They are the same law applied at three different timescales.
+
+Define the core quantity:
+
+```text
+u(a | s) = E[D_future(s) - D_future(T_a(s))] / c(a)
+```
+
+where:
+- `s` is the current student state
+- `a` is an available action
+- `T_a` is the state transition induced by that action
+- `D_future` is expected future distortion on the target distribution
+- `c(a)` is the action cost
+
+This is the real Sutra control law:
+
+```text
+take the action with highest positive expected future distortion reduction per unit cost
+```
+
+The same law governs:
+- **inference-time compute**: which stage, how much routing, how fine memory zoom, whether to continue
+- **training-time absorption**: which teacher to use, on which tokens, for which stage contract
+- **version-time evolution**: which new module to open, how much gate to grant it, whether an architectural change is worth keeping
+
+So the unified object is not "a model with some controllers." It is a **rate-distortion-governed intelligence infrastructure** whose checkpoints are temporary snapshots of accumulated useful structure.
+
+### One Law, Three Timescales
+
+#### 1. Token Timescale: Inference Control
+
+Available actions are things like:
+- `route`
+- `write`
+- `zoom_finer`
+- `continue_pass`
+- `emit`
+
+For each token state, Sutra should estimate:
+
+```text
+u_token(a) = expected token-level future CE drop from action a / action cost
+```
+
+Then:
+
+```text
+continue / reroute / zoom iff max_a u_token(a) > lambda_compute
+freeze / emit iff max_a u_token(a) <= lambda_compute
+```
+
+This is the controller described in the previous Chrome cycle, but now understood as only the shortest-timescale case of a deeper law.
+
+#### 2. Training Timescale: Teacher Absorption
+
+Available actions are now:
+- `learn from teacher j on token i`
+- `learn from teacher j on stage contract k`
+- `do ordinary self-supervised CE only`
+- `run teacher-free consolidation`
+
+The choice rule becomes:
+
+```text
+u_train(i, j, k) = expected future student distortion drop from teacher j on token i, stage k / cost(j, k)
+```
+
+Teacher use is therefore not global and not constant. It is sparse, local, and conditional:
+- different teachers are useful at different tokens
+- different teachers supervise different stage contracts
+- a teacher is used only while it still adds net new reducible distortion
+
+#### 3. Version Timescale: Perpetual Warm-Start
+
+Available actions are now:
+- `open gate on new component m`
+- `increase width or capacity in subgraph m`
+- `activate new memory resolution`
+- `replace old submodule with gated child`
+
+The choice rule is:
+
+```text
+u_version(m) = expected future distortion drop from activating component m / added training + inference cost
+```
+
+The warm-start principle is:
+
+```text
+preserve all already-paid-for gain; only open new pathways when they add new positive gain
+```
+
+So perpetual warm-start is not an optimization trick. It is the version-timescale form of the same rate-distortion controller.
+
+### Multi-Teacher Absorption Under Information Gain
+
+### Core Rule
+
+For token `i`, teacher `j`, and stage contract `k`, define:
+
+```text
+g_{i,j,k} = E[D_i(before) - D_i(after learning from teacher j at stage k)]
+u_{i,j,k} = g_{i,j,k} / c_{j,k}
+```
+
+Absorb from the teacher-stage pair with highest positive `u_{i,j,k}`.
+
+This immediately answers the core teacher questions.
+
+#### Which teacher to learn from at which training step?
+
+Whichever teacher currently offers the highest marginal future distortion reduction on the current batch slice.
+
+Typical stage mapping:
+- **autoregressive teachers** (`GPT-2`, `Pythia`, `Qwen-mini`) -> Stage 7 readout and serial refinement targets
+- **bidirectional encoders** (`BERT`, `DeBERTa`) -> Stage 4/5 prefix-visible routing geometry, span summaries, affinity sketches
+- **embedding teachers** (`BGE`, `E5`, `sentence-transformers`) -> Stage 5 semantic memory organization, chunk barycenters, contrastive structure
+
+The important point is not the teacher architecture. It is the **stage contract** the teacher can improve.
+
+#### Which tokens benefit most from which teacher?
+
+The tokens with highest residual distortion under the student, weighted by teacher-specific comparative advantage.
+
+Examples:
+- next-token uncertainty with strong local syntax -> AR teacher likely highest gain
+- long-range semantic recall failure -> embedding teacher or encoder summary likely highest gain
+- routing ambiguity across prefix spans -> bidirectional teacher distilled through causal prefix summaries
+
+So the assignment is not:
+
+```text
+teacher j supervises the whole model
+```
+
+It is:
+
+```text
+teacher j supervises the student only where teacher j removes the most remaining distortion
+```
+
+#### When has a teacher been fully absorbed?
+
+When its conditional marginal gain goes to zero:
+
+```text
+E_data[max_k u_{i,j,k}] <= epsilon
+```
+
+Operationally, a teacher is absorbed when:
+- matching that teacher no longer improves held-out student CE or downstream distortion
+- teacher residuals are already recoverable from the student and other teachers
+- teacher dropout causes negligible regression
+
+This is the exact sense in which the student can become richer than any one teacher:
+- it keeps only the non-redundant distortion-reducing structure
+- it ignores teacher-specific errors once they stop helping
+- diversity acts as regularization because the student only preserves what survives cross-teacher usefulness tests
+
+So "10 textbooks > 1 perfect textbook" becomes mathematically:
+
+```text
+diverse teachers enlarge the set of available positive-gain corrective directions
+```
+
+### Perpetual Warm-Start = Information Preservation
+
+Perpetual warm-start is best understood as a conservation law:
+
+```text
+already-acquired low-distortion structure must not be destroyed by architectural change
+```
+
+This requires four invariants.
+
+#### Invariant 1: Identity At Zero Gate
+
+For any new component `m` added at version transition `v -> v+1`:
+
+```text
+f_{v+1}(x ; theta_v, gate_m = 0) = f_v(x ; theta_v)
+```
+
+When the new path is closed, the child checkpoint reproduces the parent checkpoint up to numerical noise.
+
+#### Invariant 2: Zero-Influence Introduction
+
+New modules start with zero or near-zero behavioral influence:
+- residual gates closed
+- penalties zeroed at parent operating point
+- new controllers in shadow mode first
+
+This guarantees that prior gain is preserved before new gain is even attempted.
+
+#### Invariant 3: Gain-Gated Activation
+
+A new module opens only when:
+
+```text
+u_version(m) > 0
+```
+
+If the new pathway does not reduce future distortion enough to pay for itself, it stays closed.
+
+#### Invariant 4: Teacher-Free Consolidation
+
+After new gain has been imported, the system must prove it now owns that gain internally.
+
+That means every teacher-enriched phase should end with:
+- annealed teacher weights
+- teacher dropout
+- teacher-free CE / verify / budget training
+
+Otherwise the knowledge was borrowed, not absorbed.
+
+This is why version transitions can be described as **gain-neutral by construction**:
+- closing all new gates recovers old behavior
+- opening gates is optional and must justify itself by positive new gain
+- no old competence is sacrificed just to make room for new mechanisms
+
+### Full Token Lifecycle In The Unified System
+
+A token should be understood as moving through the same law in three modes: inference, training, and consolidation.
+
+#### Runtime Lifecycle
+
+1. **Token arrives / is addressed**
+   - state initialized as `(mu, lambda, pi)`
+   - controller starts with cheap coarse actions first
+
+2. **Stage allocation**
+   - estimate `u_token(a)` over stage moves
+   - shift mass toward the stage with best expected distortion reduction per cost
+
+3. **Memory zoom**
+   - begin at coarse gist-heavy memory because it is cheap
+   - if verify says more gain exists, lower scale `s` and retrieve finer spans
+
+4. **Verification**
+   - Stage 7 estimates residual available gain, not just present confidence
+   - if `max_a u_token(a)` stays positive, loop back to Stage 4/5/6
+
+5. **Freeze**
+   - once no action offers enough positive marginal gain, stop updating the token
+   - frozen tokens remain readable context but no longer consume active compute
+
+#### Training Overlay
+
+While this token is still hard for the student:
+- compute teacher-stage utilities `u_{i,j,k}`
+- attach only the teacher signals with positive marginal gain
+- absorb them into the appropriate stage contract
+
+Once the teacher-added signal no longer reduces future distortion:
+- teacher supervision for this token shuts off
+- the student now handles the token through its own stages and memory
+
+#### Version Overlay
+
+If a new submodule is introduced during the token's lifetime:
+- the token still sees parent behavior when the gate is closed
+- the new submodule only influences this token if its predicted added gain is positive
+- no version transition is allowed to erase the old solved path
+
+So the complete lifecycle is:
+
+```text
+arrive
+-> cheap coarse processing
+-> gain-driven stage allocation
+-> gain-driven zoom / reroute / continue
+-> optional teacher absorption where residual gain is highest
+-> verify until residual gain falls below threshold
+-> freeze
+-> remain as stable context / preserved knowledge
+```
+
+### What Sutra Is After Unification
+
+After this synthesis, Sutra is best described in three layers:
+
+1. **A model**
+   - any individual checkpoint is still a concrete predictive model
+
+2. **An infrastructure**
+   - the stage graph, memory interfaces, and gating contracts let components be replaced and improved independently
+
+3. **A learning framework**
+   - the real identity of the system is the gain-governed law that decides what to compute, what to absorb, and what to preserve
+
+The deepest answer is:
+
+**Sutra is a modular intelligence infrastructure for monotone accumulation of useful predictive structure under a single rate-distortion control law.**
+
+The checkpoint is only one temporary crystallization of that process.
+
+This fits `research/VISION.md` exactly:
+- not a monolith
+- not a frozen model family
+- an extensible state-graph system whose modules can improve without resetting the whole organism
+
+### Why This Is Stronger Than The Separate Stories
+
+Without unification:
+- compute control is one head
+- warm-start is an engineering trick
+- distillation is a side pipeline
+
+With unification:
+- compute control, teacher selection, and version growth are all the same decision in different coordinates
+- the free Markov transition kernel becomes a utility-induced controller
+- warm-start becomes the preservation law that makes cumulative learning possible
+- multi-teacher diversity becomes structured acquisition of non-redundant corrective directions
+
+This collapses theoretical surface area. That is the main reason the synthesis is strong.
+
+### Architectural Consequences
+
+If this unification is taken seriously, several design consequences follow.
+
+1. **Transition kernel should become derived, not free**
+   - estimate gain/cost for actions, then induce stage flow from those utilities
+
+2. **Teacher distillation should be stage-mapped**
+   - never imitate whole architectures blindly
+   - distill only the contract each teacher is best at improving
+
+3. **Every new module must be zero-influence at birth**
+   - gated introduction is not optional; it is the continuity law
+
+4. **Every teacher phase must end in teacher-free consolidation**
+   - otherwise no real absorption occurred
+
+5. **Memory, compute, and learning all need the same residual-gain target**
+   - confidence alone is not enough anywhere
+
+### Score
+
+| Dimension | Score | Why |
+|----------|-------|-----|
+| Unifying power | **9.7/10** | Three major threads collapse into one control law plus one preservation law |
+| Manifesto alignment | **9.5/10** | Reframes intelligence as efficient allocation and accumulation of structure, not brute-force scale |
+| Mathematical coherence | **9.0/10** | Clean rate-distortion interpretation across inference, training, and version evolution |
+| Novelty of synthesis | **8.0/10** | Ingredients exist, but the cross-timescale unification inside a stage-superposition infrastructure is materially stronger |
+| Empirical tractability | **6.5/10** | Requires calibrated marginal-gain targets, causal memory, and disciplined warm-start execution |
+| Paradigm-shift upside | **9.0/10** | If validated, fixed-depth monolithic training becomes a special case of a more general intelligence infrastructure |
+
+### Final Verdict
+
+This is the closest Sutra has come so far to the manifesto's requested paradigm shift.
+
+Why:
+- it changes the question from "what architecture should the model have?" to "what action buys the most future distortion reduction per cost?"
+- it turns training, inference, and versioning into one continuous accumulation process
+- it makes monolithic pretrain-then-deploy models look like a special degenerate case:
+  - single teacher
+  - no gated continuity
+  - fixed compute allocation
+  - no explicit preservation law
+
+The remaining burden is proof, not conceptual coherence.
+
+If the experiments validate it, Sutra is not just a small model with unusual modules.
+It is a candidate **operating system for cumulative intelligence**.
