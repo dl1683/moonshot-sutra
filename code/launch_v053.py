@@ -24,28 +24,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sutra_v05_ssm import (SutraV05, N_STAGES, STAGE_GRAPH, top2_project,
-                            StageBank, BayesianWrite, LocalRouter, Verifier)
+                            SwitchingKernel2, StageBank, BayesianWrite,
+                            LocalRouter, Verifier)
 from scratchpad import Scratchpad
-
-
-class SwitchingKernel2(nn.Module):
-    """2-mode content-dependent transition kernel (from v0.5.2)."""
-    def __init__(self, dim, hidden=256, gate_hidden=64):
-        super().__init__()
-        self.base = nn.Sequential(nn.Linear(dim, hidden), nn.SiLU(),
-                                   nn.Linear(hidden, N_STAGES * N_STAGES))
-        self.mode_gate = nn.Sequential(nn.Linear(dim, gate_hidden), nn.SiLU(),
-                                        nn.Linear(gate_hidden, 2))
-        self.mode_bias = nn.Parameter(torch.zeros(2, N_STAGES, N_STAGES))
-
-    def forward(self, h):
-        B, N, D = h.shape
-        base = self.base(h).view(B, N, N_STAGES, N_STAGES)
-        mix = F.softmax(self.mode_gate(h.mean(dim=1)), dim=-1)
-        mode = torch.einsum('bm,mij->bij', mix, self.mode_bias).unsqueeze(1)
-        raw = base + mode
-        mask = STAGE_GRAPH.to(h.device).unsqueeze(0).unsqueeze(0)
-        return F.softmax(raw.masked_fill(mask == 0, float('-inf')), dim=-1)
 
 
 class SutraV053(nn.Module):

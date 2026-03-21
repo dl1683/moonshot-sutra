@@ -49,15 +49,9 @@ ROLLING_SAVE = 1000       # Rolling checkpoint (overwritten each time, crash rec
 LOG_EVERY = 100
 VOCAB_SIZE = 50257
 
-# Grokfast DISABLED at dim=768 (diverges at all lambdas 0.05-2.0)
-# Chrome dim=128 result was false positive for production scale.
-# Save for scratch training at dim=1024.
-USE_GROKFAST = False
-
 import sys
 sys.path.insert(0, str(REPO / "code"))
 from launch_v054 import create_v054 as _create_model, warmstart_v054
-from grokfast import GrokfastFilter
 
 
 def load_tokens():
@@ -198,10 +192,6 @@ def main():
     if latest_054 and "optimizer" in ckpt:
         opt.load_state_dict(ckpt["optimizer"])
 
-    # v0.5.4: Grokfast filter (only on matrix params per Codex design)
-    # Grokfast disabled at dim=768 (diverges at all lambdas)
-    gf = None
-
     # Training
     model.train()
     step = start_step
@@ -245,8 +235,6 @@ def main():
                 running_loss = 0
                 continue
 
-            # Grokfast disabled at dim=768
-
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             opt.zero_grad()
@@ -257,10 +245,9 @@ def main():
                 elapsed = time.time() - start
                 tps = step * BATCH_SIZE * GRAD_ACCUM * SEQ_LEN / max(elapsed, 1)
                 mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
-                gf_status = "OFF"
                 msg = (f"Step {step:>6d}/{MAX_STEPS}: loss={avg:.4f} "
                        f"lr={lr:.2e} {tps:.0f}tok/s {mem:.1f}GB "
-                       f"avg_steps={aux['avg_steps']} gf={gf_status}")
+                       f"avg_steps={aux['avg_steps']}")
                 print(msg, flush=True)
                 with open(log_file, "a") as f:
                     f.write(msg + "\n")
@@ -288,7 +275,6 @@ def main():
                         "step": step, "test_bpt": round(bpt, 4),
                         "best_bpt": round(best_bpt, 4), "is_best": is_best,
                         "lr": lr, "avg_steps": aux["avg_steps"],
-                        "grokfast": False,
                         "generation": gen,
                         "timestamp": datetime.now().isoformat(),
                     }
