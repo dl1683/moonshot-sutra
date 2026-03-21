@@ -250,9 +250,14 @@ class SutraV060a(nn.Module):
         self.frozen_cache = FrozenPrefixCache(dim)
 
     def forward(self, x, y=None, force_freeze_after_pass=None,
-                force_freeze_mask=None, use_frozen_cache=False):
+                force_freeze_mask=None, use_frozen_cache=False,
+                collect_history=None):
         B, T = x.shape
         device = x.device
+
+        # Auto-detect: collect history only when training with targets
+        if collect_history is None:
+            collect_history = y is not None and self.training
 
         # Init (same as v0.5.4)
         h = self.emb(x) + self.pos_emb(torch.arange(T, device=device))
@@ -262,11 +267,15 @@ class SutraV060a(nn.Module):
         pi[:, :, 2] = 1.0
         mem = self.scratchpad.init_memory(B, device)
         pheromone = torch.zeros(B, T, device=device, dtype=h.dtype)
-        mu_prev = mu.detach().clone()
+        mu_prev = mu.detach()
 
-        # History collection
-        mu_hist = torch.zeros(B, T, self.max_steps, self.dim, device=device, dtype=h.dtype)
-        pi_hist = torch.zeros(B, T, self.max_steps, N_STAGES, device=device, dtype=h.dtype)
+        # History collection (skip during eval to save ~36MB)
+        if collect_history:
+            mu_hist = torch.zeros(B, T, self.max_steps, self.dim, device=device, dtype=h.dtype)
+            pi_hist = torch.zeros(B, T, self.max_steps, N_STAGES, device=device, dtype=h.dtype)
+        else:
+            mu_hist = None
+            pi_hist = None
 
         # Frozen state (for ablations only)
         frozen = torch.zeros(B, T, dtype=torch.bool, device=device)
@@ -338,11 +347,12 @@ class SutraV060a(nn.Module):
                 delta_mag = (mu - mu_prev).pow(2).mean(dim=-1).sqrt()
                 deposit = pi[:, :, 4].detach() * torch.tanh(delta_mag)
                 pheromone = self.pheromone_rho * pheromone + late_gate * deposit
-            mu_prev = mu.detach().clone()
+            mu_prev = mu.detach()
 
-            # Collect history
-            mu_hist[:, :, p, :] = mu.detach()
-            pi_hist[:, :, p, :] = pi.detach()
+            # Collect history (skip during eval)
+            if collect_history:
+                mu_hist[:, :, p, :] = mu.detach()
+                pi_hist[:, :, p, :] = pi.detach()
 
         # Final output (full logits once)
         final = self.ln(mu)
@@ -356,7 +366,7 @@ class SutraV060a(nn.Module):
             "avg_steps": self.max_steps,
         }
 
-        if y is not None:
+        if y is not None and collect_history:
             candidates = build_negative_set(logits.detach(), y)
             s_ce, s_margin = sampled_pass_ce(mu_hist, self.ln, self.emb.weight, self.dim, candidates)
             aux["sampled_ce_hist"] = s_ce

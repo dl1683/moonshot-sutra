@@ -119,7 +119,7 @@ class SutraV054(nn.Module):
 
         # v0.5.4: Pheromone trace (per-position scalar)
         pheromone = torch.zeros(B, T, device=device, dtype=h.dtype)
-        mu_prev = mu.detach().clone()
+        mu_prev = mu.detach()
 
         for t in range(self.max_steps):
             # Delayed start: novel mechanisms only active after step 2
@@ -172,7 +172,7 @@ class SutraV054(nn.Module):
                 delta_mag = (mu - mu_prev).pow(2).mean(dim=-1).sqrt()
                 deposit = pi[:, :, 4].detach() * torch.tanh(delta_mag)
                 pheromone = self.pheromone_rho * pheromone + late_gate * deposit
-            mu_prev = mu.detach().clone()
+            mu_prev = mu.detach()
 
         # Final output
         final = self.ln(mu)
