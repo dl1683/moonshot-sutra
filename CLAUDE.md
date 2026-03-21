@@ -93,6 +93,26 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 **Run at architecture changes:** 6, 7
 **Run at major milestones:** ALL 8
 
+#### Priority Tiers
+
+**TIER 1 — LOOP UNTIL CLEAN (every code change, every commit):**
+- **1. Correctness Engineer** — Run after every code change. Loop: fix → re-review → fix until clean.
+- **2. Performance Engineer** — Run after every code change. Loop: profile → fix → re-profile until clean. Non-negotiable after OOM disasters.
+
+**TIER 2 — EVERY CHECKPOINT (5K training steps):**
+- **3. Scaling Skeptic** — At every eval, check if results transfer across scales.
+- **8. Competitive Analyst** — At every eval, update positioning vs baselines.
+
+**TIER 3 — BEFORE PUBLIC CLAIMS (README, paper, benchmark):**
+- **4. Research Integrity Auditor** — Before any public number. Non-negotiable.
+- **5. Novelty Challenger** — Before any novelty claim.
+
+**TIER 4 — AT DESIGN GATES ONLY:**
+- **6. Architecture Theorist** — At Chrome round design decisions.
+- **7. Edge Deployment Engineer** — At major milestones, before deployment claims.
+
+**THE LOOP RULE:** Tier 1 reviewers (Correctness + Performance) run in a loop. If they find issues, fix them, then re-run the SAME reviewer. Repeat until the reviewer returns CLEAN. Do not assume one pass catches everything — fixing one issue often introduces another.
+
 #### The 8 Reviewer Personas
 
 1. **Correctness Engineer** — Bugs, edge cases, pipeline integrity, data leakage, off-by-one errors. "Does the code do what you think it does?" Reviews: training loop, eval pipeline, data loading, checkpoint save/load.

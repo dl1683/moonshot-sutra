@@ -30,8 +30,8 @@
     "total": 10042
   },
   "lambada": {
-    "accuracy": 0.0078,
-    "correct": 40,
+    "accuracy": 0.0076,
+    "correct": 39,
     "total": 5153
   }
 }
