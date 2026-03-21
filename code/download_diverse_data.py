@@ -87,12 +87,13 @@ def download_stackexchange(max_tokens=2_000_000_000):
     """StackExchange — Q&A across ALL domains."""
     print("\n=== STACKEXCHANGE ===")
     from datasets import load_dataset
-    ds = load_dataset("HuggingFaceTB/stack-exchange-preferences", split="train", streaming=True)
+    ds = load_dataset("flax-sentence-embeddings/stackexchange_math_jsonl", split="train", streaming=True)
     def format_qa(item):
-        q = item.get("question", "")
+        title = item.get("title", "")
+        body = item.get("body", "")
         answers = item.get("answers", [])
-        best = answers[0]["text"] if answers else ""
-        return f"Question: {q}\nAnswer: {best}"
+        best = answers[0] if isinstance(answers, list) and answers else str(answers)
+        return f"Question: {title}\n{body}\nAnswer: {best}"
     texts = (format_qa(item) for item in ds)
     return tokenize_and_save(texts, "stackexchange", max_tokens=max_tokens)
 

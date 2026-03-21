@@ -55,15 +55,52 @@ from launch_v054 import create_v054 as _create_model, warmstart_v054
 
 
 def load_tokens():
-    """Load tokenized MiniPile."""
+    """Load MiniPile + all available diverse shards.
+
+    Automatically picks up any shards in data/diverse_shards/*/ and
+    data/fineweb_shards/. New data sources are added to training
+    simply by dropping shard files — no code changes needed.
+    """
+    sources = {}
+
+    # MiniPile (always present)
     full_path = REPO / "data" / "minipile_full_tokens.pt"
     subset_path = REPO / "data" / "minipile_tokens.pt"
     path = full_path if full_path.exists() else subset_path
-    print(f"Loading tokens from {path.name}...")
-    tokens = torch.load(path, weights_only=True)
-    print(f"  {len(tokens):,} tokens ({len(tokens)/1e9:.3f}B)")
-    n_test = max(1000, int(len(tokens) * 0.005))
-    return tokens[:-n_test], tokens[-n_test:]
+    sources["minipile"] = torch.load(path, weights_only=True)
+
+    # Diverse shards (auto-discovered)
+    diverse_dir = REPO / "data" / "diverse_shards"
+    if diverse_dir.exists():
+        for source_dir in sorted(diverse_dir.iterdir()):
+            if not source_dir.is_dir():
+                continue
+            shards = sorted(source_dir.glob("shard_*.pt"))
+            if shards:
+                parts = [torch.load(s, weights_only=True) for s in shards]
+                sources[source_dir.name] = torch.cat(parts)
+
+    # FineWeb shards (auto-discovered)
+    fineweb_dir = REPO / "data" / "fineweb_shards"
+    if fineweb_dir.exists():
+        shards = sorted(fineweb_dir.glob("shard_*.pt"))
+        if shards:
+            parts = [torch.load(s, weights_only=True) for s in shards]
+            sources["fineweb"] = torch.cat(parts)
+
+    # Print summary and concatenate
+    total = 0
+    for name, toks in sources.items():
+        print(f"  {name}: {len(toks):,} tokens ({len(toks)/1e9:.2f}B)")
+        total += len(toks)
+
+    all_tokens = torch.cat(list(sources.values()))
+    # Shuffle at shard boundaries to mix sources
+    # (tokens within each source are sequential, but sources are interleaved)
+    print(f"  TOTAL: {total:,} tokens ({total/1e9:.2f}B) from {len(sources)} sources")
+
+    n_test = max(1000, int(len(all_tokens) * 0.005))
+    return all_tokens[:-n_test], all_tokens[-n_test:]
 
 
 def sample_batch(tokens, batch_size, seq_len):
