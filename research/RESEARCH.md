@@ -5915,6 +5915,65 @@ v0.6.1: acting controller + frozen cache → 1024-dim from scratch on 20B+ diver
 
 **Conclusion:** Attached history creates 29% MORE separation than final-only. Hard tokens benefit more from late passes when inter-step loss is active. This is a positive signal for the v0.6.0a elastic compute thesis at small scale.
 
+---
+
+## Design Proposal: Multi-Model Representation Learning (2026-03-21)
+
+### Core Decision
+Do NOT treat external pretrained models as whole-model teachers. Treat them as stage-specific measuring instruments.
+
+Round-1 mapping:
+
+- `Mamba`-family teachers -> Stage 3 local construction / recurrent-state structure
+- embedding teachers (`EmbeddingGemma`, `BGE`, `Qwen3-Embedding`) -> Stage 4/5 routing + memory geometry
+- autoregressive teachers (`Pythia`, `Qwen`) -> Stage 7 readout / verify targets
+
+### Mechanism
+Use offline layer-to-stage alignment first:
+
+- primary selector: `CKA`
+- secondary check: `SVCCA`
+- MI/InfoNCE only as a diagnostic, not the primary mapping method
+
+Distill stage contracts, not raw hidden states:
+
+- Stage 3: whitened feature loss on early passes
+- Stage 4: causal relation / Gram loss over anchor tokens
+- Stage 5: causal chunk-summary contrastive loss
+- Stage 7: KL or top-K two-term logit transfer on hard tokens
+
+Teacher use must be:
+
+- sparse
+- stage-gated by `pi`
+- hard-token-gated by residual gain
+- delayed-start by recurrent pass
+- followed by teacher-free consolidation
+
+### Why this fits current Sutra theory
+This is the practical version of the current unification thread in `RESEARCH.md`:
+
+- rate-distortion control law chooses when teacher supervision is worth its cost
+- free-energy / predictive-coding framing says teacher losses should land as structured residuals in the stage that can actually reduce them
+- LDPC / belief-propagation framing says Stage 4/5/7 should absorb better message geometry and consistency checks, not whole-model imitation
+
+### Critical warning
+The dim=128 naive dual-teacher result was negative. That does NOT kill this direction. It kills dense, global, unaligned teacher mixing.
+
+### Experiment order
+1. `dim=128` CPU: alignment scan
+2. `dim=128` CPU: Stage-7-only probe
+3. `dim=128` CPU: Stage-4/5 geometry probe
+4. `dim=128` CPU: stage-mapped multi-teacher vs naive multi-teacher
+5. `dim=768` GPU: warm-started Stage-7 + Stage-4/5
+6. `dim=768` GPU: full stage-mapped multi-teacher
+7. `dim=1024` production only if consolidation retains most of the gain
+
+### Canonical detailed doc
+Full design, exact losses, schedules, code integration plan, risks, and prior art:
+
+- `research/multi_model_learning/design_round1.md`
+
 **Caveat:** dim=128 Chrome is triage only (per CLAUDE.md). Production validation at dim=768 needed. But the direction is right.
 
 ---
@@ -5955,3 +6014,22 @@ may partially transfer — the 50-step dim=768 probe shows direction is correct.
 **Key learning:** dim=128 Chrome was NOT a false positive for Grokfast — the production
 failure was caused by LR instability, not Grokfast itself. The Scaling Expert rule applies:
 always retest killed mechanisms when hyperparameters change.
+
+---
+
+## Chrome: NCA Pre-Pre-Training Probe (2026-03-21)
+
+**STRONG POSITIVE: -13.5% test BPT from NCA initialization.**
+
+| Arm | Final Loss | Test BPT | vs Baseline |
+|-----|-----------|---------|------------|
+| Random init | 12.623 | 9.232 | — |
+| **NCA pre-pretrained** | **12.078** | **7.985** | **-13.5%** |
+
+**Method:** 200 steps of masked token reconstruction (30% mask rate) before LM training. Forces the model to learn useful local representations from the structure of text before seeing the full next-token prediction objective.
+
+**Why it works:** NCA-style pre-training teaches the recurrent stages how to reconstruct from local context — exactly the kind of representation Stage 3 (local construction) needs. Random init starts from scratch; NCA init starts with local structure already in place.
+
+**Implication:** This should be tested at dim=768 on GPU. If the 13.5% advantage holds at production scale, NCA pre-pre-training becomes mandatory for all future from-scratch training runs. It costs only 200 extra steps (trivial compute) for a massive quality boost.
+
+**Connection to research:** Validates the NCA finding from the 15-domain sweep: "164M NCA tokens give 6% LM improvement, beats 1.6B tokens of CommonCrawl." Our probe shows the same effect with just 200 steps at dim=128.
