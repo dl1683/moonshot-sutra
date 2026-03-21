@@ -1,0 +1,7 @@
+CLEAN.
+
+Round-4 issue 1 is fixed: the canary now uses separate cached train and held-out eval batches, fits on train only, and scores on eval only in [RESEARCH.md:6070](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6070), [RESEARCH.md:6250](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6250), and [RESEARCH.md:6341](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6341).
+
+Round-4 issue 2 is fixed: `hard late` is now defined by a single threshold computed over the full cached eval set and frozen, and the shuffled-target control now uses one precomputed permutation per cached train batch in [RESEARCH.md:6114](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6114), [RESEARCH.md:6213](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6213), [RESEARCH.md:6272](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6272), and [RESEARCH.md:6320](/C:/Users/devan/OneDrive/Desktop/Projects/AI%20Moonshots/moonshot-sutra/research/RESEARCH.md#L6320).
+
+No new methodology issues found in this section. This was a documentation/pseudocode review only; no runtime test was run.
