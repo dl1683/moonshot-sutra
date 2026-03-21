@@ -158,7 +158,7 @@ Exact rule:
 Return:
 
 - `sampled_ce_hist` with shape `(B, T, 12)`
-- `sampled_sampled_margin_hist` with shape `(B, T, 12)`
+- `sampled_margin_hist` with shape `(B, T, 12)`
 
 #### `class SutraV060a(nn.Module)`
 
@@ -191,7 +191,7 @@ Forward return:
   - `mu_hist`
   - `pi_hist`
   - `sampled_ce_hist`
-  - `sampled_sampled_margin_hist`
+  - `sampled_margin_hist`
   - `probe_pred`
   - `compute_cost`
   - `avg_steps`
