@@ -5870,3 +5870,31 @@ Warmup change **alone** is not enough. Checkpoint frequency **alone** is not eno
   - delete the failed giant duplicate outputs
   - remove the `>4GB` skip from the loader
   - train only against the indexed shard set
+
+---
+
+## Codex Architecture Theorist + Scaling Expert: Post-v0.6.0a Directions (2026-03-21)
+
+### Top 3 Asymmetric Directions (more capacity, no more params)
+1. **Residual-gain elastic compute** — controller that freezes easy tokens, reallocates budget to hard ones. Target: 25-35% pass reduction with matched quality.
+2. **Continuous-spectrum stigmergic memory** — scratchpad++ with delayed trace writing. Hard tokens pay for exact recall, easy tokens stay at gist.
+3. **LDPC error-correcting routing** — content patches as variable nodes, check patches as syndrome nodes, iterative residual messages. Stage 7 verification feeds Stage 4/5.
+
+### Retest at dim=1024
+- Grokfast: YES (weaker lambda, late start)
+- Pheromone: YES (2.6x late-step gain, delayed start)
+- Error Scratchpad: YES (as residual memory, not raw delta)
+- Surprise Bank: NO (hurts every arm)
+
+### Biggest Bottleneck
+Paying for dynamic recurrence without selective compute benefit. The model is a dense fixed-pass updater pretending to be a state machine. Until recurrence is gain-gated, it's worse than a plain transformer at equal compute.
+
+### Fastest Benchmark Path
+v0.6.1: acting controller + frozen cache → 1024-dim from scratch on 20B+ diverse → retest Grokfast/Pheromone/Error traces → teacher absorption on hard-token slices only.
+
+### Unexplored Transformative Ideas
+- LDPC syndrome-space verification (near-Shannon sparse iterative computation)
+- Cross-scale predictive coding (coarse predicts fine, only residuals propagate)
+- NCA pre-pre-training (biggest cold-start accelerator)
+- Criticality + stochastic resonance (stabilize deep recurrence)
+- Reversible message passing (Landauer: deeper recurrence without overwrite)
