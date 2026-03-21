@@ -17,6 +17,7 @@ Usage:
 """
 
 import json, math, os, random, time
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -65,13 +66,37 @@ def create_dataset():
     return ShardedDataset()
 
 
+def autocast_ctx():
+    if DEVICE.type == "cuda":
+        return torch.amp.autocast("cuda", dtype=torch.bfloat16)
+    return nullcontext()
+
+
+def _load_checkpoint(path):
+    try:
+        return torch.load(path, weights_only=False, map_location=DEVICE)
+    except Exception as e:
+        print(f"WARNING: Failed to load checkpoint {path.name}: {e}")
+        return None
+
+
+def atomic_torch_save(obj, path):
+    path = Path(path)
+    tmp_path = path.with_name(f"{path.stem}.tmp")
+    with open(tmp_path, "wb") as f:
+        torch.save(obj, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
+
+
 def evaluate(model, dataset, n_batches=20):
     model.eval()
     total_loss = 0
     with torch.no_grad():
         for _ in range(n_batches):
-            x, y = dataset.sample_batch(min(BATCH_SIZE, 8), SEQ_LEN, device=DEVICE)
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            x, y = dataset.sample_batch(min(BATCH_SIZE, 8), SEQ_LEN, device=DEVICE, split="test")
+            with autocast_ctx():
                 logits, aux = model(x)
                 Tc = min(logits.size(1), y.size(1))
                 loss = F.cross_entropy(
@@ -92,7 +117,7 @@ def generate_sample(model, dataset, tokenizer, max_new=100):
     with torch.no_grad():
         for _ in range(max_new):
             ctx = tokens[:, -SEQ_LEN:] if tokens.size(1) > SEQ_LEN else tokens
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            with autocast_ctx():
                 logits, _ = model(ctx)
             next_logits = logits[:, -1, :].float() / 0.9
             topk_vals, topk_idx = next_logits.topk(40)

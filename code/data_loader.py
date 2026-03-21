@@ -9,7 +9,7 @@ Any .pt file = a source. Naming: {source}_{shard_number}.pt or {source}.pt
 Usage:
     from data_loader import ShardedDataset
     dataset = ShardedDataset()  # auto-discovers shards
-    x, y = dataset.sample_batch(batch_size=8, seq_len=512, device='cuda')
+    x, y = dataset.sample_batch(batch_size=8, seq_len=512, device='cuda', split='train')
 """
 
 import os
@@ -28,13 +28,13 @@ class ShardedDataset:
     On sample: picks a random shard, loads it, samples a batch, discards it.
     Keeps one "hot" shard cached for consecutive samples.
 
-    Peak RAM: ~400MB (one shard of 50M tokens * 8 bytes).
+    Peak RAM: one hot shard at a time.
     """
 
-    def __init__(self, shard_dir=None, test_fraction=0.005):
+    def __init__(self, shard_dir=None, test_tokens=50000):
         self.shard_dir = Path(shard_dir) if shard_dir else SHARD_DIR
-        self.test_fraction = test_fraction
-        self.index = []  # list of (path, n_tokens)
+        self.test_tokens = test_tokens
+        self.index = []  # list of shard metadata dicts
         self.sources = {}  # source_name -> total tokens
         self._hot_shard = None  # cached shard tensor
         self._hot_path = None   # path of cached shard
@@ -68,12 +68,16 @@ class ShardedDataset:
 
         total = 0
         for f in shard_files:
-            # Estimate token count from file size (int64 = 8 bytes per token)
-            # torch .pt files have overhead, but this is close enough for sampling weights
-            size = os.path.getsize(f) // 8
-            if size < 100:
-                continue  # skip tiny/corrupt files
-            self.index.append((f, size))
+            tokens = self._load_shard(f)
+            if tokens is None:
+                continue
+
+            size = int(tokens.numel())
+            if size < 2:
+                continue
+
+            meta = {"path": f, "n_tokens": size}
+            self.index.append(meta)
             total += size
 
             # Track source
@@ -82,14 +86,25 @@ class ShardedDataset:
             source = parts[0] if len(parts) == 2 and parts[1].isdigit() else name
             self.sources[source] = self.sources.get(source, 0) + size
 
+        self._hot_shard = None
+        self._hot_path = None
+
+        if not self.index:
+            raise FileNotFoundError(f"No valid token shards found in {self.shard_dir}")
+
+        last_meta = self.index[-1]
+        held_out = min(self.test_tokens, last_meta["n_tokens"] - 1)
+        if held_out <= 0:
+            raise ValueError(f"Last shard {last_meta['path'].name} is too small for held-out eval")
+        last_meta["held_out_tokens"] = held_out
+        for meta in self.index[:-1]:
+            meta["held_out_tokens"] = 0
+
         # Print summary
         for source in sorted(self.sources.keys()):
             t = self.sources[source]
             print(f"  {source}: ~{t/1e9:.2f}B tokens")
         print(f"  TOTAL: ~{total/1e9:.2f}B tokens from {len(self.sources)} sources, {len(self.index)} shards")
-
-        # Sampling weights proportional to shard size
-        self._weights = [s for _, s in self.index]
         self._total = total
 
     def _load_shard(self, path):
@@ -97,42 +112,87 @@ class ShardedDataset:
         if self._hot_path == path:
             return self._hot_shard
         try:
-            self._hot_shard = torch.load(path, weights_only=True)
+            shard = torch.load(path, weights_only=True)
+            if not isinstance(shard, torch.Tensor):
+                raise TypeError(f"expected Tensor, got {type(shard).__name__}")
+            if shard.ndim != 1:
+                raise ValueError(f"expected 1D tensor, got shape {tuple(shard.shape)}")
+            if shard.dtype not in (torch.int64, torch.int32):
+                raise ValueError(f"expected int64/int32 tokens, got {shard.dtype}")
+            self._hot_shard = shard.to(dtype=torch.int64)
             self._hot_path = path
             return self._hot_shard
         except Exception as e:
             print(f"  WARNING: Failed to load {path}: {e}")
+            self._hot_shard = None
+            self._hot_path = None
             return None
 
-    def sample_batch(self, batch_size, seq_len, device='cpu'):
-        """Sample a random batch from a random shard.
+    def _split_span(self, meta, split):
+        n_tokens = meta["n_tokens"]
+        held_out = meta.get("held_out_tokens", 0)
+
+        if split == "train":
+            return 0, n_tokens - held_out
+        if split == "test":
+            if held_out <= 0:
+                return None
+            return n_tokens - held_out, n_tokens
+        raise ValueError(f"Unknown split: {split}")
+
+    def _split_candidates(self, seq_len, split):
+        candidates = []
+        weights = []
+        for meta in self.index:
+            span = self._split_span(meta, split)
+            if span is None:
+                continue
+            start, end = span
+            n_windows = end - start - seq_len
+            if n_windows < 0:
+                continue
+            candidates.append((meta, start, end))
+            weights.append(n_windows + 1)
+        if not candidates:
+            raise RuntimeError(f"No valid {split} shards available for seq_len={seq_len}")
+        return candidates, weights
+
+    def sample_batch(self, batch_size, seq_len, device='cpu', split='train'):
+        """Sample a random batch from the requested split.
 
         Picks shard weighted by size, loads it (cached), samples random positions.
         """
-        # Pick a random shard (weighted by token count)
-        path, _ = random.choices(self.index, weights=self._weights, k=1)[0]
-        tokens = self._load_shard(path)
-        if tokens is None or len(tokens) < seq_len + 1:
-            # Retry with different shard
-            path, _ = random.choice(self.index)
-            tokens = self._load_shard(path)
-            if tokens is None or len(tokens) < seq_len + 1:
-                raise RuntimeError("No valid shard available")
+        candidates, weights = self._split_candidates(seq_len, split)
+        meta, span_start, span_end = random.choices(candidates, weights=weights, k=1)[0]
+        tokens = self._load_shard(meta["path"])
+        if tokens is None:
+            raise RuntimeError(f"Failed to load shard {meta['path']}")
 
-        max_start = len(tokens) - seq_len - 1
-        idx = torch.randint(0, max_start, (batch_size,))
+        max_start = span_end - seq_len - 1
+        idx = torch.randint(span_start, max_start + 1, (batch_size,))
         x = torch.stack([tokens[i:i + seq_len] for i in idx])
         y = torch.stack([tokens[i + 1:i + seq_len + 1] for i in idx])
         return x.to(device), y.to(device)
 
-    def get_test_tokens(self, n_tokens=50000):
-        """Get a fixed test set (from last shard, deterministic)."""
+    def get_test_tokens(self, n_tokens=None):
+        """Get the fixed held-out tail from the last shard."""
         if self._test_tokens is not None:
-            return self._test_tokens
-        # Use last shard as test source
-        path = self.index[-1][0]
-        tokens = torch.load(path, weights_only=True)
-        self._test_tokens = tokens[-n_tokens:]
+            if n_tokens is None or self._test_tokens.numel() <= n_tokens:
+                return self._test_tokens
+            return self._test_tokens[-n_tokens:]
+
+        meta = self.index[-1]
+        held_out = meta.get("held_out_tokens", 0)
+        if held_out <= 0:
+            raise RuntimeError("No held-out test tokens configured")
+
+        tokens = self._load_shard(meta["path"])
+        if tokens is None:
+            raise RuntimeError(f"Failed to load held-out shard {meta['path']}")
+
+        self._test_tokens = tokens[-held_out:].clone()
+        if n_tokens is not None and self._test_tokens.numel() > n_tokens:
+            return self._test_tokens[-n_tokens:]
         return self._test_tokens
 
     @property
@@ -197,6 +257,8 @@ if __name__ == "__main__":
     else:
         print("=== TESTING STREAMING LOADER ===")
         ds = ShardedDataset()
-        x, y = ds.sample_batch(batch_size=4, seq_len=64)
-        print(f"\n  Batch: x={x.shape}, y={y.shape}")
-        print(f"  Peak RAM: ~{ds._weights[0]*8/1e6:.0f}MB per shard (not {ds._total*8/1e9:.1f}GB)")
+        x, y = ds.sample_batch(batch_size=4, seq_len=64, split="train")
+        xt, yt = ds.sample_batch(batch_size=4, seq_len=64, split="test")
+        print(f"\n  Train batch: x={x.shape}, y={y.shape}")
+        print(f"  Test batch: x={xt.shape}, y={yt.shape}")
+        print(f"  Held-out tokens: {ds.get_test_tokens().numel():,}")
