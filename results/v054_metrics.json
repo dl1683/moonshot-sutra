@@ -1,0 +1,44 @@
+[
+  {
+    "step": 1000,
+    "test_bpt": 6.0749,
+    "best_bpt": 6.0749,
+    "is_best": true,
+    "lr": 0.0007999503549803378,
+    "avg_steps": 8,
+    "grokfast": false,
+    "generation": {
+      "prompt": " who have a low worm burden. However, whether our antigen detection assays can demonstrate a single worm infection, as reported in schistosomiasis \\[[",
+      "output": "@CR54]\\]. Interestingly, this approach and the role in the immune responses ([@CR54]; [@CR31]). However, this observation revealed that the most of our group in cancer cell cycle. We report that many other cases where we identified as a cell death and expression of *H. musculopathy; these groups have been implicated in a combination of the patients could be treated plants in two-glycosylates from "
+    },
+    "timestamp": "2026-03-20T19:57:17.950304"
+  },
+  {
+    "step": 2000,
+    "test_bpt": 6.3902,
+    "best_bpt": 6.0749,
+    "is_best": false,
+    "lr": 0.0007995520745137738,
+    "avg_steps": 8,
+    "grokfast": false,
+    "generation": {
+      "prompt": " who have a low worm burden. However, whether our antigen detection assays can demonstrate a single worm infection, as reported in schistosomiasis \\[[",
+      "output": "@CR2], [@CR8]). Most of the primary enzyme from the non-neurotum, were also investigated. Although these data are available in the study provides a new methods for the research studies, however, may be necessary to investigate the role in the regulation of transcription and transcription factor binding of the transcriptional regulator of the expression, is not due to an alternative hypothesis that"
+    },
+    "timestamp": "2026-03-20T20:20:46.781372"
+  },
+  {
+    "step": 3000,
+    "test_bpt": 6.3358,
+    "best_bpt": 6.0749,
+    "is_best": false,
+    "lr": 0.0007987555118500148,
+    "avg_steps": 8,
+    "grokfast": false,
+    "generation": {
+      "prompt": " who have a low worm burden. However, whether our antigen detection assays can demonstrate a single worm infection, as reported in schistosomiasis \\[[",
+      "output": "@CR4]\\].\n\nThe present study, although the effects of the regulation of a single-dependent manner (i.e., *Chiral RNA-1, this would be an important role in the T cell membrane potential role of the production of HbS1 was in our DNA, while the transcription, is the expression in the case for Td~0~ (Fig.?[3d; *d*d*~*~ (i~?="
+    },
+    "timestamp": "2026-03-20T20:44:44.707421"
+  }
+]
