@@ -158,7 +158,7 @@ Exact rule:
 Return:
 
 - `sampled_ce_hist` with shape `(B, T, 12)`
-- `sampled_margin_hist` with shape `(B, T, 12)`
+- `sampled_sampled_margin_hist` with shape `(B, T, 12)`
 
 #### `class SutraV060a(nn.Module)`
 
@@ -173,7 +173,7 @@ Exact changes:
 - keep pheromone logic identical except generalized to 12 passes by using pass index directly
 - collect `mu` after every pass into `mu_hist`
 - collect `pi` after every pass into `pi_hist`
-- collect sampled margins into `margin_hist`
+- collect sampled margins into `sampled_margin_hist`
 - compute final full logits only once, after pass `12`
 - build sampled candidate set from final logits
 - compute probe predictions for all passes
@@ -191,7 +191,7 @@ Forward return:
   - `mu_hist`
   - `pi_hist`
   - `sampled_ce_hist`
-  - `sampled_margin_hist`
+  - `sampled_sampled_margin_hist`
   - `probe_pred`
   - `compute_cost`
   - `avg_steps`
@@ -285,7 +285,7 @@ Return:
 
 Same role as `v0.5.4`: final-pass validation BPT.
 
-#### `def evaluate_pass_curve(model, dataset, n_tokens=100000)`
+#### `def evaluate_pass_curve(model, dataset, n_tokens=50000)`
 
 Purpose: measure real dense-12 behavior using **full-vocab** CE at every pass on a fixed validation slice.
 
@@ -301,7 +301,7 @@ Bucket definition:
 - easy = bottom 30% tokens by pass-1 full CE
 - hard = top 30% tokens by pass-1 full CE
 
-#### `def evaluate_probe_calibration(model, dataset, n_tokens=100000)`
+#### `def evaluate_probe_calibration(model, dataset, n_tokens=50000)`
 
 Compare `probe_pred` to full-CE residual target:
 
@@ -317,7 +317,7 @@ Baseline:
 
 Proceed requires the probe to beat this baseline materially.
 
-#### `def evaluate_sampled_fidelity(model, dataset, n_tokens=100000)`
+#### `def evaluate_sampled_fidelity(model, dataset, n_tokens=50000)`
 
 Purpose: validate that sampled supervision tracks real CE well enough.
 
@@ -326,7 +326,7 @@ Metrics:
 - Spearman correlation between sampled residual gain and full residual gain
 - top-decile recall of sampled ranking against full residual-gain ranking
 
-#### `def evaluate_forced_freeze_ablation(model, dataset, n_tokens=100000)`
+#### `def evaluate_forced_freeze_ablation(model, dataset, n_tokens=50000)`
 
 Purpose: test frozen-context viability before any controller exists.
 
@@ -345,7 +345,7 @@ Metrics:
 - final BPT delta vs baseline
 - later-token BPT delta on tokens after frozen positions
 
-#### `def evaluate_negative_drift(model, dataset, n_tokens=100000)`
+#### `def evaluate_negative_drift(model, dataset, n_tokens=50000)`
 
 Purpose: check whether final-pass negatives are stable enough for sampled training.
 
