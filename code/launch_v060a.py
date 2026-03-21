@@ -123,7 +123,8 @@ def build_negative_set(final_logits, targets, k=32):
     device = final_logits.device
 
     # Top-(k+8) from final logits (extra buffer to filter targets)
-    top_ids = final_logits.topk(k + 8, dim=-1).indices  # (B, T, k+8)
+    topk_n = min(k + 8, V)  # Guard against small vocab
+    top_ids = final_logits.topk(topk_n, dim=-1).indices  # (B, T, topk_n)
 
     # Mask out the target from top_ids
     target_expanded = targets.unsqueeze(-1)  # (B, T, 1)

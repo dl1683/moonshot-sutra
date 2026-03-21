@@ -106,17 +106,19 @@ def compute_v060a_losses(logits, aux, y):
 def evaluate(model, dataset, n_batches=20):
     model.eval()
     total_loss = 0
-    with torch.no_grad():
-        for _ in range(n_batches):
-            x, y = dataset.sample_batch(min(BATCH_SIZE, 4), SEQ_LEN, device=DEVICE, split="test")
-            with autocast_ctx():
-                logits, _ = model(x)
-                Tc = min(logits.size(1), y.size(1))
-                loss = F.cross_entropy(logits[:, :Tc].reshape(-1, VOCAB_SIZE), y[:, :Tc].reshape(-1))
-            total_loss += loss.item()
-    model.train()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()  # Reclaim fragmented VRAM after eval
+    try:
+        with torch.no_grad():
+            for _ in range(n_batches):
+                x, y = dataset.sample_batch(min(BATCH_SIZE, 4), SEQ_LEN, device=DEVICE, split="test")
+                with autocast_ctx():
+                    logits, _ = model(x)
+                    Tc = min(logits.size(1), y.size(1))
+                    loss = F.cross_entropy(logits[:, :Tc].reshape(-1, VOCAB_SIZE), y[:, :Tc].reshape(-1))
+                total_loss += loss.item()
+    finally:
+        model.train()  # MUST restore train mode even on exception
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     return {"bpt": (total_loss / n_batches) / math.log(2)}
 
 
