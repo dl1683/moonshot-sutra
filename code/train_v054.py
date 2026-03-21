@@ -159,20 +159,19 @@ def main():
     latest_054 = sorted(ckpt_dir.glob("step_*.pt"), key=lambda p: int(p.stem.split("_")[1]))
 
     resume_path = None
-    if rolling_ckpt.exists():
-        # Rolling is most recent (model-only, no optimizer)
-        r = torch.load(rolling_ckpt, weights_only=False, map_location=DEVICE)
-        if latest_054:
-            p = torch.load(latest_054[-1], weights_only=False, map_location=DEVICE)
-            # Use whichever is further along
-            resume_path = rolling_ckpt if r["step"] > p["step"] else latest_054[-1]
-        else:
-            resume_path = rolling_ckpt
-    elif latest_054:
-        resume_path = latest_054[-1]
+    rolling_state = _load_checkpoint(rolling_ckpt) if rolling_ckpt.exists() else None
+    latest_path = latest_054[-1] if latest_054 else None
+    latest_state = _load_checkpoint(latest_path) if latest_path else None
+
+    if rolling_state and latest_state:
+        resume_path = rolling_ckpt if rolling_state["step"] >= latest_state["step"] else latest_path
+    elif rolling_state:
+        resume_path = rolling_ckpt
+    elif latest_state:
+        resume_path = latest_path
 
     if resume_path:
-        ckpt = torch.load(resume_path, weights_only=False, map_location=DEVICE)
+        ckpt = rolling_state if resume_path == rolling_ckpt else latest_state
         model = _create_model(dim=DIM, ff_dim=FF_DIM,
                               max_steps=MAX_STEPS_PER_POSITION,
                               window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
@@ -180,10 +179,9 @@ def main():
         start_step = ckpt["step"]
         best_bpt = ckpt.get("best_bpt", float("inf"))
         metrics_history = ckpt.get("metrics", [])
-        has_optimizer = "optimizer" in ckpt
         print(f"RESUMED v0.5.4 from step {start_step} ({resume_path.name}), best BPT={best_bpt:.4f}")
-        if not has_optimizer:
-            print(f"  (rolling checkpoint — optimizer state reset)")
+        if "optimizer" not in ckpt:
+            print("  (optimizer state unavailable in checkpoint)")
     else:
         # Warm-start from v0.5.3 checkpoint
         v053_ckpt_dir = REPO / "results" / "checkpoints_v053"
@@ -206,7 +204,7 @@ def main():
     print()
 
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01, betas=(0.9, 0.95))
-    if latest_054 and "optimizer" in ckpt:
+    if resume_path and "optimizer" in ckpt:
         opt.load_state_dict(ckpt["optimizer"])
 
     # Training
@@ -217,7 +215,7 @@ def main():
     start = time.time()
 
     while step < MAX_STEPS:
-        x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE)
+        x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE, split="train")
 
         # v0.5.4: Re-warmup schedule (500 steps from REWARMUP_LR_START to LR)
         if step < WARMUP_STEPS:
@@ -228,7 +226,7 @@ def main():
         for pg in opt.param_groups:
             pg["lr"] = lr
 
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        with autocast_ctx():
             logits, aux = model(x)
             Tc = min(logits.size(1), y.size(1))
             ce = F.cross_entropy(logits[:, :Tc].reshape(-1, VOCAB_SIZE),
@@ -310,8 +308,10 @@ def main():
             if step % ROLLING_SAVE == 0:
                 rolling = {"model": model.state_dict(),
                            "optimizer": opt.state_dict(),
-                           "step": step, "best_bpt": best_bpt}
-                torch.save(rolling, ckpt_dir / "rolling_latest.pt")
+                           "step": step,
+                           "best_bpt": best_bpt,
+                           "metrics": metrics_history}
+                atomic_torch_save(rolling, ckpt_dir / "rolling_latest.pt")
 
             # Permanent checkpoint: full state, never overwritten
             if step % SAVE_EVERY == 0:

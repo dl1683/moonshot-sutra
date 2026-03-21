@@ -24,7 +24,7 @@ SHARD_DIR = REPO / "data" / "shards"
 class ShardedDataset:
     """Streaming dataset that samples from random shards without loading all into RAM.
 
-    On init: scans shard directory, builds index of (path, length) pairs.
+    On init: scans shard directory, builds shard metadata.
     On sample: picks a random shard, loads it, samples a batch, discards it.
     Keeps one "hot" shard cached for consecutive samples.
 
@@ -50,8 +50,10 @@ class ShardedDataset:
             old = REPO / "data" / "minipile_full_tokens.pt"
             if old.exists():
                 size = os.path.getsize(old) // 8  # int64 = 8 bytes
-                self.index.append((old, size))
+                held_out = min(self.test_tokens, max(size - 1, 0))
+                self.index.append({"path": old, "n_tokens": size, "held_out_tokens": held_out})
                 self.sources["minipile_fallback"] = size
+                self._total = size
                 print(f"  No shards dir, falling back to {old.name} (~{size/1e9:.2f}B tokens)")
                 return
 
@@ -60,8 +62,10 @@ class ShardedDataset:
             old = REPO / "data" / "minipile_full_tokens.pt"
             if old.exists():
                 size = os.path.getsize(old) // 8
-                self.index.append((old, size))
+                held_out = min(self.test_tokens, max(size - 1, 0))
+                self.index.append({"path": old, "n_tokens": size, "held_out_tokens": held_out})
                 self.sources["minipile_fallback"] = size
+                self._total = size
                 print(f"  Empty shards dir, falling back to {old.name}")
                 return
             raise FileNotFoundError(f"No data in {self.shard_dir}")

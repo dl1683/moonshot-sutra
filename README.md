@@ -38,7 +38,7 @@ Sutra isn't a transformer. It's a **Stage-Superposition State Machine** — a sy
 
 ### What Makes This Different
 
-- **Per-position stage probabilities**: Each token is in a superposition of stages. Easy tokens emit early; hard tokens loop through more processing. The model allocates compute where it's needed.
+- **Per-position stage probabilities**: Each token is in a superposition of stages inside a fixed 8-step recurrent pass. The current v0.5.4 code does not implement true early-exit or verify/reroute loops yet.
 - **Content-dependent transitions**: A learned Markov kernel decides how each position moves through stages based on what it's processing. Not a fixed pipeline.
 - **Shared discourse memory (scratchpad)**: 8 shared memory slots that all positions can read/write. This gives the model a "working memory" for maintaining context across the sequence — like a human keeping track of the topic while reading.
 - **Recurrent processing**: 8 iterations of the stage graph per forward pass. Each iteration refines the representation. Late iterations are the most valuable — this is where reasoning happens.
@@ -89,7 +89,7 @@ The transition kernel keeps evolving each token's stage distribution based on wh
 "tired"   → pi = [0, 0, 0.2, 0.3, 0.4, 0, 0.1]    (writing the reason to memory)
 ```
 
-Notice: **easy tokens ("The") reach output stage fast. Hard tokens ("because", "it") spend more time routing.** The model allocates compute where it's needed — no wasted processing on words it already understands.
+Notice: **easy tokens ("The") tend to concentrate on later readout stages faster, while hard tokens ("because", "it") spend more mass on routing and memory.** In current v0.5.4 this is still expressed inside a fixed 8-step loop, not a true variable-depth controller.
 
 The scratchpad now contains a discourse summary: roughly "there's a cat, it did something, and there's a causal relationship."
 
@@ -137,10 +137,9 @@ v0.5.0 (base)                     → 67M params
   ↓ warm-start (91% transfer)
 v0.5.2 (+switching kernel)         → 67M params, +4.1%
   ↓ warm-start (91% transfer)
-v0.5.3 (+scratchpad memory)        → 69M params, +10.2%
+v0.5.3 (+scratchpad memory)        → 67.6M params, +10.2%
   ↓ warm-start (81% transfer)
-v0.5.4 (+gated norms + pheromone)  → 69M params, training now
-  ↓ Net2Net widening (65% transfer)
+v0.5.4 (+gated norms + pheromone)  → 67.6M params, training now
 v0.6.0 (dim=1024, on FineWeb)      → 105M params, planned
 ```
 
@@ -161,16 +160,9 @@ output = (1 - alpha) * x + alpha * LayerNorm(x)
 
 The gate starts nearly closed (identity function). During training, it gradually opens, allowing normalization to activate without disrupting learned representations. This means we can **add ANY new component to a running model** by gating it through a bypass.
 
-### The Scaling Vision: Net2Net Widening
+### The Scaling Vision
 
-When we scale from dim=768 to dim=1024, we don't start over. We **widen** the existing model:
-
-- Copy the `[:768, :768]` block of every weight matrix
-- The new dimensions start near-zero (inactive)
-- 65% of the larger model is already trained
-- The model keeps all its learned language understanding and just gains capacity
-
-This is the difference between evolution and creation from scratch. Evolution works.
+The next scale-up target is dim=1024 on the larger diverse corpus. Warm-starting across compatible checkpoints is already part of the codebase; widening into a larger parameterization is still a design direction, not a checked-in utility yet.
 
 ### Why This is Infrastructure, Not Just a Model
 
@@ -248,7 +240,7 @@ We're designing two connected innovations for v0.5.5:
 
 **Continuous-Spectrum Memory** — Instead of fixed "gist or exact" memory, a continuous zoom from wide-angle (discourse context) to narrow-focus (exact token recall). The model learns what resolution each position needs. Like a camera zoom, not a microscope with click-stops.
 
-**Elastic Compute Budget** — Current AI models are uniformly mediocre: every token gets the same compute. Sutra's budget system makes easy tokens cheap and hard tokens expensive. Stage 7 (Verify) checks quality and decides: good enough? → emit. Not confident? → spend more budget to zoom finer, route deeper, iterate longer. The cost is latency, not failure — hard tokens take more time, they don't produce worse output.
+**Elastic Compute Budget** — Current AI models are uniformly mediocre: every token gets the same compute. This is a design target for a future version. The current v0.5.4 code still runs a fixed 8-step recurrent loop with no live verify/reroute controller or adaptive emit path.
 
 This connects to a fundamental insight: **the reason AI models produce uniform mediocrity is that they never learn to prioritize.** A compute budget creates the incentive to be efficient on easy things and thorough on hard things — like how humans skim easy text and slow down for complex passages.
 
@@ -275,7 +267,7 @@ We believe in radical transparency about what doesn't work:
 | CfC time constants | -14% | Needs 200M+ to show benefit |
 | Surprise memory bank | -1.7% to -2.1% | Hurts every combination it touches |
 
-**Pattern discovered**: At 69M parameters, only simple shared state and coarse bias work. Complex learned control mechanisms fail — they need more model capacity to learn both the base task AND the control mechanism simultaneously. We call this the **delayed-start principle**: novel mechanisms that depend on accumulated state must activate only after the model has formed a provisional hypothesis (~recurrent step 3).
+**Pattern discovered**: At 67.6M parameters, only simple shared state and coarse bias work. Complex learned control mechanisms fail — they need more model capacity to learn both the base task AND the control mechanism simultaneously. We call this the **delayed-start principle**: novel mechanisms that depend on accumulated state must activate only after the model has formed a provisional hypothesis (~recurrent step 3).
 
 ### 15-Domain Cross-Disciplinary Research
 
@@ -318,12 +310,12 @@ Training on academic papers alone teaches the model to write like a journal, not
 
 | Phase | Params | Data | Goal |
 |-------|--------|------|------|
-| **Current** | 69M (dim=768) | 1.7B tokens (MiniPile) | Validate architecture |
+| **Current** | 67.6M (dim=768) | 1.7B tokens (MiniPile) | Validate architecture |
 | **Next** | 105M (dim=1024) | 25B tokens (diverse) | First reasoning emergence |
 | **Target** | 148M (dim=1280) | 25B+ tokens | Competitive with SmolLM2-135M |
 | **Stretch** | <4B | Full corpus | The David story |
 
-We warm-start between scales using Net2Net widening — no knowledge is thrown away.
+We warm-start between compatible checkpoints today. Larger-width migration remains planned work.
 
 ---
 

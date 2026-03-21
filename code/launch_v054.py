@@ -11,7 +11,6 @@ v0.5.4 additions (Chrome-validated):
     Fixes warm-start bug: standard LN destroys v0.5.3 activation statistics
     Chrome-validated: +5.9% BPT (from-scratch), warm-start BPT=6.08 (vs 5.96)
   - Delayed Pheromone: scalar position trace in global retrieval (best late-step 2.6x)
-  - Training: Grokfast(alpha=0.95, lambda=2.0) applied in trainer (+13.6% combined)
 
 Surprise Bank was KILLED (hurts every arm it touches in ablation).
 
@@ -71,13 +70,12 @@ class SutraV054(nn.Module):
 
     def __init__(self, vocab_size=50257, dim=768, ff_dim=1536,
                  max_steps=8, window=4, k_retrieval=8, n_scratch_slots=8,
-                 pheromone_rho=0.90, pheromone_alpha=0.25):
+                 pheromone_rho=0.90):
         super().__init__()
         self.dim = dim
         self.vocab_size = vocab_size
         self.max_steps = max_steps
         self.pheromone_rho = pheromone_rho
-        self.pheromone_alpha = pheromone_alpha
 
         # Embeddings (tied with output)
         self.emb = nn.Embedding(vocab_size, dim)
@@ -166,7 +164,7 @@ class SutraV054(nn.Module):
             # Residual from stage bank
             mu = mu + stage_out * 0.1
 
-            # Update scratchpad (from v0.5.3)
+            # Update scratchpad for the next recurrent step with prefix-causal summaries
             mem = self.scratchpad.write(mu.detach(), mem.detach(), pi[:, :, 4:5].detach())
 
             # v0.5.4: Update pheromone trace (delayed)
