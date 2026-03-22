@@ -24,6 +24,40 @@ Fresh Codex Session (Round N)
 
 When convergence is reached, Claude presents the final design to the user for approval before any implementation begins.
 
+## Anti-Overconfidence Protocol (MANDATORY)
+
+Every T+L prompt MUST include these rigor directives:
+
+1. **Evidence bar**: "Each confidence point must cite SPECIFIC empirical evidence from this project — not general plausibility, not literature references, not 'the design sounds right.' A +1 increase from a previous round requires NEW DATA that didn't exist before. Design refinement alone does NOT justify higher confidence."
+2. **Self-audit**: "Before finalizing ratings, ask yourself: am I being generous because the design sounds good, or because the DATA shows it works? If you cannot point to a specific experiment, probe, or benchmark result that justifies a score, lower it."
+3. **Downward pressure**: "If in doubt between two scores, pick the LOWER one. Overconfidence wastes GPU time on premature training. Underconfidence wastes only paper time on one more design round."
+
+## Critical Audit (Every 5 Rounds or at Conclusion)
+
+At rounds 5, 10, 15, ... AND when the loop claims convergence, Claude runs a SEPARATE Codex session as an adversarial auditor. This is NOT the T+L architect — it is a fresh, hostile reviewer.
+
+The critical auditor prompt checks:
+1. Does the T+L system follow its own stated instructions?
+2. Are confidence ratings justified by SPECIFIC evidence, not vibes?
+3. Is the design converging on something real or just polishing language?
+4. Are assumptions being genuinely challenged or rubber-stamped?
+5. Is there circular reasoning (e.g., "confidence is higher because we refined the design")?
+6. Are dead ends being respected or quietly revived?
+7. Is the system prioritizing efficiency or proposing expensive restarts?
+
+The auditor's findings are passed VERBATIM to the next T+L round with: "This is what our critical evaluator found. Address every point before proceeding."
+
+## Efficiency Priority (MANDATORY in every prompt)
+
+Every T+L prompt MUST include:
+
+"You have ONE RTX 5090 (24GB VRAM). Every training step costs real wall-clock time. Prioritize:
+- Warm-starting over from-scratch (unless mathematically proven impossible)
+- Additive mechanisms over architectural rewrites
+- Small targeted probes over long exploratory runs
+- Mechanisms that compose with existing trained weights
+Efficiency is the MISSION — Intelligence = Geometry means getting more from less. Do NOT propose designs requiring from-scratch restarts unless the mathematical argument for why warm-starting is impossible is airtight and explicit."
+
 ## Autonomy Rules
 
 **Claude does WITHOUT asking the user:**
@@ -97,6 +131,13 @@ BLUE LOCK RULES — internalize these:
 - Be extremely thorough and diligent about anticipating issues, tradeoffs,
   failure modes, and unintended consequences. Your confidence scores must
   reflect genuine conviction after deep analysis, not optimism.
+- ANTI-OVERCONFIDENCE: Each confidence score must cite SPECIFIC empirical
+  evidence from this project. A +1 increase from a previous round requires
+  NEW DATA. Design refinement alone does NOT justify higher confidence.
+  If in doubt between two scores, pick the LOWER one.
+- EFFICIENCY IS THE MISSION: You have ONE GPU. Every training step costs
+  real time. Warm-start by default. Small additive steps. Never propose
+  from-scratch unless mathematically proven impossible to warm-start.
 - Do not recommend "killing" directions or "being realistic" as strategy.
   Your job is to find the path that WORKS, not to manage expectations.
 ```
