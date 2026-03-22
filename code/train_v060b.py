@@ -222,19 +222,7 @@ def main():
     model = create_v060a(dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
                          window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
 
-    # Warm-start: load v0.6.0a best weights
-    source_ckpt = REPO / "results" / "v060a_best.pt"
-    if not source_ckpt.exists():
-        print(f"ERROR: Source checkpoint not found: {source_ckpt}")
-        print("Train v0.6.0a to at least 14K steps first.")
-        return
-
-    state_dict = torch.load(source_ckpt, weights_only=True, map_location=DEVICE)
-    model.load_state_dict(state_dict)
-    print(f"Loaded v0.6.0a weights from {source_ckpt}")
-    print(f"Params: {model.count_params():,} ({model.count_params()/1e6:.1f}M)")
-
-    # Check for resume: scan rolling + ALL permanent checkpoints (robustness)
+    # Check for v060b resume FIRST (self-contained: doesn't need v060a_best.pt)
     rolling = ckpt_dir / "rolling_latest.pt"
     permanent = sorted(ckpt_dir.glob("step_*.pt"), key=lambda p: int(p.stem.split("_")[1]))
     start_step = 0
@@ -266,7 +254,17 @@ def main():
         depth_history = resumed_ckpt.get("depth_history", [])
         print(f"RESUMED v0.6.0b from step {start_step} ({resumed_ckpt['_path']})")
     else:
-        print("Starting fresh from v0.6.0a warm-start.")
+        # No v060b checkpoint — warm-start from v0.6.0a
+        source_ckpt = REPO / "results" / "v060a_best.pt"
+        if not source_ckpt.exists():
+            print(f"ERROR: No v0.6.0b checkpoint AND source not found: {source_ckpt}")
+            print("Train v0.6.0a to at least 14K steps first.")
+            return
+        state_dict = torch.load(source_ckpt, weights_only=True, map_location=DEVICE)
+        model.load_state_dict(state_dict)
+        print(f"Fresh warm-start from v0.6.0a: {source_ckpt}")
+
+    print(f"Params: {model.count_params():,} ({model.count_params()/1e6:.1f}M)")
 
     # Optimizer: restore on v060b resume, fresh for initial v060a load (WSD restart)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01, betas=(0.9, 0.95))
