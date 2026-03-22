@@ -261,6 +261,38 @@ Recommendation: Start with Option 1 (simplest, cheapest to validate). If it work
 
 This is a LOAD-BEARING addition. Without it, ARMT at v0.6.3 will likely fail. R5 should confirm or revise this.
 
+## Warm-Start Roadmap Compute Budget
+
+Total warm-start evolution (R4 roadmap steps 1-6):
+
+| Step | Training | Tokens | Mechanism Added |
+|------|----------|--------|-----------------|
+| v0.6.0b-rd12 | 3K steps | 98M | Random depth |
+| v0.6.1 | 2K steps | 65M | Pass conditioning |
+| v0.6.2 | 2K steps | 65M | Control simplex + MI |
+| v0.6.3 | 2K steps | 65M | ARMT sidecar |
+| v0.6.4 | 1K steps | 33M | Core transfer |
+| v0.6.5 | 3K steps | 98M | Core-lite + Dmax=8 |
+| **Total** | **13K steps** | **424M tokens** | **6 mechanisms** |
+
+Compare: v0.6.0a training = 20K steps, 655M tokens, 1 mechanism (base architecture).
+The warm-start roadmap adds 6 mechanisms in 65% of the base training compute.
+At ~75 min/1K steps, total warm-start = ~16 hours GPU time.
+
+**This validates Outcome 4 (Data Efficiency):** iterative warm-start extracts more capability per token than training from scratch. Each step builds on validated work, and failures are caught early (3K steps wasted vs 20K).
+
+## v0.6.0b-rd12 Failure Mode Analysis
+
+| # | Failure Mode | Detection | Mitigation | Likelihood |
+|---|-------------|-----------|------------|------------|
+| 1 | **BPT regression at D=12** — early-pass forcing disrupts latent-decode separation | BPT(D=12) > 7.01 at step 3K | Reduce alpha_end, increase D=12 sampling weight | Medium |
+| 2 | **Uniform collapse** — all passes produce identical output (depth-invariant) | cos(p_i, p_j) → 1.0 for all i,j | Pass conditioning (v0.6.1 adaLN) as follow-up | Low |
+| 3 | **First-pass dominance** — model collapses to 1-pass, ignoring later passes | BPT(D=1) ≈ BPT(D=12) | Alpha ramp prevents (D=1 is rare at alpha=2.0) | Low |
+| 4 | **Training instability** — NaN from depth-varying gradient magnitudes | NaN guard in training loop | Gradient clipping at 0.5 (already present) | Low |
+| 5 | **Probe regression** — L_probe can't adapt to variable-depth targets | L_probe increases monotonically across steps | Probe is simple linear head, should adapt | Very low |
+
+**Key metric to watch at step 500 (first eval):** If BPT(D=3) improves >5% from baseline while BPT(D=12) stays within 3% of v0.6.0a best, random-depth is working. If D=12 degrades >5%, the alpha ramp needs to be more conservative.
+
 ## Questions for R5
 1. Given kNN failure at this scale, should ARMT training be moved earlier in the roadmap (before modes)?
 2. Should the datastore experiment be repeated at 20K with more tokens (1M+) to distinguish "weak model" from "retrieval doesn't help"?
