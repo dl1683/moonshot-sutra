@@ -138,21 +138,64 @@ def evaluate(model, dataset, n_batches=20):
 
 
 def evaluate_per_depth(model, dataset, n_batches=10):
-    """Evaluate at each depth 1..12 to measure per-pass contribution."""
+    """Evaluate at each depth 1..12 to measure per-pass contribution.
+    Caches eval batches once and reuses for all depths (eliminates batch noise)."""
     model.eval()
     results = {}
     try:
         with torch.no_grad():
+            # Cache eval batches once — same data for every depth
+            cached_batches = []
+            for _ in range(n_batches):
+                x, y = dataset.sample_batch(2, SEQ_LEN, device=DEVICE, split="test")
+                cached_batches.append((x, y))
+
             for d in range(1, MAX_STEPS + 1):
                 total = 0
-                for _ in range(n_batches):
-                    x, y = dataset.sample_batch(2, SEQ_LEN, device=DEVICE, split="test")
+                for x, y in cached_batches:
                     with autocast_ctx():
                         logits, _ = model(x, n_steps=d)
                         Tc = min(logits.size(1), y.size(1))
                         loss = F.cross_entropy(logits[:, :Tc].reshape(-1, VOCAB_SIZE), y[:, :Tc].reshape(-1))
                     total += loss.item()
                 results[d] = round((total / n_batches) / math.log(2), 4)
+    finally:
+        model.train()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return results
+
+
+def evaluate_per_pass_entropy(model, dataset, n_batches=5):
+    """Compute full-vocab logit entropy at each pass on fixed eval batches.
+    Primary halting signal for elastic compute (from R5 design)."""
+    model.eval()
+    results = {}
+    try:
+        with torch.no_grad():
+            # Cache batches for consistency
+            cached_batches = []
+            for _ in range(n_batches):
+                x, y = dataset.sample_batch(2, SEQ_LEN, device=DEVICE, split="test")
+                cached_batches.append((x, y))
+
+            # Accumulate per-pass entropy across all batches
+            accum = {}  # pass -> list of mean entropies
+            for x, y in cached_batches:
+                with autocast_ctx():
+                    logits, aux = model(x, y=y, n_steps=MAX_STEPS, collect_history=True)
+                if "mu_hist" in aux and aux["mu_hist"] is not None:
+                    mu_hist = aux["mu_hist"]  # (B, T, P, D)
+                    P = mu_hist.shape[2]
+                    for p in range(P):
+                        h = mu_hist[:, :, p, :]  # (B, T, D)
+                        h = model.ln(h)
+                        pass_logits = F.linear(h, model.emb.weight) / math.sqrt(model.dim)
+                        probs = F.softmax(pass_logits.float(), dim=-1)
+                        ent = -(probs * (probs + 1e-10).log()).sum(dim=-1)
+                        accum.setdefault(p + 1, []).append(ent.mean().item())
+            for p, vals in accum.items():
+                results[p] = round(sum(vals) / len(vals), 4)
     finally:
         model.train()
         if torch.cuda.is_available():
@@ -191,27 +234,45 @@ def main():
     print(f"Loaded v0.6.0a weights from {source_ckpt}")
     print(f"Params: {model.count_params():,} ({model.count_params()/1e6:.1f}M)")
 
-    # Check for resume
+    # Check for resume: scan rolling + ALL permanent checkpoints (robustness)
     rolling = ckpt_dir / "rolling_latest.pt"
+    permanent = sorted(ckpt_dir.glob("step_*.pt"), key=lambda p: int(p.stem.split("_")[1]))
     start_step = 0
     best_bpt = float("inf")
     metrics_history = []
     depth_history = []
+    resumed_ckpt = None
 
+    resume_candidates = []
     if rolling.exists():
-        try:
-            ckpt = torch.load(rolling, weights_only=False, map_location=DEVICE)
-            model.load_state_dict(ckpt["model"])
-            start_step = ckpt["step"]
-            best_bpt = ckpt.get("best_bpt", float("inf"))
-            metrics_history = ckpt.get("metrics", [])
-            depth_history = ckpt.get("depth_history", [])
-            print(f"RESUMED v0.6.0b from step {start_step}")
-        except Exception as e:
-            print(f"Failed to resume: {e}. Starting fresh from v0.6.0a.")
+        resume_candidates.append(rolling)
+    for p in reversed(permanent):
+        resume_candidates.append(p)
 
-    # FRESH optimizer (WSD restart — do NOT load optimizer state)
+    for cand in resume_candidates:
+        try:
+            c = torch.load(cand, weights_only=False, map_location=DEVICE)
+            if resumed_ckpt is None or c.get("step", 0) > resumed_ckpt.get("step", 0):
+                resumed_ckpt = c
+                resumed_ckpt["_path"] = cand.name
+        except Exception as e:
+            print(f"Skip corrupt checkpoint {cand.name}: {e}")
+
+    if resumed_ckpt is not None:
+        model.load_state_dict(resumed_ckpt["model"])
+        start_step = resumed_ckpt["step"]
+        best_bpt = resumed_ckpt.get("best_bpt", float("inf"))
+        metrics_history = resumed_ckpt.get("metrics", [])
+        depth_history = resumed_ckpt.get("depth_history", [])
+        print(f"RESUMED v0.6.0b from step {start_step} ({resumed_ckpt['_path']})")
+    else:
+        print("Starting fresh from v0.6.0a warm-start.")
+
+    # Optimizer: restore on v060b resume, fresh for initial v060a load (WSD restart)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01, betas=(0.9, 0.95))
+    if resumed_ckpt is not None and "optimizer" in resumed_ckpt:
+        opt.load_state_dict(resumed_ckpt["optimizer"])
+        print(f"  Restored optimizer state from {resumed_ckpt['_path']}")
 
     model.train()
     step = start_step
@@ -220,8 +281,11 @@ def main():
     loss_count = 0
     start = time.time()
 
-    # Depth distribution tracking
-    depth_counts = [0] * (MAX_STEPS + 1)
+    # Depth distribution tracking (restore from checkpoint if resuming)
+    if resumed_ckpt is not None:
+        depth_counts = resumed_ckpt.get("depth_counts", [0] * (MAX_STEPS + 1))
+    else:
+        depth_counts = [0] * (MAX_STEPS + 1)
 
     while step < MAX_TRAIN_STEPS:
         x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE, split="train")
@@ -321,7 +385,12 @@ def main():
                     entry["per_depth_bpt"] = per_depth
                     depth_history.append({"step": step, "per_depth": per_depth})
 
-                    json.dump(metrics_history, open(metrics_file, "w"), indent=2)
+                    # Per-pass entropy on fixed eval batches (scaling diagnostic)
+                    per_pass_entropy = evaluate_per_pass_entropy(model, dataset, n_batches=5)
+                    entry["per_pass_entropy"] = per_pass_entropy
+
+                    with open(metrics_file, "w") as mf:
+                        json.dump(metrics_history, mf, indent=2)
 
                     marker = " *BEST*" if is_best else ""
                     eval_msg = f"  EVAL Step {step}: BPT={bpt:.4f}{marker}"
@@ -342,6 +411,14 @@ def main():
                         late_improv = mid_bpt - late_bpt
                         late_pct = (late_improv / total_improv * 100) if total_improv > 0 else 100
                         print(f"    late_pct: {late_pct:.1f}% (target: <70%)", flush=True)
+
+                    # Print per-pass entropy summary
+                    if per_pass_entropy:
+                        ent_1 = per_pass_entropy.get(1, 0)
+                        ent_6 = per_pass_entropy.get(6, 0)
+                        ent_12 = per_pass_entropy.get(12, 0)
+                        ent_msg = f"    Entropy: P1={ent_1:.2f} P6={ent_6:.2f} P12={ent_12:.2f}"
+                        print(ent_msg, flush=True)
 
                     with open(log_file, "a") as f:
                         f.write(eval_msg + "\n" + depth_msg + "\n")
