@@ -9184,3 +9184,96 @@ Pattern IDENTICAL to 14K — pass collapse is structural and stable:
 6. Larger kNN ceiling (1M+ datastore, SciQ/LAMBADA)
 7. Memory canary after control lands
 8. Decisive recurrence gate (D=1 vs RD4 vs RD8)
+
+### R5 Research: Module-Local Distillation at <200M (2026-03-22)
+
+**Key finding: Module-local distillation IS superior at sub-200M scale.** TinyBERT (14.5M) with 4-component distillation (embedding+attention+hidden+logit) beats logit-only distillation by +4.4%. Ablation hierarchy: attention distillation > hidden state > prediction > embedding.
+
+| Paper | Scale | Method | Key Result |
+|-------|-------|--------|------------|
+| TinyBERT (Jiao 2020) | 14.5-67M | 4-component layer-wise | +4.4% over logit-only |
+| MiniLM (NeurIPS 2020) | ~50% of teacher | Last-layer self-attention only | >99% retention, beats TinyBERT |
+| TED (ICML 2023) | Various | Task-aware per-layer filtering | Small students HURT by irrelevant teacher knowledge |
+| Distilling Step-by-Step (ACL 2023) | 770M T5 | Separate rationale + label | 770M matches 540B PaLM few-shot |
+| PRR (LREC 2024) | Various | Separate probe + reason models | Outperforms monolithic distillation |
+| CAB (2025) | Down to 1.1M | Attention bridge, layer-wise alignment | +7.2pp over soft distillation |
+| Mamba-in-Llama (NeurIPS 2024) | 8B→hybrid | Stepwise layer replacement | Progressive > single-shot |
+
+**Implications for Sutra:** (1) Distill specific capabilities separately (memory, routing, verification). (2) Progressive/staged distillation essential — matches our warm-start roadmap. (3) Attention distillation maps to routing capability. (4) Task-aware filtering critical at 68M — don't distill everything. (5) Gap: no paper tests module-local distillation for recurrent <100M on generative LM.
+
+### R5 Research: Forgetting in Associative Memory (2026-03-22)
+
+**Core problem:** At dim=768 per head (or 64 per head × 12 heads), exact key-value retrieval is limited to ~64 associations per head. LAMBADA failure (11.2%) is capacity-limited, not training-limited.
+
+| Memory Type | Mechanism | Forgetting | Capacity at d=768 |
+|-------------|-----------|------------|-------------------|
+| ARMT (ICML 2024 WS) | Delta-rule A += beta*(v-v_bar)⊗phi(k) | **NONE** (design gap) | ~768 exact pairs/head |
+| Titans (Google, Jan 2025) | Surprise-gated: M = (1-alpha)M + S | Learned scalar alpha (best) | MLP-based, more expressive |
+| Gated DeltaNet (ICLR 2025) | Scalar gating + delta rule overwrite | Two mechanisms: global + targeted | d orthogonal pairs hard ceiling |
+| MeMo (ACL 2025) | CMM with subtraction forgetting | Penalizing matrix | ~1K-5K sequences at d=768 |
+| Modern Hopfield | Non-linear energy, exp(d) capacity | No explicit decay | Exponential but for patterns, not KV |
+| MESH (ICML 2022) | Fixed scaffold + heteroassociation | Graceful degradation (no cliff) | Nearly saturates info bound |
+
+**Critical findings:** (1) ARMT has NO forgetting — critical design gap confirmed by R4. (2) Titans' surprise-gated decay is the most principled: write when surprised, forget when not. (3) Multi-pass retrieval needed for exact recall (FwPKM: <10% single-pass, >70% with 4 passes — validates multi-pass architecture). (4) At 68M, bottleneck is memory state dimensionality, not parameter count.
+
+**Recommendation:** ARMT + Titans-style alpha decay from day 1: `A_d = (1 - alpha_d) * A_{d-1} + delta_A_d`. Exactly what R4/R5 specified.
+
+### R5 Research: Pass-Conditioned Shared-Weight Recurrence (2026-03-22)
+
+**The field has converged: unconditioned shared-weight recurrence causes pass collapse.** Huginn-3.5B analysis confirms no progressive refinement without explicit pressure.
+
+| Rank | Mechanism | Source | Extra Params (12 passes, d=768) | Power |
+|------|-----------|--------|--------------------------------|-------|
+| 1 | **AdaLN-Zero** (step-conditioned LN) | DiT (ICCV 2023) | ~100K (12 embeddings + 1 MLP) | HIGH |
+| 2 | **Per-iteration routers + memory** | MeSH (Oct 2025) | ~200K (linear layers) | HIGH |
+| 3 | **Low-rank level signals** | RingFormer (Feb 2025) | ~876K (rank-48 Q/K/V/FFN) | MED-HIGH |
+| 4 | **Per-pass LoRA** | Relaxed Recursive (Oct 2024) | ~1.2M (rank 64) | HIGH |
+| 5 | **Per-iteration MLP gates** | AdaPonderLM (Mar 2026) | ~50K | LOW (halt only) |
+| 6 | **Sinusoidal step embedding** | Universal Transformer (2019) | 0 | LOW |
+
+**Key papers with FAILURES:**
+- **Huginn probing (COLM 2025):** "Significant probing inconsistencies across recurrent blocks." No clean temporal separation or structured reasoning. Increasing depth yields only marginal gains. Explicit CoT vastly outperforms latent reasoning (24.87 vs 4.93 on GSM8K).
+- **MeSH (Oct 2025):** Identifies 3 pathologies: skewed computation (our pass 11 = 61.6%), representational stagnation, loop collapse. Per-iteration routers + external memory solves all three.
+- **ALBERT (ICLR 2020):** FFN sharing hurts MORE than attention sharing → pass conditioning should prioritize FFN modulation.
+
+**Recommendation for Sutra v0.6.1:** AdaLN-Zero as primary mechanism (battle-tested in diffusion, zero-init identity, ~100K params). If insufficient, add RingFormer low-rank signals (~876K). MeSH's external memory routers as fallback.
+
+### R5 Research: Factorized Embeddings at 50-150M (2026-03-22)
+
+**Sutra's 56.5% embedding ratio is extreme.** No production model found allocates this much. ALBERT's E=128 is optimal with parameter sharing (which maps to our recurrent shared passes).
+
+| Intervention | Savings | Evidence |
+|-------------|---------|----------|
+| Weight tying (emb = lm_head) | ~50% emb params | Standard practice (SmolLM, GPT-2) |
+| Factorized E=128 | 83% emb reduction (38.6M → 6.5M) | ALBERT optimal at E=128 with sharing |
+| Adaptive input (freq-based E) | ~75-80% | Baevski (ICLR 2019): 61% reduction |
+| PETE (Fourier basis) | 63-88% | Matches standard at 2-layer 512-dim |
+
+**Scaling law (NeurIPS 2024):** Vocab params ∝ C^0.42, non-vocab ∝ C^0.50. Our 50,257 vocab may be slightly oversized for 68M.
+
+**Critical warning:** Embedding condensation at small scale (GPT-2 exhibits it). Dispersion loss recommended as mitigation (+1.26 avg improvement).
+
+**SVD result context:** Our rank-128 = 26.5% variance does NOT mean E=128 fails from scratch. Models adapt to the constraint. ALBERT/MobileBERT prove this.
+
+**Recommendation for clean-line:** E=256 with dispersion loss (conservative), then try E=128. Adaptive input (freq-based) for maximum efficiency. Weight tying mandatory.
+
+### R5 Research: Random-Depth / Adaptive Depth Field Landscape (2026-03-22)
+
+The field has EXPLODED in 2025-2026. Key papers beyond what was in our earlier survey:
+
+| Paper | Date | Key Result |
+|-------|------|------------|
+| **LoopFormer** (ICLR 2026) | Feb 2026 | Time+step-size conditioning + shortcut-consistency loss. Direct rd12 analog. |
+| **Ouro/LoopLM** | Oct 2025 | Entropy-regularized ELBO with uniform prior over exits. 1.4B matches 12B. |
+| **PonderLM/2/3** | May 2025-Mar 2026 | Continuous-space pondering. 1.4B surpasses 2.8B. Per-iteration gates must be INDEPENDENT. |
+| **MoR** (NeurIPS 2025) | Jul 2025 | Per-token router for recursion depth. 135M-1.7B. 2x throughput. Expert-choice > token-choice. |
+| **ANIRA** | Feb 2026 | Negative result: adaptive allocation does NOT guarantee generalization. Online > early decision. |
+| **Inner Thinking Transformer** (ACL 2025) | Feb 2025 | 162M = 96.5% of 466M. Residual accumulation prevents single-pass dominance. |
+| **Two-Scale Dynamics** (NeurIPS 2025) | Sep 2025 | Second-order step-size as halting criterion > KL-divergence. |
+| **Geometric Scaling** | Jan 2026 | Pass collapse = geometric rank loss. Deep delta learning (erasure) as fix. |
+
+**Strongest validation of Sutra thesis:** Ouro 1.4B matching 12B through entropy-regularized looped recurrence IS "Intelligence = Geometry." PonderLM-2 1.4B beating vanilla 2.8B at matched data confirms recurrence = parameter efficiency.
+
+**Critical warning (ANIRA):** Adaptive compute allocation does NOT guarantee generalization to unseen complexity. Online halting > early depth decision.
+
+**RevDEQ finding:** Performance "plateaus at ~12 iterations" — independently validates our 12-pass choice.
