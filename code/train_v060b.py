@@ -260,6 +260,9 @@ def main():
         if "cuda_rng" in resumed_ckpt and torch.cuda.is_available():
             torch.cuda.set_rng_state(resumed_ckpt["cuda_rng"])
         print(f"RESUMED v0.6.0b from step {start_step} ({resumed_ckpt['_path']})")
+        # Restore dataset sticky shard state if available
+        if "dataset" in resumed_ckpt:
+            dataset.load_state_dict(resumed_ckpt["dataset"])
     else:
         # No v060b checkpoint — warm-start from v0.6.0a
         source_ckpt = REPO / "results" / "v060a_best.pt"
@@ -359,21 +362,6 @@ def main():
                 running_depth = 0
                 loss_count = 0
 
-            if step % ROLLING_SAVE == 0:
-                rng_state = {
-                    "torch_rng": torch.get_rng_state(),
-                    "random_rng": random.getstate(),
-                }
-                if torch.cuda.is_available():
-                    rng_state["cuda_rng"] = torch.cuda.get_rng_state()
-                atomic_torch_save({
-                    "model": model.state_dict(), "optimizer": opt.state_dict(),
-                    "step": step, "best_bpt": best_bpt,
-                    "metrics": metrics_history, "depth_history": depth_history,
-                    "depth_counts": depth_counts,
-                    **rng_state,
-                }, ckpt_dir / "rolling_latest.pt")
-
             if step % EVAL_EVERY == 0:
                 try:
                     # Full-depth eval
@@ -450,8 +438,26 @@ def main():
                     "step": step, "best_bpt": best_bpt,
                     "metrics": metrics_history, "depth_history": depth_history,
                     "depth_counts": depth_counts,
+                    "dataset": dataset.state_dict(),
                     **perm_rng,
                 }, ckpt_dir / f"step_{step}.pt")
+
+            # Rolling save AFTER eval + permanent save so it captures latest state
+            if step % ROLLING_SAVE == 0:
+                rng_state = {
+                    "torch_rng": torch.get_rng_state(),
+                    "random_rng": random.getstate(),
+                }
+                if torch.cuda.is_available():
+                    rng_state["cuda_rng"] = torch.cuda.get_rng_state()
+                atomic_torch_save({
+                    "model": model.state_dict(), "optimizer": opt.state_dict(),
+                    "step": step, "best_bpt": best_bpt,
+                    "metrics": metrics_history, "depth_history": depth_history,
+                    "depth_counts": depth_counts,
+                    "dataset": dataset.state_dict(),
+                    **rng_state,
+                }, ckpt_dir / "rolling_latest.pt")
 
     # Final summary
     print(f"\n{'='*60}")

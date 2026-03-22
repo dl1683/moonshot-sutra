@@ -245,6 +245,26 @@ class ShardedDataset:
             return self._test_tokens[-n_tokens:]
         return self._test_tokens
 
+    def state_dict(self):
+        """Capture sticky shard state for faithful resume."""
+        return {
+            "sticky_count": getattr(self, '_sticky_count', 0),
+            "sticky_path": self._sticky_meta["path"] if getattr(self, '_sticky_meta', None) else None,
+            "sticky_budget": getattr(self, '_sticky_budget', 64),
+        }
+
+    def load_state_dict(self, sd):
+        """Restore sticky shard state from checkpoint."""
+        self._sticky_count = sd.get("sticky_count", 0)
+        self._sticky_budget = sd.get("sticky_budget", 64)
+        path = sd.get("sticky_path")
+        if path is not None:
+            self._sticky_meta = next((m for m in self.index if m["path"] == path), None)
+            if self._sticky_meta is not None:
+                self._load_shard(path)  # warm the cache
+        else:
+            self._sticky_meta = None
+
     @property
     def total_tokens(self):
         return self._total
