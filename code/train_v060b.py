@@ -2,12 +2,12 @@
 
 Purpose: Fix early-pass collapse by training with random depth.
 Each batch samples D ~ P(D=d) = d^alpha / Z for d in {1..12}.
-Alpha ramps from 1.0 to 2.0 over first 1K steps.
+Alpha ramps from 0.0 (uniform) to 1.0 (moderate late-bias) over first 1K steps.
 
 Loss = L_final + 0.20 * L_probe (NO L_step — random depth makes it meaningless)
 
 Warm-start: loads v0.6.0a best weights, RESETS optimizer (WSD restart).
-Fresh cosine LR schedule, 500-step warmup, 3K total steps.
+Fresh cosine LR schedule, 500-step warmup, 5K total steps.
 
 Success criteria (from Codex R4):
   - late_pct drops from 91.5% to <70%
@@ -44,7 +44,7 @@ BATCH_SIZE = 4
 GRAD_ACCUM = 16         # Effective batch = 64
 LR = 3.5e-4
 WARMUP_STEPS = 500
-MAX_TRAIN_STEPS = 3000  # Short warm-start: 3K steps
+MAX_TRAIN_STEPS = 5000  # Extended from 3K: collapse fix needs more tokens
 EVAL_EVERY = 500
 SAVE_EVERY = 1000
 ROLLING_SAVE = 100
@@ -53,9 +53,11 @@ VOCAB_SIZE = 50257
 PROBE_LOSS_COEF = 0.20
 GRAD_CLIP_NORM = 0.5
 
-# Random-depth alpha schedule
-ALPHA_START = 1.0
-ALPHA_END = 2.0
+# Random-depth alpha schedule (flat start → moderate late-bias)
+# alpha=0: uniform across depths. alpha=1: P(D=12) ~ 12x P(D=1).
+# Start flat so early passes get real terminal supervision, then ramp.
+ALPHA_START = 0.0
+ALPHA_END = 1.0
 ALPHA_RAMP_STEPS = 1000
 
 import sys
