@@ -5,9 +5,91 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 ---
 
-## CURRENT STRATEGIC DIRECTION: Probe-First Incremental Evolution
+## CURRENT STRATEGIC DIRECTION: Shared-Core Cognitive Spectrum (Codex R4 2026-03-22)
 
 **CRITICAL FRAMING (User Insight 2026-03-22):** Don't converge too early. The v0.7.0 spec and v1.0 roadmap are HYPOTHESES, not commitments. Each warm-start step is a Chrome probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
+
+**CODEX R4 (Tesla+Leibniz) DESIGN: "Shared-Core Cognitive Spectrum Sutra"**
+- R4 confidence: 7/8/7/7/6 (up from R3's 6/7/6/6/5)
+- Full spec: results/tesla_leibniz_r4_output.md
+- 8-step warm-start roadmap: v0.6.0b-rd12 -> v0.6.1-rd12 -> v0.6.2-modes -> v0.6.3-armt -> v0.6.4-corexfer -> v0.6.5-corelite -> Recurrence Gate -> v0.7.0-clean1024
+- THE GATE still holds: D>1 must beat D=1 at matched compute on simplified core.
+
+### v0.6.0b-rd12 Implementation Plan (NEXT GPU TASK after 20K)
+
+**Purpose:** Random-depth training to fix early-pass collapse. P0 intervention.
+
+**Model changes (launch_v060a.py):**
+- Add `n_steps` parameter to `forward()`: `def forward(self, x, y=None, n_steps=None, ...)`
+- Default `n_steps = self.max_steps` (backward compatible)
+- Change loop: `for p in range(n_steps):`
+- Allocate history for `n_steps` passes, not `self.max_steps`
+- Logits computed from mu at the SAMPLED final pass (not always pass 11)
+
+**Training changes (train_v060a.py -> train_v060b.py):**
+- Sample D per batch: `P(D=d) = d^alpha / sum_i i^alpha` for d in {1..12}
+- Alpha schedule: ramp from 1.0 to 2.0 over first 1K steps
+- `L_total = L_final + 0.20 * L_probe` (L_step = 0)
+- L_final = CE(logits at sampled depth D, y)
+- L_probe still uses mu_hist but only for visited passes
+- Warm-start: load v0.6.0a weights, RESET optimizer (WSD restart)
+- LR: fresh WSD schedule, 500-step warmup, 3K total steps
+
+**Success criteria:**
+- late_pct drops from 91.5% to <70%
+- Passes 1-6 contribute materially to BPT
+- Final BPT matches or beats source checkpoint (7.14)
+- Greedy trigram diversity improves over 0.265
+
+**Pre-training gate:** Codex Correctness + Performance + Scaling review loop BEFORE launch.
+
+**Exact code changes (pseudocode for Codex audit):**
+
+```python
+# launch_v060a.py — forward() signature change
+def forward(self, x, y=None, n_steps=None, ...):
+    if n_steps is None:
+        n_steps = self.max_steps  # backward compatible
+
+    # History allocation uses n_steps, not self.max_steps
+    if collect_history:
+        mu_hist = torch.zeros(B, T, n_steps, self.dim, ...)
+        pi_hist = torch.zeros(B, T, n_steps, N_STAGES, ...)
+
+    for p in range(n_steps):  # was: range(self.max_steps)
+        ... # same body, unchanged
+
+    # Logits from mu at sampled final pass
+    final = self.ln(mu)
+    logits = F.linear(final, self.emb.weight) / math.sqrt(self.dim)
+
+    aux = {
+        "mu_hist": mu_hist,
+        "compute_cost": torch.tensor(float(n_steps), ...),
+        "avg_steps": n_steps,
+        ...
+    }
+
+    # L_step computation skipped when n_steps < self.max_steps
+    # L_probe targets adjusted for visited passes only
+
+# train_v060b.py — random depth sampling
+def sample_depth(max_d, alpha):
+    """P(D=d) = d^alpha / Z for d in {1..max_d}"""
+    weights = torch.arange(1, max_d + 1, dtype=torch.float) ** alpha
+    return torch.multinomial(weights, 1).item() + 1
+
+# Training loop
+alpha = 1.0 + min(step / 1000, 1.0)  # ramp 1.0 -> 2.0 over 1K steps
+D = sample_depth(12, alpha)
+logits, aux = model(x, y=y, n_steps=D)
+L_final = CE(logits, y)
+L_total = L_final + 0.20 * L_probe  # NO L_step
+```
+
+**CODEX R2 (Tesla+Leibniz) REVISION:** The 7-stage bank is dead. Replace with 1 shared block + lightweight control. Random-depth is P0 (not adaLN). The recurrence gate: D>1 must beat D=1 at matched compute on a simplified shared-core model, or recurrence dies at 68M.
+
+**USER PRIORITY (2026-03-22): PRECISE-GENERAL MEMORY SPECTRUM.** The architecture needs a CONTINUOUS retrieval spectrum from general reasoning (distributed, multi-pass) to precise recall (exact fact lookup). Knowledge-task benchmark gap (SciQ 25.9% vs Pythia 74%, LAMBADA ~1% vs 32.6%) is the strongest competitive weakness. Probe D confirmed current scratchpad is imprecise workspace only. The model must learn WHEN to go precise vs general — this is content-dependent and connects to elastic compute (Outcome 5). This is a FIRST-CLASS DESIGN CONSTRAINT for Round 3 and beyond.
 
 ### STRATEGIC PRINCIPLE: Top-Down + Bottom-Up (User Insight 2026-03-22)
 
@@ -158,6 +240,68 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 **Status**: User insight (2026-03-22). Needs Codex design review and literature survey on information-gain-driven training.
 
 ---
+
+## PRIORITY 8 (NEW): Random-Depth Training — Fixing Gradient Structure
+
+**ROOT CAUSE OF COLLAPSE (derived 2026-03-22):** L_final contributes 97-99% of gradient signal at ALL passes. L_step at coef=0.25 contributes only 1-3%. Since all passes share weights, they ALL optimize for final-pass output. Early passes converge to safe fixed-points because they can't improve final-pass output yet.
+
+**Mechanism:** Sample training depth D from distribution each step. Run only D passes. Compute L_final on pass D output. When D=4, pass 3 IS the final pass and gets 100% of L_final gradient.
+
+**Why this is better than adaLN alone:**
+- adaLN gives per-pass behavior capacity but doesn't change gradient structure (still 97% from L_final)
+- Random-depth changes gradient structure: early passes sometimes get 100% of L_final gradient
+- 9.3x increase in early-pass gradient signal (from 1% to 8.3%+ under uniform depth)
+- ALSO saves compute: average depth 6.5-9.2 passes (54-77% of current cost)
+- Matches Relaxed Recursive Transformer training strategy (randomized loop counts, ICLR 2025)
+
+**Distribution options:**
+- Uniform: avg 6.5 passes, 54% compute, equal signal to all passes
+- Geometric (alpha=0.85): avg 8.3 passes, 69% compute, biased toward deep
+- Deep-biased: avg 9.2 passes, 77% compute, mostly 8-12 with occasional short runs
+
+**Implementation:** ~20 lines of code change to train_v060a.py. Sample D per batch, loop only D times, compute L_final on pass D.
+
+**Chrome Probe:** v0.6.0a + random-depth vs v0.6.0a fixed-12 vs v0.6.1 adaLN vs v0.6.1 adaLN + random-depth. Gate on collapse Gini coefficient, early-pass contribution, total BPT.
+
+**Warm-start:** FULLY COMPATIBLE — no architecture change, only training recipe. Can be applied to any existing checkpoint.
+
+---
+
+## POST-CRITIQUE R2 BRANCH HYPOTHESES (2026-03-22)
+
+These are raw strategic branches, not commitments.
+
+### Track A: Minimal Relaxed-Recursive Decoder
+
+- Strong shared causal block
+- `4-8` passes, not `12+` by default
+- per-pass `adaLN` or low-rank depth adapters
+- scratchpad only if it proves value over the dense control
+- no seven-stage ABI claims yet
+
+### Track B: Deep-Thin Dense Control
+
+- Mandatory falsification baseline
+- deeper-thinner stack, shared embeddings, `GQA`, `SwiGLU`
+- no recurrence ideology
+- use it to answer the real question: does recurrence buy anything on this hardware budget?
+
+### Track C: Hybrid Local-State + Exact Memory
+
+- limited recurrence for iterative refinement
+- sparse exact long-range recall as the real non-negotiable
+- no async / multiscale graph until the simple version wins
+
+### Hard Decision Gate
+
+- A partially shared recurrent model in the `135M-350M` band must beat a deep-thin dense control at matched compute.
+- If it cannot, the belief-graph `v1.0` roadmap dies.
+
+### Raw Hypotheses Worth Testing
+
+- Pass disagreement may be more valuable first as a training-time weighting signal than as an inference controller.
+- If the current trainer already saturates `24GB` at `68M/12` passes, the first scale fix is probably fewer passes before more parameters.
+- Warm-start should be treated as an accelerator only, not a design constraint.
 
 ## OPEN QUESTIONS
 
