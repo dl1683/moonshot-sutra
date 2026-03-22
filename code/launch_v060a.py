@@ -250,11 +250,15 @@ class SutraV060a(nn.Module):
         self.gain_probe = ResidualGainProbe(dim)
         self.frozen_cache = FrozenPrefixCache(dim)
 
-    def forward(self, x, y=None, force_freeze_after_pass=None,
+    def forward(self, x, y=None, n_steps=None, force_freeze_after_pass=None,
                 force_freeze_mask=None, use_frozen_cache=False,
                 collect_history=None):
         B, T = x.shape
         device = x.device
+
+        # Variable depth: default to max_steps (backward compatible)
+        if n_steps is None:
+            n_steps = self.max_steps
 
         # Auto-detect: collect history only when training with targets
         if collect_history is None:
@@ -272,8 +276,8 @@ class SutraV060a(nn.Module):
 
         # History collection (skip during eval to save ~36MB)
         if collect_history:
-            mu_hist = torch.zeros(B, T, self.max_steps, self.dim, device=device, dtype=h.dtype)
-            pi_hist = torch.zeros(B, T, self.max_steps, N_STAGES, device=device, dtype=h.dtype)
+            mu_hist = torch.zeros(B, T, n_steps, self.dim, device=device, dtype=h.dtype)
+            pi_hist = torch.zeros(B, T, n_steps, N_STAGES, device=device, dtype=h.dtype)
         else:
             mu_hist = None
             pi_hist = None
@@ -282,7 +286,7 @@ class SutraV060a(nn.Module):
         frozen = torch.zeros(B, T, dtype=torch.bool, device=device)
         cache_state = self.frozen_cache.init_state(B, T, device, h.dtype) if use_frozen_cache else None
 
-        for p in range(self.max_steps):
+        for p in range(n_steps):
             late_gate = 1.0 if p >= 3 else 0.0
 
             # Check forced freeze
@@ -365,8 +369,8 @@ class SutraV060a(nn.Module):
         aux = {
             "mu_hist": mu_hist,
             "pi_hist": pi_hist,
-            "compute_cost": torch.tensor(float(self.max_steps), device=device),
-            "avg_steps": self.max_steps,
+            "compute_cost": torch.tensor(float(n_steps), device=device),
+            "avg_steps": n_steps,
         }
 
         if y is not None and collect_history:
@@ -379,7 +383,7 @@ class SutraV060a(nn.Module):
             probe_preds = []
             prev_margin = torch.zeros(B, T, device=device)
             prev_mu_norm = torch.zeros(B, T, device=device)
-            for p in range(self.max_steps):
+            for p in range(n_steps):
                 margin_p = s_margin[:, :, p].detach()
                 margin_slope = margin_p - prev_margin if p > 0 else torch.zeros_like(margin_p)
                 # Detach probe inputs so L_probe is truly shadow-only (doesn't train recurrent core)
@@ -387,12 +391,12 @@ class SutraV060a(nn.Module):
                 pi_p_det = pi_hist[:, :, p].detach()
                 mu_prev_det = (mu_hist[:, :, p-1] if p > 0 else mu_hist[:, :, 0]).detach()
                 delta_mu = (mu_p_det - mu_prev_det).pow(2).mean(-1).sqrt()
-                pass_frac = torch.full((B, T), p / (self.max_steps - 1), device=device)
+                pass_frac = torch.full((B, T), p / max(n_steps - 1, 1), device=device)
                 pred = self.gain_probe(mu_p_det, pi_p_det,
                                        margin_p, margin_slope, delta_mu, pass_frac)
                 probe_preds.append(pred)
                 prev_margin = margin_p
-            aux["probe_pred"] = torch.stack(probe_preds, dim=2)  # (B, T, 12)
+            aux["probe_pred"] = torch.stack(probe_preds, dim=2)  # (B, T, n_steps)
 
         return logits, aux
 
