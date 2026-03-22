@@ -2,6 +2,11 @@
 
 Reverse chronological. See ledger.jsonl for machine-readable details.
 
+### [OK] v060a-20k-complete (2026-03-22)
+**Purpose:** v0.6.0a training milestone: 20K steps complete
+**Key metrics:** best_bpt=6.7946, sciq=48.1%, piqa=54.5%, lambada_acc=11.2%, pass_collapse_cos=0.293
+**Learned:** New best BPT at 20K (beat 17K's 6.8284). Pass collapse confirmed structural and stable (entropy cliff at pass 12 unchanged from 14K). SciQ and PIQA show real learning. LAMBADA 11.2% is meaningful signal. Training stopped for v0.6.0b-rd12 warm-start.
+
 ### [OK] collapse-metrics-step10K (2026-03-22)
 **Purpose:** Measure pass-to-pass collapse profile at step 10K
 **Key metrics:** final_bpt=7.3525, total_improvement=12.654, late_improvement=11.5775

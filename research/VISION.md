@@ -292,19 +292,22 @@ These rules govern every architectural choice, every experiment design, every Co
 
 ## Current Status (2026-03-22)
 
-### v0.6.0a Training (ACTIVE)
+### v0.6.0a Training (COMPLETE — 20K steps)
 - 68.3M params, 12 recurrent passes, attached inter-step history
-- Step 8700+, monotonically improving BPT (bits per token)
-- Power law: BPT = 164 * tokens^(-0.157), predicts 5.25 BPT at 100K steps
-- Training on 20.72B tokens from 18 diverse sources, 246 shards
-- Throughput ~6760 tok/s on a single RTX 5090
+- **Best BPT: 6.7946 at step 20K** (new best, beat 17K's 6.8284)
+- Training STOPPED at 20K: 655M tokens (48% of Chinchilla-optimal 1.36B for 68M)
+- Benchmarks: SciQ 48.1%, PIQA 54.5%, LAMBADA 11.2%, ARC-Easy 31.3%
+- Throughput ~6927 tok/s on a single RTX 5090
+- **Next: v0.6.0b-rd12** (random-depth warm-start to fix pass collapse)
 
-### Critical Discovery: Late Passes Are the Most Valuable
-- **Full-vocab per-pass CE** (not sampled CE!) shows passes 0-11 monotonically improve quality
-- Pass 11 (final) is BEST (BPT 7.59), pass 6 is terrible (BPT 20.94)
-- Late passes (7-11) contribute **63%** of total BPT improvement
-- The earlier "late-pass degradation" narrative was a MEASUREMENT ARTIFACT from selection bias in `build_negative_set()` — it constructed evaluation candidates from final-pass logits, creating systematic bias against late passes
-- **Lesson for all future work**: Always measure with full-vocab metrics. Sampled metrics can be deeply misleading. This cost us weeks of work on a non-existent problem (L_regret probe).
+### Critical Discovery: PASS COLLAPSE (structural)
+- Pass 11 alone = 61.6% of all BPT improvement. Passes 0-7 = 6.4%.
+- Logit entropy flat 10.1-10.4 for passes 1-11, crashes to 5.84 at pass 12
+- cos(pass 11, pass 12) = 0.293 (near-orthogonal) — final pass applies massive transformation
+- This pattern is STABLE from 14K to 20K — structural, not training dynamics
+- The model is effectively a 1-pass system with 11 wasted passes
+- **Fix: v0.6.0b-rd12** (random-depth training forces useful output at every pass)
+- **Historical note**: Earlier "late-pass value" finding was CORRECT but understated — the issue isn't that late passes are valuable (they are) but that ONLY the final pass matters (pass collapse).
 
 ### What Works (Validated)
 - Stage-superposition: positions flow through stages at their own rate ✓
