@@ -6509,3 +6509,21 @@ but makes hard/easy tokens more distinguishable — exactly what elastic compute
 **Key insight:** Some mechanisms don't improve BPT directly but improve the
 SUBSTRATE for future mechanisms. Error Scratch v2 improves separation,
 which is the signal the elastic controller will consume.
+
+---
+
+## Reversible Writer Design (Codex, 2026-03-21)
+
+**Landauer-inspired: prevent destructive late-pass overwriting.**
+
+Minimal sidecar on existing BayesianWrite:
+- Correction trace `c` (B,T,D) stores recent write mass
+- Gate `z` (scalar): controls how much correction to store
+- Anti-gate `a` (scalar): subtracts stored correction when evidence says "don't overwrite"
+- If z=a=0: identical to current model (zero-influence at birth)
+- If z=a=1, c=0: solved token gets no write (identity)
+
+Kill criteria: easy_drift not reduced 20%, hard_gain drops >5%, no gate selectivity.
+Probe: dim=768 CPU, freeze core, train only z/a heads, 300-500 steps.
+
+Status: Design complete. Ready for CPU probe after syndrome results.
