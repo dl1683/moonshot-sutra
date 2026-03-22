@@ -3,9 +3,12 @@
 Allows running standard benchmarks (ARC, HellaSwag, PIQA, etc.) on Sutra
 using EleutherAI's lm-evaluation-harness.
 
+Supports both v0.5.4 and v0.6.0a models via --version flag.
+
 Usage:
-    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v054/step_15000.pt
-    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v054/step_15000.pt --tasks arc_easy,arc_challenge
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v060a/rolling_latest.pt --version v060a
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v054/step_15000.pt --version v054
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v060a/step_20000.pt --tasks arc_easy,arc_challenge
 """
 
 import sys, argparse, torch
@@ -24,8 +27,8 @@ from transformers import AutoTokenizer
 class SutraLMEval(LM):
     """lm-eval compatible wrapper for Sutra."""
 
-    def __init__(self, checkpoint=None, dim=768, ff_dim=1536, max_steps=8,
-                 batch_size=8, device="cuda", **kwargs):
+    def __init__(self, checkpoint=None, dim=768, ff_dim=1536, max_steps=12,
+                 batch_size=8, device="cuda", version="v060a", **kwargs):
         super().__init__()
         self._device = torch.device(device if torch.cuda.is_available() else "cpu")
         self._batch_size = batch_size
@@ -33,10 +36,18 @@ class SutraLMEval(LM):
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Load model
-        from launch_v054 import create_v054
-        self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=max_steps,
-                                  window=4, k_retrieval=8)
+        # Load model based on version
+        if version == "v060a":
+            from launch_v060a import create_v060a
+            self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=max_steps,
+                                       window=4, k_retrieval=8)
+        elif version == "v054":
+            from launch_v054 import create_v054
+            self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=max_steps,
+                                      window=4, k_retrieval=8)
+        else:
+            raise ValueError(f"Unknown version: {version}. Use 'v060a' or 'v054'.")
+
         if checkpoint:
             ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
             state = ckpt["model"] if "model" in ckpt else ckpt
@@ -165,18 +176,20 @@ class SutraLMEval(LM):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v054/step_15000.pt"))
+    parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v060a/rolling_latest.pt"))
     parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--version", default="v060a", choices=["v060a", "v054"])
     args = parser.parse_args()
 
-    print(f"Running lm-eval on Sutra v0.5.4")
+    print(f"Running lm-eval on Sutra {args.version}")
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Tasks: {args.tasks}")
     print(f"Device: {args.device}")
 
-    model = SutraLMEval(checkpoint=args.checkpoint, batch_size=args.batch_size, device=args.device)
+    model = SutraLMEval(checkpoint=args.checkpoint, batch_size=args.batch_size,
+                         device=args.device, version=args.version)
 
     task_list = args.tasks.split(",")
     results = lm_eval.simple_evaluate(

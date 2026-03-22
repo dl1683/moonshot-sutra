@@ -46,10 +46,11 @@ def load_model(checkpoint, device, version="auto"):
         from launch_v054 import create_v054
         model = create_v054(dim=768, ff_dim=1536, max_steps=8, window=4, k_retrieval=8)
 
-    model.load_state_dict(ckpt["model"], strict=False)
-    step = ckpt.get("step", "?")
-    best_bpt = ckpt.get("best_bpt", "?")
-    del ckpt
+    state = ckpt["model"] if "model" in ckpt else ckpt
+    model.load_state_dict(state, strict=False)
+    step = ckpt.get("step", "?") if isinstance(ckpt, dict) and "step" in ckpt else "?"
+    best_bpt = ckpt.get("best_bpt", "?") if isinstance(ckpt, dict) and "best_bpt" in ckpt else "?"
+    del ckpt, state
     gc.collect()
     model.to(device).eval()
     print(f"Loaded {version} model (step {step}, BPT {best_bpt})")
@@ -236,7 +237,7 @@ def score_lambada(model, tok, device):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v054/step_20000.pt"))
+    parser.add_argument("--checkpoint", default=str(REPO / "results/v060a_best.pt"))
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -278,7 +279,7 @@ if __name__ == "__main__":
         free_mem()             # Free RAM/VRAM between benchmarks
 
     print(f"\n{'='*60}", flush=True)
-    print(f"SUTRA v0.5.4 step 20K — FULL BENCHMARKS ({time.time()-t0:.0f}s)", flush=True)
+    print(f"SUTRA BENCHMARKS ({time.time()-t0:.0f}s)", flush=True)
     print(f"{'='*60}", flush=True)
     for name, r in results.items():
         print(f"  {name:20s} {r['accuracy']*100:5.1f}%  ({r['correct']}/{r['total']})", flush=True)
