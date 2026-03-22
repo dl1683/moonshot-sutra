@@ -252,6 +252,13 @@ def main():
         best_bpt = resumed_ckpt.get("best_bpt", float("inf"))
         metrics_history = resumed_ckpt.get("metrics", [])
         depth_history = resumed_ckpt.get("depth_history", [])
+        # Restore RNG state for faithful resume (depth sampling + data loader)
+        if "torch_rng" in resumed_ckpt:
+            torch.set_rng_state(resumed_ckpt["torch_rng"])
+        if "random_rng" in resumed_ckpt:
+            random.setstate(resumed_ckpt["random_rng"])
+        if "cuda_rng" in resumed_ckpt and torch.cuda.is_available():
+            torch.cuda.set_rng_state(resumed_ckpt["cuda_rng"])
         print(f"RESUMED v0.6.0b from step {start_step} ({resumed_ckpt['_path']})")
     else:
         # No v060b checkpoint — warm-start from v0.6.0a
@@ -353,11 +360,18 @@ def main():
                 loss_count = 0
 
             if step % ROLLING_SAVE == 0:
+                rng_state = {
+                    "torch_rng": torch.get_rng_state(),
+                    "random_rng": random.getstate(),
+                }
+                if torch.cuda.is_available():
+                    rng_state["cuda_rng"] = torch.cuda.get_rng_state()
                 atomic_torch_save({
                     "model": model.state_dict(), "optimizer": opt.state_dict(),
                     "step": step, "best_bpt": best_bpt,
                     "metrics": metrics_history, "depth_history": depth_history,
                     "depth_counts": depth_counts,
+                    **rng_state,
                 }, ckpt_dir / "rolling_latest.pt")
 
             if step % EVAL_EVERY == 0:
@@ -425,11 +439,18 @@ def main():
                     print(f"EVAL FAILED: {e}", flush=True)
 
             if step % SAVE_EVERY == 0:
+                perm_rng = {
+                    "torch_rng": torch.get_rng_state(),
+                    "random_rng": random.getstate(),
+                }
+                if torch.cuda.is_available():
+                    perm_rng["cuda_rng"] = torch.cuda.get_rng_state()
                 atomic_torch_save({
                     "model": model.state_dict(), "optimizer": opt.state_dict(),
                     "step": step, "best_bpt": best_bpt,
                     "metrics": metrics_history, "depth_history": depth_history,
                     "depth_counts": depth_counts,
+                    **perm_rng,
                 }, ckpt_dir / f"step_{step}.pt")
 
     # Final summary
