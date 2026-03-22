@@ -343,9 +343,27 @@ Every Codex review produces an output file. After Claude reads it:
 
 ---
 
-## Codex Prompt Template (MANDATORY)
+## Tesla+Leibniz Design Workflow (STRATEGIC ARCHITECTURE SESSIONS)
 
-**Every single Codex invocation MUST begin with this preamble. No exceptions.**
+**For strategic architecture design — NOT for code review or correctness checks.**
+
+Full workflow spec: `research/TESLA_LEIBNIZ_WORKFLOW.md`
+
+Use this workflow when designing or redesigning architecture. It runs Codex as a committed senior architect (not a reviewer) through an iterative loop: internalize mission → question assumptions → identify gaps → research → design → iterate until >=9/10 confidence on all 5 outcomes.
+
+**Key rules:**
+- Every Codex session is FRESH (no resume — other sessions may run between rounds)
+- Full persona + vision + outcomes injected EVERY round
+- Claude autonomously executes research/probes between rounds
+- Hardware availability is DYNAMIC (filled by Claude from live nvidia-smi each round)
+- Codex's technical insights are valuable. Its strategic surrender is NOT.
+- NEVER use the generic reviewer personas for strategic direction — they default to safety
+
+---
+
+## Codex Prompt Template (MANDATORY for non-Tesla/Leibniz sessions)
+
+**Every non-Tesla/Leibniz Codex invocation (correctness, performance, etc.) MUST begin with this preamble. No exceptions.**
 
 ```
 MANDATORY FIRST STEP: Read CLAUDE.md in this repository root. Every rule there is binding.
