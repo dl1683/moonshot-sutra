@@ -34,7 +34,7 @@ def load_model(checkpoint, device, version="auto"):
     # Auto-detect version from checkpoint
     if version == "auto":
         config = ckpt.get("config", {})
-        if config.get("max_steps", 8) == 12 or "checkpoints_v060a" in str(checkpoint):
+        if config.get("max_steps", 8) == 12 or "v060a" in str(checkpoint):
             version = "v060a"
         else:
             version = "v054"
