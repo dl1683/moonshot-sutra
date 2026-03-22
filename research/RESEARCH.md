@@ -1,5 +1,27 @@
 # Sutra Research Log
 
+## Pre-Training Gate: v0.6.0b-rd12 (2026-03-22)
+
+**6 rounds, 12 fixes, ALL THREE CLEAN.** Training started.
+
+| Round | Issues | Fixes Applied |
+|-------|--------|---------------|
+| R1 | 4 med correctness, 2 med scaling | Resume scanning, optimizer restore, cached eval batches, depth_counts restore, JSON context manager, per-pass entropy diagnostic |
+| R2 | 1 med correctness | Resume self-containment (check v060b before v060a) |
+| R3 | 1 med correctness + 1 med scaling | RNG state save/restore (torch, random, CUDA) |
+| R4 | 2 HIGH correctness | Rolling checkpoint timing (moved after eval), dataset sticky state checkpointing |
+| R5 | 2 med scaling | Alpha schedule 0.0→1.0 (was 1.0→2.0), extended 3K→5K steps |
+| R6 | ALL CLEAN | — |
+
+**Key design decisions from gate:**
+- Alpha=0 (uniform) start gives all depths ~equal terminal supervision during first 1K steps
+- Alpha caps at 1.0 (P(D=12)~12x P(D=1)), not 2.0 (144x), for meaningful early-pass exposure
+- 5K steps (~164M tokens) adequate for structural de-collapse canary
+- Average depth lower → throughput ~1.48x of planned 3K run, not 1.67x
+- D=1 gets ~1.4K terminal-supervised microbatches across the full run
+
+---
+
 ## Research Survey: Exact-Memory Backends for Small Causal LMs (2026-03-22)
 
 ### Motivation
