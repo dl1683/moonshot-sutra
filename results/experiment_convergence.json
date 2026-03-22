@@ -1,8 +1,0 @@
-{
-  "experiment": "easy_hard_token_convergence",
-  "result": "FAIL",
-  "finding": "No separation at step 4 (5.1% easy vs 5.4% hard done)",
-  "implication": "Current model converges uniformly. Must train with inter-step loss first.",
-  "big_jump": "Step 7->8: easy goes 55%->100% done. Late steps are critical.",
-  "conclusion": "v0.6.0 Phase A (inter-step supervision) is mandatory before freezing works."
-}
