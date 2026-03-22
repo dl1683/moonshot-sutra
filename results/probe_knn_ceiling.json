@@ -1,0 +1,256 @@
+{
+  "probe": "knn_lm_ceiling",
+  "step": 13900,
+  "datastore_size": 131072,
+  "k": 64,
+  "temperature": 10.0,
+  "per_lambda": {
+    "0.0": {
+      "whitespace": {
+        "count": 135,
+        "mean_ce": 1.8151,
+        "top1_accuracy": 0.8
+      },
+      "function_word": {
+        "count": 2080,
+        "mean_ce": 2.5492,
+        "top1_accuracy": 0.4202
+      },
+      "code_symbol": {
+        "count": 146,
+        "mean_ce": 3.4514,
+        "top1_accuracy": 0.3151
+      },
+      "number": {
+        "count": 190,
+        "mean_ce": 5.2864,
+        "top1_accuracy": 0.0842
+      },
+      "content_word": {
+        "count": 5471,
+        "mean_ce": 5.8136,
+        "top1_accuracy": 0.1978
+      },
+      "proper_noun": {
+        "count": 100,
+        "mean_ce": 6.2593,
+        "top1_accuracy": 0.13
+      },
+      "acronym": {
+        "count": 53,
+        "mean_ce": 6.4245,
+        "top1_accuracy": 0.283
+      },
+      "code_identifier": {
+        "count": 1,
+        "mean_ce": 6.6752,
+        "top1_accuracy": 0.0
+      }
+    },
+    "0.1": {
+      "whitespace": {
+        "count": 135,
+        "mean_ce": 1.7913,
+        "top1_accuracy": 0.8148
+      },
+      "function_word": {
+        "count": 2080,
+        "mean_ce": 2.5594,
+        "top1_accuracy": 0.425
+      },
+      "code_symbol": {
+        "count": 146,
+        "mean_ce": 3.4676,
+        "top1_accuracy": 0.2945
+      },
+      "number": {
+        "count": 190,
+        "mean_ce": 5.3105,
+        "top1_accuracy": 0.0842
+      },
+      "content_word": {
+        "count": 5471,
+        "mean_ce": 5.85,
+        "top1_accuracy": 0.1963
+      },
+      "proper_noun": {
+        "count": 100,
+        "mean_ce": 6.3297,
+        "top1_accuracy": 0.14
+      },
+      "acronym": {
+        "count": 53,
+        "mean_ce": 6.5185,
+        "top1_accuracy": 0.283
+      },
+      "code_identifier": {
+        "count": 1,
+        "mean_ce": 6.7806,
+        "top1_accuracy": 0.0
+      }
+    },
+    "0.2": {
+      "whitespace": {
+        "count": 135,
+        "mean_ce": 1.7769,
+        "top1_accuracy": 0.8074
+      },
+      "function_word": {
+        "count": 2080,
+        "mean_ce": 2.5808,
+        "top1_accuracy": 0.426
+      },
+      "code_symbol": {
+        "count": 146,
+        "mean_ce": 3.5045,
+        "top1_accuracy": 0.2808
+      },
+      "number": {
+        "count": 190,
+        "mean_ce": 5.3634,
+        "top1_accuracy": 0.0789
+      },
+      "content_word": {
+        "count": 5471,
+        "mean_ce": 5.9173,
+        "top1_accuracy": 0.1958
+      },
+      "proper_noun": {
+        "count": 100,
+        "mean_ce": 6.4129,
+        "top1_accuracy": 0.14
+      },
+      "acronym": {
+        "count": 53,
+        "mean_ce": 6.6277,
+        "top1_accuracy": 0.283
+      },
+      "code_identifier": {
+        "count": 1,
+        "mean_ce": 6.8984,
+        "top1_accuracy": 0.0
+      }
+    },
+    "0.3": {
+      "whitespace": {
+        "count": 135,
+        "mean_ce": 1.7682,
+        "top1_accuracy": 0.8074
+      },
+      "function_word": {
+        "count": 2080,
+        "mean_ce": 2.6104,
+        "top1_accuracy": 0.4197
+      },
+      "code_symbol": {
+        "count": 146,
+        "mean_ce": 3.5562,
+        "top1_accuracy": 0.2671
+      },
+      "number": {
+        "count": 190,
+        "mean_ce": 5.4335,
+        "top1_accuracy": 0.0789
+      },
+      "content_word": {
+        "count": 5471,
+        "mean_ce": 6.002,
+        "top1_accuracy": 0.1919
+      },
+      "proper_noun": {
+        "count": 100,
+        "mean_ce": 6.5107,
+        "top1_accuracy": 0.13
+      },
+      "acronym": {
+        "count": 53,
+        "mean_ce": 6.7539,
+        "top1_accuracy": 0.283
+      },
+      "code_identifier": {
+        "count": 1,
+        "mean_ce": 7.0319,
+        "top1_accuracy": 0.0
+      }
+    },
+    "0.5": {
+      "whitespace": {
+        "count": 135,
+        "mean_ce": 1.765,
+        "top1_accuracy": 0.8074
+      },
+      "function_word": {
+        "count": 2080,
+        "mean_ce": 2.6953,
+        "top1_accuracy": 0.4178
+      },
+      "code_symbol": {
+        "count": 146,
+        "mean_ce": 3.7056,
+        "top1_accuracy": 0.2466
+      },
+      "number": {
+        "count": 190,
+        "mean_ce": 5.6294,
+        "top1_accuracy": 0.0737
+      },
+      "content_word": {
+        "count": 5471,
+        "mean_ce": 6.2305,
+        "top1_accuracy": 0.1872
+      },
+      "proper_noun": {
+        "count": 100,
+        "mean_ce": 6.7667,
+        "top1_accuracy": 0.13
+      },
+      "acronym": {
+        "count": 53,
+        "mean_ce": 7.0766,
+        "top1_accuracy": 0.2642
+      },
+      "code_identifier": {
+        "count": 1,
+        "mean_ce": 7.3684,
+        "top1_accuracy": 0.0
+      }
+    }
+  },
+  "best_lambda_per_category": {
+    "acronym": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "code_identifier": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "code_symbol": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "content_word": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "function_word": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "number": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "proper_noun": {
+      "best_lambda": 0.0,
+      "best_delta_pct": 0.0
+    },
+    "whitespace": {
+      "best_lambda": 0.5,
+      "best_delta_pct": -2.76
+    }
+  },
+  "avg_retrieval_target_delta": 0.0,
+  "avg_general_delta": -0.92,
+  "verdict": "NEGATIVE: Exact memory does not help. Retrieval spectrum thesis weakened."
+}
