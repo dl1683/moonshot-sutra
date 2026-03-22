@@ -5953,17 +5953,11 @@ Do NOT treat external pretrained models as whole-model teachers. Treat them as s
 6. Risk mitigation is mandatory:
    - no teacher losses until elastic compute actually works
    - every teacher run must beat a same-compute-on-more-data student-only baseline
-7. Canonical artifact restored:
-   - `design_round1.md` is deprecated because it was clobbered
-   - canonical design doc is now `research/multi_model_learning/design_round3.md`
+7. Canonical design docs were in multi_model_learning/ (deleted — findings ingested above)
 
 ### Practical interpretation
 
 The negative `dim=128` dual-teacher result does NOT kill the direction. It kills dense, global, unaligned teacher mixing at tiny scale. The only defensible next move is the narrow Stage 7-only experiment above, after controller-first prerequisites are satisfied.
-
-### Canonical detailed doc
-
-- `research/multi_model_learning/design_round3.md`
 
 ---
 
@@ -6550,4 +6544,772 @@ that doesn't exist in the computational graph yet.
 then retest. Without verification producing actual consistency checks,
 there's nothing for syndrome nodes to detect.
 
-6 design rounds → 1 clean probe → definitive kill. The Chrome workflow worked.
+---
+
+## Chrome: Reversible Writer Probe INCONCLUSIVE (2026-03-21)
+
+**INCONCLUSIVE: Probe methodology insufficient. Mechanism not invalidated.**
+
+Three arms: control, correction-only (z gate), correction+anti (z+a gates).
+Frozen v0.6.0a backbone at step 5000, CPU, 500 steps per arm.
+
+| Arm | BPT | easy_drift | hard_gain | z_mean | a_mean |
+|-----|-----|-----------|-----------|--------|--------|
+| control | 8.7733 | 5.8192 | 0.6597 | — | — |
+| correction_only | 8.6052 | 5.1105 | 0.6236 | 0.000688 | 0 |
+| correction_anti | 8.7315 | 4.2530 | 0.9342 | 0.000012 | 0.000014 |
+
+**WARNING: All metric differences are confounded** — each arm drew a different eval batch
+(random state drift between arm runs). At z≈0.00001 the sidecar has effectively zero
+influence on model output. The apparent drift/gain differences measure eval batch difficulty.
+
+### Probe methodology failures
+
+1. **Eval batch not seeded:** Random state differs between arms → cross-arm comparisons invalid
+2. **Correction-only arm broken:** With a=0, the correction trace c accumulates but never affects
+   mu_out (mu_out = mu_prop - 0*c_new = mu_prop). Zero gradient to z → nothing trains.
+3. **Gates start too closed:** sigmoid(-7) ≈ 0.0009. Gradient through sigmoid at x=-7 is ~0.0009.
+   With LR=1e-3, bias updates are ~1e-6 per step — 500 steps can't move the gates.
+4. **Frozen backbone = local minimum:** The optimizer correctly learns that any sidecar interference
+   increases CE loss relative to the already-optimized backbone. Pushes gates CLOSED.
+
+### What we learned
+
+The reversible writer **cannot be tested as a frozen overlay**. The mechanism requires
+co-training from scratch to find its role in the loss landscape — the sidecar must shape
+how the backbone learns, not retrofit corrections onto a converged model.
+
+**Decision:** NOT KILLED (mechanism), but probe methodology FAILED. Defer to v0.6.1 where
+the reversible writer can be included from the start of training. If included:
+- Start gate biases at -3 (sigmoid ≈ 0.05) not -7 (sigmoid ≈ 0.001)
+- Seed eval batches deterministically for fair cross-arm comparison
+- Fix correction-only arm: use direct write gating (mu_out = mu_prop * (1-z) + mu * z)
+
+### General Chrome probe lesson
+
+**Frozen-overlay probes are valid for mechanisms that ADD information** (Error Scratchpad,
+syndrome detection) but **invalid for mechanisms that MODIFY existing outputs** (reversible
+writer, gating). The former can show signal even with no gradient to the base model; the
+latter need gradient to the full computation graph.
+
+---
+
+## v0.6.0a Loss Component Analysis (step 7800, 2026-03-21)
+
+L_final converging steadily at 0.77 per 1K steps (10.97 → 4.95 at step 7800).
+L_step **plateaued at ~1.8 since step 2100** — intermediate pass CE stopped improving.
+L_probe rising (0.03 → 0.22) — probe finding more residual gain to predict.
+
+| Metric | Rate | Concern |
+|--------|------|---------|
+| L_final | -0.77/1K steps | Healthy |
+| L_step | Plateau at 1.8 | Inter-step supervision may not be reaching recurrent core |
+| L_probe | Rising | Expected: probe calibrating |
+| fin/stp ratio | 3.6 → 2.76 | Passes becoming more uniform |
+
+**Key question:** Is L_step plateau because intermediate passes genuinely can't improve
+further, or because the gradient signal from L_step (coef=0.25) is too weak relative
+to L_final? Need per-pass CE decomposition to diagnose.
+
+### Per-Pass CE Decomposition (step 5000)
+
+**CRITICAL FINDING: Late passes DESTROY quality. Best pass = 6, final pass = WORST.**
+
+| Pass | Sampled CE | Margin | Change from prev |
+|------|-----------|--------|-----------------|
+| 0 | 2.636 | -0.756 | init |
+| 1 | 2.498 | -0.539 | +0.138 |
+| 2 | 2.436 | -0.460 | +0.062 |
+| 3 | 2.399 | -0.419 | +0.037 |
+| 4 | 2.363 | -0.380 | +0.035 |
+| 5 | 2.351 | -0.372 | +0.012 |
+| **6** | **2.348** | **-0.382** | **+0.003 (BEST)** |
+| 7 | 2.365 | -0.434 | -0.017 |
+| 8 | 2.398 | -0.524 | -0.034 |
+| 9 | 2.494 | -0.689 | -0.096 |
+| 10 | 2.856 | -1.168 | -0.362 |
+| 11 | 4.977 | -3.351 | -2.122 |
+
+Summary: Passes 0-6 improve monotonically. Passes 7-11 degrade catastrophically.
+Final pass (11) is 2.1x worse than best pass (6). The model is OVERTHINKING.
+
+**Implications:**
+1. **L_step can't fix this** — its coefficient (0.25) is too weak vs L_final (1.0).
+   L_final optimizes pass 11 only, sacrificing mid-pass quality.
+2. **Elastic compute is mandatory** — freezing at pass 5-6 would give 2x better predictions.
+3. **The overwrite problem is REAL and QUANTIFIED** — each late pass adds ~0.1-2.1 CE.
+4. **This is the #1 problem to solve** — more training won't fix this; the architecture
+   allows late passes to destroy early-pass work.
+
+**Next:** Run same analysis at step 7700+ to see if training reduces the late-pass degradation.
+
+### Codex Fix Design: Best-So-Far Regret Penalty (2026-03-22)
+
+**Recommended by Architecture Theorist + Correctness Engineer.**
+
+The root cause of late-pass degradation is dynamical: nothing in the loss says
+"more passes must not destroy solved tokens." Late passes get extra pheromone routing,
+keep writing with Bayesian precision that only grows, and overshoot good states.
+
+**Implementation:**
+```python
+# In compute_v060a_losses(), after computing sampled_ce_hist:
+best_prev = sampled_ce.cummin(dim=2).values  # running minimum along pass axis
+# Shift right so pass p compares against best of passes 0..p-1
+best_prev_shifted = torch.cat([sampled_ce[:,:,:1], best_prev[:,:,:-1]], dim=2)
+regret = F.relu(sampled_ce - best_prev_shifted - 0.01)  # epsilon=0.01 tolerance
+# Only penalize passes 7+ (where degradation occurs)
+mask = torch.zeros(12, device=sampled_ce.device)
+mask[7:] = 1.0
+L_regret = (regret * mask).pow(2).mean()
+L_total += REGRET_LOSS_COEF * L_regret  # start at 0.05, raise to 0.10 if stable
+```
+
+**Properties:**
+- Zero new parameters, no checkpoint format change
+- Mid-training compatible (resume from step 8K)
+- NaN-safe (relu + square)
+- Dynamic: reference updates as passes improve, doesn't hard-code "pass 6 is best"
+- Hard tokens can still improve in late passes (only penalizes regression)
+
+**Seven approaches evaluated (Codex ranking):**
+1. **G. Regret penalty** ← RECOMMENDED (targets exact bug, safest)
+2. C. Monotonic constraint (pairwise version of G, less flexible)
+3. F. Write decay (preserves early quality but may hurt hard tokens)
+4. A. Stronger L_step (blunt, doesn't target late-pass specifically)
+5. B. Multi-exit (hard-codes pass 6, extra compute)
+6. D. Progressive readout (masks the bug, doesn't fix it)
+7. E. Early stopping (right long-term, but probe not validated yet)
+
+**Chrome probe before deployment:**
+1. Verify sampled CE matches full-vocab CE trend at passes 5-11
+2. Eval-only write-decay sweep on 8K checkpoint
+3. 500-1000 step fork: baseline vs L_regret, track late_drop + hard-token gain
+
+---
+
+## Learning Rate Analysis (2026-03-22)
+
+**Power law fit: BPT = 164 * tokens^(-0.157)**
+
+| Step | Tokens | BPT | Rate/1K | Accel |
+|------|--------|-----|---------|-------|
+| 1K | 33M | 10.70 | — | — |
+| 2K | 66M | 9.76 | 0.94 | — |
+| 3K | 98M | 9.23 | 0.53 | -0.41 |
+| 4K | 131M | 8.89 | 0.34 | -0.19 |
+| 5K | 164M | 8.49 | 0.40 | +0.06 |
+| 6K | 197M | 8.09 | 0.40 | -0.01 |
+| 7K | 229M | 7.89 | 0.20 | -0.19 |
+| 8K | 262M | 7.79 | 0.10 | -0.10 |
+
+Scaling exponent 0.157 is HIGHER than Chinchilla typical (0.05-0.10).
+This means the model is still in the steep part of the curve — not capacity-limited.
+Predicted BPT=5.25 at ~100K steps (3.3B tokens).
+
+Mini-plateaus (steps 3100-3600, 4600-5100, 6600-7100) suggest phase transitions —
+the model reorganizes representations periodically.
+
+**Key insight:** Deceleration is normal for power law learning. The model hasn't
+hit the 69M parameter expressiveness wall. The late-pass degradation is a bigger
+bottleneck than raw capacity — fixing it with L_regret would effectively increase
+useful capacity without adding parameters.
+
+---
+
+## Chrome Design: Resonant Write Dither (Codex Architecture Theorist, 2026-03-21)
+
+**Stochastic resonance applied to Stage-5 write threshold.**
+
+### Mechanism
+
+Noise on the write-stage logit, scaled by local susceptibility:
+```
+χ_{i,p} = 1[3 ≤ p ≤ 8] · q_{write}(1-q_{write}) · g_{phero}(1-g_{phero})
+η ~ N(0, σ₀² · χ²)
+ℓ̃_{write} = ℓ_{write} + η
+```
+
+q(1-q) = local slope of write threshold (noise only helps near threshold).
+g(1-g) = pheromone susceptibility (noise maximal where trace is informative but unsaturated).
+
+**Zero parameters** for probe (fixed σ₀ values). If survives: 1 scalar `log_sigma`.
+
+### Why This Specific Design
+
+- Targets specific failure: borderline tokens not separating into write/stop
+- Not generic regularization (NEFTune) — threshold-specific, pass-specific, susceptibility-scaled
+- Not Gumbel noise — that's exploration, not resonance
+- Not Grokfast — that's gradient filtering, not activation noise
+- SR requires inverted-U: medium noise beats both zero AND high noise
+
+### Probe Spec (Pure Evaluation — No Training)
+
+- CPU, dim=768, frozen v0.6.0a checkpoint
+- Arms: σ₀ = {0, 0.03, 0.10, 0.30} + untargeted mu-noise control
+- 750 fixed cached eval batches per arm
+- Primary: late_best_CE on borderline-hard subset
+- Secondary: hard_gain, easy_drift, test_BPT, AUROC(q_write, future_gain)
+- SR signature: inverted-U required (σ=0.10 must beat both 0 and 0.30)
+
+### Kill Criteria
+
+1. Best arm fails to improve late_best_CE by ≥5% vs control
+2. easy_drift worsens by >5%
+3. test_BPT regresses by >0.2%
+4. Untargeted noise matches targeted within 1%
+5. No inverted-U
+
+### Novelty Claim (Narrow)
+
+Late-pass, pheromone-conditioned, zero-birth threshold dither on Stage-5 write decision.
+Not a broad "noise helps" claim. Prior art exists for noise in neural networks (dropout,
+NEFTune, noisy routing). What's specific: threshold-resonance on the recurrent write gate.
+
+### Probe Result: KILL (2026-03-22)
+
+**All arms identical. Zero measurable effect at any noise level.**
+
+| Arm | BPT | Drift | Gain | Late CE |
+|-----|-----|-------|------|---------|
+| sigma=0 (ctrl) | 8.5851 | 4.8632 | 0.7180 | 3.2018 |
+| sigma=0.03 | 8.5850 | 4.8617 | 0.7177 | 3.2020 |
+| sigma=0.10 | 8.5850 | 4.8607 | 0.7177 | 3.2019 |
+| sigma=0.30 | 8.5851 | 4.8622 | 0.7178 | 3.2017 |
+| untargeted | 8.5850 | 4.8600 | 0.7176 | 3.2023 |
+
+All differences are in 4th-5th decimal place — pure noise floor.
+
+**Root cause:** Susceptibility scaling chi = q_write(1-q_write) * g_phero(1-g_phero)
+produces effective noise on the order of 0.001-0.02, far below signal level.
+At sigma=0.30 with chi=0.06, the actual dither is ~0.02 on log-probabilities
+that span 1-10. The noise is 1000x too small to affect the softmax/top2_project output.
+
+**Lesson:** Susceptibility scaling is double-edged. It correctly targets borderline tokens
+but also guarantees the noise is negligible (by definition, borderline tokens have small
+susceptibility). The SR framing requires a threshold device with a specific noise
+sensitivity band. Stage-5 pi_write after softmax+top2_project is not such a device —
+it's a smooth probability, not a threshold.
+
+**Decision:** KILL the Resonant Write Dither approach. The architecture's write mechanism
+is not a threshold device suitable for stochastic resonance. The late-pass degradation
+problem needs a direct architectural fix (multi-exit loss, monotonic constraint, or
+write decay), not noise injection.
+
+6 design rounds -> 1 clean probe -> definitive kill. The Chrome workflow worked.
+
+---
+
+## Codex Tier 2 Reviews at Step 8K (2026-03-22)
+
+Three parallel Codex reviews (Scaling Expert, Competitive Analyst, Architecture Theorist) run against the 8K checkpoint state. All three converge on the same core message.
+
+### Scaling Expert
+
+**Bottom line:** Do not widen yet. Fix pass destruction first.
+
+- BPT 10.70 -> 7.79 from 1K to 8K (262M tokens seen). Fitted exponent 0.157 = still in steep pre-asymptotic regime, not permanently better scaling law.
+- Not capacity-limited at 69M. Bottleneck is bad recurrent dynamics, not raw width.
+- Late-pass fix is a free 2x compute recovery. Passes 7-11 actively undo solved states — worse than useless.
+- Chinchilla needs a third axis: useful_passes. Training compute scales with P=12 but P_useful is approximately 6.
+- At dim=1024 without fix, wider router/writer amplifies overshoot. More capacity = more power for bad late passes.
+- Scale trigger: late_drop improved >50%, final-pass CE within ~10% of best mid-pass, 768 post-fix curve clearly flattening.
+- Recommended: pass-truncation sweep at 4/6/8/10/12 passes on 8K checkpoint.
+
+### Competitive Analyst
+
+**Bottom line:** Sutra is interesting research, not yet competitive product.
+
+- v0.5.4 genuinely close to Pythia-70M on PIQA/WinoGrande/HellaSwag/ARC-C, genuinely nowhere close on SciQ/LAMBADA.
+- SmolLM2-135M trained on 2T tokens is the 2026 small-model bar. Gap is massive: +13.6 PIQA, +16.4 HellaSwag.
+- 69M is right scale for proving mechanism. First real competitive push should be 150M-250M, not another 69M run.
+- Field pattern: dominant wins are data-centric overtraining (SmolLM2) and hybrid architectures (Mamba-2, Falcon-H1, Bamba). Pure recurrence alive via RWKV-7 and xLSTM.
+- Strongest argument against Sutra: recurrence may be latency tax + optimization burden, not capability multiplier. Late-pass destruction is best evidence for that criticism.
+- **Critical missing evidence:** Need matched dense baseline (same tokenizer, data, params, plain decoder). Without it, the geometry claim is underdetermined.
+- Honest narrative: "69M from-scratch recurrent model surprisingly close to Pythia-70M with far less data/compute, but not yet frontier-competitive, and half its recurrent depth is wasted."
+
+Key papers to track: SmolLM2, Mamba-2, xLSTM, Titans, RWKV-7, Falcon-H1, Bamba.
+
+### Architecture Theorist
+
+**Bottom line:** "The real direction is not '7 stages.' It is 'iterative shared-state refinement with protected memory.'"
+
+Component verdicts:
+- **12-pass recurrence**: Real signal, wrong deployment. Dense recurrence helps to pass 6, current loss rewards destructive tail.
+- **Stage-superposition**: Useful design language, overstated as current reality. Live system is effectively 4-stage machine.
+- **Scratchpad**: KEEP. Most consistent win (+10.2% at small scale). Best matches global-workspace / stigmergic-memory theory.
+- **Pheromone**: DEMOTE. Entangled with late-pass failure — late passes get extra pheromone-biased routing then overwrite good states.
+- **GatedLayerNorm**: Keep as engineering scaffold, not theory.
+- **BayesianWrite**: Write stage is core, Bayesian story not yet earned. Lambda failed as correctness signal. Trust "bounded gated write" over "Bayesian precision."
+
+Theory insight: 12-pass system is NOT behaving as successively refinable code. Passes 0-6 refine; passes 7-11 re-encode and destroy. This is catastrophic forgetting inside one forward pass. Rate-distortion predicts optimal pass count: D(p) + lambda_compute*p + lambda_overwrite*O(p). O(p) explodes after pass 6.
+
+Cross-domain analogy: LDPC/turbo decoding. Good iterative decoders pass extrinsic information. Sutra late passes recycle intrinsic belief and amplify it.
+
+v0.6.1 minimal spec: keep v0.6.0a scaffold, add L_regret, stop reading out from final pass blindly. Make late passes safe first, then make them optional.
+
+Kill immediately: dense 12-pass inference, "lambda = confidence" story, Stage-7 rhetoric without verifier, any new pheromone/noise exotica before overwrite bug is fixed.
+
+If simplifying: remove explicit pheromone first, replace BayesianWrite with simpler bounded/reversible gated residual write. Core that survives: local construction, routing, scratchpad, protected iterative refinement.
+
+---
+
+## Pass-Truncation Sweep + Per-Pass CE at Step 8300 (2026-03-22)
+
+### CRITICAL FINDING: Late Passes Are Essential Despite Sampled CE Degradation
+
+**Pass-truncation sweep (step 8300, rolling_latest):**
+
+| Passes | BPT | CE |
+|--------|------|------|
+| 4 | 21.40 | 14.83 |
+| 6 | 21.23 | 14.72 |
+| 8 | 20.40 | 14.14 |
+| 10 | 18.39 | 12.75 |
+| **12** | **7.59** | **5.26** |
+
+12 passes is best by a massive margin. Truncating at pass 6 (the "best" per sampled CE) gives near-random BPT.
+
+**Per-pass sampled CE (step 8300, same checkpoint):**
+Pass 0: 2.969 -> Pass 6: 2.730 (best) -> Pass 11: 4.691
+
+The degradation pattern is IDENTICAL to step 5K (pass 6 optimal, pass 11 catastrophic), just shifted in absolute values.
+
+**Interpretation:** The sampled CE and full-vocab BPT tell different stories:
+- Sampled CE says: pass 6 is best, late passes destroy quality
+- Full-vocab BPT says: all 12 passes are essential, truncating is catastrophic
+
+Three hypotheses:
+1. **Representation reorganization**: Late passes sacrifice per-token discrimination (sampled CE) to build global structure the readout layer needs
+2. **Metric mismatch**: `build_negative_set` uses final-pass logits for candidates — pass 6 may look artificially good against pass-12-biased negatives
+3. **Information routing**: Late passes move information between positions (via routing/scratchpad) in ways that hurt local CE but enable better full-vocab discrimination
+
+**Implication for L_regret:** The probe has a BPT regression kill criterion (<1%), so it's safe. If L_regret fixes sampled CE but hurts actual BPT, it will be killed correctly. But this finding suggests the "late-pass destruction" narrative may be an artifact of the sampled CE metric, not the actual model quality.
+
+**Action needed:** Design a full-vocab per-pass CE test (not sampled). Compute full CE(pass_p) for all p to see if the degradation is real or metric-dependent.
+
+### RESOLUTION: Full-Vocab Per-Pass CE (Step 8300)
+
+**THE SAMPLED CE METRIC WAS COMPLETELY MISLEADING.**
+
+Full-vocab BPT at each pass (same readout: ln + emb.weight):
+
+| Pass | Full-Vocab BPT | Sampled CE | Discrepancy |
+|------|---------------|------------|-------------|
+| 0 | 20.99 | 2.97 | -- |
+| 3 | 21.40 (worst) | 2.77 | Sampled says improving |
+| 6 | 20.94 | 2.73 (best sampled) | Sampled says optimal HERE |
+| 8 | 19.58 | 2.76 | Sampled says degrading |
+| 10 | 16.13 | 3.04 | Sampled says catastrophic |
+| 11 | **7.59 (best)** | 4.69 (worst sampled) | COMPLETE INVERSION |
+
+**The real picture:**
+- Passes 0-6 barely help full-vocab BPT (21.0 -> 20.9, only -0.3 BPT improvement)
+- Passes 7-11 provide MASSIVE improvement (20.4 -> 7.6, a 63% BPT reduction)
+- Late passes contribute +8.88 CE drop — the bulk of all learning
+
+**Why sampled CE was misleading:** `build_negative_set()` constructs candidates from final-pass (pass 12) logits. This negative set is biased toward what the FINAL state finds confusing. Early passes look "good" against these negatives because they haven't specialized — they have broad, non-committal representations that happen to discriminate well against a small candidate set. Late passes look "bad" because they're building highly specialized representations that are optimal for the FULL 50K-token vocabulary but lose per-token discrimination against a small biased set.
+
+**Analogy:** Measuring a student's knowledge with 10 multiple-choice questions (sampled CE) vs. a comprehensive exam (full-vocab CE). A student who's memorized surface patterns aces the multiple-choice. A student who deeply understands the material aces the comprehensive exam but may second-guess individual multiple-choice items.
+
+**Implications:**
+1. **L_regret may be solving the wrong problem.** It penalizes late-pass "degradation" in sampled CE, but late passes are actually the most constructive. The BPT kill criterion (<1% regression) will catch this.
+2. **The "default inference at pass 6" recommendation would be CATASTROPHIC** — BPT 20.9 vs 7.6.
+3. **The Architecture Theorist's "late passes re-encode and destroy" narrative is WRONG** for full-vocab. Late passes re-encode but for the BETTER.
+4. **The sampled_pass_ce metric in train_v060a.py's L_step loss may be training the wrong signal.** L_step uses sampled CE weights that up-weight late passes — but the sampled CE gradient for late passes points AWAY from the actual improvement direction.
+
+**CRITICAL QUESTION:** Is L_step (which uses sampled CE) actually HURTING late-pass learning? The model improves despite L_step because L_final (full-vocab) dominates, but L_step may be providing a confounding gradient signal for passes 7-11.
+
+**Next steps:**
+1. ~~Wait for L_regret probe to complete~~ DONE — KILLED (see below)
+2. Design a probe: run with L_step=0 (only L_final + L_probe) to see if removing the confounding sampled CE signal improves late-pass learning
+3. Consider replacing sampled_pass_ce with full-vocab per-pass CE in training — computationally expensive (12x full softmax) but would give correct gradient signal
+
+### L_regret Probe Result: KILLED (2026-03-22)
+
+**Verdict: KILL** — regret reduction 7.8% (threshold was >=30%).
+
+| Metric | Baseline | + L_regret | Delta |
+|--------|----------|-----------|-------|
+| BPT | 8.999 | 8.991 | -0.01% (neutral) |
+| Late regret (sampled) | 1.290 | 1.190 | -7.8% (below 30% threshold) |
+| Hard gain | 0.024 | 0.072 | +205% (positive) |
+| Final CE (sampled) | 5.354 | 5.227 | -0.13 (slight improvement) |
+| best_pass (sampled) | 3 | 5 | shifted later |
+
+L_regret barely moved any metric. It couldn't fix the "late-pass degradation" because there IS no late-pass degradation in full-vocab terms. The sampled CE was misleading.
+
+**The confirmation:** L_regret's BPT was essentially unchanged (-0.01%), confirming that the sampled CE "destruction" in late passes does not correspond to actual quality loss. The L_regret penalty targeted a non-existent problem.
+
+**Key lesson:** Never trust proxy metrics (sampled CE from build_negative_set) over ground truth (full-vocab CE/BPT). The sampled negative set introduces selection bias that inverts the quality signal for late passes.
+
+**New #1 priority:** Test L_step=0 (remove sampled CE loss entirely). If L_step's sampled CE signal is actively confounding late-pass learning, removing it should improve training speed.
+
+### Codex Review: Full-Vocab Finding (2026-03-22)
+
+Codex confirms the diagnosis and adds actionable recommendations:
+
+**Root cause confirmed:** `build_negative_set` constructs negatives from final-pass top-32 logits. `sampled_pass_ce` then scores ALL passes against this fixed set. Early passes are broad/low-commitment — full-vocab CE punishes this but sampled CE ignores it (throws away 50K-token denominator). Late passes compress mass onto a small plausible set — full-vocab rewards this but sampled CE punishes it (those plausible alternatives ARE the negatives).
+
+**Training confound amplified:** L_step uses sampled_ce_hist with STEP_WEIGHTS that upweight late passes — so the most biased part gets the largest auxiliary weight. L_probe targets are also biased but detached, so contamination is limited to controller labels, not the recurrent core.
+
+**Recommended replacement for L_step:**
+1. Per-pass full-vocab CE using same readout (ln + emb.weight), not build_negative_set
+2. Subsample token positions (not vocab) to keep compute sane — vocab softmax stays exact
+3. Only supervise late band (passes 7-10); L_final handles pass 11. Don't force passes 0-5 to decode — fights stage complementarity
+4. Retarget L_probe with exact metrics too
+5. Set new coefficient by gradient-norm calibration, not raw magnitude
+
+**v0.6.1 revisions required:**
+- "Default at pass 6": FULLY REVERSED (pass 12 is essential)
+- "Demote pheromone": SOFTENED (pheromone active in late passes = where real gain lives; can't assume destructive without correct metrics)
+- "Replace BayesianWrite": SOFTENED (destructive-tail argument gone)
+- "L_regret": remains KILLED (targeted proxy artifact)
+
+**DO NOT ablate pheromone or writer until loss metric is fixed.** Risk of amputating the part of the system that's carrying the model.
+
+**Next experiments:**
+1. Finish L_step=0 probe (running)
+2. 3-arm fork: baseline vs L_step=0 vs L_step_exact_late (full-vocab, late passes only)
+3. Metric-isolation probe: final-top32 vs self-top32 vs random32 vs full-vocab CE
+4. Add fixed-slice full-vocab per-pass eval to main training loop
+
+### Turbo/LDPC Decoding Theory Connection
+
+Theory work during probe runtime. The Architecture Theorist noted the analogy to turbo/LDPC iterative decoding.
+
+**Key insight:** Good iterative decoders (turbo, LDPC) strictly separate:
+- **Intrinsic information**: original channel evidence (fixed, never recycled)
+- **Extrinsic information**: what each iteration discovered NEW
+
+Sutra's current architecture violates this separation:
+- `mu` serves as both intrinsic (initialized from input) and accumulator (updated each pass)
+- Router reads `mu` directly (intrinsic-dependent messages, not extrinsic)
+- BayesianWrite accumulates precision monotonically (can't retract bad updates)
+- Pheromone measures change magnitude (delta_mag), not information quality
+
+**However**, the truncation sweep results complicate this diagnosis. If all 12 passes are essential for good BPT, the model may have found its OWN way to use late passes constructively, even if the turbo/LDPC separation principle is violated. The "recycled intrinsic belief" may be a feature, not a bug, at this training stage.
+
+**v0.6.1 design implication:** Before redesigning the information flow (extrinsic-only messages, residual corrections), we need to understand WHY 12 passes works so much better than 6. The sampled CE metric may be the wrong lens for this problem.
+
+### Convergent Recommendations (All 3 Agree — UPDATED by Full-Vocab Finding)
+
+1. ~~**Fix late-pass destruction before anything else.**~~ SUPERSEDED: Late passes are CONSTRUCTIVE. L_regret probe KILLED. The real problem is the sampled CE metric in L_step.
+2. **Do not scale to dim=1024 yet.** Still valid — but reason changed: need to understand if L_step is confounding, not fix non-existent late-pass destruction.
+3. **First competitive push at 150-250M**, not another 69M run. Still valid.
+4. **Run matched dense baseline** to validate the recurrence-is-worth-it claim. Still valid — highest priority evidence gap.
+5. **Demote pheromone, keep scratchpad** as the surviving proven mechanism. Still valid.
+6. ~~**Default inference at pass 6**~~ WRONG: Full-vocab shows pass 6 BPT=20.9 vs pass 12 BPT=7.6. Pass 12 is essential.
+
+### Codex Tier 1 Review (Step 7800) — Pending Actions
+
+From earlier Tier 1 review (now ingested, output file cleaned up):
+- **MEDIUM**: Eval uses random test windows per checkpoint. Test_bpt is stochastic single-shard proxy. Action: switch to fixed indexed multi-shard eval slice.
+- **MEDIUM**: Rolling resume drops metric history. Rolling checkpoints omit `metrics`; on resume `metrics_history` becomes empty. Action: store metrics in rolling checkpoints or merge from JSON on resume.
+- Both are pipeline hygiene issues, not blocking training progress.
+
+## Chrome Cycle: L_step_exact Probe (2026-03-22)
+
+### Theory: Intermediate Loss Strength Matters More Than Direction
+
+**Background:** Three probes tested modifications to L_step (the intermediate-pass loss):
+
+| Probe | What | Result |
+|-------|------|--------|
+| L_step=0 | Remove intermediate loss entirely | KILLED — late improvement dropped 1.37 |
+| L_step_sampled | Current: sampled CE with 33 biased candidates | Baseline — works reasonably |
+| L_step_exact | Full-vocab CE on passes 7-10 | EARLY SIGNAL: late improvement COLLAPSED (12.5→3.6) |
+
+**Critical finding (emerging):** The full-vocab CE on intermediate passes is TOO STRONG. At step 100 of the exact arm:
+- BPT=9.15 (vs baseline 9.07 — only slightly worse)
+- Late improvement=3.6 (vs baseline 12.5 — CATASTROPHICALLY worse)
+- Best pass shifted from 11→9 (model is no longer using late passes effectively)
+
+**What this means:** Full-vocab CE forces intermediate passes to try to PREDICT THE OUTPUT directly. But intermediate passes should NOT be output stages — they're building blocks. Pass 7 should create a representation that HELPS passes 8-11 build toward the final answer. When we force pass 7 to directly predict the output token, it optimizes for a different objective than what pass 11 needs from it.
+
+**The analogy:** It's like training middle managers to do the CEO's job instead of their own. If you evaluate every middle manager on final company revenue, they all try to make high-level decisions instead of doing their actual jobs (information routing, resource management, quality control). The company performs worse because nobody is doing the intermediate work.
+
+**Why sampled CE (the current approach) works despite wrong direction:**
+1. It provides gradient flow (L_step=0 proved this matters)
+2. But with only 33 candidates (vs 50K full vocab), the gradient is WEAK
+3. A weak wrong-direction gradient is less harmful than a strong right-direction gradient that targets the wrong objective
+4. The 33-candidate CE is essentially a soft ranking signal, not a hard prediction signal
+
+**Three competing hypotheses for what intermediate passes need:**
+1. **Weak prediction signal** — current approach, tolerable. Keep sampled CE but know it's a compromise.
+2. **Representation quality signal** — "does pass p's representation contain the information pass p+1 needs?" Something like contrastive loss between adjacent passes, or mutual information maximization.
+3. **Gradient flow without any prediction objective** — just ensure gradients can flow back. Maybe detach the direction but keep the magnitude (gradient penalty on intermediate passes).
+
+### Competitive Landscape: Sub-200M Models (Research, 2026-03-22)
+
+**Honest assessment of where we stand vs the field.**
+
+| Model | Params | HellaSwag | PIQA | WinoGrande | Training Tokens |
+|-------|--------|-----------|------|------------|-----------------|
+| **SmolLM2-135M** | 135M | **42.1** | **68.4** | 51.3 | **2T** |
+| **MobileLLM-125M** | 125M | 38.9 | 65.3 | 53.1 | **1T** |
+| **Mamba-130M** | 130M | 35.3 | 64.5 | 51.9 | **300B** |
+| **Pythia-160M** | 162M | 30.3 | ~59.8 | 51.5 | **300B** |
+| **Pythia-70M** | 70M | 27.3 | — | 51.5 | **300B** |
+| **Sutra v0.5.4** | 68.3M | 25.7 | 54.8 | 49.8 | **~20B** |
+
+**Key insight: training tokens matter enormously at small scale.** SmolLM2-135M uses 2T tokens (14,815x params). Pythia-70M uses 300B tokens (4,286x params). Sutra uses ~20B tokens (294x params). We've barely scratched the surface of what these parameters can learn.
+
+**At 68M params, most benchmarks are near-random:**
+- HellaSwag 25% is random. Pythia-70M gets 27.3%. Sutra gets 25.7%.
+- WinoGrande 50% is random. Pythia-70M gets 51.5%. Sutra gets 49.8%.
+- At this scale, architecture matters less than data volume.
+
+**The honest picture:**
+1. Sutra at 68M/20B tokens is comparable to Pythia-70M at 68M/300B tokens on some metrics — which suggests our architecture may be more data-efficient, but the signal is weak because both are near-random.
+2. To compete meaningfully, we need either (a) much more training data (300B+ tokens), or (b) scale to 135-350M params, or (c) both.
+3. The competitive targets at 135M are SmolLM2 (2T tokens, 42.1 HellaSwag) and MobileLLM (1T tokens, 38.9 HellaSwag). These are MASSIVE data budgets.
+4. Mamba-130M (300B tokens, 35.3 HellaSwag) shows architecture CAN matter at this scale — it beats Pythia-160M despite fewer params.
+
+**What this means for Sutra:**
+- The "matched dense baseline" probe is CRITICAL — we need to know if our architecture adds value beyond training setup
+- Scale-up to 135-200M should be high priority after 20K checkpoint
+- Data efficiency (Outcome 4: multi-teacher learning) is the most under-developed outcome and potentially the biggest lever
+- MobileLLM's deep-thin architecture (30 layers at 125M) is worth studying — depth helps at small scale
+
+**Next steps:** Wait for full L_step_exact probe results. If confirmed as KILL, then:
+- Keep current sampled L_step (it works despite being theoretically wrong)
+- Design a representation quality probe (hypothesis 2) — measure whether intermediate pass mu contains the information the next pass needs
+- Alternatively, try WEAKENED exact loss: full-vocab CE but with very low coefficient (0.05 instead of 0.25) and temperature scaling
+- The "correct" intermediate loss may be representation-level, not prediction-level
+
+### Chrome Probe: L_step_exact (3-arm, completed 2026-03-22)
+
+**The definitive L_step experiment.** Three arms, 500 steps each from step 5000 checkpoint.
+
+| Arm | Description | Final BPT | Late Improvement | Best Pass | Verdict |
+|-----|-------------|-----------|------------------|-----------|---------|
+| Baseline | Sampled CE (K=32), production config | 9.07 | 12.48 (stable) | 11 | KEEP |
+| Exact | Full-vocab CE on passes 7-10 | 9.21 | **3.50** (collapsed) | **9** | **KILL** |
+| None | No L_step at all | 9.00 | 10.63 (declining) | 11 | WORSE |
+
+**Exact arm catastrophe in detail:** At step 250, late_improvement hit 1.28 (vs 12.2 baseline). Passes 8-11 converged to near-identical BPT (~9.17-9.21), meaning 4 passes of compute do NOTHING. The model learned to predict tokens early (good) but the final passes can't improve on the intermediate ones (fatal). Best pass shifted from 11→9, never returning to 11.
+
+**The complete picture of intermediate losses:**
+1. Full-vocab CE on intermediate passes = CATASTROPHIC (too strong, wrong objective)
+2. Sampled CE on intermediate passes = GOOD (right strength, adequate direction)
+3. No loss on intermediate passes = DEGRADING (insufficient gradient flow)
+
+**Why this matters architecturally:** The Goldilocks zone for intermediate supervision is a *weak, imprecise prediction signal*. The 32-candidate sampled CE provides just enough gradient flow to keep intermediate passes engaged in the recurrent computation, without distorting them toward direct prediction. This is an important design principle for any recurrent architecture with shared parameters.
+
+### Chrome Probe: L_step Ablation (2-arm, completed 2026-03-22)
+
+**Question:** Does the sampled L_step loss help or hurt late-pass effectiveness?
+
+**Design:** 2-arm probe from step 5000 checkpoint, 500 fine-tuning steps each:
+- Arm 1: Baseline (sampled L_step, as in production training)
+- Arm 2: No L_step (L_step coefficient = 0)
+
+**Results:**
+
+| Arm | Final BPT | Late Improvement (final) | Late Improvement (trend) | Best Pass |
+|-----|-----------|-------------------------|-------------------------|-----------|
+| **Baseline (sampled L_step)** | 9.054 | 12.35 | Stable (12.5→12.35) | Always 11 |
+| **No L_step** | 9.162 | 10.98 | Declining (13.5→11.0) | 11→10 at step 450 |
+
+**Verdict: Sampled L_step is BENEFICIAL.**
+
+Key findings:
+1. **Without L_step, late-pass effectiveness degrades steadily.** Late improvement dropped from 13.5 to 11.0 over 500 steps — a 19% decline. The best pass shifted from 11 (final) to 10, meaning the final pass stopped being the most effective.
+2. **With sampled L_step, late-pass effectiveness is stable.** Late improvement stayed 12.3–12.8 throughout 500 steps. Best pass remained at 11 (final) consistently.
+3. **BPT is slightly worse without L_step** (9.16 vs 9.05), confirming that the intermediate gradient signal helps overall quality too.
+
+**Interpretation:** The sampled L_step provides a gradient flow signal that keeps intermediate passes "engaged" in the recurrent processing. Without it, the intermediate passes gradually become decorrelated from the final pass — they still process information but in ways that don't compound effectively toward the output. The sampled CE loss (33 candidates) acts as a soft alignment signal — too weak to distort intermediate representations toward direct prediction (like the exact probe showed), but strong enough to keep them in the game.
+
+**This resolves the L_step question definitively:**
+- Full-vocab CE on intermediate passes → KILL (too strong, wrong objective)
+- Sampled CE on intermediate passes → KEEP (right strength, adequate direction)
+- No loss on intermediate passes → WORSE (insufficient gradient flow)
+- The Goldilocks zone is a weak, imprecise prediction signal. The current design is in this zone.
+
+### Generation Quality Test (step 9000, 2026-03-22)
+
+**15 diverse prompts tested with greedy (temperature=0) and sampled (k=40, temp=0.9) decoding.**
+
+**Greedy summary averages:**
+- Trigram diversity: 0.265 (1.0 = no repetition) — SEVERE repetition
+- ASCII ratio: 1.0 — clean text, no garbage
+- Word diversity: 0.26 — heavily repetitive vocabulary
+- Avg length: 43.1 words
+
+**Greedy examples (representative):**
+- "The cat sat on the" → "other hand, and the cat was a good idea. The cat was a good idea to be the cat, and the cat was a good idea..." (pure loop)
+- "Once upon a time, there was a" → "little girl named Lily. She was a little girl named Lily. She was a little girl named Lily..." (exact repetition)
+- "The capital of France is" → "a major role in the United States. The capital of France is a major role in the United States..." (wrong + loop)
+- "def fibonacci(n):" → " n" then whitespace (near-empty)
+- "Question: What is the meaning of life?\nAnswer:" → echoes the question in a loop
+
+**Sampled decoding** produces more diverse text (avg trigram diversity 0.94) but is semantically incoherent — random associations loosely related to prompt words.
+
+**Assessment at 68M/9K steps:**
+- The model has learned basic English syntax and word co-occurrence patterns
+- It can start coherent phrases but collapses into repetition loops within 10-20 tokens
+- No factual knowledge demonstrated (expected — we've seen <0.5% of what 300B-token models see)
+- No code generation ability
+- The repetition problem is the dominant failure mode — suggests the model's hidden state "collapses" to attractors during recurrent processing
+
+**What this tells us about the architecture:**
+1. The recurrent loop may amplify attractor states — once the model settles on a pattern, 12 passes reinforces it
+2. This is different from standard transformer degeneration (which is typically softmax sharpening) — our repetition may be STATE-LEVEL collapse in the recurrent dynamics
+3. A repetition penalty at the architecture level (detecting when mu converges across passes) could help
+4. More training data is the biggest lever — at 9K steps on 20B tokens, we've seen very little data relative to model capacity
+
+**Baseline for future comparison:** Track trigram_diversity and word_diversity at each checkpoint. Target: trigram_diversity > 0.5 at step 20K, > 0.7 at 50K.
+
+---
+
+### Leibniz Research Loop: Architectural Innovations Survey (2026-03-22)
+
+**Full brief: research/leibniz_brief_01.md. Codex Leibniz Round 1 in progress.**
+
+Comprehensive survey of 2024-2026 innovations from DeepSeek, Moonshot/Kimi, MiniMax, Qwen, Meta, OLMo, MobileLLM, plus our own moonshot findings. Key innovations surveyed:
+
+**Optimizer:** Muon (10-15% token efficiency, 50% less optimizer memory, validated at 100M), MuonClip (Muon + weight-level QK clipping, zero loss spikes at 1T params)
+
+**Architecture consensus (2024-2025):** SwiGLU (universal), RMSNorm + QK-Norm (stability), RoPE (saves 1.57M params), deep-and-thin (MobileLLM: 30 layers beats 12 at 125M), GQA, weight tying
+
+**Training recipe:** WSD schedule > cosine (SmolLM2 validated), z-loss for stability, zero dropout (ACL 2025 confirms), grad clip 1.0
+
+**Chinese lab innovations:** MLA (93% KV cache reduction via latent compression), DeepSeekMoE (fine-grained experts, shared + routed), aux-loss-free load balancing (dynamic bias), FP8 training, Lightning Attention (hybrid linear+quadratic), Native Sparse Attention (3-branch: compress+select+window)
+
+**Our moonshots:** Fractal embeddings (geometric structure creates efficiency), latent space reasoning (scratch space has theoretical grounding), self-constructing intelligence (emergence from random init), CTI universal law (D(C) = D_inf + k*C^(-alpha))
+
+**Tokenizer:** At 68M, vocab=50K makes embedding 56.5% of params. Vocab=32K would free 14M params for compute. Optimal vocab scales with model size.
+
+**Codex Leibniz session will derive:** which principles apply to our recurrent architecture, novel mechanisms we could invent, what to change for v0.7.0.
+
+### Codex Leibniz Round 1 — Mechanism Analysis (2026-03-22)
+
+**Codex grounded analysis in actual v0.6.0a code, not just the brief.** Key delta: StageBank already uses SiLU (not GELU), lambda is per-dimension/monotone/internal to BayesianWrite. Real current failure = fixed-point recurrent collapse, not weak FFNs.
+
+**Cross-Cutting Principles Identified:**
+1. Preserve geometry under repeated composition
+2. Separate content from control
+3. Compress before communicating
+4. Favor depth over width
+5. Use weak auxiliaries, not dominant ones
+6. Keep coarse semantics and fine specialization separate
+
+**Priority-Ranked Mechanism Proposals:**
+1. **Dual-axis RoPE + QK-norm + pass-phase conditioning** — Replace learned pos embeddings with rotary + second rotary axis for pass number. Same weights, different effective function per pass. Cleanest fix for shared-parameter fixed-point collapse.
+2. **Orthogonal/conflict-aware BayesianWrite** — Decompose proposal into parallel + orthogonal components vs current mu. Parallel raises confidence; orthogonal rotates state and can REDUCE confidence on conflict. Muon-style transfer to write dynamics.
+3. **SwiGLU factorized StageBank with micro-experts** — Keep 7 coarse stages, each gets 2-4 tiny SwiGLU micro-experts + 1 shared. Route coarse with pi, then micro-expert within. Bias-based load balancing (no aux loss).
+4. **z-loss + WSD schedule** — z-loss for logit stability, WSD (warmup-stable-decay) likely better than cosine.
+5. **Latent communication bottleneck** — Compress only what's broadcast across positions/passes (128-256d latent). Router/scratchpad on latent, writer reconstructs from latent + local state. Right MLA-style application.
+6. **Smaller vocab + param reallocation** — Replace 50K GPT-2 with smaller hierarchical tokenizer, spend freed params on recurrence/richer stages.
+7. **Deeper recurrence + CTI controller** — Only after 1-6: test deeper passes + elastic early exit using predicted marginal distortion reduction (from L_probe).
+
+**Dead Ends (do not pursue):**
+- Full-token MTP at 68M
+- Massive flat MoE replacing 7-stage semantics
+- Treating Muon optimizer as the main fix
+- Directly importing MLA/NSA/Lightning wholesale
+- z-loss as the repetition solution (it's stability, not cure)
+- Label smoothing, dropout, stronger exact intermediate CE
+- FP8/GQA before fixing writer/routing/state collapse
+- Monotone confidence if conflict evidence matters
+
+**Immediate inference patch:** LZ-style repetition penalty at decode time to stop generation loops while training v0.7.
+
+**Follow-up questions for Round 2 research** (see Leibniz Round 2 brief).
+
+### Codex Leibniz Round 2 — Evidence Weighing + v0.7.0 Spec (2026-03-22)
+
+**Codex reviewed comprehensive both-sides evidence for all 10 follow-up questions, moonshot cross-pollination, and 5 explicit challenges to Round 1 assumptions.**
+
+**Positions Changed from Round 1:**
+- **Dual-axis RoPE → KILLED for pass conditioning.** Pass index is computation-time control, not spatial geometry — different objects shouldn't be encoded the same way. Replaced with adaLN/GatedRMSNorm pass conditioning (proven by TMLT) + sequence RoPE + QK-norm.
+- **Micro-experts → KILLED for v0.7.0.** Zero evidence below 100M params. Starvation risk too high at 68M with shared weights.
+- **Vocab redesign → DEFERRED.** 12-pass recurrence changes the fertility/compute math. 50K may be suboptimal but "drop to 32K now" is no longer justified.
+- **Deeper recurrence → DEFERRED.** Late-pass usefulness proves recurrence matters, but doesn't prove more shared passes = more distinct layers.
+
+**Positions Strengthened:**
+- **Conflict-aware BayesianWrite** — Genuine novelty gap on orthogonal state updates. Real alternative to monotone precision.
+- **SwiGLU** — Universal evidence. Param-matched: replace 768→1536→768 SiLU with 768→1024 SwiGLU.
+- **Pass conditioning** — TMLT proves it's mathematically necessary for shared-weight expressiveness.
+
+**New Proposals:**
+- **Passwise successive refinement** — From Fractal Embeddings: force early passes to do coarse compression, late passes to do fine. Better than micro-experts.
+- **Remove pheromone** — Positive feedback is wrong sign for an attractor problem. Not load-bearing.
+
+**v0.7.0 Architecture Spec (Codex-approved):**
+Goal: targeted simplification + anti-collapse repair, NOT bigger novelty bundle.
+
+1. Pass-conditioned GatedRMSNorm/adaLN (thread pass index through recurrent block)
+2. Sequence RoPE + QK-norm (replace learned position embeddings)
+3. Conflict-aware BayesianWrite (agreement raises precision, conflict/novelty can decay it)
+4. Param-matched SwiGLU StageBank (768→1024 SwiGLU replaces 768→1536 SiLU)
+5. Remove pheromone injection/update
+6. WSD schedule + z-loss + pass-collapse metrics logging
+7. Instrument for active compression (metrics only, no steering yet)
+
+**Chrome Probes Required Before Training:**
+- Probe A: Pass conditioning (baseline vs adaLN vs adaLN+RoPE)
+- Probe B: Writer (monotone vs conflict-aware)
+- Probe C: StageBank (SiLU vs SwiGLU)
+- Probe D: Recipe (cosine/WSD × z-loss on/off)
+- Probe E: Successive refinement auxiliary loss
+
+**Deferred to v0.8.0:** Micro-experts, latent bottleneck, tokenizer redesign, more passes, CTI controller / active compression.
+
+**Training Curve Assessment:** v0.6.0a trailing v0.5.4 is concerning, not just "patience." v0.7.0 should recover trainability, not add complexity. This is why micro-experts, tokenizer surgery, and latent bottleneck are deferred.
+
+**Active Compression (Priority 7):** Feasible in principle but not v0.7.0-ready. Prerequisites: calibrated uncertainty, hard floor on uniform sampling, correlation probes showing predicted gain matches actual gain. v0.7.0 instruments for it; v0.8.0 may promote to training controller.
+
+### Codex Tesla Session — v1.0 Ideal Architecture + Roadmap (2026-03-22)
+
+**v1.0 Destination: Multiscale Asynchronous Belief Graph.**
+Not a polished v0.7.0. A fundamentally different architecture at 0.8B-1.2B static params with recurrence. Current 68M line is a mechanism incubator.
+
+**Node State (per position):**
+- `c_i` content (R^2048), `a_i` address (R^64), `r_i` precision (R^64)
+- `u_i` control (R^32), `pi_i` stage mix (Δ^6), `g_i` gain estimate (R+)
+
+**Key Design Principles:**
+- Variable-rate segments (16K-32K learned segments + byte fallback) at 3 scales: segment, span, chunk
+- Global communication moves only 64d addresses and 128-256d latents. 2048d content stays LOCAL.
+- 80-90% shared core + 10-20% pass/stage adapters
+- Elastic: 2-4 cycles easy tokens, 8-16 hard tokens, ceiling 24, target avg 6-8
+- Training: L_final + weak L_refine + weak L_calib + weak L_budget + weak L_memory + module-local teachers
+
+**8 Non-Negotiable Properties:**
+1. **Explicit uncertainty** — model must know what it doesn't know. Required for halting, revision, active learning.
+2. **Content/control separation** — routing is low-entropy, semantics high-entropy. Entangling wastes params.
+3. **Successive refinement** — coarse structure before lexical detail. Progressive targets.
+4. **Sparse exact long-range recall** — recurrent state is lossy, exact retrieval needs a bypass.
+5. **Revision under contradiction** — can lower confidence, change route. Monotone certainty is not intelligence.
+6. **Elastic asynchronous compute** — difficulty is nonuniform. Gain predictor + retire mask.
+7. **Stable module ABI** — democratization requires composable improvements. Fixed stage contracts.
+8. **Function-preserving growth** — warm-start path dies without it. Net2Net, additive adapters.
+
+**Roadmap from v0.6.0a to v1.0:**
+- v0.6.1-v0.6.5: Anti-collapse repairs (pass norms, RoPE, conflict writer, drop pheromone, WSD/z-loss)
+- v0.6.6: Successive refinement aux loss probe
+- v0.6.7: SwiGLU bridge (blended FFN warm-start)
+- v0.7.0: Merged stable recurrent core ("stop collapsing" release)
+- v0.7.1-v0.7.3: Route/content split, 2-level scratchpad, calibrated gain/uncertainty
+- v0.8.0: Asynchronous inference halting with token retirement
+- v0.8.1-v0.8.2: Multiscale graph (token/span/chunk), first scale jump to 135M-350M
+- v0.9.0: Latent comm bottleneck + ABI freeze (modules truly swappable)
+- v0.9.1: Tokenizer migration via dual-vocab bridge (late because destructive)
+- v0.9.2: Offline active compression with exploration floor
+- v1.0: Online active compression + competitive-scale (0.8B-1.2B). Criterion: multiscale graph, calibrated halting, latent routing, stable ABI, benchmark competitive.
+
+**What v1.0 Must NOT Be:**
+- Not uniform lockstep depth (equal compute per token is wrong geometry)
+- Not dense all-to-all communication (too expensive, entangles routing+content)
+- Not flat MoE below scale where experts specialize
+- Not pure next-token CE with decorative auxiliaries
+- Not monotone certainty or "more passes = more intelligence"
+
+**Wild Cards:**
+- Factor-graph belief propagation for verification
+- Multigrid/renormalization passes across scales
+- Error-correcting-code syndrome checks for memory/readout
+- Hyperbolic or product-manifold address spaces
+- "Biggest gain may come from smarter control/verification, not fatter constructor — clearest proof Intelligence = Geometry"
