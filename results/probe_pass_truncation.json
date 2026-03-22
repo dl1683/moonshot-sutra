@@ -1,0 +1,37 @@
+{
+  "probe": "pass_truncation_sweep",
+  "checkpoint": "rolling_latest.pt",
+  "checkpoint_step": 8300,
+  "eval_batches": 10,
+  "batch_size": 2,
+  "seq_len": 256,
+  "results": [
+    {
+      "passes": 4,
+      "bpt": 21.3972,
+      "ce": 14.8314
+    },
+    {
+      "passes": 6,
+      "bpt": 21.2302,
+      "ce": 14.7157
+    },
+    {
+      "passes": 8,
+      "bpt": 20.4048,
+      "ce": 14.1435
+    },
+    {
+      "passes": 10,
+      "bpt": 18.3917,
+      "ce": 12.7481
+    },
+    {
+      "passes": 12,
+      "bpt": 7.5923,
+      "ce": 5.2626
+    }
+  ],
+  "best_passes": 12,
+  "best_bpt": 7.5923
+}

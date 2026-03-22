@@ -1,0 +1,288 @@
+{
+  "probe": "reversible_writer",
+  "dim": 768,
+  "steps": 500,
+  "checkpoint": "step_5000.pt",
+  "verdict": "KILL",
+  "reasons": [
+    "gates never opened (z,a < 0.001)"
+  ],
+  "arms": {
+    "control": [
+      {
+        "step": 50,
+        "train_loss": 6.0253,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 100,
+        "train_loss": 5.5863,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 150,
+        "train_loss": 5.4158,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 200,
+        "train_loss": 5.6004,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 250,
+        "train_loss": 4.9568,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 300,
+        "train_loss": 5.7754,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 350,
+        "train_loss": 5.5896,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 400,
+        "train_loss": 5.7043,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 450,
+        "train_loss": 5.836,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      },
+      {
+        "step": 500,
+        "train_loss": 4.5691,
+        "eval_bpt": 8.7733,
+        "easy_drift": 5.8192,
+        "hard_gain": 0.6597
+      }
+    ],
+    "correction_only": [
+      {
+        "step": 50,
+        "train_loss": 5.7677,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 100,
+        "train_loss": 5.9935,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 150,
+        "train_loss": 5.8732,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 200,
+        "train_loss": 5.8265,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 250,
+        "train_loss": 5.5844,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 300,
+        "train_loss": 5.7043,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 350,
+        "train_loss": 5.6504,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 400,
+        "train_loss": 5.7852,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 450,
+        "train_loss": 6.0806,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      },
+      {
+        "step": 500,
+        "train_loss": 5.8915,
+        "eval_bpt": 8.6052,
+        "easy_drift": 5.1105,
+        "hard_gain": 0.6236,
+        "z_mean": 0.000688,
+        "a_mean": 0.0,
+        "trace_rms": 0.001577
+      }
+    ],
+    "correction_anti": [
+      {
+        "step": 50,
+        "train_loss": 5.7888,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 0.000236,
+        "a_mean": 0.000289,
+        "trace_rms": 0.000579
+      },
+      {
+        "step": 100,
+        "train_loss": 5.7825,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 9.2e-05,
+        "a_mean": 0.000112,
+        "trace_rms": 0.000251
+      },
+      {
+        "step": 150,
+        "train_loss": 6.0333,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 2e-05,
+        "a_mean": 2.5e-05,
+        "trace_rms": 5.7e-05
+      },
+      {
+        "step": 200,
+        "train_loss": 5.8577,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.1e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 3.9e-05
+      },
+      {
+        "step": 250,
+        "train_loss": 5.8324,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.1e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 4.3e-05
+      },
+      {
+        "step": 300,
+        "train_loss": 5.7908,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.1e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 3.1e-05
+      },
+      {
+        "step": 350,
+        "train_loss": 5.589,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.1e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 3.1e-05
+      },
+      {
+        "step": 400,
+        "train_loss": 5.8968,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.1e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 3.1e-05
+      },
+      {
+        "step": 450,
+        "train_loss": 5.5122,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.2e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 3.2e-05
+      },
+      {
+        "step": 500,
+        "train_loss": 5.541,
+        "eval_bpt": 8.7315,
+        "easy_drift": 4.253,
+        "hard_gain": 0.9342,
+        "z_mean": 1.2e-05,
+        "a_mean": 1.4e-05,
+        "trace_rms": 3.2e-05
+      }
+    ]
+  }
+}
