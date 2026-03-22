@@ -5,7 +5,9 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 ---
 
-## CURRENT STRATEGIC DIRECTION: Design Ideal v1.0, Reverse-Engineer the Path
+## CURRENT STRATEGIC DIRECTION: Probe-First Incremental Evolution
+
+**CRITICAL FRAMING (User Insight 2026-03-22):** Don't converge too early. The v0.7.0 spec and v1.0 roadmap are HYPOTHESES, not commitments. Each warm-start step is a Chrome probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
 
 ### STRATEGIC PRINCIPLE: Top-Down + Bottom-Up (User Insight 2026-03-22)
 
@@ -19,13 +21,13 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 **The Leibniz loop is a TOOL, not the goal.** It informs the vision and validates specific mechanisms. But the architecture vision drives the priorities, not the other way around.
 
-### v1.0 DESTINATION (Codex Tesla Session 2026-03-22)
+### v1.0 DESTINATION (Codex Tesla Session 2026-03-22) — HYPOTHESIS, NOT PLAN
 
 **Multiscale Asynchronous Belief Graph at 0.8B-1.2B params.** Current 68M = mechanism incubator.
 
-**Roadmap:** v0.6.1→0.6.5 (anti-collapse) → v0.6.6-7 (successive refinement + SwiGLU) → v0.7.0 (stable core) → v0.7.1-3 (route/content split, 2-level scratchpad, calibrated uncertainty) → v0.8.0 (async halting) → v0.8.1-2 (multiscale + scale jump to 135M-350M) → v0.9.0 (latent comm + ABI freeze) → v0.9.1 (tokenizer) → v0.9.2 (active compression) → v1.0 (online active compression + competitive scale)
+**Working roadmap (subject to revision at every probe):** v0.6.1→0.6.5 (anti-collapse) → v0.6.6-7 (successive refinement + SwiGLU) → v0.7.0 (stable core) → v0.7.1-3 (route/content split, 2-level scratchpad, calibrated uncertainty) → v0.8.0 (async halting) → v0.8.1-2 (multiscale + scale jump to 135M-350M) → v0.9.0 (latent comm + ABI freeze) → v0.9.1 (tokenizer) → v0.9.2 (active compression) → v1.0 (online active compression + competitive scale)
 
-**8 Non-Negotiable Properties:** explicit uncertainty, content/control separation, successive refinement, sparse exact recall, revision under contradiction, elastic async compute, stable module ABI, function-preserving growth.
+**8 Properties we're EXPLORING (non-negotiable as goals, negotiable as implementations):** explicit uncertainty, content/control separation, successive refinement, sparse exact recall, revision under contradiction, elastic async compute, stable module ABI, function-preserving growth.
 
 **Full details in RESEARCH.md under "Codex Tesla Session."**
 

@@ -7313,3 +7313,41 @@ Not a polished v0.7.0. A fundamentally different architecture at 0.8B-1.2B stati
 - Error-correcting-code syndrome checks for memory/readout
 - Hyperbolic or product-manifold address spaces
 - "Biggest gain may come from smarter control/verification, not fatter constructor — clearest proof Intelligence = Geometry"
+
+---
+
+### Collapse Metrics Probe — Step 10K Baseline (2026-03-22)
+
+**50 batches, CPU, from step 10K checkpoint (BPT=7.49).**
+
+| Pass | BPT | Cosine to Prev | Lambda Mean |
+|------|-----|----------------|-------------|
+| 0 | 20.01 | — | 1.17 |
+| 1 | 19.95 | 0.962 | 1.27 |
+| 2 | 19.85 | 0.986 | 1.34 |
+| 3 | 19.78 | 0.993 | 1.39 |
+| 4 | 19.73 | 0.996 | 1.43 |
+| 5 | 19.61 | 0.996 | 1.45 |
+| 6 | 19.37 | 0.997 | 1.47 |
+| 7 | 18.93 | 0.996 | 1.50 |
+| 8 | 18.23 | 0.991 | 1.56 |
+| 9 | 17.18 | 0.983 | 1.67 |
+| 10 | 15.02 | 0.931 | 1.89 |
+| 11 | 7.35 | **0.291** | **4.60** |
+
+**Key findings:**
+1. **Passes 0-9 are near-collapsed:** cosine 0.93-0.997, BPT barely drops (20.0→17.2 over 10 passes)
+2. **Pass 10→11 does 60% of ALL compression:** 15.02→7.35 = 7.67 BPT drop, out of 12.65 total
+3. **91.5% of total improvement from passes 7-11**
+4. **Lambda spike at pass 11:** 1.89→4.60 (model dumps all precision budget into final pass)
+5. **Pass 10→11 cosine = 0.291:** near orthogonal — the final pass does something completely different from all previous passes
+
+**Diagnosis:** Shared-weight recurrence converges to near-fixed-point for passes 0-9, then makes one dramatic rewrite at the end. The model has learned to waste 10 passes and compress in 1. This is the attractor collapse that pass conditioning (adaLN) should address.
+
+**v0.6.1 probe hypothesis:** If adaLN lets the model differentiate behavior across passes, we expect:
+- Earlier passes contributing more BPT improvement (not just passes 10-11)
+- Lower average cosine similarity (more diverse pass representations)
+- More gradual lambda distribution (not all precision in final pass)
+
+**Gate for v0.6.1:** avg cosine decreases AND late_pct decreases (more distributed improvement).
+**Kill for v0.6.1:** if collapse profile looks the same or worse after 3K steps.
