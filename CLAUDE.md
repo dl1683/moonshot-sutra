@@ -12,6 +12,38 @@ Every existing small model inherits the assumptions of the large model paradigm.
 
 ---
 
+## Design Philosophy: Zero Ego, Full Commitment to Mission
+
+**Nothing is sacred except outcomes.** Every design choice exists to enforce a specific outcome. If that outcome can be achieved better another way, the implementation MUST change. The full philosophy with deep explanations is in `research/VISION.md` — READ IT EVERY SESSION.
+
+**The 5 Sacred Outcomes** (these are the GOALS — the mechanisms we use to pursue them are negotiable):
+
+1. **Genuine Intelligence** — The model must be genuinely smart: understand context, reason about complex problems, generate high-quality text. This is the #1 gating criterion. Our current mechanism is *state superposition* (different content follows different compute paths, modeled as probability distributions over processing stages with 12 recurrent passes). We chose superposition because it mirrors how thinking works — you don't spend equal effort on every word. **But superposition is the mechanism, not the goal. If a better mechanism produces higher intelligence from the same resources, replace it.**
+
+2. **Improvability** — When the model fails at something, you can identify WHAT is failing and fix it surgically without breaking everything else. The cost of improving intelligence must be low. Our current mechanism is *modular stage decomposition* (7 named stages with uniform interfaces). Stages make the system debuggable and composable. **The goal is improvability, not stages. If a different decomposition gives better improvability, use it.**
+
+3. **Democratized Development** — No single team is the bottleneck. Domain experts improve their domain. Improvements compose. Intelligence is a public utility built by a community, not a proprietary moat. Our current mechanism is the *infrastructure vision* (swappable stage modules, like Linux subsystems). **The goal is democratization, not any specific architecture pattern.**
+
+4. **Data Efficiency** — Extract maximum intelligence from minimum data by absorbing knowledge from every available source — other models, mathematical structure, symbolic systems, code patterns, not just raw text. Our current mechanism is *multi-teacher learning* (LEAST developed pillar — currently training from scratch due to warm-start technical issues). **Any approach that improves knowledge absorption per training token is welcome.**
+
+5. **Inference Efficiency** — Cheap to run. Easy tokens exit early, hard tokens get full compute. ~40% cost reduction if 60% of tokens can stop after 3 passes instead of 12. Our current mechanism is *elastic compute via BayesianWrite + lambda* (precision-weighted energy budget that creates natural halting pressure). The halting pressure constraint is LOAD-BEARING (elastic compute needs it), but the specific formula is negotiable. **If a better halting mechanism exists, propose it.**
+
+**Load-bearing choices** (solve real architectural constraints — keep unless a better solution to the SAME constraint exists):
+- **Scratchpad** — External memory for precise retrieval. SSMs/recurrence lose signal over long contexts. Without this, the model degrades on any task requiring recall of earlier information.
+- **Lambda/BayesianWrite** — Energy budget that creates natural stopping pressure for elastic compute. Without budget pressure, elastic compute degenerates to "always use max passes."
+
+**Negotiable choices** (historical or experimental — replace freely if something better achieves the same outcome):
+- Shared params across passes (could be partially shared or adaptive)
+- Pheromone routing (any cross-position info flow mechanism works)
+- 7-stage count (could be 5 or 10 — emerged from iteration, not theory)
+- From-scratch training (want warm-start/multi-teacher, hit technical issues)
+
+**The gating criterion is PERFORMANCE.** Benchmarks (MMLU, ARC, HellaSwag, GSM8K, etc.), generation quality, competitive positioning against the BEST models in our parameter class (Phi-4, Qwen3-4B, Gemma-3-1B, SmolLM). What "winning" means: same or fewer params, trained on a fraction of the data, with a fraction of the compute, matching or approaching the performance of models that used 100-1000x more resources to train. Not a specific number — the demonstration that mathematical insight closes the resource gap.
+
+**For every Codex review, every heartbeat, every design decision**: Ask "what outcome does this enforce?" and "is there a better way?"
+
+---
+
 ## Hard Rules
 
 ### No Inherited Paradigms
@@ -141,7 +173,7 @@ Run parallel Codex reviews using these 8 specialized personas. Not all are neede
 
 #### The 8 Reviewer Personas
 
-1. **Correctness Engineer** — Bugs, edge cases, pipeline integrity, data leakage, off-by-one errors. "Does the code do what you think it does?" Reviews: training loop, eval pipeline, data loading, checkpoint save/load. **Also repo hygiene:** flags stale files, outdated artifacts, Codex output files that should be ingested into RESEARCH.md and deleted, dead code, unused imports, temporary scripts. The repo must never accumulate entropy from agent outputs.
+1. **Correctness Engineer** — Bugs, edge cases, pipeline integrity, data leakage, off-by-one errors. "Does the code do what you think it does?" Reviews: training loop, eval pipeline, data loading, checkpoint save/load. **ALSO: Aggressive Entropy Auditor.** Every file in the repo starts at NEGATIVE valence — it must justify its existence through active utility or unique insight. The Correctness Engineer MUST systematically challenge every file's right to exist: code files, research docs, result JSONs, Codex output files, configs — everything. Flags: stale files, outdated artifacts, Codex outputs that should be ingested into RESEARCH.md and deleted, dead code, unused imports, temporary scripts, superseded research docs, old version files, completed probe code (results live in JSON), any file whose insights have been consolidated elsewhere. Files that can be consolidated with other positive-valence files should be merged. The repo must shrink or stay flat — never grow without justification. **Code is a liability. Every file is a liability. Git preserves history — deletion is safe and mandatory.**
 
 2. **Performance Engineer** — Memory profiling, GPU/CPU utilization, throughput bottlenecks, batch sizing, framework overhead. "Will this OOM? What's the peak memory? Where's the bottleneck?" Must profile before any long-running job. Would have caught: bootstrap_iters=100K OOM, zombie process contention.
 
@@ -205,6 +237,21 @@ colleagues (Codex). Compute time = theory time. ZERO idle time.
 **Task list is LIVE:** Automatically create tasks for new ideas, new probes, new theories as
 they emerge during research. The task list drives autonomous momentum — never run out of
 things to do.
+
+### Mission Alignment Heartbeat (MANDATORY — Session Start + Every 60 Minutes)
+
+At the start of every session and recurring every 60 minutes:
+
+1. Read `research/VISION.md`, this `CLAUDE.md`, the global `~/.claude/CLAUDE.md` (additive — global rules ADD to project rules, never replaced by them), and all memory files
+2. Schedule `/loop 60m` heartbeat for self-reflection alignment check
+3. Each heartbeat checks:
+   - Are active tasks serving the manifesto (Intelligence = Geometry, democratize AI)?
+   - Are we repeating dead ends already logged in RESEARCH.md?
+   - Should any Codex reviews be re-run (Tier 1 every code change, Tier 2 every 5K steps)?
+   - Are there idle resources (GPU/CPU) we should be using?
+   - Is the task list healthy — nothing stale, nothing missing, no gaps?
+4. Output a brief alignment report and take corrective actions immediately
+5. If Chrome isn't running experiments, START ONE. Zero idle time.
 
 ### THE SUTRA VISION: Stage-Superposition State Machine
 
@@ -302,23 +349,41 @@ Every Codex review produces an output file. After Claude reads it:
 
 ```
 MANDATORY FIRST STEP: Read CLAUDE.md in this repository root. Every rule there is binding.
+Then read research/VISION.md — especially the "Design Philosophy" section at the top.
 
 CONTEXT YOU MUST KNOW:
+- DESIGN PHILOSOPHY: Nothing is sacred except outcomes. Every design choice exists to
+  enforce a specific outcome. If achievable better another way, CHANGE IT. Zero ego.
+  The 5 sacred OUTCOMES (the mechanisms used to pursue them are negotiable):
+    1. Genuine Intelligence — the model must be smart. Mechanism: state superposition.
+    2. Improvability — find and fix failures surgically. Mechanism: modular stages.
+    3. Democratized Development — community builds it like Linux. Mechanism: infrastructure vision.
+    4. Data Efficiency — learn more from less. Mechanism: multi-teacher learning.
+    5. Inference Efficiency — cheap to run, easy tokens exit early. Mechanism: elastic compute.
+  If you can propose a BETTER mechanism for any outcome, propose it. Mechanisms are not sacred.
+  Load-bearing CONSTRAINTS (the problem is real, solution negotiable): Scratchpad (precise
+  retrieval bypassing recurrence signal loss), Lambda (halting pressure for elastic compute).
+  See VISION.md for deep explanations of each outcome and mechanism.
 - We are in a CHROME WORKFLOW: theory + experiments alternate.
-  v0.5.4 (69.4M params, Gated Peri-LN + Delayed Pheromone) is training on GPU.
-  Building diverse 25B-token corpus in parallel. Next milestone: dim=1024 scale-up.
+  v0.6.0a (68.3M params, 12 recurrent passes, attached history) is training on GPU.
+  Step 8700+, BPT monotonically improving. Critical finding: late passes (7-11) are MOST
+  valuable (63% of BPT improvement). Sampled CE metric was MISLEADING — build_negative_set()
+  creates selection bias from final-pass logits that INVERTS the quality signal.
 - The architecture vision is a STAGE-SUPERPOSITION STATE MACHINE with 7 stages that
-  form a state graph (not a pipeline). See research/STAGE_ANALYSIS.md for full details.
+  form a state graph (not a pipeline). See research/VISION.md for full details.
 - DO NOT recommend copying existing architectures (e.g., "just add attention layers").
   Every mechanism must be DERIVED from first principles (math, info theory, biology).
 - CRITICAL: This is an INTEGRATED SYSTEM. All stages must COMPLEMENT each other,
   not compete. Each stage's output must be exactly what the next stage needs.
   Components must lift each other exponentially, not drag each other down with
   conflicting biases. Evaluate proposals for SYSTEM COHERENCE, not just per-stage quality.
+- PERFORMANCE IS THE GATING CRITERION. Evaluate against best-in-class (Phi-4, Qwen3-4B,
+  Gemma-3-1B), not strawmen. The goal: same or fewer params, fraction of the training data,
+  fraction of the compute, matching or approaching the best in our parameter class.
 - File management: NEVER create new files unless necessary. Edit existing. Delete outdated.
 - All findings → research/RESEARCH.md. Raw ideas → research/SCRATCHPAD.md.
 
-After reading CLAUDE.md, explore the repo structure to understand current state.
+After reading CLAUDE.md and VISION.md, explore the repo structure to understand current state.
 
 ACTUAL TASK:
 [task goes here]

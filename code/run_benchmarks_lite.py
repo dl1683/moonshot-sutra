@@ -12,7 +12,6 @@ from pathlib import Path
 REPO = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO / "code"))
 
-from launch_v054 import create_v054
 from transformers import AutoTokenizer
 from datasets import load_dataset
 
@@ -28,13 +27,32 @@ def free_mem():
         torch.cuda.empty_cache()
 
 
-def load_model(checkpoint, device):
-    model = create_v054(dim=768, ff_dim=1536, max_steps=8, window=4, k_retrieval=8)
+def load_model(checkpoint, device, version="auto"):
+    """Load Sutra model, auto-detecting version from checkpoint config."""
     ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
+
+    # Auto-detect version from checkpoint
+    if version == "auto":
+        config = ckpt.get("config", {})
+        if config.get("max_steps", 8) == 12 or "checkpoints_v060a" in str(checkpoint):
+            version = "v060a"
+        else:
+            version = "v054"
+
+    if version == "v060a":
+        from launch_v060a import create_v060a
+        model = create_v060a(dim=768, ff_dim=1536, max_steps=12, window=4, k_retrieval=8)
+    else:
+        from launch_v054 import create_v054
+        model = create_v054(dim=768, ff_dim=1536, max_steps=8, window=4, k_retrieval=8)
+
     model.load_state_dict(ckpt["model"], strict=False)
-    del ckpt  # Free 500MB+ optimizer state immediately
+    step = ckpt.get("step", "?")
+    best_bpt = ckpt.get("best_bpt", "?")
+    del ckpt
     gc.collect()
     model.to(device).eval()
+    print(f"Loaded {version} model (step {step}, BPT {best_bpt})")
     return model
 
 

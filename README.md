@@ -38,10 +38,10 @@ Sutra isn't a transformer. It's a **Stage-Superposition State Machine** — a sy
 
 ### What Makes This Different
 
-- **Per-position stage probabilities**: Each token is in a superposition of stages inside a fixed 8-step recurrent pass. The current v0.5.4 code does not implement true early-exit or verify/reroute loops yet.
+- **Per-position stage probabilities**: Each token is in a superposition of stages inside a 12-step recurrent pass. True early-exit and verify/reroute loops are design goals for future versions.
 - **Content-dependent transitions**: A learned Markov kernel decides how each position moves through stages based on what it's processing. Not a fixed pipeline.
 - **Shared discourse memory (scratchpad)**: 8 shared memory slots that all positions can read/write. This gives the model a "working memory" for maintaining context across the sequence — like a human keeping track of the topic while reading.
-- **Recurrent processing**: 8 iterations of the stage graph per forward pass. Each iteration refines the representation. Late iterations are the most valuable — this is where reasoning happens.
+- **Recurrent processing**: 12 iterations of the stage graph per forward pass. Each iteration refines the representation. Late iterations (7-11) contribute 63% of BPT improvement — this is where reasoning happens.
 - **Bayesian state updates**: Precision-weighted evidence accumulation, not simple residual addition. The model tracks confidence.
 
 ### How It Actually Works: A Concrete Walkthrough
@@ -89,18 +89,18 @@ The transition kernel keeps evolving each token's stage distribution based on wh
 "tired"   → pi = [0, 0, 0.2, 0.3, 0.4, 0, 0.1]    (writing the reason to memory)
 ```
 
-Notice: **easy tokens ("The") tend to concentrate on later readout stages faster, while hard tokens ("because", "it") spend more mass on routing and memory.** In current v0.5.4 this is still expressed inside a fixed 8-step loop, not a true variable-depth controller.
+Notice: **easy tokens ("The") tend to concentrate on later readout stages faster, while hard tokens ("because", "it") spend more mass on routing and memory.** In current v0.6.0a this is expressed inside a fixed 12-step loop — true variable-depth control is a design goal for future versions.
 
 The scratchpad now contains a discourse summary: roughly "there's a cat, it did something, and there's a causal relationship."
 
-#### Iterations 5-8: Refinement and Reasoning
-**This is where the magic happens.** Late iterations are 2-4x more valuable than early ones.
+#### Iterations 5-12: Refinement and Reasoning
+**This is where the magic happens.** Late iterations (7-11) contribute 63% of total BPT improvement — this is empirically validated, not theoretical.
 
-The **pheromone traces** (activated at iteration 3+) mark which positions changed most during previous iterations. "because" and "it" have high pheromone — the routing system now prioritizes these hard positions.
+The routing system prioritizes hard positions that need more context. "because" and "it" get more compute.
 
 "it" finally locks onto "cat" through the routing mechanism. The causal chain "because → tired → cat" gets encoded. The scratchpad memory provides global context that helps resolve long-range dependencies.
 
-By iteration 8:
+By iteration 12:
 ```
 "The"     → pi = [0, 0, 0, 0, 0, 0, 1.0]  (Stage 7: output ready)
 "cat"     → pi = [0, 0, 0, 0, 0, 0, 1.0]  (output ready)
@@ -110,9 +110,9 @@ By iteration 8:
 ```
 
 #### Final: Output
-The hidden state `mu` has been refined through 8 iterations of evidence accumulation. It's projected through the output head to produce logits for the next token prediction.
+The hidden state `mu` has been refined through 12 iterations of evidence accumulation. It's projected through the output head to produce logits for the next token prediction.
 
-**The key insight**: this isn't a fixed 8-layer network. It's a dynamical system where each token follows its own path through the stage graph. The stage probabilities evolve differently per token — some concentrate on readout quickly while others spend more mass on routing and memory. In v0.5.4, all tokens still run through 8 recurrent steps (true early-exit and verify/reroute are design goals for v0.5.5+), but the stage distributions already create **content-dependent processing** within that fixed loop.
+**The key insight**: this isn't a fixed 12-layer network. It's a dynamical system where each token follows its own path through the stage graph. The stage probabilities evolve differently per token — some concentrate on readout quickly while others spend more mass on routing and memory. True early-exit and verify/reroute are design goals for future versions, but the stage distributions already create **content-dependent processing** within the fixed recurrent loop.
 
 ### Why This Matters
 
@@ -133,17 +133,12 @@ This is one of Sutra's most underappreciated features. The architecture isn't ju
 ### Every Version Builds on the Last
 
 ```
-v0.5.0 (base)                     → 67M params
-  ↓ warm-start (91% transfer)
-v0.5.2 (+switching kernel)         → 67M params, +4.1%
-  ↓ warm-start (91% transfer)
-v0.5.3 (+scratchpad memory)        → 67.6M params, +10.2%
-  ↓ warm-start (81% transfer)
-v0.5.4 (+gated norms + pheromone)  → 67.6M params, training now
-v0.6.0 (dim=1024, on FineWeb)      → 105M params, planned
+v0.5.0 → v0.5.2 → v0.5.3 → v0.5.4 (warm-start chain, MiniPile)
+v0.6.0a (from scratch, 20.7B diverse tokens, 12 passes — current)
+v0.7.0 (architecture redesign via Leibniz research loop — designing)
 ```
 
-Nothing is thrown away. Each version inherits everything the previous version learned. This is **compound intelligence** — each improvement builds on all prior improvements.
+The v0.5.x chain demonstrated compound intelligence through warm-starting. v0.6.0a trained from scratch on a much larger diverse corpus to establish a new baseline. v0.7.0 will incorporate novel mechanisms derived from a systematic research-to-invention process.
 
 ### The Gated Warm-Start Trick
 
@@ -181,14 +176,14 @@ The warm-start chain means every improvement from every contributor compounds au
 
 ## Current Status
 
-**v0.5.4** — Step 20K checkpoint (best: 5.25 BPT), full standard benchmarks
+**v0.6.0a** — Training in progress (~step 9500, BPT improving monotonically)
 
 | Metric | Value |
 |--------|-------|
-| Parameters | 69.4M |
-| Architecture | Stage-Superposition + Switching Kernel + Scratchpad + Gated Peri-LN + Pheromone |
-| Training data | 1.7B tokens (MiniPile academic papers) |
-| Best eval | **5.25 BPT** at step 20K |
+| Parameters | 68.3M |
+| Architecture | Stage-Superposition + 12 recurrent passes + Attached history + Probe-driven aux loss |
+| Training data | 20.72B tokens (FineWeb-Edu + 17 diverse sources, 246 shards) |
+| Current best eval | **7.54 BPT** at step 9K (improving) |
 | Hardware | Single NVIDIA RTX 5090 (24GB VRAM) |
 
 ### Benchmark Comparison (Full Standard Suites)
@@ -229,24 +224,24 @@ v0.5.0  Base Stage-Superposition SSM
   |
 v0.5.2  + Switching Kernel (+4.1%) + Gain Clamp (eliminates NaN)
   |
-v0.5.3  + Scratchpad Memory (+10.2%) — 2-4x training speedup at production scale
+v0.5.3  + Scratchpad Memory (+10.2%)
   |
-v0.5.4  + Gated Peri-LN + Delayed Pheromone (current)
+v0.5.4  + Gated Peri-LN + Delayed Pheromone — reached 5.25 BPT at 20K steps
   |
-v0.5.5  + Continuous-Spectrum Memory + Elastic Compute Budget (designing)
+v0.6.0a + 12 passes + Attached history + Probe-driven aux loss (current, training)
+  |
+v0.7.0  Architecture redesign informed by Leibniz research loop (designing)
 ```
 
-Each version warm-starts from the previous — knowledge accumulates, nothing is wasted.
+### What's Next: v0.7.0 Architecture
 
-### What's Next: Elastic Compute + Spectrum Memory
+We're running a structured research-to-invention loop (codenamed Leibniz) — surveying 2024-2026 innovations, understanding driving mechanisms, and deriving novel improvements. Top proposals from Codex's analysis:
 
-We're designing two connected innovations for v0.5.5:
+1. **Dual-axis RoPE** — Rotary position encoding plus pass-phase encoding. Same shared weights, different effective function per pass.
+2. **Orthogonal BayesianWrite** — Decompose proposals into parallel + orthogonal components vs current state. Conflicting evidence can REDUCE confidence.
+3. **Micro-expert StageBank** — Each of 7 stages gets 2-4 tiny SwiGLU experts, routed within the stage.
 
-**Continuous-Spectrum Memory** — Instead of fixed "gist or exact" memory, a continuous zoom from wide-angle (discourse context) to narrow-focus (exact token recall). The model learns what resolution each position needs. Like a camera zoom, not a microscope with click-stops.
-
-**Elastic Compute Budget** — Current AI models are uniformly mediocre: every token gets the same compute. This is a design target for a future version. The current v0.5.4 code still runs a fixed 8-step recurrent loop with no live verify/reroute controller or adaptive emit path.
-
-This connects to a fundamental insight: **the reason AI models produce uniform mediocrity is that they never learn to prioritize.** A compute budget creates the incentive to be efficient on easy things and thorough on hard things — like how humans skim easy text and slow down for complex passages.
+The goal is not to adopt existing innovations but to derive something better from the principles underlying them.
 
 ---
 
@@ -314,12 +309,12 @@ Training on academic papers alone teaches the model to write like a journal, not
 
 | Phase | Params | Data | Goal |
 |-------|--------|------|------|
-| **Current** | 67.6M (dim=768) | 1.7B tokens (MiniPile) | Validate architecture |
-| **Next** | 105M (dim=1024) | 25B tokens (diverse) | First reasoning emergence |
-| **Target** | 148M (dim=1280) | 25B+ tokens | Competitive with SmolLM2-135M |
-| **Stretch** | <4B | Full corpus | The David story |
+| **v0.5.4** (done) | 69M (dim=768) | 1.7B tokens (MiniPile) | Validate architecture |
+| **v0.6.0a** (current) | 68M (dim=768) | 20.7B tokens (diverse) | Training on real data at scale |
+| **v0.7.0** (designing) | TBD | 20.7B+ tokens | Architecture redesign via Leibniz research |
+| **Target** | <4B | Full corpus | Competitive with Phi-4, Qwen3-4B, Gemma-3-1B |
 
-We warm-start between compatible checkpoints today. Larger-width migration remains planned work.
+The target is not to beat dense baselines — it's to compete with **the best models in our parameter class**.
 
 ---
 
@@ -351,24 +346,21 @@ If intelligence requires a data center, it will always be controlled by those wh
 ```
 sutra/
 ├── code/
-│   ├── sutra_v05_ssm.py          # Core architecture
-│   ├── launch_v054.py             # Current model (Gated Peri-LN + Pheromone)
-│   ├── train_v054.py              # Production trainer
-│   ├── grokfast.py                # Gradient filter module (disabled at dim=768)
+│   ├── sutra_v05_ssm.py          # Core architecture (stages, routing, BayesianWrite)
+│   ├── launch_v060a.py            # Current model (12 passes, attached history)
+│   ├── train_v060a.py             # Production trainer (3-part loss)
 │   ├── scratchpad.py              # Shared discourse memory
-│   ├── download_diverse_data.py   # Multi-source data pipeline
-│   └── spectrum_memory.py         # Continuous-spectrum memory (v0.5.5)
+│   ├── data_loader.py             # Sharded data pipeline
+│   ├── gen_quality_test.py        # Generation quality assessment
+│   ├── run_benchmarks_lite.py     # Standard benchmarks (ARC, PIQA, HellaSwag, etc.)
+│   └── lm_eval_wrapper.py         # lm-eval framework integration
 ├── research/
-│   ├── RESEARCH.md                # All findings (~5000 lines)
+│   ├── RESEARCH.md                # All findings (~7000 lines)
 │   ├── VISION.md                  # The full infrastructure vision
+│   ├── SCRATCHPAD.md              # Strategic ideas and test queue
 │   └── STAGE_ANALYSIS.md          # Deep theoretical design for 7 stages
 ├── results/
-│   ├── chrome_v054_ablation.json     # Chrome experiment results
-│   ├── chrome_v054_probes.json       # Chrome probe results
-│   └── *.json                        # Chrome probe results
-├── eval/
-│   ├── sutra_eval_500.jsonl       # 500 reasoning questions
-│   └── clean_eval.py              # Evaluation scripts
+│   └── *.json                     # Probe results, metrics, benchmarks
 ├── experiments/
 │   └── ledger.jsonl               # Every experiment logged
 └── CLAUDE.md                      # Project constitution
