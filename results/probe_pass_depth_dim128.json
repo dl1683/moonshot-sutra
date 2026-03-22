@@ -1,0 +1,25 @@
+{
+  "probe": "pass_depth_comparison",
+  "dim": 128,
+  "steps": 500,
+  "results": {
+    "4": {
+      "test_bpt": 13.0689,
+      "params": 7645483,
+      "time_s": 150.1,
+      "steps": 500
+    },
+    "8": {
+      "test_bpt": NaN,
+      "params": 7645483,
+      "time_s": 206.5,
+      "steps": 500
+    },
+    "12": {
+      "test_bpt": 12.9652,
+      "params": 7645483,
+      "time_s": 344.0,
+      "steps": 500
+    }
+  }
+}

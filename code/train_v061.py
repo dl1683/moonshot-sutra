@@ -218,18 +218,21 @@ def main():
         source_optimizer = ckpt.get("optimizer", None)
         print(f"RESUMED v0.6.1 from step {start_step} ({ckpt['_path']})")
     elif not args.from_scratch:
-        # Warm-start from v0.6.0a
-        v060a_best = REPO / "results" / "v060a_best.pt"
+        # Warm-start from v0.6.0a — prefer permanent checkpoint with known step
+        # (Codex audit: v060a_best.pt has no step metadata, rolling may be newer
+        # than expected. Use step_* checkpoint for reproducible warm-start.)
+        v060a_permanents = sorted(
+            (REPO / "results" / "checkpoints_v060a").glob("step_*.pt"),
+            key=lambda p: int(p.stem.split("_")[1]), reverse=True
+        )
         v060a_rolling = REPO / "results" / "checkpoints_v060a" / "rolling_latest.pt"
-        v060a_step10k = REPO / "results" / "checkpoints_v060a" / "step_10000.pt"
 
-        # Try best, then rolling, then latest permanent
-        for src in [v060a_best, v060a_rolling, v060a_step10k]:
+        # Try permanent checkpoints first (known step), then rolling as fallback
+        for src in list(v060a_permanents) + [v060a_rolling]:
             if src.exists():
                 try:
                     ws_info = warm_start_from_v060a(model, str(src))
                     print(f"Warm-started from: {src.name}")
-                    # Don't load v0.6.0a optimizer — different param set
                     break
                 except Exception as e:
                     print(f"Warm-start failed from {src.name}: {e}")
@@ -259,6 +262,11 @@ def main():
     })
     best_bpt = min(best_bpt, init_metrics["bpt"])
 
+    # Track v0.6.1-specific training steps for LR schedule
+    # (Codex audit: schedule must continue on resume, not restart)
+    v061_steps_done = ckpt.get("v061_steps_done", 0) if ckpt is not None else 0
+    v061_total_steps = max_steps - start_step  # how many v0.6.1 steps to run total
+
     model.train()
     step = start_step
     running_losses = {"L_final": 0, "L_step": 0, "L_probe": 0, "L_total": 0}
@@ -268,9 +276,10 @@ def main():
     while step < max_steps:
         x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE, split="train")
 
-        cur_lr = lr * min(1.0, (step - start_step + 1) / WARMUP_STEPS) * (
-            0.5 * (1 + math.cos(math.pi * max(0, step - start_step - WARMUP_STEPS)
-                                 / max(1, max_steps - start_step - WARMUP_STEPS))))
+        # LR schedule based on v0.6.1-specific step count (survives resume)
+        cur_lr = lr * min(1.0, (v061_steps_done + 1) / WARMUP_STEPS) * (
+            0.5 * (1 + math.cos(math.pi * max(0, v061_steps_done - WARMUP_STEPS)
+                                 / max(1, v061_total_steps - WARMUP_STEPS))))
         for pg in opt.param_groups:
             pg["lr"] = cur_lr
 
@@ -305,6 +314,7 @@ def main():
             opt.step()
             opt.zero_grad()
             step += 1
+            v061_steps_done += 1
 
             if step % LOG_EVERY == 0:
                 avgs = {k: v / loss_count for k, v in running_losses.items()}
@@ -321,7 +331,9 @@ def main():
 
             if step % ROLLING_SAVE == 0:
                 atomic_torch_save({"model": model.state_dict(), "optimizer": opt.state_dict(),
-                                   "step": step, "best_bpt": best_bpt}, ckpt_dir / "rolling_latest.pt")
+                                   "step": step, "best_bpt": best_bpt,
+                                   "v061_steps_done": v061_steps_done},
+                                  ckpt_dir / "rolling_latest.pt")
 
             if step % EVAL_EVERY == 0:
                 try:
@@ -352,7 +364,8 @@ def main():
 
             if step % SAVE_EVERY == 0:
                 atomic_torch_save({"model": model.state_dict(), "optimizer": opt.state_dict(),
-                                   "step": step, "best_bpt": best_bpt, "metrics": metrics_history},
+                                   "step": step, "best_bpt": best_bpt, "metrics": metrics_history,
+                                   "v061_steps_done": v061_steps_done},
                                   ckpt_dir / f"step_{step}.pt")
 
     # Final summary

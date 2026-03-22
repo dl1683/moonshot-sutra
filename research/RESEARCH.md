@@ -7351,3 +7351,46 @@ Not a polished v0.7.0. A fundamentally different architecture at 0.8B-1.2B stati
 
 **Gate for v0.6.1:** avg cosine decreases AND late_pct decreases (more distributed improvement).
 **Kill for v0.6.1:** if collapse profile looks the same or worse after 3K steps.
+
+---
+
+### Codex Architecture Critique R1 — Stress-Testing All Assumptions (2026-03-22)
+
+**Persona: Architecture Theorist + Scaling Expert (combined). Mandate: challenge everything.**
+
+**Key verdicts:**
+
+1. **adaLN pass conditioning (P1):** STRONGEST proposal, justified by collapse data. But DON'T bundle with RoPE/QK-norm — test separately. Confidence: HIGH.
+
+2. **Conflict-aware BayesianWrite (P2):** WEAKEST major proposal. Collapse shows deferred work, not inability to lower confidence — different failure mode. Better alternative: random-depth training or simple forget gate. Confidence: LOW.
+
+3. **SwiGLU (P3):** Likely helpful but second-order at 68M. Activation choice is not the main bottleneck with this much collapse. Defer. Confidence: MEDIUM.
+
+4. **Remove pheromone (P4):** Easy yes, dead weight. Confidence: HIGH.
+
+5. **WSD+z-loss (P5):** Split it. Metrics logging mandatory. WSD reasonable. z-loss is hygiene, not a fix. On 3-5K probe schedule, architecture > recipe.
+
+6. **Successive refinement (P6):** Premature. Transfer from Fractal Embeddings to recurrent passes is weak. Better: train with sampled loop counts.
+
+**Recommended experiment order:**
+1. Train v0.6.1 adaLN-only (already built)
+2. **Run matched dense baseline NOW** — biggest evidence gap
+3. Compare 6/8/12 passes at matched FLOPs with random-depth training
+4. Remove pheromone
+5. Only then touch the writer
+6. SwiGLU after trainability recovered
+7. Successive refinement only if early-pass utility still refuses to emerge
+
+**v1.0 vision challenge:**
+- "Multiscale Asynchronous Belief Graph" is NOT yet more justified than simpler alternatives
+- Top 3 competing visions: (1) Deep-thin dense decoder (MobileLLM/SmolLM2), (2) Relaxed recursive transformer (Huginn), (3) Hybrid fast-memory (Mamba-2/xLSTM/RWKV/Titans)
+- "Non-negotiables" that are actually negotiable: explicit uncertainty, content/control split, revision, successive refinement, stable ABI
+- Only genuinely non-negotiable: sparse exact recall (if staying recurrent)
+
+**If starting fresh recommendation:** Relaxed recursive decoder — one strong causal block (RoPE, RMSNorm, SwiGLU), 70-85% shared across loops, 15-30% depth adapters, sampled loop count training, optional scratchpad. No 7-stage ABI, no overloaded Bayesian semantics, no async until short-loop competence exists.
+
+**Critical risk identified:** Optimizing for warm-start compatibility instead of best architecture. The embedding tax at 68M and absence of matched dense baseline are bigger strategic issues than SwiGLU vs SiLU.
+
+**Most informative experiment NOW:** v0.6.1 warm-start vs v0.6.1 from-scratch vs matched plain deep-thin decoder. If only one A/B: v0.6.1 vs dense baseline.
+
+**Sources:** MobileLLM (arxiv:2402.14905), SmolLM2 (arxiv:2502.02737), Relaxed Recursive Transformers (arxiv:2410.20672), Huginn (arxiv:2502.05171), Mamba-2, RWKV-7, xLSTM, Titans, MiniCPM/WSD, PonderNet, BLT.
