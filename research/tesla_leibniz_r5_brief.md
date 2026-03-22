@@ -11,8 +11,8 @@ This brief contains new data from R4-requested probes.
 - Pattern: alternating noise/improvement. Odd checkpoints (13K, 15K) regress; even (12K, 14K) improve.
 - This is likely eval variance (only 20 batches = ~40K tokens). True trend is still improving.
 - GPU at 90% util, ~75 min/1K steps, 20K ETA ~15:30
-- Power law: BPT = 594K * step^(-1.49) + 6.61. Predictions: 20K=6.85, 30K=6.74
-- Architecture ceiling: ~6.61 BPT. Below this requires architectural changes (rd12, modes, ARMT)
+- **Updated power law** (8 data points, RMSE=0.050): BPT = 49M * step^(-2.02) + 6.90. Predictions: 20K=6.99, 30K=6.94
+- Architecture ceiling: **~6.90 BPT** (±0.13). Previous estimate of 6.61 was too optimistic. Ceiling moved UP with more data — the model is plateauing faster. Below ~7.0 requires architectural changes (rd12, modes, ARMT)
 - **v0.6.0b-rd12 code is DRAFTED** — model supports variable n_steps, trainer ready for Codex audit
 
 ## R4 Probe Results (2 of 6 completed, rest GPU-blocked)

@@ -9101,8 +9101,10 @@ Forgetting is LOAD-BEARING for multi-pass accumulation. Without it, ARMT matrix 
 | 14K | **7.01** | **New best** |
 | 15K | 7.12 | Noise (same pattern as 13K) |
 
-Power-law fit: BPT = 594K * step^(-1.49) + 6.61
-- 15K predicted: 6.98, actual: 7.12 (eval variance — 40K token sample)
-- 20K predicted: 6.85
-- Architecture ceiling: ~6.61 (diminishing returns without architectural change)
+**Updated power-law fit** (8 data points, RMSE=0.050): BPT = 49M * step^(-2.02) + 6.90
+- Previous fit (6 points): BPT = 594K * step^(-1.49) + 6.61 — too optimistic
+- 15K predicted: 7.07, actual: 7.12 (within RMSE)
+- 20K predicted: 6.99
+- Architecture ceiling: **~6.90 ± 0.13** (moved UP from 6.61 with more data — model plateauing faster)
+- Below ~7.0 requires architectural changes (random-depth, control simplex, ARMT)
 - Pattern: alternating noise/improvement at odd/even checkpoints. True trend still descending.
