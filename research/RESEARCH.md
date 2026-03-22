@@ -6527,3 +6527,27 @@ Kill criteria: easy_drift not reduced 20%, hard_gain drops >5%, no gate selectiv
 Probe: dim=768 CPU, freeze core, train only z/a heads, 300-500 steps.
 
 Status: Design complete. Ready for CPU probe after syndrome results.
+
+---
+
+## Chrome: Syndrome Scratchpad Scalar Probe KILL (2026-03-21)
+
+**KILL: No syndrome signal detected. Spearman rho = -0.0018 (p=0.63).**
+
+| Metric | Real | Shuffled Control |
+|--------|------|-----------------|
+| Spearman rho | -0.0018 | 0.0021 |
+| p-value | 0.63 | 0.56 |
+
+76,368 samples from hard late tokens at dim=768. The syndrome energy head
+has zero predictive power for future gain — indistinguishable from random.
+
+**Root cause:** Current architecture has no real Stage 7 verifier to emit
+consistency signals. The syndrome head was trying to detect something
+that doesn't exist in the computational graph yet.
+
+**Prerequisite for revival:** Implement a real verifier head first (post v0.6.1),
+then retest. Without verification producing actual consistency checks,
+there's nothing for syndrome nodes to detect.
+
+6 design rounds → 1 clean probe → definitive kill. The Chrome workflow worked.
