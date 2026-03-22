@@ -24,13 +24,23 @@ Fresh Codex Session (Round N)
 
 When convergence is reached, Claude presents the final design to the user for approval before any implementation begins.
 
-## Anti-Overconfidence Protocol (MANDATORY)
+## Anti-Overconfidence Protocol (MANDATORY for confidence scores)
 
 Every T+L prompt MUST include these rigor directives:
 
 1. **Evidence bar**: "Each confidence point must cite SPECIFIC empirical evidence from this project — not general plausibility, not literature references, not 'the design sounds right.' A +1 increase from a previous round requires NEW DATA that didn't exist before. Design refinement alone does NOT justify higher confidence."
 2. **Self-audit**: "Before finalizing ratings, ask yourself: am I being generous because the design sounds good, or because the DATA shows it works? If you cannot point to a specific experiment, probe, or benchmark result that justifies a score, lower it."
 3. **Downward pressure**: "If in doubt between two scores, pick the LOWER one. Overconfidence wastes GPU time on premature training. Underconfidence wastes only paper time on one more design round."
+
+## Intuition-Driven Exploration (the other side of rigor)
+
+The rigor protocol governs confidence SCORES. But the exploration PROCESS should be intuition-driven:
+
+- Codex is intelligent. It will notice patterns, see cross-domain connections, and develop hunches. These are NOT suppressed — they are the seeds of breakthroughs.
+- Intuitions must be FLAGGED EXPLICITLY in the output: "INTUITION: I suspect X based on Y. Conviction: low/medium/high. To validate: [probe/research]."
+- Intuitions become research/probe requests. Claude executes them.
+- No publication pressure, no deadline. Big swings are encouraged. Wild ideas with a testable hypothesis are more valuable than safe incremental proposals.
+- **The balance: EXPLORE with intuition, DECIDE with evidence.** Intuitions drive the search. Data gates the final design. Both are essential.
 
 ## Critical Audit (Every 5 Rounds or at Conclusion)
 
