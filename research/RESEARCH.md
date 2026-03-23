@@ -132,7 +132,7 @@ R12's central insight: **multi-source learning (O4) should come BEFORE shared-co
 - V2: FAIL — 4 mandatory fixes (causality, CKA weight, CKA batch, tokenizer)
 - V3: FAIL — tokenizer remap lossy, CKA gradient concentrated
 - V4: FAIL — confirmed remap collision problem
-- V5: PENDING — final audit on GPT-2-teacher version
+- **V5: PASS** — zero HIGH, zero MEDIUM. All 4 fixes verified correct. GPT-2 teacher switch approved. Only residual: GPU smoke test for VRAM/throughput before 15K launch.
 
 ### Items Accepted
 - CKA gradient concentrated on 4th micro-batch: directionally correct, variance OK
