@@ -95,7 +95,7 @@ class SwitchingKernel2(nn.Module):
     def forward(self, h):
         B, N, D = h.shape
         base = self.base(h).view(B, N, N_STAGES, N_STAGES)
-        mix = F.softmax(self.mode_gate(h.mean(dim=1)), dim=-1)
+        mix = F.softmax(self.mode_gate(h[:, 0, :]), dim=-1)  # first-token (causal)
         mode = torch.einsum('bm,mij->bij', mix, self.mode_bias).unsqueeze(1)
         raw = base + mode
         mask = STAGE_GRAPH.to(h.device).unsqueeze(0).unsqueeze(0)

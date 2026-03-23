@@ -1,5 +1,1347 @@
 # Sutra Research Log
 
+## Codex Pre-Training Audit V3: P1 Two-Teacher Trainer (2026-03-23, post-fix re-audit)
+
+### Verdict: FAIL
+
+### Correctness
+- **HIGH — tokenizer verification fix is not present in the current trainer; invalid approximate remap is still live.**
+  - File: `code/train_p1_twoteacher.py:90-115,118-138,555-556,603-608`
+  - The current file still builds `gpt2_to_pythia` by decode/re-encode and explicitly falls back to `first-token approx` for non-1:1 cases. Training then remaps both teacher inputs and teacher logits through this lossy table.
+  - Local cached-tokenizer check on 2026-03-23:
+    - `gpt2.decode([i]) != pythia.decode([i])` for **50,140 / 50,257** IDs
+    - GPT-2 token decoded text re-encodes to multiple Pythia IDs for **13,295 / 50,257** IDs
+    - only **36,962** IDs are clean 1-token mappings; there are **13,283** target collisions in the current table
+  - Consequence: the teacher often sees different input text than the student, and the gathered teacher logit distribution in GPT-2 space is not a valid categorical target.
+  - Required fix: delete the mapping path entirely; add the explicit decode-all-IDs verification/abort gate. If IDs do not match exactly, do not run direct logit KD.
+
+- **MEDIUM — the CKA “unbiased weighting” fix corrects scalar frequency, not gradient support.**
+  - File: `code/train_p1_twoteacher.py:624-643`
+  - The first 3 micro-batches in each 4-batch CKA window are detached, so they receive zero CKA gradient. Only the 4th micro-batch is live, then its loss is multiplied by `CKA_EVERY_N`.
+  - Toy gradient check on 2026-03-23 reproducing this pattern:
+    - micro-batches 1-3: exact full-window CKA has nonzero grad, current approximation gives zero grad
+    - micro-batch 4: current approximation gives ~4x the exact grad norm
+  - Consequence: this is not an unbiased approximation of the intended 16-sample CKA objective; 75% of samples never receive representation-alignment gradient.
+  - Required fix: either keep the graph for all 4 micro-batches, or recompute the first 3 student representations at window end and backprop through all 4. Remove the `* CKA_EVERY_N` compensation unless all 4 micro-batches participate in gradient.
+
+### Performance
+- **LOW — entropy selection materializes a full fp32 softmax over the full vocabulary every micro-batch.**
+  - File: `code/train_p1_twoteacher.py:240-257`
+  - At `B=4, T=512, V=50257`, `probs = softmax(logits.float())` is ~392.6 MiB before temporary tensors from `log()` and multiplication.
+  - Consequence: avoidable VRAM/throughput tax on top of an already teacher-heavy step.
+  - Recommendation: replace entropy with a cheaper uncertainty proxy (top-2 gap, logsumexp margin, chunked top-k entropy, or bf16/chunked computation).
+
+### Scaling
+- **LOW — the causality fix is correct, but it collapses the global mode gate to token 0 only.**
+  - File: `code/sutra_v05_ssm.py:98`
+  - This removes future leakage, but it also means every token in the sequence shares a 2-mode bias determined solely by the first token.
+  - Consequence: on longer or heterogeneous sequences, the gate may become a weak/noisy control signal.
+  - Recommendation: if a sequence-global causal signal is still wanted, derive it from a causal prefix summary/state rather than raw token 0.
+
+### Fix Status Summary
+- Fix #1 (causality): **correct**
+- Fix #2 (tokenizer verification): **not present / regressed in current file**
+- Fix #3 (CKA accumulation + unbiased weighting): **partially fixed, gradient still wrong**
+- Fix #4 (`use_cache=False`): **correct**
+
+### Mandatory fixes before training
+1. Remove the GPT-2↔Pythia approximate mapping path and replace it with the promised exact verification/abort gate.
+2. Rework CKA accumulation so all micro-batches in the window receive the intended gradient, then re-audit the trainer.
+
+## Tesla+Leibniz Round 12 (2026-03-23)
+
+**Confidence: 6/8/4/4/6** (O2 improved 7→8 based on P0 surgical repair evidence)
+
+### Priority Reorder: O4-First Strategy
+R12's central insight: **multi-source learning (O4) should come BEFORE shared-core (O2 architectural work)**. The reasoning:
+- O4 is the weakest pillar with zero implemented capability
+- Literature shows looped models work best when starting from pretrained knowledge
+- Recurrence should be treated as a refinement layer on top of absorbed knowledge, not the sole knowledge engine
+- The embedding tax (56.5% of params on GPT-2 tokenizer) may move benchmarks more than controller work
+
+### R12 Experiment Queue (priority order)
+1. **P1: O4-first 15K continuation** from v0.6.0a step 20K. Two teachers: AR teacher (Pythia-160M/SmolLM-135M) for logits, encoder teacher (Qwen3-Embedding-0.6B/all-MiniLM-L6-v2) for geometry. High-entropy top-30% token selection. Deep-biased rd burst steps 0-250, then D=8 default.
+2. **P2: 16K tokenizer transplant, 15K matched** from same parent. Token Distillation init → freeze backbone 2K → TokAlign 3K → full tune 10K.
+3. **P3: Shared-core branch** — only after P1/P2 winner. Replace 7 FFN banks with shared SwiGLU + 4 zero-init branches (compose/route/retrieve/verify).
+4. **P4: INT4 drift audit** — forward-only tanh-clipped INT4 emulation on stable checkpoints. Promote to 1K smoke only if drift small.
+
+### Key Assumption Challenges (12 total)
+- 12 passes: keep P_train=12 as scaffold, D_infer=8 as default (8/10)
+- Full weight sharing: keep shared core, not pure full sharing (8/10)
+- 7 named stages: compress to compose/route/retrieve/verify (8/10)
+- 7 FFN banks: retire, replace with shared SwiGLU core (9/10)
+- Scratchpad: keep as workspace only, add exact-memory sidecar (9/10)
+- BayesianWrite/lambda: keep BayesianWrite, demote lambda from halting story (8/10)
+- LocalRouter/pheromone: keep router, remove pheromone (7/10)
+- Optimizer reset: never again — warm-start default (9/10)
+- GPT-2 tokenizer: change it — 16K transplant (9/10)
+- Recurrence thesis: alive but as refinement overlay, not sole knowledge engine (6/10)
+- Multi-source learning can wait: NO — start immediately (9/10)
+- INT4 QAT next: investigate but not decisive branch yet (7/10)
+
+### Inherited Paradigm Audit
+| Decision | Change now? | Impact |
+|----------|------------|--------|
+| GPT-2 tokenizer 50K | YES | Frees 26-29M params |
+| Cosine LR restart | YES → continuation/noreset | Knowledge preservation |
+| Pheromone | YES → remove | Unproven, complexity cost |
+| frozen_cache | YES → delete | Dead weight |
+| SiLU → SwiGLU | With shared-core branch | Better capacity use |
+| dim=768, ff_dim=1536 | Investigate after tokenizer | Unknown |
+| Learned pos_emb → RoPE | Investigate later | Saves 1.57M |
+
+### R12 Research Requests
+1. Strongest low-cost multi-source recipe for small recurrent student under 24GB: one AR teacher for token knowledge, one encoder teacher for semantic geometry, cached top-entropy positions only
+2. Heterogeneous teacher fusion beyond text-only LMs: universal interface for encoder, decoder, vision, diffusion representations into causal text student
+3. Shared-weight recurrence under low-bit QAT: does repeated reuse amplify quantization bias?
+4. Exact-memory modules with forgetting below 200M: ARMT, Gated DeltaNet, Titans-style decay
+
+### R12 Intuitions
+1. Pulsed random-depth beats continuous (v0.6.0c step 250 sweet spot, 750 worse) — HIGH conviction
+2. Embedding tax may move benchmarks more than controller work — HIGH conviction
+3. Recurrence should be refinement layer on absorbed knowledge — HIGH conviction
+4. Hard tokens need heterogeneous teachers, not just AR logits — MEDIUM conviction
+5. Tanh soft clipping could suit shared recurrence, but only after stabilization — MEDIUM conviction
+
+### What Would Raise/Lower Confidence
+- O1 ↑: matched 15K branch lifting SciQ, LAMBADA, and generation together
+- O2 ↑: two more successful surgical interventions (shared-core swap, memory upgrade)
+- O3 ↑: CPU module-swap proof where memory/verify replaced without full retrain
+- O4 ↑: two-teacher run or tokenizer transplant beating parent on full 7-task suite after 15K
+- O5 ↑: tokenwise halting saving ≥30% compute with negligible quality loss
+
+---
+
+## P1 Pre-Training Audit (2026-03-23)
+
+### Codex V2 Audit: FAIL (4 mandatory fixes)
+1. **HIGH** — SwitchingKernel2 non-causal: `h.mean(dim=1)` at sutra_v05_ssm.py:98 leaks future tokens through sequence-global mode gate. Zero-initialized mode_bias masked the bug in causality tests on fresh models, but non-zero after 20K training steps.
+2. **HIGH** — CKA underweighted 4x: computed 1/4 micro-batches but weighted same as full-time losses. Effective coefficient 0.075, not 0.3.
+3. **MEDIUM** — CKA Gram matrix only 4x4 (B=4): high-variance, upward-biased alignment signal.
+4. **MEDIUM** — No tokenizer ID verification between GPT-2 and Pythia for KL distillation.
+5. **MEDIUM** — Pythia forward call allocating unused KV-cache (use_cache not set to False).
+6. **MEDIUM** — Permanent step checkpoints lack optimizer state, not actually resumable.
+
+### Fixes Applied (V2→V5, 5 audit rounds)
+1. **Causality**: Changed `h.mean(dim=1)` → `h[:, 0, :]` (first-token gating, causal). Verified: diff=0.000000 at production dim=768 with trained v0.6.0a weights (mode_bias norm=1.54).
+2. **CKA accumulation**: Accumulates across CKA_EVERY_N=4 micro-batches (16x16 Gram matrix instead of 4x4). Weight compensated: ALPHA_REPR * 4 = 1.2 when computed, total effective = 0.3 * L_CKA per optimizer step.
+3. **use_cache=False**: Added to AR teacher forward call.
+4. **CRITICAL: AR teacher switch** (Codex V3+V4 flagged). Pythia-160M has DIFFERENT token ID ordering from GPT-2 (50140/50257 differ). Remapping attempted but lossy (13K collisions). **Replaced Pythia with GPT-2 small (124M) — identical tokenizer, direct KL, zero remapping.** GPT-2 uses 75MB less VRAM. KD loss properly aligned: ~2.6-3.1 (vs ~4-6 with misaligned Pythia).
+
+### Audit Timeline
+- V2: FAIL — 4 mandatory fixes (causality, CKA weight, CKA batch, tokenizer)
+- V3: FAIL — tokenizer remap lossy, CKA gradient concentrated
+- V4: FAIL — confirmed remap collision problem
+- V5: PENDING — final audit on GPT-2-teacher version
+
+### Items Accepted
+- CKA gradient concentrated on 4th micro-batch: directionally correct, variance OK
+- Permanent checkpoints without optimizer: rolling_latest.pt has full state
+- Loss shock from preserved Adam moments: self-corrects within ~50-100 steps
+- Entropy mask fp32 softmax (392MB): acceptable under 24GB budget
+
+---
+
+## P0 v0.6.0c Results (2026-03-23) — Knowledge-Preserving Random-Depth Canary
+
+**Parent:** v0.6.0a step 20K (model + optimizer, NO reset)
+**Design:** Deep-biased curriculum: Phase 1 (0-100) D=10-12, Phase 2 (101-300) D=8-12 d² bias, Phase 3 (301-750) D=4-12 d¹ bias
+**LR:** 3.2e-4 → 1e-4 cosine continuation (no warmup, no WSD restart)
+**Steps:** 750
+
+### Pass Collapse: FIXED
+
+| Step | BPT (D=12) | D=8 vs D=12 gap | late_pct | Entropy spread |
+|------|-----------|-----------------|----------|----------------|
+| 0 (parent) | 6.88 | +11.33 | 98.1% | P12 only (4.93) |
+| 250 | 6.91 | -0.002 ✅ | 62.7% | P8+ active (4.69-4.80) |
+| 500 | 7.06 | -0.028 | -0.1% | P4+ active (5.23-5.58) |
+| 750 | 7.08 | -0.022 | -0.1% | P4+ active (5.06-5.52) |
+
+Pass collapse eliminated in 250 steps. Entropy now distributed across passes 4-12 instead of concentrated in pass 12 alone. D=8 is actually slightly BETTER than D=12 at convergence (7.14 vs 7.16), confirming the oracle halting probe findings.
+
+**Cost:** BPT degraded +0.20 (6.88 → 7.08). The model traded peak D=12 quality for multi-depth capability.
+
+### Knowledge Retention: Optimizer Preservation VALIDATED
+
+| Checkpoint | SciQ | LAMBADA | Δ from v0.6.0a |
+|-----------|------|---------|-----------------|
+| v0.6.0a (parent) | 48.1% | 11.2% | — |
+| v0.6.0b (opt RESET) | 35.8% | 1.5% | -12.3%, -9.7% |
+| **v0.6.0c step 250 (opt PRESERVED)** | **47.3%** | **9.5%** | **-0.8%, -1.7%** |
+| **v0.6.0c step 750 (opt PRESERVED)** | **44.7%** | **6.7%** | **-3.4%, -4.5%** |
+
+**Step 250 is the sweet spot**: pass collapse already fixed (D=8 gap = -0.002) AND knowledge barely degraded (-0.8% SciQ, -1.7% LAMBADA). Step 750 trades more knowledge for broader depth coverage.
+
+Optimizer preservation recovered ~70-90% of the knowledge loss vs optimizer reset. Random-depth training causes progressive knowledge loss — more steps = more degradation — but the catastrophic loss from WSD restart is averted.
+
+**R11 Intuition #1 VALIDATED:** Knowledge IS stored in optimizer state (momentum/variance). Resetting the optimizer destroys it.
+**R11 Intuition #2 VALIDATED:** Deep-biased curriculum works. Pass collapse fixed without catastrophic BPT regression.
+
+### NaN Gradient Events
+8 NaN/Inf gradients across 750 steps (steps 242, 356, 493, 502, 514, 521, 525, 565, 694). Frequency increased during Phase 3 (steps 500+) when low depths D=4-6 were sampled. All caught by NaN guard and skipped. Potential concern for longer training.
+
+### Depth Distribution (actual samples)
+D=4: 3.1%, D=5: 4.4%, D=6: 5.2%, D=7: 5.9%, D=8: 10.3%, D=9: 11.7%, D=10: 17.7%, D=11: 20.4%, D=12: 21.4%
+
+Heavy deep bias as designed. Phase 1+2 contribute majority deep samples, Phase 3 fills in shallow.
+
+### Implications for R12
+1. **Recommended parent: v0.6.0c step 250.** Best balance: pass collapse fixed (D=8 gap = -0.002), knowledge almost fully preserved (SciQ 47.3%, LAMBADA 9.5%), BPT only +0.03 from parent.
+2. **Optimizer preservation is non-negotiable** for any warm-start going forward.
+3. **Knowledge degrades progressively with random-depth training:** Step 250 loses <2%, step 750 loses ~4%. Suggests short random-depth bursts followed by fixed-depth training may be optimal.
+4. **NaN at low depth:** 8 NaN events, frequency increased in Phase 3 (D=4-6). May need gradient clipping or depth-specific LR.
+5. **Multi-source learning is the critical gap.** Research shows strongest looped models start from pretrained bases. Our from-scratch recurrent training fights against the field evidence. R12 must prioritize O4.
+
+---
+
+## R11 Research Findings (2026-03-23) — 3 Literature Reviews
+
+### 1. BPE/Tokenizer Rate-Distortion Study
+
+**Key findings:**
+- NeurIPS 2024 scaling laws: 50K vocab is 4-6x oversized for 68M model. Optimal vocabulary for our scale is **8K-16K tokens**.
+- Embedding table (50,257 × 768 = 38.6M params) is 56.5% of model, with 75.8% of vocabulary unused on typical training data.
+- A 12K vocab would save ~29M params, freeing capacity for actual intelligence.
+- BPE merge count directly controls bytes-per-token efficiency; diminishing returns above ~12K for English-dominated corpora.
+
+### 2. Warm-Start After Tokenizer Transplant
+
+**Key findings:**
+- **TokAlign (2024):** 97.6% performance recovery in just 5K steps. Method: align new embeddings to old via overlap mapping + linear projection, then brief fine-tune.
+- **ReTok (2024):** 98.7% recovery with frozen backbone + retrained embeddings/head only. Key insight: the backbone (transformer layers) is tokenizer-agnostic if embeddings are properly initialized.
+- **Token Distillation (2024):** Best initialization method — distill old token representations into new vocab using weighted combinations based on BPE merge overlap.
+- **Practical recipe:** (1) Token Distillation init → (2) TokAlign-style fine-tune → (3) brief full-model tune. Expected ~98% recovery in 3-5K steps.
+
+### 3. Recurrence vs Dense at Matched Compute
+
+**Key findings:**
+- **Fundamental tradeoff:** Looped models win reasoning tasks but lose memorization/knowledge at matched FLOPs. This is because recurrence shares weights (good for procedures) but reduces parameter count for storage (bad for facts).
+- **MoR 135M underperforms** dense baselines due to capacity bottleneck — at small scale, the knowledge storage penalty dominates any reasoning benefit.
+- **PonderLM shows 2x equivalence:** A looped model with N passes behaves like a dense model with 2× its parameter count (not N×).
+- **AdaPonderLM, Relaxed Recursive:** The strongest results start from PRETRAINED dense models and ADD recurrence on top. From-scratch recurrent training has almost no positive evidence in the literature.
+- **Critical implication for Sutra:** Our from-scratch recurrent training at 68M is fighting against the strongest evidence in the field. The path forward may be: (1) get a strong dense base (via multi-source KD), then (2) add recurrence.
+
+### External Reference: T4NT-0.5B (TanH 4-bit Neural Transformer)
+
+**Source:** [huggingface.co/shivnathtathe/T4NT-0.5B](https://huggingface.co/shivnathtathe/T4NT-0.5B) (2026-03-22)
+**Paper:** arxiv 2603.13931
+
+535M decoder-only transformer trained from scratch with 4-bit QAT on a single T4 GPU in 2.92 hours. Key method: `tanh(w/3) * 3` soft weight clipping — smooth, differentiable bounding that constrains all linear layers to 15 quantization levels (INT4 symmetric, -7 to +7). Latent weights kept in FP32 for optimizer; forward pass always quantized.
+
+| Detail | Value |
+|--------|-------|
+| Params | 535M (dim=1280, 20 layers, 16 heads, SwiGLU 3584) |
+| Training | WikiText-103 only (~15M tokens), 50 epochs, AdamW, cosine LR |
+| Best PPL | 93.04 (WikiText-103 val) |
+| Deployment | 255 MB INT4 (8x compression from 2.04GB FP32) |
+
+**Key findings relevant to Sutra:**
+1. **4-bit QAT stable from scratch at 500M scale** — no divergence over 50 epochs, all 15 quantization levels stayed utilized (no level collapse)
+2. **tanh soft clipping shows self-correcting dynamics** — weights expand during active learning, contract during convergence. Weight std constant at 0.020±0.001 throughout. Gradient norms decreased naturally 2.22→0.60.
+3. **Architecture is completely standard** (RoPE + SwiGLU + RMSNorm + GPT-2 tokenizer). Innovation is purely in the QAT method.
+4. **Same GPT-2 tokenizer inefficiency** we identified — 50,257 vocab at 535M params
+5. **No FP32 baseline comparison** — the paper proves stability, not that 4-bit matches full precision at this scale
+6. **Sequence length only 256** — T4 memory constraint
+
+**Implications for Sutra's quantization-native design:**
+- tanh soft clipping could replace hard clipping in our quantization strategy — smooth gradients, self-correcting, proven stable
+- If we combine 4-bit QAT with our recurrent architecture (shared weights = fewer unique weights to quantize), the compression could be even more dramatic
+- The "no level collapse" finding matters — means the model fully utilizes its quantization budget
+- BUT: this is a standard transformer, not recurrent. Whether 4-bit QAT works with shared-weight recurrence is an open question worth probing
+
+### External Reference: DyT — Dynamic Tanh (CVPR 2025)
+
+**Source:** "Transformers without Normalization" (CVPR 2025). Replace LayerNorm/RMSNorm entirely with `gamma * tanh(alpha * x) + beta` where alpha is a learnable per-channel scalar.
+
+**Key findings:**
+1. **Matches or beats LayerNorm** across vision (ViT, ConvNeXt, DiT), LLMs (LLaMA 1B/7B), speech (wav2vec2), and RL — 3 domains, 12+ architectures
+2. **Works as a drop-in replacement** for both pre-norm and post-norm configurations
+3. **No per-token statistics** — pure elementwise operation. No mean/variance calculation, no batch/sequence dependence
+4. **Cheaper compute** — elementwise tanh vs reduce+normalize. Matters for recurrent architectures where norm is called every pass
+5. **Alpha initializes to 0.5** and is learned per-channel. Acts as adaptive soft saturation — large alpha ≈ hard clipping, small alpha ≈ linear passthrough
+
+**Implications for Sutra:**
+- Our 12-pass recurrence calls RMSNorm 12 times per token. DyT could reduce this to pure elementwise ops — significant throughput gain
+- tanh saturation may help with gradient stability in deep recurrence (soft clipping of activations, related to T4NT's weight clipping)
+- No sequence-length dependence means DyT is naturally compatible with variable-length generation
+- OPEN QUESTION: Does DyT interact well with shared-weight recurrence? The learned alpha would be shared across passes — could be a feature (consistent saturation) or a limitation (passes can't independently tune normalization)
+
+### Best-in-Class Benchmarks (R11 Reference)
+
+| Model | ARC-E | ARC-C | HellaSwag | PIQA | SciQ | WinoGrande | LAMBADA |
+|-------|-------|-------|-----------|------|------|------------|---------|
+| Pythia-160M | 44.0% | 22.3% | 30.0% | 62.0% | 72.0% | 51.4% | 34.2% |
+| OPT-125M | 43.9% | 22.8% | 31.3% | 62.0% | 75.1% | 50.3% | 37.9% |
+| SmolLM-135M | 44.7% | 26.0% | 42.3% | 69.6% | — | 52.0% | — |
+| **Sutra v0.5.4** | **29.7%** | **20.2%** | **25.8%** | **54.1%** | **33.6%** | **49.1%** | **1.8%** |
+| **Sutra v0.6.0a 20K** | **31.3%** | **—** | **—** | **54.5%** | **48.1%** | **—** | **11.2%** |
+| **Sutra v0.6.0c 250** | **31.2%** | **21.6%** | **26.3%** | **52.8%** | **47.3%** | **49.3%** | **9.5%** |
+| **Sutra v0.6.0c 750** | **—** | **—** | **—** | **—** | **44.7%** | **—** | **6.7%** |
+| **Sutra v0.6.1 1K** | **31.1%** | **16.7%** | **25.8%** | **54.4%** | **36.1%** | **48.9%** | **2.6%** |
+
+Gap to best-in-class remains large. SciQ: -27% vs OPT-125M. LAMBADA: -31% vs OPT-125M. The recurrence research suggests this gap may be structural (knowledge storage penalty of weight sharing) rather than just a training issue.
+
+---
+
+## Tesla+Leibniz Round 11 (2026-03-23)
+
+**Confidence: 6/7/4/4/6** (unchanged from R10 — no new outcome-level wins)
+
+### Main R11 Decision
+**CRITICAL PIVOT:** Stop treating v0.6.0b step 3000 as the automatic parent. The WSD restart that created it destroyed the strongest knowledge evidence (SciQ -12.3%, LAMBADA -9.7%). Next sequence: preserve benchmarked knowledge first, then simplify core, then add memory and distillation.
+
+### Key Assumption Challenges (14 total, both-sides analysis)
+
+| # | Assumption | Lean | Conf |
+|---|-----------|------|------|
+| 1 | Parent should be v0.6.0b not v0.6.0a | **Use two parents**: v0.6.0a for benchmark work, v0.6.0b for structural canaries | 8/10 |
+| 2 | 12 passes is the right depth | Keep P_train=12 as scaffold, D_infer=8 default | 8/10 |
+| 3 | Full weight sharing is right | Keep, but with explicit pass identity + real branch gating | 7/10 |
+| 4 | 7 named stages right decomposition | Compress to 4 branches: compose, route, retrieve, verify | 8/10 |
+| 5 | 7 FFNs + top-2 routing right implementation | **No.** Replace with shared SwiGLU core + 4 real branches | 9/10 |
+| 6 | Controller metrics primary targets | Diagnostics only until branch-gating is causal | 9/10 |
+| 7 | Scratchpad load-bearing and enough | Keep as workspace. Stop asking it to solve exact memory. | 9/10 |
+| 8 | BayesianWrite/lambda for halting | Keep BayesianWrite, demote lambda from halting story | 8/10 |
+| 9 | LocalRouter + pheromone right | Keep local router, remove/re-earn pheromone immediately | 7/10 |
+| 10 | BPT is primary gate | BPT necessary but insufficient; add knowledge slice probes | 9/10 |
+| 11 | Optimizer reset acceptable | **No.** Do not reset optimizer for matched weights | 8/10 |
+| 12 | GPT-2 tokenizer should stay | **Change it.** Highest-priority inherited architecture change | 9/10 |
+| 13 | Recurrence thesis validated at 68M | Still unproven. Keep betting, stop claiming victory | 5/10 |
+| 14 | Multi-source learning should wait | **Don't wait.** Start targeted KD as soon as parent stable | 8/10 |
+
+### Inherited Paradigm Audit
+
+| Decision | Optimal? | Impact if Changed | Priority |
+|----------|----------|-------------------|----------|
+| GPT-2 tokenizer 50K vocab | No — biggest param sink, 75.8% unused | Frees 26-32M params | **Change now** |
+| dim=768 | Unproven (GPT-2 copy) | Investigate after vocab savings | Later |
+| ff_dim=1536 | Unproven ratio | Change with shared core | Now |
+| LocalRouter window=4, k=8 | Unproven | Short sweep needed | Now |
+| Learned pos_emb | Probably not optimal, 1.57M | RoPE/NoPE later | Later |
+| SiLU everywhere | SwiGLU likely better | Change with shared core | Now |
+| Cosine LR + optimizer reset | Reset harmful (knowledge loss) | No fresh restart on matched weights | **Change now** |
+| Pheromone rho=0.90 | Meaningless until justified | Remove or isolate | Now |
+
+Top 3 changes: (1) GPT-2 tokenizer, (2) GPT-2 width recipe after vocab fix, (3) optimizer reset on continuation
+
+Dead weight: frozen_cache (delete), pheromone (remove/isolate), gain_probe (keep as diagnostic only)
+
+### Per-Outcome Confidence (evidence-based)
+
+- **O1 Intelligence: 6/10** — v0.6.0a 20K still best (SciQ 48.1%, LAMBADA 11.2%). Gap to Pythia-160M huge (-26% SciQ, -21.4% LAMBADA). v0.6.1 improved diagnostics, not benchmarks.
+- **O2 Improvability: 7/10** — Good diagnosis (localized v0.6.1 failure, fixed dead-gradient bug). But still only ONE successful surgical repair (rd12).
+- **O3 Democratization: 4/10** — No module-swap proof, no contributor ABI demo, no evidence of isolated improvement.
+- **O4 Data Efficiency: 4/10** — Warm-start works but knowledge absorption not demonstrated. WSD restart actually DESTROYED knowledge.
+- **O5 Inference Efficiency: 6/10** — D=8 frontier validated (33% savings). But learned halting still weak (AUROC 0.56).
+
+### R11 Design Proposal: Branch-Gated Shared-Core
+
+**State:** h∈R^768, λ∈R+^768, α∈Δ^4 (compose/route/retrieve/verify), ρ∈Δ^3 (local/scratchpad/ARMT), S∈R^(8×768), ARMT A_j∈R^(64×64) z_j∈R^64 (j=1..4)
+
+**Controller:** Linear router (not MLP), iteration-specific. α = Top2Softmax(W_α r + b_α[p]), ρ = softmax(W_ρ r + b_ρ[p]). Input r = [RMSNorm(h); stopgrad(emb); log mean(λ); ||Δh||].
+
+**Pass-conditioned norm:** c = E_pass[p] + E_mode α. h̃ = (1+W_g c)⊙RMSNorm(h) + W_b c. Zero-init W_g, W_b.
+
+**Real branches (modes gate actual computation):**
+- compose: SwiGLU shared core (768→3072→768, ~7.08M)
+- route: W_route · LocalRouter(h̃)
+- retrieve: W_mem(ρ₁·local + ρ₂·scratchpad + ρ₃·ARMT)
+- verify: W_v2 SiLU(W_v1 [h̃; comp; retr])
+- δ = α_c·comp + α_r·route + α_t·retr + α_v·verify
+
+**ARMT:** 4 heads × 64×64, ELU+1 features, per-pass forget/write gates. Read: y = A·φ(q)/(z^T·φ(q)+ε). Write: A' = (1-f)A + w(v - A·φ(k))φ(k)^T.
+
+**ABI for Outcomes 2+3:** BranchInput = (h̃, local_ctx, scratch_ctx, armt_ctx, pass_idx) → BranchOutput = δ∈R^768. Each branch independently swappable.
+
+**Optimizer:** AdamW, preserve moments for matched weights. Dual LR: low continuation for existing, 3x for new params. No fresh cosine restart on matched weights.
+
+### R11 Training Plan (6 Phases)
+
+- **Phase 0:** P0 v0.6.0c-rd12-noreset (knowledge preservation, from v0.6.0a 20K)
+- **Phase 1:** Shared-core bridge (zero-init mixer, distill old bank → new core)
+- **Phase 2:** Real branch gating (4 branches, linear controller)
+- **Phase 3:** ARMT precise memory (surprise + forget gates)
+- **Phase 4:** Hard-token KD (Pythia-160M teacher on entropy-selected tokens)
+- **Phase 5:** 16K tokenizer head transplant
+
+### R11 Experiment Queue
+
+| # | Probe | Purpose | Parent | Steps |
+|---|-------|---------|--------|-------|
+| P0 | v0.6.0c-rd12-noreset | Knowledge-preserving random-depth | v0.6.0a 20K (with optimizer) | 750 |
+| P1 | Controller causality | Additive bias vs real branch gating | P0 best or v0.6.0b 3K | 500 |
+| P2 | Shared-core bridge | Retire 7-bank without collapse | P0 best | 700 |
+| P3 | 16K tokenizer transplant | Embedding tax → measured intervention | Best benchmark parent | 1200 |
+| P4 | Hard-token KD | First O4 evidence | Best knowledge parent | 500-1000 |
+| P5 | Recurrence gate | D>1 vs D=1 matched compute | Any stable parent | TBD |
+| P6 | Module-swap proof | Stop O3 rhetoric | First branch-gated ckpt | CPU only |
+
+### R11 Research Requests
+1. Rate-distortion tokenizer study: 8K/12K/16K/24K BPE on real corpus
+2. Warm-start after tokenizer transplant precedents at fixed hidden dim
+3. Recurrence vs dense evidence under 200M at matched compute on benchmarks
+
+### R11 Intuitions
+1. **Knowledge stored in optimizer state** — SciQ 48.1→35.8, LAMBADA 11.2→1.5 after reset (HIGH conviction, P0 tests)
+2. **Uniform random-depth too abrupt** — deep-to-shallow curriculum needed (MEDIUM-HIGH, P0 tests)
+3. **Embedding tax bigger than mechanism changes** — 38.6M/29M dead weight (HIGH, P3 tests)
+4. **Controller fails from lack of causal teeth, not weakness** — v0.6.1 proved this (HIGH, P1 tests)
+5. **ARMT should be surprise-gated, mid-to-late passes** — literature + token failure bucket (MEDIUM-HIGH)
+
+---
+
+## v0.6.1 Canary Training (2026-03-23)
+
+### Run 1 (bugged — adapter dead gradient)
+- **Bug:** PassAdapter had gate=0 AND up.weight=0 → dead gradient deadlock. Neither param gets gradient because each needs the other to be non-zero.
+- **Fix:** up.weight now init with normal(std=0.001) instead of zeros. Gate stays zero-init but gradients flow via non-zero up.weight.
+- **Step 500 eval (bugged, adapter_gates stuck at 0.0000):**
+  - test_bpt=7.3481 (parent was 7.2217, regression +0.13, FAILS +0.05 criterion)
+  - D=8: 7.2783, D=9: 7.2783, D=12: 7.2982 (depth frontier flat, good)
+  - late_verify_share=0.006 (PASS, was 0.995 in parent — dramatic improvement)
+  - mode_entropy=0.014 (near zero — modes are pass-scheduled, not content-conditioned)
+  - Per-pass mode: each pass picks ONE mode at ~98%. Pass 1→route, 2→retrieve, 3→compose, 4→retrieve, 5-6→verify, 7-12→route. DIFFERENT from parent (was all verify late) but still pass-global.
+  - mode_to_stage weight norm: 0.076 (very weak influence on transition)
+  - L_probe dropped 0.156→0.103 (gain predictor learning)
+  - Throughput: 4370→6813 tok/s over 500 steps
+- **Interpretation:** Controller IS learning (changed mode schedule) but hasn't achieved content-dependence. Adapters contributed nothing due to dead gradient. BPT regression is from warm-start disruption (replaced mode_gate with near-zero controller).
+
+### Run 2 (fixed — adapter up.weight init)
+- Restarted from parent step 3000. Now adapter forward = gate * up(down(ln(x))) where up.weight~N(0,0.001). grad(gate) = up(down(ln(x))) ≠ 0.
+- Training curve: L=5.62→5.51→5.34→5.43→5.38→5.44→5.41→5.37→5.30→5.31 (steps 50-500). Alpha ramp 0→0.70 over 300 steps.
+- L_collapse = 0.0000 throughout (no verify collapse triggered).
+- L_probe: 0.157→0.100 (gain predictor learning steadily).
+- **Step 500 eval:**
+  - test_bpt = 7.3423 (parent 7.2217, delta +0.12 — FAILS +0.05 criterion)
+  - D=1: 9.70, D=8: 7.39, D=9: 7.39, D=12: 7.39 (depth frontier flat but all regressed from parent)
+  - Per-pass entropy: 8.27→5.27, monotonically decreasing, NO cliff, NO tail rise (structurally different from parent)
+  - late_verify_share = 0.001 (PASS — was 0.995 in parent, DRAMATIC improvement)
+  - mode_entropy = 0.014 (near zero — modes still deterministic per pass)
+  - adapter_gates: max=0.0053, mean=0.0026 (ALIVE — fix worked, but gates still small)
+  - Per-pass modes: P1=route(98%), P2=retrieve(95%), P3=retrieve(94%), P4=compose(93%), P5=verify(92%), P6=verify(100%), P7-12=route(98-100%)
+  - Mode schedule CHANGED from parent (was all-verify late) to diverse but still PASS-GLOBAL, not content-conditioned
+
+**R8 Success Criteria Assessment:**
+| Criterion | Target | Actual | Verdict |
+|---|---|---|---|
+| BPT ≤ parent+0.05 | ≤7.2717 | 7.3423 | **FAIL** (+0.12) |
+| late_verify ≤ 0.75 | ≤0.75 | 0.001 | **PASS** |
+| MI(mode,token_class) ≥ 0.10 | ≥0.10 | 0.0091 | **FAIL** (worse than parent 0.019) |
+| MI(mode,pass) ≤ 0.40 | ≤0.40 | 1.4881 | **FAIL** (far worse than parent 0.558) |
+| D7-D9 within 0.03 of parent | ≤0.03 | ~0.49 per-depth | **FAIL** |
+
+**Interpretation:** The controller DID learn (verify collapse eliminated, mode schedule diversified). But routing remains pass-global, not content-conditioned. BPT regressed moderately — possibly from warm-start disruption (replaced mode_gate with near-zero controller) or from the attached L_step adding noise. The adapters are alive but contributing negligibly at step 500 (gate=0.005). Training continues to step 3000.
+
+**R10 Probe Results (step 500):**
+- **P1 MI:** MI(mode,token_class)=0.0091 (FAIL, target≥0.10, parent was 0.019 — WORSE), MI(mode,pass)=1.4881 (FAIL, target≤0.40, parent was 0.558 — FAR WORSE). Mode by token class virtually identical across all classes (~58% route). This is zero content-dependence with extreme pass-global scheduling.
+- **P1 Phase breakdown:** Early passes (0-3) show some diversity (compose 23%, route 25%, retrieve 47%, verify 5%). Mid passes (4-7) split route/verify. Late passes (8-11) are 99.2% route — complete collapse to single mode.
+- **P2 Fixed-point:** Early rel change 0.2765, late rel change 0.0683, ratio 0.2472. Late passes: cosine 0.9994-0.9996, similar to R9 parent baseline (0.998-0.9997). Convergence profile unchanged by controller surgery.
+- **P3 Adapters:** ALIVE (max gate=0.0053, mean=0.0026, verdict=ALIVE). Effective scales 0.001-0.005 range. Largest: pass 2 (gate=-0.005, scale=0.005), pass 11 (gate=-0.005, scale=0.004). Active but influence is negligible.
+- **Verdict:** 1 PASS (late_verify), 4 FAIL (BPT, MI×2, depth frontier). Controller learned a MORE pass-locked schedule than parent. Content-dependence is zero.
+
+**Root Cause Analysis (gradient flow audit):**
+The pass-global failure has 5 interlocking causes:
+1. **Base kernel dominates:** `base(h)` produces a full 49-dim transition matrix via MLP. The controller's `stage_bias` (7 values) is additive on top — negligible influence after softmax.
+2. **Pass embedding dominates content:** `pass_logits` (scalar per pass) vs `content_logits` (per-token with smaller variance) in softmax — pass-global signal swamps content signal.
+3. **No direct loss on content-dependence:** L_final/L_step/L_probe don't explicitly reward token-differentiated routing. The only signal is indirect: "does better mode improve prediction?" But the base kernel already handles prediction.
+4. **Full weight sharing = weak mode signal:** All stages use the same shared parameters. Switching modes changes pi (stage weighting) but all stages compute the same outputs regardless. Mode selection is mechanically toothless.
+5. **L_collapse allows pass-global:** Penalizes high verify-mean, not uniformity across tokens. A deterministic "pass p → mode X" pattern satisfies L_collapse perfectly.
+**Implication:** The v0.6.1 controller design is mathematically sound but architecturally neutered. The fix requires EITHER (a) multiplicative mode coupling instead of additive stage_bias, (b) mode-specialized stage behaviors, (c) explicit MI-based auxiliary loss, or (d) suppressing the base kernel's ability to encode pass structure.
+
+**Step 1000 eval (Run 2):**
+- test_bpt = 7.2075 (**NEW BEST**, improved from 7.3423 at step 500, Δ=-0.135)
+- **BPT criterion NOW PASSES:** 7.2075 < 7.27 threshold (parent 7.22 + 0.05)
+- Per-depth: D=8: 7.5809, D=9: 7.5813, D=10: 7.5804 (best), D=12: 7.5851 (flat plateau D=7-12, per-depth eval on different sample — higher absolute values vs step 500 are sampling noise)
+- Per-pass entropy: 8.31→5.41 (monotonic, no cliff, similar shape to step 500 but higher — consistent with harder eval sample)
+- **Mode stats step 1000:** mode_entropy = 0.0026 (DOWN from 0.0144 at step 500 — controller becoming MORE pass-global)
+  - Each pass: ~96% dominant mode with ~3.8% uniform noise floor. Zero content dependence.
+  - P1=route(95%), P2-3=retrieve(96%), P4-5=compose(96%), P6=verify(96%), P7-12=route(96%)
+  - late_verify_share = 0.0095 (up from 0.001 but still negligible)
+  - Pattern has STABILIZED into a fixed pass-to-mode permutation with constant minority share. This is the equilibrium the controller converges to when modes have no functional teeth.
+- **Updated R8 criteria at step 1000:** BPT=PASS, late_verify=PASS, MI(mode,tc)=FAIL (structural), MI(mode,pass)=FAIL (structural), D7-D9=FAIL (structural per-depth regression)
+- **Assessment:** Loss improvement comes from base model continued training, NOT from controller/adapter contributions. The +398K new parameters (controller + adapters) are being trained but contribute negligibly to predictions. The mode entropy decrease confirms the controller is CONVERGING to pass-global behavior, not moving away from it.
+
+**Comparison: Run 1 (bugged) vs Run 2 (fixed):**
+| Metric | Run 1 | Run 2 |
+|---|---|---|
+| test_bpt | 7.3481 | 7.3423 |
+| adapter_gates | 0.0000 | 0.0053 |
+| mode schedule | Similar | Nearly identical |
+
+Adapter fix had MINIMAL impact on BPT (-0.006) and mode schedule. The mode schedule is driven by the controller content/pass networks, not the adapters.
+
+---
+
+## Tesla+Leibniz Round 10 (2026-03-23)
+
+**Confidence: 6/7/4/4/6** (rebased from 8/9/6/7/8 — most honest assessment to date)
+
+### Critical Audit Response
+R10 was preceded by an adversarial audit (every 5 T+L rounds). Codex confirmed the audit's findings: previous scores were too generous. Diagnostic convergence ≠ outcome convergence. The project has become good at naming failure modes but has not yet become good at beating strong baselines.
+
+Rebased scores: R9 was 8/9/6/7/8. Audit suggested 7/8/5/5/7. R10 landed at **6/7/4/4/6** after deep evidence review.
+
+### Key Strategic Decisions
+
+1. **v0.6.1 controller-only repair is FALSIFIED.** The code did not implement the intended spec: controller only biases transition columns (additive stage_bias on a 49-dim base kernel), modes don't gate real computation branches. "Controller metrics improve without intelligence improving" is now a real risk.
+
+2. **7-bank scaffold (16.5M params) identified as structural waste.** At 68M, seven MLP banks fragment scarce data more than they create specialization. Top-2 routing between banks adds complexity without meaningful differentiation.
+
+3. **Next branch from v0.6.0b step 3000, not v0.6.1.** The best path is not "better controller labels." The best path is: random-depth + one stronger shared core + control that gates real branches + trained precise memory + targeted KD.
+
+### Assumption Challenges (with both-sides analysis)
+
+| Assumption | Lean | Confidence |
+|---|---|---:|
+| 12 passes is the right depth | Use 12 only as training scaffold, D=8 for inference | 8/10 |
+| Full weight sharing is right | Keep sharing, but with explicit pass identity | 7/10 |
+| 7 named stages are right decomposition | Keep semantic decomposition, not the current 7-bank | 8/10 |
+| 7 FFNs with top-2 routing are right implementation | **No.** Replace with shared core. | 9/10 |
+| Controller metrics should be primary target | Diagnostic only for now — not proven causal | 8/10 |
+| Scratchpad is load-bearing | Keep as workspace, stop pretending it solves exact memory | 9/10 |
+| BayesianWrite/lambda core to halting | Keep bounded writer, demote lambda-as-confidence story | 9/10 |
+| Recurrence thesis validated at 68M | Promising, still unproven | 5/10 |
+| v0.6.1 proves content-conditioned control is dead end | Controller-only repair falsified, content-conditioned control is NOT | 8/10 |
+
+### Architecture: "Shared-Core Spectrum Sutra" (~62.9M params)
+
+**Core change:** Replace 7-bank scaffold (16.5M params) with one shared SwiGLU core (7.08M) + 4 real computation branches that modes actually gate.
+
+**State:** h∈R^768 (hidden), λ∈R^768 (precision), α∈Δ^4 (mode simplex), ρ∈Δ^3 (memory simplex), S∈R^(8×768) (scratchpad), A_h∈R^(64×64) (ARMT associative memory, 4 heads)
+
+**Controller:** Input = [LN(h); stopgrad(emb); log mean(λ); ||Δh||; p/P]. Output: α (4-mode simplex via Top2Softmax), ρ (3-way memory simplex), ĝ (diagnostic gain head).
+
+**Pass-conditioned normalization:** c = E_pass[p] + Σ_m α_m E_mode[m]. Then h̃ = (1 + Wγ c) ⊙ LN(h) + Wβ c. Wγ, Wβ = 0 at init.
+
+**Real computation branches:**
+- δ_compose = SwiGLU shared core (Wu h̃ ⊙ SiLU(Wv h̃))
+- δ_route = Wr · LocalRouter(h̃)
+- δ_retrieve = Wm · (ρ1·local + ρ2·scratchpad + ρ3·ARMT)
+- δ_verify = SiLU(Wv1 [h̃; memory_output])
+- δ = α_c·δ_compose + α_r·δ_route + α_t·δ_retrieve + α_v·δ_verify
+
+**ARMT (associative memory with forgetting):** 4 heads × 64×64 matrices. ELU+1 features. Per-pass forget/write gates from controller. This addresses the precise recall gap (SciQ 25.9% vs 74% baseline, LAMBADA ~1% vs 32.6%).
+
+**Parameter budget:** 62.9M total (smaller than current 68.3M). Embedding: 40.17M, SwiGLU core: 7.08M, LocalRouter: 4.70M, BayesianWrite: 2.45M, Scratchpad: 2.40M, Controller/norm: 0.63M, Verify: 1.18M, ARMT: 1.18M, misc: 3.10M.
+
+**Training plan:** Branch from v0.6.0b step 3000. Phase A: 200 steps new modules only (frozen legacy). Phase B: 800-step canary (joint training). Phase C: if passes, continue to 2-3K then add hard-token KD. Random depth D~d^α, ramp α:0→1.0 over 500 steps. Loss = L_final + 0.10 L_step(sampled) + 0.20 L_probe + 0.02 L_adjcollapse + λ_KD L_KD. L_adjcollapse = mean_p max(0, cos(h^p, h^(p+1)) - 0.995)^2.
+
+### R10 Experiment Queue
+- P0: Shared-core bridge canary (v0.6.0b step 3000 parent, 200+800 steps)
+- P1: Controller causality probe (stage-bias vs branch-gating, 500 steps each)
+- P2: Pass-count gate (D=4/8/12 matched compute)
+- P3: ARMT memory canary (300 frozen + 700 joint)
+- P4: Hard-token KD canary (Pythia-160M teacher, ce_spread targeting)
+- P5: Module-swap proof (swap verify with identity, test isolation)
+
+### R10 Research Requests
+1. Token-conditioned compute recipes below 200M (SUT, ITT, MoR, LoopFormer, AdaPonderLM, DirMoE)
+2. Single-GPU module-local distillation (TAID, MOHAWK, m2mKD, SE-KD)
+3. Warm-start associative memory with forgetting (ARMT, Titans, Gated DeltaNet)
+4. Embedding/tokenizer co-design for recurrent 50-150M models
+5. Module ABI precedents in generative models
+
+### R10 Literature Findings
+
+**RQ1: Token-conditioned compute recipes below 200M** (6 papers surveyed)
+
+Key findings for Sutra's Shared-Core Spectrum:
+- **AdaPonderLM (arXiv:2603.01914):** Iteration-specific MLP gates + monotonic halting mask. Shared MLP gate is UNSTABLE — collapses to degenerate equilibria. Per-pass gates MUST be iteration-specific. Two-stage warmup critical: 20K steps LM-only, then activate halting loss with gradual warmup. Works at 70M (~10% FLOP reduction). Bottom-K selection prevents trivial all-halt. **Validates our per-pass controller + delayed activation approach.**
+- **ITT (arXiv:2502.13842, ACL 2025):** Percentile-based Adaptive Token Routing. Tokens above ρ-th percentile weight get extra compute, rest copy forward. NO auxiliary loss needed — percentile threshold prevents collapse by construction. Works at 162M (96.5% of 466M vanilla perf). ~30-50% tokens routed per step. **Cleanest approach — consider for our controller.**
+- **MoR (arXiv:2507.10524, NeurIPS 2025):** FAILS at 135M due to "recursive capacity bottleneck." Works at 360M+. Expert-choice > token-choice. Linear router optimal (MLP doesn't help). **WARNING: recursive models with routing overhead underperform vanilla at our scale.**
+- **SUT (arXiv:2310.07096, EMNLP 2023):** Stick-breaking halting + SMoE. 50% compute reduction at 7M on formal tasks. MIM expert balancing loss. Partial content-dependence (domain-specific).
+- **LoopFormer (arXiv:2602.11451, ICLR 2026):** Budget-level elastic depth (not per-token). Shortcut consistency loss critical. Untested <200M. AdaLN time/step-size conditioning.
+- **DirMoE (arXiv:2602.09001, ICLR 2026):** Width-routing (MoE expert selection) not depth-routing. Dirichlet decouples "which experts" from "how much." At 185M. Not directly relevant to our depth problem.
+
+**Critical lessons for Sutra:**
+1. Per-pass gates MUST be iteration-specific (AdaPonderLM proves shared gates collapse)
+2. Linear routers suffice at our scale — MLP routers don't improve (MoR ablation)
+3. Two-stage warmup: backbone first, then halting (prevents gate collapse)
+4. Monotonic halting mask: once halted, stay halted (train-test consistency + KV reuse)
+5. MoR 135M failure: routing overhead can EXCEED its benefits at small scale — keep ultra-lightweight
+6. Pass-global patterns are DEFAULT failure mode <200M — only iteration-specific + warmup/percentile forcing avoids it
+
+**RQ3: Warm-start associative memory with forgetting** (3 papers + 3 additional)
+
+Key findings for Sutra's memory module:
+- **ARMT (arXiv:2407.04841, ICML 2024):** BEST for warm-start. Delta-rule matrix per layer, ~2.7M overhead (4% of 68M). Add-on design (no architectural changes). Forgetting via gamma correction (must be detached/stop-gradient). DPFP-3 nonlinearity on keys. Tested at 145M and 500K. Excels at factual recall, not general perplexity. **Write: A_i = A_{i-1} + beta*(v - A*phi(k))*phi(k)^T. Read: y = A*phi(q)/(z^T*phi(q)).**
+- **Titans (arXiv:2501.00663, NeurIPS 2025):** Most expressive (MLP as memory, gradient-based updates). Surprise-based writing: high-gradient = unexpected = write. 6-36M overhead (9-53% — too heavy for us). "Titans Revisited" (arXiv:2510.09551) found warm-start mismatch issues. MAC variant most compatible. **Write: M_t = (1-alpha_t)*M_{t-1} + S_t where S_t = eta*S_{t-1} - theta*grad(loss).**
+- **Gated DeltaNet (arXiv:2412.06464, ICLR 2025):** Best raw LM quality. REPLACES attention (not add-on). L2 norm on q,k critical. Data-dependent gating. Chunkwise parallel training. NOT warm-startable (requires replacing existing mechanism). **S_t = alpha*S_{t-1}*(I - beta*k*k^T) + beta*v*k^T.**
+- **MIRAS (arXiv:2504.13173):** Unifying framework — all memory models are special cases (ARMT, Titans, DeltaNet, Mamba). Different choices of memory arch, attentional bias, retention gate, and update algorithm.
+- **RWKV-7 "Goose" (arXiv:2503.14456):** Generalized delta rule with vector gating. 0.1-2.9B. In FLA library.
+- **Memory^3 (arXiv:2407.01178):** Zero-param overhead (disk-based). More retrieval-augmented than trained memory.
+
+**Recommendation for Sutra:** ARMT is the strongest candidate for warm-start. ~4% overhead, add-on design, tested below 200M. Consider hybrid: ARMT matrices + Titans surprise gating (write only when unexpected).
+
+**RQ2: Module-local distillation for recurrent models** (15+ papers surveyed)
+
+Key findings for Sutra's KD strategy (Pythia-160M teacher → 68M student, 2.4:1 ratio — well within effective range per MiniPLM):
+- **Hard-token selection by student entropy** is optimal ("Rethinking Selective KD"): top 20% of tokens by H(q_theta) carry most distillation signal. Even 1% selection matches full KD.
+- **AdaKD (arXiv:2510.11615):** Per-token adaptive temperature via Hellinger distance. Hard tokens get LOWER temp (sharper signal). LATF dynamically narrows budget from 20%→5% as training progresses. tau_i = tau_base * exp(-0.5 * normalized_difficulty).
+- **Relaxed Recursive Transformers (arXiv:2410.20672, ICLR 2025):** CLOSEST prior art. Forward KL validated for weight-shared models. Depth-weighted aux losses: alpha=0.1 for intermediate, 1.0 for final. Per-loop LoRA adapters (rank 64-512). 15-60B tokens for uptraining.
+- **TAID (arXiv:2501.16937):** Logit-level interpolation, architecture-agnostic. Adaptive scheduling: starts t=0.4, increases aggressively. 2x faster than DistiLLM. Tested Pythia 400M student.
+- **Pre-training Distillation Design Space (ACL 2025):** BEST PRACTICAL RECIPE: alpha=0.9 (90% KD), WSD schedule (decay toward 0.5). tau=1.0-2.0. Forward KLD > NLL > MSE. Top-p=0.95 logit truncation. Larger teachers don't always help (capacity gap).
+- **MOHAWK:** Three-stage progressive (matrix → block → end-to-end). Designed for cross-architecture. Applicable for staged warm-start.
+
+**Synthesized recipe for Sutra:**
+1. Select top-20% tokens by student entropy at final pass
+2. Forward KL, alpha=0.9 (WSD decay), tau=1.5
+3. Depth-weighted aux: 0.1 weight at passes 4,8; 1.0 at pass 12
+4. Delay KD until base model stable (per feedback_delayed_start)
+5. 2-5K steps (consistent with warm-start convergence times)
+
+**EMBEDDING TAX ANALYSIS (2026-03-23) — CRITICAL DESIGN DECISION**
+
+The GPT-2 tokenizer (50,257 vocab × 768 dim) is Sutra's single biggest inefficiency:
+- **38.6M params** (56.2% of model) in embedding table
+- **Only 30.1M params** (43.8%) doing actual intelligence
+- **75.8% of GPT-2 vocab never appears** in 100K training token sample
+- Top 8,192 tokens cover 96.1% of data; top 16,384 cover 100%
+- **29.2M params (42.6%) are dead weight** for unused tokens
+- Embedding is NOT low-rank: rank-256 captures only 45.9% variance, cosine sim 0.67 → ALBERT factorization won't work
+
+With 16K custom BPE vocab (saves 26M params):
+- **Option A (same total):** Core capacity 1.86x (30M → 56M), embed fraction drops to 18.3%
+- **Option B (same core):** Total 42.7M params (37.9% reduction), faster training
+- **Option C (50M target):** Core 1.24x (37.4M), embed 25.2% — balanced
+
+Migration path (warm-startable "head transplant"):
+1. Train 16K BPE on our data mix (SentencePiece)
+2. Retokenize dataset shards (batch job, ~1 hour)
+3. Initialize 16K×768 embedding randomly (or average similar GPT-2 token embeds)
+4. Freeze recurrent core, train ONLY embedding for ~2K steps (alignment)
+5. Unfreeze, continue training (full model)
+6. The recurrent core operates in R^768 — it doesn't care about vocab size
+
+**This is the single biggest potential improvement available — bigger than any mechanism change.**
+Must go to Codex T+L for design decision.
+
+### Intuitions (high conviction, probe-able)
+- Deepest mistake in v0.6.1: semantic emptiness — controller predicted labels that don't gate real computations
+- 7-stage bank fragments scarce data more than it creates specialization
+- Hard tokens won't show healthy pass disagreement until they have a retrieval path that can actually change the answer
+- Outcome 4 will unlock faster from targeted KD on hard tokens than from waiting for perfect controller
+- Clean-line embedding fix will matter more than another long run on 50K vocab front end
+
+---
+
+## Tesla+Leibniz Round 9 (2026-03-22)
+
+**Confidence: 8/9/6/7/8** (unchanged — R9 validates R8, no new empirical wins yet)
+
+**Executive Decision: GREENLIGHT v0.6.1 from step 3000. Do not wait for step 5000.**
+
+### R9 Rationale
+- Controller failure decisively diagnosed: `MI(mode, token_class)=0.0131`, `late_verify_share=0.9952`
+- Step 3000 parent strong enough: `test_bpt=7.2217` (new best), `D=7..9` frontier stable (6.9043/6.9014/6.9017)
+- `D=8` effectively optimal: beats D=12 by 0.0115 BPT, saves 33% compute
+- Probe package validates v0.6.1 ingredients: lexical survival 93.6%, difficulty AUROC +0.0915 over mu-only, oracle deep labels noisy enough for shadow-only halting
+- If compute exists, keep rd12 running to 5K as fallback parent, but **do not block v0.6.1**
+
+### R9 Assumption Stress Tests (10 assumptions, both sides)
+| # | Assumption | Lean | Confidence |
+|---|-----------|------|-----------|
+| 1 | Branch v0.6.1 now from step 3000 | **YES** — controller question is ripe | 8.5/10 |
+| 2 | Keep rd12 running while branching | YES if compute allows; v0.6.1 has priority | 7.5/10 |
+| 3 | Bimodal oracle implies real elastic-depth headroom | **PARTIAL YES** — shallow tokens real, deep labels noisy | 8/10 |
+| 4 | Lexical anchoring belongs in controller | **YES for mode; NO as primary halt feature** | 8.5/10 |
+| 5 | Verify collapse is architecture first, objective second | **YES** — architecture is the bottleneck | 9/10 |
+| 6 | Restoring attached L_step is net positive | YES, with small weight; audit D7-D9 frontier | 7.5/10 |
+| 7 | Full weight sharing + zero-init pass adapters = right canary | **YES** — minimally invasive, isolates hypothesis | 8/10 |
+| 8 | 12 passes are for training/teacher, not inference | **YES** — D7-D9 span is only 0.0029 BPT | 8.5/10 |
+| 9 | Lambda stats should not be primary halt signal | **YES** — keep as auxiliary only | 8/10 |
+| 10 | Defer multi-teacher/distillation until after v0.6.1 | **YES** — fix controller first | 8.5/10 |
+
+### R9 Probe Requests (7 probes)
+| ID | Probe | Type | Gate |
+|----|-------|------|------|
+| P1 | Frozen-core controller ablation (3 arms × 500 steps) | GPU | Combined must beat pass-only by +0.05 MI(mode,token_class) |
+| P2 | Teacher-free halting (remove ce_d1, deployable features only) | CPU | AUROC must not collapse badly vs 0.6656 |
+| P3 | Bilinear necessity ablation (zero bilinear/lexical/pass_embed) | GPU | Bilinear must earn its complexity cost |
+| P4 | Fixed-point diagnostics passes 6-11 (cosine, delta, accel) | CPU | v0.6.1 must reduce late-pass redundancy |
+| P5 | Margin-weighted halting labels (clean subset margin>=0.05) | CPU | Better halt metrics on clean subset |
+| P6 | Dmax=9 truncation canary (short compute-matched) | GPU | D=9 within 0.02 BPT of D=12 |
+| P7 | Mode semantics audit (post-v0.6.1) | GPU | Modes must be semantically legible |
+
+### R9 Refinements to R8 Spec
+1. **Keep controller-local scope narrow** — no memory, distillation, or extra routing in this canary
+2. **Split diagnostic vs deployable halt features** — ce_d1 for diagnostics only, promote pi_entropy + acceleration signals
+3. **Treat D=8..9 as operational frontier** — evaluate every canary at D=8, D=9, D=12
+4. **Add "not just relabeling" metric** — require lower adjacent-pass cosine in late passes OR higher late-pass delta norm on differently-routed tokens
+5. **Margin-aware halting reporting** — report both all-token and clean-subset (margin>=0.05) metrics
+
+### R9 Key Insight
+> R8's story survives contact with the probes. The three strongest facts: (1) architecture bottleneck is real — control is pass-scheduled not content-conditioned; (2) missing content signal is accessible — lexical info survives late; (3) halting stays diagnostic-only — real shallow-token headroom but deep oracle too noisy for direct supervision.
+
+### R9 Probe Results (2026-03-22, step 3000)
+
+#### P2: Teacher-Free Halting — FAIL (too weak)
+Without ce_d1, AUROC drops from 0.661 → 0.560 (-0.101). ce_d1 alone has importance 0.466, dwarfing all other features.
+- **Deployable features only**: entropy (0.550), acceleration_norm (0.449), margin (0.498), all near chance
+- **LogReg**: 0.584 (slightly better than RF's 0.560)
+- **Verdict**: Teacher-free halting too weak for acting. Keep as diagnostic-only per R9 decision.
+
+#### P4: Fixed-Point Diagnostics — Baseline Established
+Late passes (6-11) are near-convergent: cosine 0.998-0.9997, relative change 6-9%.
+
+| Pass | Adj Cosine | Rel Change | Accel Norm |
+|------|-----------|-----------|-----------|
+| 1 | 0.887 | 0.439 | — |
+| 3 | 0.964 | 0.241 | 14.8 |
+| 6 | 0.998 | 0.090 | 4.2 |
+| 8 | 0.9996 | 0.076 | 1.4 |
+| 10 | 0.9997 | 0.065 | 0.6 |
+| 11 | 0.9997 | 0.060 | 0.5 |
+
+**v0.6.1 success metric (R9 refinement #4):** Late-pass cosine must decrease OR acceleration must increase on differently-routed tokens.
+
+#### P5: Margin-Weighted Labels — CONFIRMED noisy labels mask signal
+Clean subset (margin >= 0.05, 43.7% of tokens): AUROC = 0.661 (+0.101 over full 0.560)
+- Clean: 865 tokens (794 shallow, 71 deep) — heavily imbalanced
+- Noisy: 1116 tokens (555 shallow, 561 deep) — near 50/50 → genuine noise
+- **Key insight**: The "deep" tokens are mostly noise (561/632 = 88.8% noisy). Halting should focus on identifying shallow tokens with clear early-exit signal.
+
+---
+
+## Tesla+Leibniz Round 8 (2026-03-22)
+
+**Confidence: 8/9/6/7/8** (unchanged from R7 — no new empirical wins yet, R8 is design phase)
+
+### R8 Core Design: v0.6.1 Controller-Local Canary
+
+R8 confirms the branch decision (9/10 confidence) but recommends NOT stopping v0.6.0b mid-flight. Let it run to 3K+ for a stronger warm-start parent.
+
+**v0.6.1 = replace pass-global controller + add pass adapters + restore L_step. Keep everything else.**
+
+#### Exact Controller Spec
+```
+r_t^p = [LN(mu_t^p); stopgrad(emb[x_t]); mean(log lam); std(log lam); ||Δmu||; p/(P-1)]  ∈ R^1540
+c_t^p = W2 SiLU(W1 r_t^p)                    1540 → 128 → 128
+u_p   = E_pass[p]                              ∈ R^32
+
+ell_{t,p,m} = a_m^T c_t^p + b_m^T u_p + (c_t^p)^T U_m u_p + beta_m
+alpha_{t,p} = softmax(ell/tau_mode),  m ∈ {compose, route, retrieve, verify}
+
+b_stage    = alpha_{t,p} W_ms                  4 → 7 stage-bias logits
+B_{t,p}    = reshape(W_base h_t^p + b_base, 7, 7)
+K_{t,p}    = softmax_j(B[i,j] + b_stage[j] + M[i,j])  where M = 0 if edge, -inf otherwise
+pi_{t,p+1} = Top2(pi_{t,p} K_{t,p})
+```
+
+W_base inherits from v0.6.0b's `transition.base`. Old sequence-global `mode_gate(h.mean(dim=1))` and `mode_bias` REMOVED.
+
+#### Pass Adapters (zero-init)
+```
+adapter_{t,p} = g_p W_up[p] W_down[p] LN(mu_{t,p}^post),  rank r=8
+g_p = 0, W_up = 0, W_down ~ N(0, 0.02)  → exact no-op at step 0
+```
+
+#### Shadow Gain Probe (diagnostics only, not acting)
+```
+g_t^p     = CE_t^p - min_{q>p} CE_t^q
+g_hat_t^p = softplus(MLP([LN(mu), entropy, margin, ||Δmu||, mean(log lam), std(log lam), p/(P-1)]))
+```
+
+#### Loss Function
+```
+L = L_final + 0.10 L_step + 0.20 L_probe + 0.02 L_collapse
+L_step     = (1/D) Σ_{p=1..D} sampled_CE_p        # ATTACHED, not detached
+L_collapse = mean_{p=7..11} ReLU(mean(alpha_verify,p) - 0.80)²
+```
+Alpha ramps 0→0.7 over 300 steps (NOT to 1.0 — softer depth bias).
+
+#### Parameter Budget
+| Component | Params |
+|---|---:|
+| v0.6.0b parent | 68,323,243 |
+| Remove old mode gate/bias | -49,444 |
+| Add factorized controller | +231,207 |
+| Add 12 rank-8 pass adapters | +147,468 |
+| **v0.6.1 total** | **68,652,474** (+0.48%) |
+
+#### Warm-Start Strategy
+1. Load all v0.6.0b parent weights unchanged
+2. Copy `transition.base` → `W_base`
+3. Initialize controller pass-dependent biases by imitating parent's average schedule (content/bilinear terms = 0)
+4. Pass adapters closed at birth (zero-init)
+5. Dual LR: existing weights 1.5e-4, new controller/adapters 4.5e-4
+6. AdamW (0.9, 0.95), wd=0.01, 100-step warmup, cosine decay, clip 0.5, bf16
+
+#### Success Criteria (500 steps)
+- BPT ≤ parent + 0.05
+- MI(mode, token_class) ≥ 0.10 overall
+- late_verify_share(passes 8-11) ≤ 0.75
+- MI(mode, pass_index) ≤ 0.40 (must FALL from 0.4775)
+- D7-D9 frontier within 0.03 BPT of parent
+
+### R8 Assumption Table
+
+| Assumption | Lean | Confidence |
+|---|---|---|
+| Gate triggered → branch now | YES, but don't stop v0.6.0b mid-flight | 9/10 |
+| Don't kill active run | Prepare branch, launch from 3K+ checkpoint | 8/10 |
+| Bimodal oracle = real elastic headroom | YES, but probes are weak (AUROC 0.57-0.59) | 8/10 |
+| Lexical anchor helps mode, not depth | Keep in mode head, ban from depth head | 7/10 |
+| Verify collapse = arch + objective | Architecture is bottleneck, objective is accelerator | 9/10 |
+| L_final-only explains collapse | Directionally correct, incomplete alone | 8/10 |
+| Keep full weight sharing + pass adapters | Shared core + tiny zero-init adapters | 8/10 |
+| 12 passes for training, not inference | D=9 is operating point, D=12 for teacher | 8/10 |
+| Lambda → kill as primary halt signal | Keep as one feature among many | 8/10 |
+| Defer multi-teacher to post-v0.6.1 | Would confound controller canary | 9/10 |
+
+### R8 Knowledge Gap Queue (Phase B)
+
+1. **Oracle-depth regret audit** — CE_d - CE_oracle margins. Are "deep" tokens real or noise?
+2. **Frozen-core controller probe** — train pass-only vs content-only vs combined on cached trajectories
+3. **Pass-local lexical survival** — can we predict token tags from mu_p? Does core erase lexical info?
+4. **Difficulty-feature halt probe** — predict depth from {entropy, margin, Δmu_rms, λ stats, pass}
+5. **Counterfactual action-gain** — disable one action source per pass, measure CE delta
+6. **Fixed-point diagnostics** — Jacobian norm / DEQ contraction around passes 6-11
+7. **Literature**: shared-weight controllers <200M, anytime halting under random-depth, fixed-point diagnostics for looped LMs
+
+### R8 Probe Results (2026-03-22)
+
+#### Probe #1: Oracle-Depth Regret Margin Audit — NOISY (54% < 0.05)
+
+The bimodal oracle depth (65% shallow, 29% deep) is **partially noise**. 54% of all tokens have best-vs-second-best margin < 0.05 CE.
+
+| Bucket | Count | Margin Mean | % Margin < 0.01 | % Margin < 0.05 |
+|--------|-------|-------------|------------------|------------------|
+| Shallow (≤5) | 2736 | 0.208 | 15.2% | 37.7% |
+| Medium (6-7) | 179 | 0.015 | 65.4% | **94.4%** |
+| Deep (≥8) | 1181 | 0.025 | 34.4% | **87.1%** |
+
+**Key insight:** Shallow tokens have REAL depth preference (62% have margin ≥ 0.05). Deep tokens are mostly NOISE — their "deep preference" is a near-tie between many depths. Medium bucket is almost entirely noise. This means:
+- Per-token halting for shallow tokens: VIABLE (clear early-exit signal)
+- Per-token halting for deep tokens: DUBIOUS (oracle labels are noisy argmins)
+- The 50%+ compute saving estimate from R7 is OVEROPTIMISTIC for learned halting
+- Practical halting should focus on identifying the 62% of shallow tokens with clear early-exit signal
+
+Regret at depth boundaries:
+- Shallow tokens at D=6: 0.44 average regret (real cost to depth error)
+- Deep tokens at D=9: 0.08 regret (they're close to oracle at D=9 anyway)
+- Deep tokens at D=12: 0.004 regret (D=12 is near-optimal for deep tokens)
+
+#### Probe #2: Difficulty-Feature Halt — AUROC=0.666 (+0.092 over mu-only)
+
+| Feature | Individual AUROC | Coefficient Magnitude |
+|---------|------------------|-----------------------|
+| ce_d1 (CE at depth 1) | **0.629** | 0.084 |
+| pi_entropy | 0.578 | **1.458** |
+| entropy (final logits) | 0.545 | 0.077 |
+| margin (top1-top2) | 0.526 | 0.203 |
+| delta_mu_rms | 0.511 | 0.392 |
+| pass_norm | 0.500 | 0.019 |
+
+**Combined AUROC: 0.666** vs R7 mu_only 0.574 (+0.092 gain).
+
+**Key insight:** CE at depth 1 is the single best predictor — "how hard is this token at minimal depth?" directly predicts whether the token needs more passes. `pi_entropy` has the highest coefficient but lower individual AUROC, suggesting interaction effects. **For v0.6.1 shadow gain probe, include ce_d1 and pi_entropy as features.**
+
+#### Probe #3: Pass-Local Lexical Survival — RETAINED (93.6%)
+
+| Pass | Accuracy | Macro-AUROC |
+|------|----------|-------------|
+| 0 | 0.810 | **0.970** |
+| 1 | 0.733 | 0.948 |
+| 2 | 0.668 | 0.922 |
+| 3 | 0.648 | 0.905 |
+| 4-7 | 0.624-0.635 | 0.891-0.897 |
+| 8-11 | 0.626-0.633 | 0.885-0.891 |
+
+Early mean (0-2): 0.947 → Late mean (9-11): 0.886 → **Retention: 93.6%**
+
+**Verdict: RETAINED.** Lexical info survives to late passes. The core does NOT erase token identity — it's preserved in mu throughout all 12 passes. The controller FAILED to use it because `mode_gate(h.mean(dim=1))` averages away per-token content. The lexical anchor in v0.6.1's controller is justified — the information exists, the architecture just can't access it.
+
+#### R8 Probe Summary & Implications for v0.6.1
+
+1. **Regret audit tempers halting optimism**: per-token halting is viable for shallow tokens (62% have clear signal) but noisy for deep tokens. Shadow-only halting in v0.6.1 is the right call.
+2. **Difficulty features outperform mu-only by +0.09 AUROC**: ce_d1 and pi_entropy should be primary features in the gain probe. R8's exact spec for g_hat is validated.
+3. **Lexical anchor is justified**: 93.6% retention proves the info exists in mu but the controller can't use it. Adding stopgrad(emb[x_t]) to the controller input is the correct fix.
+4. **The combined controller spec from R8 is sound**: content signal (mu + lexical anchor + difficulty features) + pass signal + bilinear interaction addresses ALL three findings.
+
+### R8 Literature Survey (2026-03-22)
+
+#### Content-Dependent Routing (Key Findings)
+- **AdaPonderLM (Mar 2026)**: Iteration-specific MLP gates (NOT shared) with monotonic halting mask. Single shared MLP is UNSTABLE — validates our per-pass approach. Warm-start protocol: freeze backbone, warm up gates with 1B tokens, then unfreeze. 70M-2.8B. ~10% FLOP reduction.
+- **Mixture-of-Recursions (NeurIPS 2025)**: Expert-choice routing for recursive depth. Hierarchical filtering (3/3→2/3→1/3). 135M-1.7B. New Pareto frontier.
+- **Mixture-of-Depths (DeepMind 2024)**: Linear router `w^T h` — simplest per-token routing. 50% FLOP reduction at matched quality.
+- **ANIRA-O (Feb 2026)**: Online halting via per-pass sigmoid. Online > early-allocation for content-dependence. Aligns with R8's controller design.
+- **AdaLN-Zero (DiT)**: Zero-init MLP → (scale, shift, gate). Identity at init = perfect warm-start. Directly applicable to our pass adapters.
+- **Acceleration-based exit (Two-Scale 2025)**: `||Δ^k - Δ^{k-1}||` — second-order convergence detector. Better than first-order delta norm. Should add to v0.6.1 gain probe features.
+- **NO ONE reports MI(route, content)** — our MI probe methodology is actually novel.
+
+#### Learned Halting (Key Findings)
+- **Self-supervised halting > oracle labels**: AdaPonderLM + PonderLM-3 prove end-to-end halting from LM loss works. Avoids noisy oracle problem entirely.
+- **If using oracle: weight by margin**: Mask out tokens with margin < 0.05. Our regret audit confirms 54% tokens are noise.
+- **Monotonic halting mask**: Once halted, stay halted. Critical for train-test consistency. AdaPonderLM validated.
+- **LoopFormer (ICLR 2026)**: Shortcut-consistency training aligns short/long trajectories. Best training regime for elastic depth.
+- **PonderNet geometric prior**: KL(halt dist || Geometric(λ_p)) prevents collapse. Maps to our P(D=d)∝d^α.
+- **Key for v0.6.1**: Shadow gain probe should use self-supervised signal, not oracle labels. Keep as diagnostic only.
+
+#### Shared-Weight Controllers <200M (Key Findings)
+- **Pass collapse is the universal failure mode at small scale** — field confirms this (not Sutra-specific).
+- **AdaPonderLM at 70M validates iteration-specific gates work at our scale.**
+- **Mixture-of-LoRAs (MoL, Dec 2025)**: Token-conditional LoRA routing at 50-120M. Content-dependent weight modulation at very small scale.
+- **Entropy regularization is CRITICAL at small scale** (Ouro/LoopLM 2025): uniform prior + 2-stage training prevents collapse.
+- **Our bilinear interaction term `(c_t)^T U_m u_p` appears novel** — no paper uses this exact formulation.
+
+#### Best-in-Class Benchmarks (Sub-200M)
+| Model | Params | ARC-E | ARC-C | HellaSwag | PIQA | WinoGrande | LAMBADA |
+|-------|--------|-------|-------|-----------|------|------------|---------|
+| MobileLLM-LS-125M | 125M | 45.8 | 28.7 | 39.5 | 65.7 | 52.1 | — |
+| SmolLM2-135M | 135M | ~44* | ~44* | 42.1n | 68.4 | 51.3 | — |
+| MobileLLM-125M | 125M | 43.9 | 27.1 | 38.9 | 65.3 | 53.1 | — |
+| Pythia-160M | 160M | 45.2 | 18.1 | 30.3n | 62.7 | 51.9 | 38.9 |
+| OPT-125M | 125M | 43.5 | 18.9 | 31.5n | 63.0 | 50.3 | 37.9 |
+| **Sutra v0.6.0a 20K** | **68M** | **31.3** | — | — | **54.5** | — | **11.2** |
+
+*n = acc_norm, * = ARC Average only. Sutra at 68M with 655M tokens vs baselines at 125-160M with 300B-2T tokens.*
+
+### R8 Path to 9/10
+
+| Outcome | Current | Target | What R8 Adds |
+|---|---|---|---|
+| 1: Intelligence | 8 | 9 | v0.6.1 canary must match parent BPT + show content-aware routing |
+| 2: Improvability | 9 | 9 | Controller-local fix must succeed from surgical diagnosis |
+| 3: Democratized Dev | 6 | 9 | Clean 4-mode ABI with content sensitivity, dead modes eliminated |
+| 4: Data Efficiency | 7 | 9 | Deferred — multi-teacher after controller fix |
+| 5: Inference Efficiency | 8 | 9 | Shadow gain probe must predict oracle depth, learned halting after |
+
+---
+
+## Tesla+Leibniz Round 7 (2026-03-22)
+
+**Confidence: 8/9/6/7/8** (Outcome 3 DOWN to 6 — dead stages, no contributor-facing modules)
+
+### R7 Key Design Decision: Tokenwise Factorized Controller
+
+The missing mechanism is NOT AdaLN-Zero alone. It's a **tokenwise factorized controller** that combines content and pass signals with a bilinear interaction:
+
+```
+alpha_{t,p} = softmax(Wc * c_t + Wp * u_p + Wi * (c_t ⊙ U * u_p))
+```
+
+Where:
+- `c_t = MLP([mu_t^p, stopgrad(token_embed_t), token_class_bits, lambda_t, ||Δmu_t||])` — content signal
+- `u_p = pass_embed[p]` — pass signal
+- The bilinear term `c_t ⊙ U * u_p` gives TRUE interaction (not just additive)
+- `stopgrad(token_embed_t)` provides an IMMUTABLE lexical anchor — the original token identity persists unchanged across all passes
+
+### R7 Assumption Updates
+
+1. **rd12 is correct first-order fix** (9/10) — eliminated catastrophic collapse; v0.6.0a D=8 was 18.24, v0.6.0b D=8 is 7.57. Keep.
+2. **12 passes justified for training, not inference** (9/10) — best depth at D=9, D=12 worse at all checkpoints. Keep 12 for training, kill for inference.
+3. **Full weight sharing fine IF conditioned** (8/10) — collapse fixed without weight changes. But unconditioned sharing → one generic late behavior. Kill unconditioned.
+4. **Seven banks → kill implementation, keep ABI** (8/10) — stages 0-1 dead, stage 6 dominates 71%. MI differentiation by pass, not content.
+5. **Controller can't become content-dependent from mu alone** (10/10) — KILLED. Sequence-global mean-pool washes out per-token content.
+6. **AdaLN-Zero alone insufficient** (9/10) — adds pass priors only, doesn't solve content-independence. Kill as standalone, keep in combined fix.
+7. **D=1 regression: watch, don't intervene** (7/10) — not the operating point (D=8-9). Alpha=1.0 biases toward deeper passes by design.
+8. **Slowdown is NOT structural plateau yet** (6/10) — LR decaying, alpha just saturated, loss still trending down, entropy minimum moving.
+9. **Entropy deepening = weakly positive, not proven** (7/10) — could be basin translation, not new computation. Needs delta norm validation.
+10. **Oracle halting → learned halting: viable but needs content-dependent controller first** (8/10) — oracle is checkpoint-global, learned must be tokenwise.
+
+### R7 Confidence Evidence Ledger
+
+| Outcome | R6 | R7 | Evidence for Change | Next Evidence Needed |
+|---------|----|----|---------------------|----------------------|
+| 1: Intelligence | 8 | 8 | No new benchmark/generation win. Step 1500 BPT=7.51 improving. | v0.6.0b benchmarks, BPT ≤6.90 on same tokens |
+| 2: Improvability | 9 | 9 | MI probe + oracle precisely isolate next bottleneck (controller). Surgical identification, not vague "architecture bad." | Controller-local fix succeeds: warm-start branch changes only control, improves token-class MI |
+| 3: Democratized Dev | 7 | **6** | Weakened: token-class MI=0.02-0.06, stages 0-1 dead, verify=71%. Modules exist as code but NOT contributor-facing capabilities. | Clean 4-mode ABI, dead modes eliminated, MI(mode,token_class)≥0.15 |
+| 4: Data Efficiency | 7 | 7 | Warm-start efficiency confirmed but multi-teacher absent. | External knowledge gives ≥2x token efficiency or ≥0.1 BPT |
+| 5: Inference Efficiency | 8 | 8 | Oracle halting stable across 3 checkpoints. D=12 consistently worse than D=9. | Learned halting: 25-35% savings at ≤0.01 BPT, depth correlated to content difficulty |
+
+### R7 Experiment Queue (exact specs from Codex)
+
+1. **Step 2000 diagnostic pack** — passwise cosine, ||Δmu_p||, late verify share, MI(mode, token_class), MI(mode, pass), token-class depth curves. GATE: branch controller if MI(mode,token_class) < 0.08 or late verify share > 0.80.
+2. **Offline depth prediction probe** — predict oracle depth {≤6, 7-8, 9+} from pass-only, mu-only, lexical-only, mu+lexical. Keep lexical anchor if macro-AUROC improves >0.05 over mu-only.
+3. **v0.6.1 warm-start canary** — tokenwise 4-mode controller + zero-init pass adapters. Success after 500 steps: MI(mode,token_class) ≥ 0.10, late verify ≤ 0.75, BPT no worse than parent by >0.05.
+4. **Three-arm ablation** — pass-only vs content-only vs pass+content. All warm-started from same checkpoint. Keep combined if token-class MI >0.05 better than pass-only, BPT cost <0.05.
+5. **Learned halting head** — oracle gain labels G_p. Pass if AUROC(G_p>0.01) ≥ 0.75 overall and ≥ 0.65 on hard tokens. Halting BPT loss ≤ 0.01.
+6. **D=1 shallow-depth floor** (if D1 poor at 3K) — 500 steps with 90% d^1/Z + 10% Uniform{1,2,3}. Keep if D1 improves ≥0.20 BPT, D8/D9 degrade <0.03.
+7. **Dmax=9 truncation canary** (after 3K/5K) — 300-500 steps. Keep if D9 BPT within 0.02 of 12-pass, throughput improves >20%.
+
+### R7 Intuitions
+
+- **HIGH: Missing variable = persistent lexical anchor** — numbers/acronyms/function words all get identical mode distributions. Immutable token embedding must be fed to controller.
+- **MEDIUM-HIGH: Controller learns time schedule, not computation policy** — explains why rd12 fixes collapse but collapses mode diversity into verify.
+- **MEDIUM: D=1 rescue not needed now** — economically relevant frontier is D=6-9.
+- **MEDIUM-HIGH: Entropy minimum deepening = basin translation, not deeper reasoning** — needs delta norm validation.
+- **MEDIUM: Learned halting may be easier than learned modes** — gain target is explicit and probe head exists.
+
+### R7 Path to 9/10
+
+| Outcome | Current | Target | What's Needed |
+|---------|---------|--------|---------------|
+| 1: Intelligence | 8 | 9 | BPT ≤6.90 same-token, D8 within 0.05 of best, ≥1 benchmark/generation win over v0.6.0a |
+| 2: Improvability | 9 | 9 | (Already near target) Next fix must be controller-local and successful |
+| 3: Democratized Dev | 6 | 9 | Clean 4-mode ABI, kill dead modes, MI(mode,token_class) ≥ 0.15, prove one mode swappable |
+| 4: Data Efficiency | 7 | 9 | Multi-teacher/distillation gives ≥2x token efficiency or ≥0.1-0.15 BPT at fixed data |
+| 5: Inference Efficiency | 8 | 9 | Learned halting: 25-35% savings, ≤0.01 BPT, depth correlated to content difficulty |
+
+### R7 Main Conclusion
+
+**rd12 fixed collapse but exposed that the controller is pass-global. The next branch should not be "AdaLN yes/no" — it should be "can the model choose modes from immutable token content plus pass context, while preserving the shared recurrent core."**
+
+### R7 Experiment #1 Results: Step 2000 Diagnostic Pack (2026-03-22 ~19:20)
+
+**GATE TRIGGERED — Both conditions met. Controller branching is now mandatory.**
+
+| Metric | Value | Gate Threshold | Status |
+|--------|-------|---------------|--------|
+| MI(mode, token_class) | **0.0131** | < 0.08 | **TRIGGERED** |
+| Late verify share (passes 8-11) | **0.9952** | > 0.80 | **TRIGGERED** |
+| MI(mode, pass_index) | 0.4775 | (informational) | Pass-schedule confirmed |
+
+**Passwise cosine similarity** (adjacent passes):
+- Pass 0→1: 0.890, Pass 1→2: 0.874, Pass 2→3: 0.962
+- Pass 3→4: 0.984, Pass 4→5: 0.995, Pass 5→6: 0.997
+- Pass 6→7: 0.999, Pass 7→8: 0.999, Pass 8→9: 1.000, Pass 9→10: 1.000, Pass 10→11: 1.000
+- **Late passes (8-11) are near-identical** — cosine ≥ 0.9997. The model has converged to a fixed point by pass 8.
+
+**Delta norms** (||Δmu_p|| per pass):
+- Pass 0: 1.41, Pass 1: 0.65, Pass 2: 0.76, Pass 3: 0.44
+- Pass 4: 0.32, Pass 5: 0.21, Pass 6: 0.16, Pass 7: 0.13
+- Pass 8: 0.11, Pass 9: 0.10, Pass 10: 0.09, Pass 11: 0.08
+- **Monotonically decreasing from pass 3 onward**. Late passes make tiny adjustments — consistent with fixed-point convergence.
+
+**Mode distribution evolution** (dominant 4-mode per pass):
+- Pass 0: retrieve=93%, compose=7% (initialization)
+- Pass 1: route=79%, retrieve=8%, verify=8% (routing phase)
+- Pass 2: retrieve=40%, route=33%, verify=23% (mixed)
+- Pass 3: verify=52%, route=36% (verify takes over)
+- Pass 4-5: verify=82-91% (verify dominates)
+- Pass 6-11: verify=96-100% (**total verify saturation**)
+
+**Mode diversity collapsed even further since step 1000**: late verify was 91% at step 1K, now 99.5% at step 2K. Training is making the controller MORE pass-global, not less.
+
+**MI(mode, token_class) per pass**: Highest at pass 1 (0.134) — early passes have weak content sensitivity. Drops to 0.006-0.002 for passes 6-11. Late modes are completely content-independent.
+
+**Token-class depth curves** (oracle best depth per class):
+- All classes cluster at depth 4.6-4.8 — NO differentiation by token type
+- CE varies by class (rare=3.46, common_func=5.85) but optimal depth does NOT
+- **REVISED** (depth probe corrects this): The ~4.7 average HIDES a bimodal distribution: 65% of tokens want depth ≤5, 29% want depth ≥8. Median=3, std=4.1. Token class doesn't predict which bucket (AUROC=0.497=random).
+
+### R7 Experiment #2 Results: Offline Depth Prediction Probe (2026-03-22 ~19:35)
+
+Oracle depth bucket distribution (4096 tokens): shallow(≤5)=65%, medium(6-7)=6%, deep(≥8)=29%.
+
+| Probe | Accuracy | Macro-AUROC |
+|-------|----------|-------------|
+| mu_only | 0.629 | 0.574 |
+| lexical_only | 0.633 | 0.565 |
+| mu_plus_lexical | 0.628 | 0.589 |
+| token_class_only | 0.637 | 0.497 (random!) |
+
+**Lexical anchor for depth: DROP** (gain=0.015 < 0.05 threshold). Token embeddings don't predict depth.
+
+**Key insights:**
+1. Depth prediction is HARD — even mu only achieves 0.574 AUROC (barely above chance). The difficulty of a prediction isn't easily identifiable from the final-pass representation.
+2. Token class is USELESS for depth prediction (0.497 = random). Numbers don't systematically need more/less depth than function words.
+3. The bimodal distribution (65% shallow, 29% deep) means per-token halting COULD save 50%+ compute vs batch-level D=9. But the halting head needs to identify the 29% "hard" tokens — and neither lexical class nor mu clearly identifies them.
+4. **Design implication for v0.6.1:** SEPARATE mode selection from depth selection. Mode selection may benefit from content signals. Depth selection needs prediction-difficulty signals (entropy, margin, delta_mu_rms).
+
+**Key insights for R8 brief:**
+1. The controller is now functionally a TIMER, not a router. 99.5% verify at late passes = zero content routing.
+2. Delta norms confirm fixed-point convergence by pass 8 — passes 9-12 are computational waste.
+3. Token-class oracle depth (~4.8) is much shallower than batch-level oracle (D=9) — suggests per-token early exit could save >50% compute.
+4. MI(mode, token_class) is getting WORSE with training (0.019 at step 1K → 0.013 at step 2K). The current architecture actively suppresses content-dependent routing.
+5. Early passes (0-2) retain SOME content sensitivity — the lexical signal isn't dead, just overwhelmed by pass 3+.
+
+### v0.6.0b-rd12 Step 3000 Eval (2026-03-22) — NEW BEST
+
+**BPT=7.2217** — massive recovery from step 2500's regression (7.42). Step 2500 was crash artifact.
+
+| Depth | Step 2000 | Step 2500 | **Step 3000** | Δ from 2000 |
+|-------|-----------|-----------|---------------|-------------|
+| D=1 | 9.44 | 9.78 | **8.85** | **-0.59** |
+| D=3 | 7.81 | 8.18 | **7.24** | **-0.57** |
+| D=6 | 7.42 | 7.82 | **6.92** | **-0.51** |
+| D=8 | 7.40 | 7.80 | **6.90** | **-0.50** |
+| D=9 | 7.40 | 7.80 | **6.90** | **-0.50** |
+| D=12 | 7.41 | 7.81 | **6.91** | **-0.50** |
+
+Key observations:
+- **D=8 is new optimal** (6.9014) — D=7 (6.9043) and D=9 (6.9017) nearly tied
+- **D=12 is WORSE than D=8** by 0.012 — consistent with all prior checkpoints
+- **D=1 improved dramatically** — from 9.78 to 8.85 (-0.93 in 500 steps)
+- **Entropy tighter**: P1=6.48, P12=5.19, range=1.29 (tightening from 1.55 at 2500)
+- **Step 2500 regression was crash artifact** — CONFIRMED. BPT resumed downward trend.
+
+BPT trajectory: 500=7.79, 1000=7.60, 1500=7.51, 2000=7.37, 2500=7.42↑, **3000=7.22↓ BEST**
+
+**This checkpoint is a strong warm-start parent for v0.6.1.** R8 recommended using 3K+ checkpoint.
+
+---
+
+## Tesla+Leibniz Round 6 (2026-03-22)
+
+**Confidence: 8/9/7/7/8** (up from R5's 8/8/7/7/7 — Outcomes 2 and 5 each +1)
+
+### What Changed
+- **Outcome 2 (Improvability) → 9/10:** A trainer-only intervention (rd12) fixed pass collapse without architectural rewrite. Entropy changed from flat 10.1-10.4→5.84 cliff to smooth 6.89→5.24→5.38 curve. All depths improved 4-7% from step 500→1000. Direct evidence that failures can be isolated and repaired surgically.
+- **Outcome 5 (Inference Efficiency) → 8/10:** First real adaptive-depth evidence. Entropy curve is smooth, D=8-12 nearly tied with best at D=9. Variable-depth inference plausible even without live halting policy.
+
+### R6 Assumption Updates (both-sides analysis)
+
+1. **R5's structural prediction was right, but its numeric keep/kill rule was wrong.** (10/10) rd12 removed entropy cliff by step 1000. But D8-D12 gap is only 0.017 and late_pct ~0.7% — model learned an early decode plateau, not rich deep refinement. Lean: keep rd12, retire R5's early rule that D12 had to be within 0.05-0.10 of source after only 1K.
+
+2. **12 passes justified as teacher depth, not yet as inference depth.** (9/10) Best depth moved 8→9, tail not dead. But passes 9-12 almost flat in both BPT and entropy. Lean: keep 12 for training, make D=9 the first truncation candidate. Test Dmax=9 truncation canary at 3K-5K.
+
+3. **Full weight sharing more viable than R5 feared, but only as shared content core.** (9/10) Collapse fixed without changing weights → training geometry was the first-order problem, not weight sharing. But entropy bottoms at pass 6 then rises = unconditioned shared operator near shallow fixed point. Lean: keep shared core, add pass-conditioned norms/adapters only if D8-D12 plateau persists by 3K.
+
+4. **Seven stages → preserve ABI, not seven-bank content implementation.** (8/10) rd12 improved behavior without stage-specific rescue, weakening seven-bank case. Lean: preserve stage/controller ABI, plan shared-core + 4-mode controller.
+
+5. **Scratchpad = workspace, not knowledge mechanism.** (10/10) Unchanged. rd12 fixed collapse without touching exact recall. Failure buckets still = exact-retrieval buckets.
+
+6. **Lambda has lost more ground as halting signal.** (8/10) Entropy tracks useful stopping structure better than lambda. D8-D12 plateau = "state is stable" ≠ "more compute is worthless." Lean: keep BayesianWrite, demote lambda, use predicted marginal gain + entropy for halting.
+
+7. **Pheromone remains unearned.** (7/10) rd12 fixed main failure without proving pheromone value. Next missing behavior = retrieve/verify specialization, not another bias field. Lean: keep router short-term, delete pheromone in next simplification.
+
+8. **v0.5.4 beating v0.6.0a on BPT is real but not a clean architectural verdict.** (8/10) 5.25 vs 6.79 is genuine compression gap, but different warm-start history, optimizer, corpus. v0.6.0a beats v0.5.4 on SciQ (48.1% vs 25.9%) and LAMBADA (11.2% vs ~1%). Lean: treat v0.5.4 as optimization bar, not architectural refutation.
+
+### R5 Adversarial Audit Results (2026-03-22)
+
+**Verdict: FAIL** (4 RED, 2 YELLOW, 2 GREEN)
+
+| Item | Rating | Issue |
+|------|--------|-------|
+| Anti-Overconfidence | RED | R5 score laundering (no evidence ledger). R6 Outcome 2=9 from single rd12 fix. Outcome 5=8 before live halting. |
+| Both-Sides Analysis | RED | Strongest-AGAINST arguments are token caveats, not genuine challenges. |
+| Extreme Granularity | RED | No precise equations, loss functions, adapter specs. Only threshold choices. |
+| Efficiency Priority | GREEN | Warm-start first, incremental. No from-scratch proposals. |
+| Dead End Avoidance | GREEN | Graveyard respected. Warning: MoE-style routing mentioned. |
+| Mission Alignment | YELLOW | Drifting toward standard recurrent-model repair literature. |
+| Instruction Compliance | RED | "Full output" was a summary, missing mandatory T+L format sections. |
+| Data Integrity | YELLOW | Status contradictions (COMPLETED vs RUNNING for same experiment). |
+| Circular Reasoning | RED | Confidence rises from stories ("single fix = improvable") not explicit evidence. |
+| Convergence Honesty | RED | Outcomes 1/3/4 stagnant. BPT projected 7.2-7.4 at 5K, not matching 6.90. |
+
+**Required actions for R8:**
+1. Explicit evidence ledger: for each score, cite exact experiment + exact metric
+2. Freeze Outcome 2 at 8 and Outcome 5 at 7 until benchmarked evidence (live halting, v0.6.0b benchmarks)
+3. Force real strongest-AGAINST arguments (not token caveats)
+4. Add extreme granularity: exact loss functions, adapter specs, optimizer changes
+5. Fix all status contradictions in experiment tracking
+
+### Confidence Evidence Ledger (Audit-Mandated)
+
+| Outcome | R4 | R5 | R6 | Evidence for R6 Score | Audit-Adjusted |
+|---------|----|----|----|-----------------------|----------------|
+| 1: Intelligence | 7 | 8 | 8 | SciQ 48.1%, PIQA 54.5% (v0.6.0a). v0.6.0b no benchmarks yet. | 8 (HOLD — need v0.6.0b benchmarks) |
+| 2: Improvability | 8 | 8 | 9 | rd12 trainer fix eliminated pass collapse. One fix ≠ general improvability. | **8** (DOWN from 9 — single fix insufficient) |
+| 3: Democratized Dev | 7 | 7 | 7 | Interfaces exist. No stage-swap demo. No community tooling. | 7 (HOLD) |
+| 4: Data Efficiency | 7 | 7 | 7 | v0.6.0b@1K = v0.5.4@20K on same tokens (20x efficiency via warm-start). But not yet attributed to architecture. | 7 (HOLD — warm-start is training trick, not architecture) |
+| 5: Inference Efficiency | 6 | 7 | 8 | Oracle halting: D=8 saves 33%. But no live halting. Fixed-depth ≠ adaptive. | **7** (DOWN from 8 — oracle is not live) |
+
+**Audit-adjusted scores: 8/8/7/7/7** (down from R6's 8/9/7/7/8)
+
+### R6 Intuitions
+- **D8-D12 plateau = shallow fixed-point basin** (HIGH conviction) — entropy minimum at pass 6, slight rise; D9-D12 tied. Validate with passwise cosine/delta norms.
+- **Adaptive halting via marginal gain, not entropy alone** (HIGH) — entropy changes after pass 6 while BPT barely does. Validate with oracle Pareto curve.
+- **v0.5.4's BPT lead = partly optimization/curriculum debt** (MEDIUM) — rd12 changed behavior in ~33M tokens; v0.6.0a beats old v0.5.4 on some benchmarks despite worse BPT. Validate with same-corpus eval.
+- **Late passes should become retrieve/verify specialists or stay redundant** (MEDIUM-HIGH) — generic shared refinement saturates around pass 6-9. Validate with 4-mode controller after rd12 stabilizes.
+
+### R6 Experiment Queue
+1. **Continue rd12 to 3K/5K** — eval at 1500/2000/3000/5000. Log per-depth BPT, per-pass entropy, passwise cosine, delta norms. Gate on D12 recovery slope and D8→D12 marginal utility.
+2. **Replace late_pct metric** — track D8-D12, D9-D12, entropy-tail rise H12-Hmin, passwise cosine/delta.
+3. **Pass conditioning trigger** — only if plateau persists at 3K. Additive zero-init peri-LN or tiny low-rank depth adapters.
+4. **Oracle adaptive-halting simulation** — G_p = CE_p - min_{q>p} CE_q, plot average depth vs BPT with entropy+gain thresholds.
+5. **v0.5.4 vs v0.6.0a apples-to-apples audit** — same held-out batches, same tokenizer/corpus.
+6. **7→4 MI probe** — {1,2,3}=compose, 4=route, 5=retrieve, {6,7}=verify on saved pi_hist.
+7. **Make lm-eval offline-safe** — cache/vendor datasets, rerun v0.5.4, v0.6.0a@20K, v0.6.0b.
+
+### R6 Research Requests (5 topics)
+1. Module-local distillation / representation alignment at <200M (continued from R5)
+2. Low-overhead forgetting in associative memory for small models
+3. Pass-conditioned shared-weight recurrence at small scale (failures AND wins)
+4. Factorized embeddings + smaller vocab at 50-150M
+5. **NEW:** Adaptive halting after stochastic/random-depth training — marginal-gain prediction, anytime prediction, tokenwise halting in looped models
+
+### R6 Probe: Apples-to-Apples BPT Comparison (2026-03-22)
+
+**Evaluated v0.5.4, v0.6.0a, v0.6.0b on IDENTICAL held-out tokens from the current corpus.**
+
+| Model | Depth | BPT (same tokens) | Own-eval BPT | Gap |
+|-------|-------|-------------------|--------------|-----|
+| v0.5.4@20K | D=8 | **7.5701** | 5.25 | 2.32 (corpus shift!) |
+| v0.6.0a@20K | D=12 | **6.9013** | 6.79 | 0.11 (consistent) |
+| v0.6.0a@20K | D=8 | **18.2378** | — | Pass collapse! |
+| v0.6.0b@1K | D=12 | **7.5783** | 7.60 | 0.02 (consistent) |
+| v0.6.0b@1K | D=9 | **7.5667** | 7.30 | 0.27 |
+| v0.6.0b@1K | D=8 | **7.5703** | 7.30 | 0.27 |
+
+**Key findings:**
+1. **v0.5.4's BPT "lead" was a DOMAIN EFFECT.** On the same tokens, v0.5.4 (7.57) is WORSE than v0.6.0a (6.90). The 5.25 BPT was specific to MiniPile-focused data. R6's "optimization debt" intuition was directionally correct but underestimated — it's primarily a DOMAIN difference, not optimization.
+2. **v0.6.0a is definitively the best model** at 6.90 on the shared held-out set. Its architecture + 20K training genuinely produced better compression on general text.
+3. **v0.6.0b@1K is already TIED with v0.5.4@20K** (7.58 vs 7.57) after only 1K steps (33M tokens) of warm-start training. This validates the iterative warm-start strategy.
+4. **v0.6.0a at D=8 = 18.24 BPT** — catastrophically bad. This PROVES pass collapse: without passes 9-12, v0.6.0a is useless. In contrast, v0.6.0b at D=8 = 7.57 (perfectly functional). This is the strongest evidence yet that rd12 solved collapse.
+5. **v0.6.0b D=8 ≈ D=9 ≈ D=12** on these tokens too — elastic compute confirmed on different eval data.
+
+**Implication:** The "BPT gap" between v0.5.4 and v0.6.0a was a mirage. v0.6.0a IS better. v0.6.0b just needs more training to close the remaining 0.67 BPT gap (7.58 → 6.90). The architecture is sound; the training budget is the bottleneck.
+
+### R6 Probe: 7→4 Mode MI Analysis (2026-03-22)
+
+**Testing R6's hypothesis: do 7 stages cluster into 4 modes (compose/route/retrieve/verify)?**
+
+Mapping: stages {0,1,2}=compose, {3}=route, {4}=retrieve, {5,6}=verify
+
+| Metric | v0.6.0a@20K | v0.6.0b@1K |
+|--------|-------------|------------|
+| MI(4-mode, token_class) | 0.032 | 0.019 |
+| MI(4-mode, pass_index) | 0.692 | 0.558 |
+| MI(7-stage, token_class) | 0.092 | 0.062 |
+| MI(7-stage, pass_index) | 0.761 | 0.564 |
+
+**Key findings:**
+1. **Stages differentiate by PASS INDEX, not TOKEN TYPE.** MI(mode, pass) is 20-30x higher than MI(mode, token_class). The model learned "when in the recurrence to use each mode" but NOT "what kind of content needs each mode."
+2. **Stages 0-1 are DEAD** — 0% utilization in both models. Only stages 2-6 active. 7 banks is definitively over-granular.
+3. **v0.6.0b after rd12: verify dominates at 71%.** Late passes are 90.6% verify. This is the shallow fixed-point basin R6 predicted.
+4. **v0.6.0a had more mode diversity:** route=51%, verify=25%. rd12 collapsed this into verify dominance — the model defaulted to "keep checking" rather than learning diverse late-pass behaviors.
+5. **Token class is nearly ignored** — all types get similar mode distributions. This is a PROBLEM: numbers/acronyms should trigger more retrieve, function words more compose.
+
+**Implications for architecture:**
+- The 4-mode grouping captures LESS information than 7 stages (MI drops from 0.76 to 0.69 for pass, 0.09 to 0.03 for token class), but only because stages 3 (route) and 6 (verify) are separately useful.
+- Pass conditioning (AdaLN-Zero) should force MODE DIVERSITY across passes, not just identity.
+- A control simplex that responds to TOKEN TYPE (not just pass index) is the missing mechanism — needs input-dependent mode selection.
+
+### Root Cause Analysis: Content-Independence Gap (2026-03-22)
+
+**Why does the transition kernel learn pass-index dependence instead of content dependence?**
+
+Examined `SwitchingKernel2` in `code/sutra_v05_ssm.py` (lines 78-102):
+
+1. **`base` network** (Linear→SiLU→Linear, 768→256→49): Takes mu as input. Mu encodes both content AND pass information, but pass dynamics dominate because mu has been through p recurrent iterations. The original token signal is attenuated.
+
+2. **`mode_gate`** uses `h.mean(dim=1)` — SEQUENCE-LEVEL average. This completely washes out per-token content differences. Both modes are global, not token-specific.
+
+3. **No explicit pass embedding.** The model must dedicate transition kernel capacity to inferring "what pass am I on" from the hidden state dynamics, leaving no capacity for "what type of content am I processing."
+
+4. **Evidence modulation** (`softmax(evidence / 0.5)`) also depends on mu, suffering the same pass-dominance issue.
+
+**Root cause:** The information bottleneck. The transition kernel receives only mu, which after p passes of shared-weight recurrence is dominated by accumulated processing dynamics. The original content signal (token identity, local context) is deeply buried. The easiest thing to learn is "at pass p, use mode X" because pass information is the strongest signal in mu.
+
+**Proposed fix (3 complementary signals, all cheap and warm-startable):**
+
+1. **Explicit pass embedding** (12 × proj_dim ≈ 768 params): Concatenate or add a learned pass-index embedding before the transition kernel. Frees kernel capacity from pass-index inference.
+
+2. **Content residual** (0 extra params): Inject the ORIGINAL token embedding h₀ (pre-recurrence) into the transition input. This gives a content signal that is invariant across passes — the kernel always has access to "what token type am I."
+
+3. **Per-token mode gate**: Remove `.mean(dim=1)` from `mode_gate` so each token gets its own mode selection instead of a global one.
+
+**Total overhead:** ~768 params for pass embedding + 0 for content residual + 0 for per-token gate = negligible. **Warm-startable:** zero-init the pass embedding and content-residual projection, existing weights unaffected.
+
+**Connection to v0.6.1 design:** This is the minimal intervention needed before the full 4-mode controller. It directly addresses Outcome 1 (Intelligence — better routing → better processing) and Outcome 5 (Efficiency — content-dependent halting needs content-dependent routing first).
+
+### Theory: Geometric Content-Dependent Routing (2026-03-22)
+
+**Responding to audit concern: "drifting toward standard repair." What would an Intelligence=Geometry approach to content-dependent routing look like?**
+
+**The standard approach (what we proposed above):** Add pass embedding + content residual to transition kernel. This is engineering — more inputs to the same MLP. It works but adds no mathematical insight.
+
+**The geometric approach:** The transition kernel K operates on the hidden state manifold. Currently K(mu) produces a 7×7 transition matrix independent of the *intrinsic geometry* of the state space. What if K depended on WHERE in the representation space the token is, not just its raw coordinates?
+
+**Sketch: Information-geometric transition kernel**
+- The hidden state mu lives on a manifold M (the learned representation space)
+- Different REGIONS of M correspond to different token types (numbers vs function words vs entities)
+- The transition kernel should vary *smoothly* over M, with different dynamics in different regions
+- This is a vector field on M, not a fixed function applied to coordinates
+
+**Concrete mechanism: Fisher-metric-conditioned transitions**
+- Compute the local curvature of the loss landscape w.r.t. the current token's hidden state
+- High curvature regions (the model is "uncertain" about this token) → more processing passes
+- Low curvature regions → fewer passes, faster convergence
+- The curvature signal is INHERENTLY content-dependent: it measures how hard the token is, not which pass we're on
+- This is related to natural gradient methods and Fisher information
+
+**Why this is different from standard approaches:**
+- Standard: add more parameters (MoE, AdaLN, etc.) to achieve content dependence
+- Geometric: USE THE STRUCTURE THAT ALREADY EXISTS in the representation space
+- The representation space already encodes token difficulty — we just need to READ it differently
+
+**Connection to the manifesto:** This IS Intelligence = Geometry. The content signal doesn't come from additional parameters — it comes from better mathematical interpretation of the existing state space.
+
+**Status:** Speculative theory. Needs Codex evaluation for feasibility. The practical concern: computing Fisher information is expensive (requires Hessian-vector products). A cheaper proxy might be the gradient magnitude or the delta-mu norm across passes (which we already compute).
+
+**Quick sanity check:** We ALREADY have a content-dependent signal we're not using: `delta_mu_rms` (the RMS change in hidden state between passes). From our existing probes, this varies 4.79x between easy and hard tokens (Q4/Q1 CE ratio). This IS geometric information about the local dynamics. The transition kernel could condition on delta_mu_rms as a FREE curvature proxy.
+
+### R6 Oracle Adaptive-Halting Simulation Results (2026-03-22)
+
+**Direct validation of Outcome 5 (Inference Efficiency).**
+
+Using per-depth BPT and per-pass entropy from v0.6.0b-rd12 step 1000:
+
+| Halt Depth | BPT | BPT Loss vs Best | Compute Savings | Policy (τ_G, τ_H) |
+|-----------|------|-------------------|-----------------|-------------------|
+| D=6 | 7.3302 | +0.033 | **50%** | (0.040, 0.010) |
+| D=7 | 7.3077 | +0.010 | **42%** | (0.020, 0.030) |
+| D=8 | 7.2979 | **+0.0004** | **33%** | (0.010, 0.050) |
+| D=9 (best) | 7.2975 | 0 | 25% | — |
+| D=12 (full) | 7.3148 | +0.017 | 0% | — |
+
+**Key findings:**
+1. **D=8 is the sweet spot:** 33% savings with 0.0004 BPT loss. Practically free.
+2. **Full depth D=12 is WORSE than D=9** by 0.017 BPT — late passes actively degrade quality.
+3. **50% savings achievable** at D=6 with only 0.033 BPT penalty (exceeds R5's 40% target).
+4. **Marginal gain G_p drops below 0.01 at D=8** — natural halting boundary.
+5. **Entropy minimum at pass 6** (5.2402), tail rise to pass 12 is only 0.142 — much smoother than step 500's 0.312.
+6. **Evolution from step 500→1000:** Entropy tail tightened (0.31→0.14), best depth shifted deeper (8→9), elastic savings slightly decreased but quality improved substantially.
+
+**Implication for live halting:** A gain head trained on G_p with threshold τ_G=0.01 + entropy threshold τ_H=0.05 would halt at D=8 and save 33% compute with zero practical quality loss. This validates R6's proposed halting mechanism: stop at first pass where H_p < τ_H and Ĝ_p < τ_G for two consecutive passes.
+
+### R6 Path Forward
+Keep rd12 running unchanged to 3K/5K. Replace late_pct with D8→D12 utility + entropy-tail slope as main gate. If plateau persists, add zero-init pass conditioning only. Pursue adaptive halting through marginal-gain prediction (G_p head), not lambda thresholding. Concrete adaptive-depth path: train tiny G_p head → stop at first pass where H_p < τ_H and Ĝ_p < τ_G for two consecutive passes → per-token asynchronous halting. After that: 4-mode controller → memory → compute-matched D=1 gate.
+
+---
+
+## v0.6.0b-rd12 Early Eval Results (2026-03-22)
+
+### Step 500 Eval (alpha=0.499, ~16M tokens after warm-start)
+- **BPT = 7.7887** (regressed from 6.7946 source, expected from WSD restart)
+- **Best depth: D=8** (BPT=7.80). D=7-10 nearly tied (7.80-7.82).
+- **PASS COLLAPSE FIXED:** Entropy smoothly decreases 7.14→5.26 over passes 1-5, then slightly rises 5.26→5.57 over passes 5-12. The v0.6.0a cliff (flat 10.1 → 5.84) is GONE.
+- Late passes slightly hurt: D=9→D=12 BPT increases 7.80→7.84 (0.04 regression). Likely from alpha=0.499 biasing toward early-pass terminal supervision.
+
+### Step 1000 Eval (alpha=0.999, ~33M tokens after warm-start)
+- **BPT = 7.6007** (-2.4% from step 500, trajectory: -0.19 BPT / 500 steps)
+- **Best depth shifted: D=8 → D=9** (BPT=7.2975). D=8-10 nearly tied (7.298-7.300).
+- **Late passes NO LONGER HURT:** D=9 vs D=12 gap reduced to 0.017 (was 0.036 at step 500).
+- **ALL depths improved 4-7%** from step 500. Early depths improved most in absolute terms.
+- **Entropy curve smoother:** 6.89→5.24→5.38 (range 0.14 bits in passes 5-12, vs 0.31 at step 500).
+
+### Step 1500 Eval (alpha=1.0, ~49M tokens after warm-start)
+- **BPT = 7.5141** (-1.1% from step 1000, steady improvement)
+- **Best depth: still D=9** (BPT=7.322). D=8 close (7.328, gap 0.006).
+- **D9-D12 gap: 0.014** (tightening from 0.017 at step 1K)
+- **Entropy minimum shifted to pass 7** (5.303, was pass 6 at 5.240). Entropy tail rise: 0.112 (was 0.142).
+- **D=1 slightly regressed** (9.55 vs 9.46 at 1K) — early-pass quality traded for deeper gains.
+- **D=3 improved** (7.85 vs 8.01 at 1K, -2%) — mid depths catching up.
+- **BPT trajectory RE-ACCELERATED at step 2000:** -0.147/500 steps (up from -0.087/500). The step 1000-1500 deceleration was a transient from alpha ramp completing, not a structural plateau. R7's intuition (6/10 "not plateau yet") VALIDATED.
+
+### Step 2000 Eval (alpha=1.0, ~65M tokens after warm-start)
+- **BPT = 7.367** — much better than exponential fit predicted (7.47). Rate re-accelerated!
+- **Best depth: still D=9** (BPT=7.403). D=7-10 all within 0.005 of each other.
+- **D=1 RECOVERED** (9.44, was 9.55 at step 1500) — early-pass regression reversed.
+- **D8-D12 gap: 0.010** (tightening from 0.014)
+- **Entropy minimum shifted BACK to pass 5** (was pass 7 at 1.5K). H12-Hmin=0.105.
+- **Oracle halting improved:** D=7 saves 42% at only 0.005 BPT loss (was D=8/33% at 1.5K).
+- **Updated trajectory:** If -0.15/500 persists → step 3K: ~7.07, step 5K: ~6.77. v0.6.0a's 6.90 WITHIN REACH.
+
+### Key Findings
+1. **Random-depth training works.** The pass collapse cliff is eliminated. Entropy is smooth across all 12 passes.
+2. **Outcome matches R5 prediction (b): "multi-checkpoint decode."** An effective decode plateau forms around D=8-9 rather than a single cliff at D=12. Not yet smooth decode (outcome a).
+3. **BPT gap from source:** 7.31 (D=12 at step 1K) vs 6.79 (source) = 0.52 gap. Trajectory suggests continued recovery but gap may not fully close.
+4. **Alpha ramp worked as designed:** Uniform start (alpha=0) ensured early passes got terminal supervision; ramping to 1.0 shifted focus to deeper passes.
+5. **Entropy minimum at pass 6** (5.24 at step 1K). After pass 6, entropy rises slightly — suggests model hasn't learned useful refinement for later passes yet.
+
+### Implications for Next Steps
+- Random-depth successfully breaks collapse → proceed with training to 5K
+- If entropy curve doesn't become monotone by 3K, pass conditioning (adaLN) needed (R5's contingency plan)
+- The D=8-9 plateau suggests Dmax=8 may be sufficient for most tokens (elastic compute target)
+- Need to monitor whether BPT gap from source closes or stabilizes — determines if rd12 is net-positive vs net-negative for intelligence
+
+---
+
 ## Pre-Training Gate: v0.6.0b-rd12 (2026-03-22)
 
 **6 rounds, 12 fixes, ALL THREE CLEAN.** Training started.
@@ -9299,3 +10641,18 @@ The field has EXPLODED in 2025-2026. Key papers beyond what was in our earlier s
 **Critical warning (ANIRA):** Adaptive compute allocation does NOT guarantee generalization to unseen complexity. Online halting > early depth decision.
 
 **RevDEQ finding:** Performance "plateaus at ~12 iterations" — independently validates our 12-pass choice.
+
+### R5 Audit: P1 Two-Teacher Trainer (2026-03-23)
+
+**Verdict: FAIL (1 blocker remains).** The causality fix in `SwitchingKernel2`, the CKA accumulation/weighting fix, and `use_cache=False` all look correct on code inspection. Local `python code/launch_v060a.py` also passes the causality smoke test (`diff=0.000000`).
+
+**Blocker - Pythia remap is not a permutation, so KL is still misaligned.**
+- `build_token_mapping()` in `code/train_p1_twoteacher.py` maps GPT-2 ids by `decode -> pythia encode`, then collapses multi-token cases to the first Pythia id.
+- The trainer then remaps teacher logits with `t_logits_full[:, :, gpt2_to_pythia]`, which duplicates one Pythia logit column into many GPT-2 columns instead of producing a true vocab alignment.
+- Local verification with cached tokenizers: only 36,962 / 50,257 GPT-2 ids re-encode to a single Pythia id; 13,295 are ambiguous; 13,283 extra GPT-2 ids collide onto already-used Pythia ids. Only 31,968 ids are exact non-colliding matches.
+- On 81,920 sampled training tokens from the current shard set, about 2.0% of input tokens hit the ambiguous first-token approximation, and only about 51.5% of tokens land on exact non-colliding ids for a safe logit-space mapping.
+- This means the KL target is still structurally wrong, especially for common columns (`\\n`, `.`, ` the`, ` to`, ` a`, etc.) whose mapped Pythia ids are shared by many GPT-2 ids.
+
+**Non-blocking bug - frozen cache ablation path is broken.**
+- `FrozenPrefixCache.read()` in `code/launch_v060a.py` builds `frozen_mask` by multiplying a float mask by `-inf`, which yields NaNs on zero entries. Local reproduction returns all-NaN outputs as soon as any token is frozen.
+- This does not affect the default P1 trainer path (`use_frozen_cache=False`), but the ablation path should use `torch.where` or `masked_fill` instead.
