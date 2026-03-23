@@ -37,7 +37,7 @@ class SutraLMEval(LM):
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Load model based on version (each version has its own default max_steps)
-        if version in ("v060a", "v060b", "v060c"):
+        if version in ("v060a", "v060b"):
             from launch_v060a import create_v060a
             self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=12,
                                        window=4, k_retrieval=8)
@@ -45,11 +45,8 @@ class SutraLMEval(LM):
             from launch_v054 import create_v054
             self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=8,
                                       window=4, k_retrieval=8)
-        elif version == "v061":
-            from launch_v061 import SutraV061
-            self.model = SutraV061()
         else:
-            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v060c', 'v054', or 'v061'.")
+            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v060c', or 'v054'.")
 
         if checkpoint:
             ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
@@ -183,7 +180,7 @@ if __name__ == "__main__":
     parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--version", default="v060a", choices=["v060a", "v054", "v061"])
+    parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v060c", "v054", "v061"])
     parser.add_argument("--output", default=None, help="Output JSON path (default: results/sutra_lm_eval_results.json)")
     args = parser.parse_args()
 
