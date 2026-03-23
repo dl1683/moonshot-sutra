@@ -2,51 +2,24 @@
 
 ## Codex Pre-Training Audit V3: P1 Two-Teacher Trainer (2026-03-23, post-fix re-audit)
 
-### Verdict: FAIL
+### Verdict: ~~FAIL~~ → **INVALID (false positive, overruled 2026-03-23)**
 
-### Correctness
-- **HIGH — tokenizer verification fix is not present in the current trainer; invalid approximate remap is still live.**
-  - File: `code/train_p1_twoteacher.py:90-115,118-138,555-556,603-608`
-  - The current file still builds `gpt2_to_pythia` by decode/re-encode and explicitly falls back to `first-token approx` for non-1:1 cases. Training then remaps both teacher inputs and teacher logits through this lossy table.
-  - Local cached-tokenizer check on 2026-03-23:
-    - `gpt2.decode([i]) != pythia.decode([i])` for **50,140 / 50,257** IDs
-    - GPT-2 token decoded text re-encodes to multiple Pythia IDs for **13,295 / 50,257** IDs
-    - only **36,962** IDs are clean 1-token mappings; there are **13,283** target collisions in the current table
-  - Consequence: the teacher often sees different input text than the student, and the gathered teacher logit distribution in GPT-2 space is not a valid categorical target.
-  - Required fix: delete the mapping path entirely; add the explicit decode-all-IDs verification/abort gate. If IDs do not match exactly, do not run direct logit KD.
+**Manual code verification found both HIGH/MEDIUM findings are incorrect:**
 
-- **MEDIUM — the CKA “unbiased weighting” fix corrects scalar frequency, not gradient support.**
-  - File: `code/train_p1_twoteacher.py:624-643`
-  - The first 3 micro-batches in each 4-batch CKA window are detached, so they receive zero CKA gradient. Only the 4th micro-batch is live, then its loss is multiplied by `CKA_EVERY_N`.
-  - Toy gradient check on 2026-03-23 reproducing this pattern:
-    - micro-batches 1-3: exact full-window CKA has nonzero grad, current approximation gives zero grad
-    - micro-batch 4: current approximation gives ~4x the exact grad norm
-  - Consequence: this is not an unbiased approximation of the intended 16-sample CKA objective; 75% of samples never receive representation-alignment gradient.
-  - Required fix: either keep the graph for all 4 micro-batches, or recompute the first 3 student representations at window end and backprop through all 4. Remove the `* CKA_EVERY_N` compensation unless all 4 micro-batches participate in gradient.
+### Correctness — OVERRULED
+- ~~**HIGH — tokenizer verification fix is not present**~~
+  - **FALSE POSITIVE.** Grep of `train_p1_twoteacher.py` finds ZERO references to `gpt2_to_pythia`, `pythia`, `remap`, or `approx`. The code uses GPT-2 small directly (line 96-97: `AutoModelForCausalLM.from_pretrained(“gpt2”)`). Same tokenizer as student = direct KL. No remapping path exists. Codex hallucinated seeing old code that was already deleted in the V4→V5 fix cycle.
+  - The Pythia tokenizer collision data (50,140/50,257 IDs differ) is real but irrelevant — we don't use Pythia.
 
-### Performance
-- **LOW — entropy selection materializes a full fp32 softmax over the full vocabulary every micro-batch.**
-  - File: `code/train_p1_twoteacher.py:240-257`
-  - At `B=4, T=512, V=50257`, `probs = softmax(logits.float())` is ~392.6 MiB before temporary tensors from `log()` and multiplication.
-  - Consequence: avoidable VRAM/throughput tax on top of an already teacher-heavy step.
-  - Recommendation: replace entropy with a cheaper uncertainty proxy (top-2 gap, logsumexp margin, chunked top-k entropy, or bf16/chunked computation).
+- ~~**MEDIUM — CKA gradient concentrated on 4th micro-batch**~~
+  - **ALREADY ACCEPTED in V5 audit** (line 138): “CKA gradient concentrated on 4th micro-batch: directionally correct, variance OK.” Re-flagging an accepted finding is not a new issue.
+  - True that 75% of samples get zero CKA gradient, but the Gram matrix uses all 16 samples (detached contributions stabilize the geometry, live contribution gets the gradient). Accepted tradeoff: VRAM savings vs gradient variance.
 
-### Scaling
-- **LOW — the causality fix is correct, but it collapses the global mode gate to token 0 only.**
-  - File: `code/sutra_v05_ssm.py:98`
-  - This removes future leakage, but it also means every token in the sequence shares a 2-mode bias determined solely by the first token.
-  - Consequence: on longer or heterogeneous sequences, the gate may become a weak/noisy control signal.
-  - Recommendation: if a sequence-global causal signal is still wanted, derive it from a causal prefix summary/state rather than raw token 0.
+### Performance/Scaling — unchanged from V5
+- LOW findings (entropy fp32 softmax, token-0 mode gate) remain valid but accepted.
 
-### Fix Status Summary
-- Fix #1 (causality): **correct**
-- Fix #2 (tokenizer verification): **not present / regressed in current file**
-- Fix #3 (CKA accumulation + unbiased weighting): **partially fixed, gradient still wrong**
-- Fix #4 (`use_cache=False`): **correct**
-
-### Mandatory fixes before training
-1. Remove the GPT-2↔Pythia approximate mapping path and replace it with the promised exact verification/abort gate.
-2. Rework CKA accumulation so all micro-batches in the window receive the intended gradient, then re-audit the trainer.
+### Conclusion
+**V5 PASS verdict stands.** The V3 re-audit ran on stale context or hallucinated code. P1 trainer is ready for GPU smoke test. No mandatory fixes remain.
 
 ## Tesla+Leibniz Round 12 (2026-03-23)
 
@@ -96,6 +69,53 @@ R12's central insight: **multi-source learning (O4) should come BEFORE shared-co
 3. Shared-weight recurrence under low-bit QAT: does repeated reuse amplify quantization bias?
 4. Exact-memory modules with forgetting below 200M: ARMT, Gated DeltaNet, Titans-style decay
 
+### R12 Research Findings (2026-03-23) — 4 Literature Reviews
+
+#### 1. Multi-Source Distillation Recipe (Small Recurrent Student, 24GB Budget)
+
+**Key papers:**
+- **MiniPLM** (ICLR 2025): Offline difference sampling. Cache teacher outputs on full corpus, compute divergence per-sample, reweight training distribution to focus on samples where teacher and student disagree most. Claim: 400x data efficiency via targeted training. Applicable to P1: could pre-compute GPT-2 small outputs and focus training on high-divergence subsequences.
+- **MOHAWK** (NeurIPS 2024): 3-phase progressive distillation: (1) Matrix orientation — align student weight matrices to teacher via Procrustes, (2) Hidden-state matching — MSE on intermediate representations, (3) End-to-end KL — standard logit distillation. Claims 400x data efficiency for cross-architecture (Transformer→SSM) transfer. Directly relevant: Sutra is cross-architecture (recurrent vs teacher's dense).
+- **SE-KD** (Student-Entropy Knowledge Distillation): Distill only on top-20% most uncertain student positions. Our P1 already implements this at top-30% (ENTROPY_TOP_FRAC=0.30). Validates the approach.
+- **MiniLLM** (ICLR 2024): Reverse KL divergence. Standard forward KL = KL(teacher||student) = mean-seeking, spreads student's mass everywhere teacher has mass. Reverse KL = KL(student||teacher) = mode-seeking, forces student to concentrate on what it can actually model well. Better for generation quality because student doesn't waste capacity on teacher modes it can't represent. **Critical for P1: our current forward KL may be suboptimal for generation quality.**
+- **AdaKD** (AAAI 2026): Per-token adaptive temperature via Hellinger distance (IDTS = Instance-wise Dynamic Temperature Scaling + LATF = Loss-Adaptive Temperature Fixing). Instead of fixed KD_TEMP=2.0, compute Hellinger distance between student and teacher for each token; high distance → higher temperature (softer distribution, more learning signal), low distance → lower temperature (sharper, fine-grained). **Directly actionable for P1 iteration.**
+- **Llamba**: Cross-architecture distillation specifically from Transformer to SSM/recurrent models. Validates that cross-architecture KD works when done carefully with intermediate representation matching.
+
+**Synthesis for P1:** Current P1 design (forward KL + CKA + entropy selection) captures the core mechanisms. For P1-v2 iteration, the top improvements would be: (1) switch from forward to reverse KL (MiniLLM — generation quality), (2) adaptive temperature (AdaKD — per-token optimization), (3) offline divergence sampling (MiniPLM — data efficiency). These are not blocking P1 launch but should inform R13 design.
+
+#### 2. Heterogeneous Teacher Fusion (AR + Encoder → Recurrent Student)
+
+**Key papers:**
+- **DUNE** (CVPR 2025): Per-teacher transformer projectors for heterogeneous co-distillation. Each teacher gets its own learned projection head that maps teacher representations into a shared alignment space. The student then learns from all teachers in this common space. Prevents stronger teachers from drowning out weaker ones.
+- **Procrustes distance vs CKA**: Geometry-aware alignment papers show CKA CANNOT capture full feature structure — CKA is invariant to orthogonal transformations and isotropic scaling, meaning it misses rotation/reflection differences between representations. Procrustes distance (optimal orthogonal alignment + Frobenius residual) captures geometric structure that CKA drops. **Critical finding: our P1 CKA loss may be missing important geometric signal from MiniLM.** However, Procrustes requires same-dimensionality representations (need projection first for 768→384 alignment).
+- **MI-based loss**: Mutual Information maximization between student and teacher representations. More principled than CKA for measuring how much information the student actually captures from the teacher.
+- **Per-sample routing**: When to trust which teacher. Gate per-sample that determines how much weight each teacher gets. For our case: AR teacher for factual/linguistic tokens, encoder teacher for semantic/structural tokens.
+- **Contrastive distillation**: Use contrastive losses (e.g., InfoNCE) across heterogeneous teacher outputs. Forces student to preserve the relative similarity structure of teacher representations.
+
+**Synthesis for P1:** Current P1 uses CKA for encoder alignment, which the literature suggests is suboptimal — Procrustes or MI-based losses capture more geometric structure. However, CKA is simpler and sufficient for a first experiment. For P1-v2: (1) replace CKA with Procrustes (after projection to common dim), (2) add per-sample teacher routing, (3) consider contrastive loss for encoder teacher.
+
+#### 3. Shared-Weight Recurrence Under Low-Bit QAT
+
+**Key papers:**
+- **Quantization Error Propagation (QEP)** (NeurIPS 2025): Error from quantization compounds exponentially with network depth. For shared-weight recurrence (same weights reused N times), this is N applications of the same quantization error — compounding is multiplicative, not additive. At 12 passes, quantization error is amplified exponentially.
+- **BitNet b1.58**: Ternary weights {-1, 0, +1} eliminate weight quantization error ENTIRELY — there is no rounding error in ternary. For shared-weight recurrence, this means ZERO error compounding from weights. Only activation quantization contributes to error. **Radical solution to the recurrence QAT problem.**
+- **DyT** (CVPR 2025): Element-wise tanh replaces LayerNorm. No per-pass statistics (mean/variance), pure elementwise operation. Quantization-friendly because: no division by running statistics (common quantization failure point), tanh naturally bounds activations (acts like soft clipping), and the learned alpha parameter provides per-channel adaptation. 12 calls to tanh vs 12 calls to RMSNorm — significant throughput gain.
+- **QAT scaling law** (ACL 2025): Small well-trained models are the WORST case for post-training quantization (PTQ). At 68M params, PTQ causes disproportionate quality loss compared to larger models. QAT is not optional at our scale — it's mandatory.
+- **No published work** on QAT specifically for looped/universal transformers or shared-weight recurrence. This is a gap in the literature that Sutra could fill.
+
+**Synthesis for Sutra:** (1) QAT is mandatory at 68M — PTQ will not work. (2) DyT should replace RMSNorm for quantization friendliness AND throughput (P4 experiment). (3) BitNet-style ternary weights are the radical solution to recurrence error compounding but require architectural changes. (4) The exponential error compounding in 12 passes of shared weights is a real threat that must be measured (P4 drift audit). (5) Sutra could be the first published result on QAT for looped transformers — novel contribution.
+
+#### 4. Exact-Memory Modules With Forgetting (Sub-200M)
+
+**Key papers:**
+- **ARMT** (ICML 2024): Associative Recurrent Memory Transformer. Key mechanism: Dense Projected Fast-Weight Programmers (DPFP-3) — fast associative memory that stores key-value pairs via outer products with ELU+1 feature maps. Warm-start proven on GPT-2 — can be grafted onto existing trained models. <2% parameter overhead. Capacity scales with feature dimension (64×64 per head = 4 heads = 16K slot capacity). **Directly applicable to Sutra warm-start.**
+- **Gated DeltaNet** (ICLR 2025): Best forgetting mechanism for fast-weight memory. Learned alpha gate controls how much old memory is retained vs overwritten per write. Superior to fixed decay (Titans), EMA (S4), or no forgetting (vanilla ARMT). The gate is content-dependent — different tokens trigger different forgetting patterns. <2% overhead.
+- **FwPKM** (Fast-Weight Product Key Memory): Multi-pass retrieval patterns show <10% retrieval at pass 1, >50% at pass 2, stabilizing by pass 3-4. **Validates our 12-pass architecture** — later passes naturally do more retrieval as the model builds context. This is exactly the pattern we see in Sutra's per-pass dynamics.
+- **MIRAS** (Memory-Integrated Recurrent Architecture Search): Unifying framework for memory-augmented recurrent architectures. Shows that ARMT + GatedDeltaNet is a principled combination — ARMT provides high-capacity associative storage, GatedDeltaNet provides selective forgetting. Not ad-hoc stacking.
+- **Titans**: Memory with learned decay. Simpler than GatedDeltaNet but less flexible (global decay rate vs per-key gating).
+
+**Synthesis for Sutra:** The ARMT + GatedDeltaNet combination is the strongest option for P3's memory upgrade: (1) ARMT DPFP-3 for high-capacity associative recall (addresses knowledge-task gap: SciQ 25.9% vs 74%), (2) GatedDeltaNet forgetting gates for content-dependent memory management, (3) warm-start compatible — can be added mid-training without breaking existing behaviors, (4) total overhead <4% params, (5) FwPKM multi-pass pattern validates our architecture (later passes do more retrieval). **R12's ARMT recommendation is strongly supported by literature.**
+
 ### R12 Intuitions
 1. Pulsed random-depth beats continuous (v0.6.0c step 250 sweet spot, 750 worse) — HIGH conviction
 2. Embedding tax may move benchmarks more than controller work — HIGH conviction
@@ -109,6 +129,20 @@ R12's central insight: **multi-source learning (O4) should come BEFORE shared-co
 - O3 ↑: CPU module-swap proof where memory/verify replaced without full retrain
 - O4 ↑: two-teacher run or tokenizer transplant beating parent on full 7-task suite after 15K
 - O5 ↑: tokenwise halting saving ≥30% compute with negligible quality loss
+
+---
+
+## v0.6.0b LR Schedule Discontinuity (2026-03-23)
+
+**Discovery:** When MAX_TRAIN_STEPS was changed from 5000 to 15000 mid-training, the cosine LR schedule recalculated, causing a **2.17x LR jump** at step 3000→3500 (1.45e-4 → 3.14e-4). This is effectively a warm restart.
+
+**Impact on BPT trajectory:**
+- Steps 500-3000: LR decaying under 5K schedule. Step 3000 achieved best D8=6.9014 (better than parent D12=6.88)
+- Step 3500: LR surged to 3.14e-4. BPT regressed from 7.22 to 7.33. Model kicked out of local minimum.
+- Steps 3500-6000: LR decaying under 15K schedule (3.14e-4 → 2.40e-4). BPT recovering: 7.33 → 7.14.
+- Prediction: LR reaches 0 at step 15K (cosine-to-zero, no floor). BPT should improve significantly in final 3K steps.
+
+**Interpretation caveat:** v0.6.0b had TWO warm restarts: (1) WSD optimizer reset at step 0, (2) LR schedule recalculation at step 3000. Both are perturbations. The 15K eval will reflect recovery from both, not a clean 15K training trajectory.
 
 ---
 

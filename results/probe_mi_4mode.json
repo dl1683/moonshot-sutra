@@ -1,0 +1,160 @@
+{
+  "v0.6.0a@20K": {
+    "mi_mode_tokenclass": 0.0321,
+    "mi_mode_pass": 0.6922,
+    "mi_stage_tokenclass": 0.0919,
+    "mi_stage_pass": 0.7608,
+    "mode_by_phase": {
+      "early_0-3": {
+        "compose": 0.1481,
+        "route": 0.2179,
+        "retrieve": 0.263,
+        "verify": 0.371
+      },
+      "mid_4-7": {
+        "compose": 0.0008,
+        "route": 0.5619,
+        "retrieve": 0.0913,
+        "verify": 0.346
+      },
+      "late_8-11": {
+        "compose": 0.0,
+        "route": 0.5829,
+        "retrieve": 0.3468,
+        "verify": 0.0703
+      }
+    },
+    "mode_by_tokenclass": {
+      "acronym": {
+        "compose": 0.121,
+        "route": 0.3843,
+        "retrieve": 0.2151,
+        "verify": 0.2796
+      },
+      "content_word": {
+        "compose": 0.0819,
+        "route": 0.4322,
+        "retrieve": 0.2363,
+        "verify": 0.2496
+      },
+      "function_word": {
+        "compose": 0.0057,
+        "route": 0.4885,
+        "retrieve": 0.2271,
+        "verify": 0.2787
+      },
+      "number": {
+        "compose": 0.0213,
+        "route": 0.4441,
+        "retrieve": 0.3101,
+        "verify": 0.2245
+      },
+      "punctuation": {
+        "compose": 0.0087,
+        "route": 0.4598,
+        "retrieve": 0.2162,
+        "verify": 0.3152
+      },
+      "whitespace": {
+        "compose": 0.0,
+        "route": 0.6174,
+        "retrieve": 0.2964,
+        "verify": 0.0862
+      }
+    },
+    "stage_utilization": {
+      "stage_0": 0.0,
+      "stage_1": 0.0,
+      "stage_2": 0.0487,
+      "stage_3": 0.5147,
+      "stage_4": 0.1836,
+      "stage_5": 0.0794,
+      "stage_6": 0.1735
+    },
+    "mode_utilization": {
+      "compose": 0.0487,
+      "route": 0.5147,
+      "retrieve": 0.1836,
+      "verify": 0.2529
+    }
+  },
+  "v0.6.0b@1K": {
+    "mi_mode_tokenclass": 0.0185,
+    "mi_mode_pass": 0.5581,
+    "mi_stage_tokenclass": 0.062,
+    "mi_stage_pass": 0.5642,
+    "mode_by_phase": {
+      "early_0-3": {
+        "compose": 0.0464,
+        "route": 0.3453,
+        "retrieve": 0.3513,
+        "verify": 0.2571
+      },
+      "mid_4-7": {
+        "compose": 0.0,
+        "route": 0.1432,
+        "retrieve": 0.0686,
+        "verify": 0.7882
+      },
+      "late_8-11": {
+        "compose": 0.0,
+        "route": 0.0747,
+        "retrieve": 0.0193,
+        "verify": 0.906
+      }
+    },
+    "mode_by_tokenclass": {
+      "acronym": {
+        "compose": 0.0486,
+        "route": 0.2281,
+        "retrieve": 0.176,
+        "verify": 0.5472
+      },
+      "content_word": {
+        "compose": 0.0209,
+        "route": 0.2099,
+        "retrieve": 0.159,
+        "verify": 0.6102
+      },
+      "function_word": {
+        "compose": 0.0057,
+        "route": 0.1577,
+        "retrieve": 0.1294,
+        "verify": 0.7072
+      },
+      "number": {
+        "compose": 0.0064,
+        "route": 0.2404,
+        "retrieve": 0.1922,
+        "verify": 0.5611
+      },
+      "punctuation": {
+        "compose": 0.0128,
+        "route": 0.1306,
+        "retrieve": 0.1144,
+        "verify": 0.7422
+      },
+      "whitespace": {
+        "compose": 0.0332,
+        "route": 0.263,
+        "retrieve": 0.1552,
+        "verify": 0.5485
+      }
+    },
+    "stage_utilization": {
+      "stage_0": 0.0,
+      "stage_1": 0.0,
+      "stage_2": 0.0099,
+      "stage_3": 0.1539,
+      "stage_4": 0.1235,
+      "stage_5": 0.0247,
+      "stage_6": 0.6881
+    },
+    "mode_utilization": {
+      "compose": 0.0099,
+      "route": 0.1539,
+      "retrieve": 0.1235,
+      "verify": 0.7128
+    }
+  }
+}

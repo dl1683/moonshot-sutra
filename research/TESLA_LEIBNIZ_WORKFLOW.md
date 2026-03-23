@@ -68,6 +68,75 @@ Every T+L prompt MUST include:
 - Mechanisms that compose with existing trained weights
 Efficiency is the MISSION — Intelligence = Geometry means getting more from less. Do NOT propose designs requiring from-scratch restarts unless the mathematical argument for why warm-starting is impossible is airtight and explicit."
 
+## Multi-Source Learning Mandate (MANDATORY in every round — until O4 is solved)
+
+O4 (Data Efficiency) is the LEAST developed pillar. No multi-teacher, multi-source, or representation-hijacking capabilities have been implemented. This is the biggest gap in the project.
+
+Every T+L round MUST include at least 1-2 of the following for O4:
+- **Research requests** on multi-source learning, representation fusion, cross-model knowledge transfer
+- **Probe/experiment proposals** for absorbing knowledge from multiple pretrained models simultaneously
+- **Novel mechanism ideas** for hijacking representations from diverse model families (transformers, SSMs, hybrids) and combining them
+
+This is NOT traditional single-model knowledge distillation. The vision:
+- Learn from MULTIPLE pretrained models simultaneously — not just LLMs!
+- ALL types of neural networks: autoregressive LLMs, encoder-only models (BERT, sentence transformers), diffusion models, vision encoders (CLIP, DINOv2), STEM models (protein, molecular, weather), code models, embedding models
+- Hijack their INTERNAL representations — not just output logits
+- Combine heterogeneous representations (attention-based, state-space, CNN, diffusion, encoder, decoder) into Sutra's framework
+- Each teacher contributes what it's best at: factual recall from one, reasoning from another, linguistic structure from a third, spatial understanding from a vision encoder, scientific reasoning from a STEM model
+- Why train on trillions of tokens when billions of parameters of already-trained knowledge exist in public models?
+
+Every T+L prompt MUST include:
+
+"MULTI-SOURCE LEARNING (O4 MANDATE — standing requirement until solved):
+O4 (Data Efficiency) is the least developed pillar. No multi-teacher capabilities exist.
+You MUST propose at least 1-2 concrete research requests, probe designs, or mechanism proposals for learning from MULTIPLE pretrained models simultaneously.
+This is NOT single-model KD. Learn from ALL types of neural networks: LLMs, encoder models, diffusion models, vision encoders, STEM models, code models — any neural network with learned representations. Hijack their internal representations, combine heterogeneous architectures, extract the best of each.
+Think about: representation alignment across architectures, feature distillation vs logit distillation, cross-architecture probing, progressive multi-teacher curricula, representation space surgery, neural stitching, representation translation networks, stealing structured knowledge from encoder models, extracting compositional structure from diffusion models, absorbing scientific priors from domain-specific STEM models.
+What mechanisms would let a 68M model absorb knowledge from 10+ diverse pretrained models across ALL modalities and architectures?"
+
+This mandate stays active until Codex rates O4 confidence >= 9/10.
+
+## Evaluation Comparability Rules (MANDATORY — HARD RULES)
+
+### 1. Minimum 15K Training Steps Before Any Decision
+**No design is dropped or accepted based on short canaries.** Every training variant MUST run for a minimum of 15K steps before we decide whether to keep or drop it. Emergent properties and behaviors may only appear after sufficient training — short canaries (500-3K steps) tell us "does this immediately break?" but NOTHING about the design's actual potential.
+
+Short canaries (<15K) are allowed as smoke tests only. They may NOT be used to:
+- Drop a design direction
+- Claim a design "works" or "doesn't work"
+- Compare benchmark numbers across variants
+- Make any architectural decision
+
+**The 15K checkpoint is where evaluation happens. Not before.**
+
+### 2. Full Eval Suite + Generation Quality — No Cherry-Picking
+At the 15K evaluation checkpoint, EVERY variant MUST run:
+- **Full benchmark suite:** `arc_easy, arc_challenge, hellaswag, winogrande, piqa, sciq, lambada_openai`
+- **Text generation quality test:** Multiple prompts at different temperatures, evaluated for coherence, factual accuracy, diversity, and repetition
+
+Both are mandatory. Benchmarks alone miss generation quality. Generation alone misses specific capability gaps. Together they give the complete picture.
+
+No partial evals. No "just SciQ + LAMBADA." No skipping generation. If we can't afford the eval time, we can't afford the training run.
+
+### 3. Matched Comparisons Only
+Cross-variant comparisons are only valid at the SAME training step count. Comparing v0.6.0a at 20K steps vs v0.6.0c at 750 steps is meaningless. All variants compared at 15K.
+
+If Codex proposes evaluating a design based on anything less than 15K steps, flag it: "This violates the 15K minimum. Need full training before deciding."
+
+## Inherited Paradigm Audit (MANDATORY in every round)
+
+Every T+L round MUST include an "Inherited Paradigm Audit" section that forces Codex to question unquestioned design decisions. This was added after the GPT-2 tokenizer (50K vocab, 56.2% of params) survived 10 T+L rounds without anyone noticing it was the single biggest inefficiency in the architecture.
+
+Every T+L prompt MUST include:
+
+"INHERITED PARADIGM AUDIT: Before designing new mechanisms, audit the ENTIRE parameter budget and inherited design decisions.
+1. What fraction of params is doing actual intelligence work vs. inherited infrastructure (embeddings, tokenizer artifacts, unused capacity)?
+2. List ALL design decisions carried forward from previous versions that have NOT been re-derived from first principles for this specific model and scale.
+3. For each inherited decision: what is the theoretical justification at THIS scale? 'It worked before' or 'GPT-2 uses it' is NOT justification.
+4. What are the top 3 inherited assumptions that, if changed, would yield the biggest improvement?
+5. Are there components consuming >20% of params that could be redesigned for the current scale?
+The biggest gains often come from questioning boring infrastructure, not adding clever new mechanisms."
+
 ## Autonomy Rules
 
 **Claude does WITHOUT asking the user:**
@@ -93,6 +162,8 @@ Efficiency is the MISSION — Intelligence = Geometry means getting more from le
 ## Codex Session Template
 
 **The permanent static template lives at `research/TESLA_LEIBNIZ_CODEX_PROMPT.md`.** This file contains the full prompt that Codex gets every round — Sections 1-5 with all static content (persona, mentality, task, standalone rule). Codex reads the repo directly for dynamic context (hardware via nvidia-smi, research via RESEARCH.md, code via source files, training status via checkpoint inspection).
+
+**MANDATORY: Codex MUST read `research/ARCHITECTURE.md` every round.** This file contains the complete parameter budget, design decision audit (DERIVED/INHERITED/ARBITRARY classification for every choice), and the architecture diagram. It makes inherited assumptions visible and questionable. Update ARCHITECTURE.md whenever the architecture changes — the code follows the doc.
 
 For Round 1: Claude passes the static template as-is. Codex self-populates all dynamic context.
 For Round N>1: Claude appends to Section 4: (a) the full output from Round N-1, (b) new research findings.

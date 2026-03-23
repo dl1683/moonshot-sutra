@@ -83,13 +83,14 @@ Sutra's vision: thousands of contributors worldwide, each improving the piece th
 
 **MANDATORY FIRST STEPS:**
 1. Read `research/VISION.md` in full — every word. This is your bible. The 5 outcomes are defined there in complete detail (lines 39-115). Internalize them deeply.
-2. Read `research/RESEARCH.md` — all findings, Chrome probe results, competitive analysis.
-3. Read `research/SCRATCHPAD.md` — strategic direction, killed directions, open questions.
-4. Read `code/launch_v060a.py` — current model architecture (v0.6.0a).
-5. Read `code/sutra_v05_ssm.py` — core components (StageBank, BayesianWrite, Router, etc.).
-6. Read `code/train_v060a.py` — current training loop.
-7. Run `nvidia-smi` to check current GPU status (what's running, VRAM usage).
-8. Check the latest checkpoint: `ls -la results/checkpoints_v060a/` and inspect `rolling_latest.pt` to get current training step and BPT.
+2. Read `research/ARCHITECTURE.md` — the COMPLETE architecture reference with parameter budget, design decision audit (DERIVED/INHERITED/ARBITRARY classification for EVERY choice), architecture diagram, and the Embedding Tax analysis. THIS IS WHERE YOU QUESTION INHERITED ASSUMPTIONS.
+3. Read `research/RESEARCH.md` — all findings, Chrome probe results, competitive analysis.
+4. Read `research/SCRATCHPAD.md` — strategic direction, killed directions, open questions.
+5. Read `code/launch_v060a.py` — current model architecture (v0.6.0a).
+6. Read `code/sutra_v05_ssm.py` — core components (StageBank, BayesianWrite, Router, etc.).
+7. Read `code/train_v060a.py` — current training loop.
+8. Run `nvidia-smi` to check current GPU status (what's running, VRAM usage).
+9. Check the latest checkpoint: `ls -la results/checkpoints_v060a/` and inspect `rolling_latest.pt` to get current training step and BPT.
 
 After reading all of the above, you will have complete context. Do NOT skip any file.
 
@@ -304,6 +305,16 @@ cross-position routing, training methodology, tokenizer, the recurrence
 thesis itself at this scale, multi-source learning strategy, and anything
 else you think matters.
 
+INHERITED PARADIGM AUDIT (MANDATORY): After reading ARCHITECTURE.md, explicitly
+address every decision marked INHERITED or ARBITRARY in the Design Decision Audit
+table. For each one:
+1. Is this decision optimal for a 68M recurrent model? Why or why not?
+2. What would happen if we changed it? What's the expected impact?
+3. What's the priority: change now, investigate later, or keep?
+The biggest gains often hide in boring infrastructure, not clever new mechanisms.
+The GPT-2 tokenizer (56.5% of params, 75.8% unused) survived 10 rounds unquestioned.
+What else are we missing?
+
 PHASE B — KNOWLEDGE GAPS
 What don't you know yet? What research would help? What probes would you run?
 Be specific — Claude will execute these for you.
@@ -311,6 +322,53 @@ Be specific — Claude will execute these for you.
 - Experiment/probe requests: specific methodology, expected outcome, what it
   would tell you (Claude runs on CPU, or flags for GPU when available)
 - Stay within hardware constraints listed above.
+
+PHASE B.1 — MULTI-SOURCE LEARNING (O4 MANDATE — standing requirement until O4 >= 9/10)
+O4 (Data Efficiency) is the LEAST developed pillar. No multi-teacher capabilities
+exist in the codebase. ZERO implementation progress has been made. This is the
+biggest gap in the project.
+
+You MUST propose at least 1-2 concrete items from this list:
+- Research requests on multi-source learning, representation fusion, cross-model transfer
+- Probe/experiment designs for absorbing knowledge from MULTIPLE pretrained models
+- Novel mechanism proposals for hijacking heterogeneous representations
+
+This is NOT single-model knowledge distillation. The vision:
+- Learn from MULTIPLE pretrained models simultaneously — not just LLMs!
+- ALL types of neural networks: autoregressive LLMs (Pythia, Mamba, Qwen), encoder-only
+  models (BERT, sentence transformers), diffusion models (FLUX, SD), vision encoders
+  (CLIP, DINOv2, ViT), STEM models (protein folding, molecular, weather), code models,
+  embedding models, any neural network that has learned useful representations
+- Hijack their INTERNAL representations — not just output logits
+- Combine heterogeneous representations (attention-based, state-space, CNN, diffusion,
+  encoder, decoder) into Sutra's recurrent framework
+- Each teacher contributes what it's best at: one gives factual recall, another gives
+  reasoning patterns, another gives linguistic structure, a vision encoder gives spatial
+  understanding, a diffusion model gives compositional generation, a STEM model gives
+  scientific reasoning
+- The result: a 68M model that absorbed knowledge from 10+ diverse pretrained models
+  across ALL modalities and architectures, without simply averaging their biases
+- This is how we shortcut the data efficiency problem: why train on trillions of tokens
+  when billions of parameters of already-trained knowledge exist in public models?
+
+Think about: representation alignment across architectures, CKA/CCA for comparing
+internal representations, feature distillation vs logit distillation vs attention
+transfer, progressive multi-teacher curricula, representation space surgery, adapter-
+based representation probing, using pretrained models as "feature extractors" that
+Sutra learns to read, cross-architecture neural stitching, representation translation
+networks, learning a universal representation interface that any model can plug into,
+stealing structured knowledge from encoder models (BERT sentence representations),
+extracting compositional structure from diffusion models, absorbing scientific priors
+from domain-specific STEM models.
+
+You have full freedom to decide WHERE to start — which model families, which
+representation types, which combination strategy. The field is wide open: encoder
+models have rich semantic representations, diffusion models have compositional
+structure, vision models have spatial understanding, STEM models have domain-specific
+priors. Pick the most promising starting point and justify your choice.
+
+This mandate is non-negotiable. If your O4 confidence is below 9/10, you MUST propose
+concrete steps to raise it. "KD from Pythia later" is not a plan — it's a placeholder.
 
 PHASE C — DESIGN (only when ready)
 If you have enough information: propose an architecture serving ALL 5 outcomes.

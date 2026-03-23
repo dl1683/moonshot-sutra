@@ -1,0 +1,433 @@
+{
+  "description": "Comprehensive benchmark tracking across all Sutra versions. BPT and lm-eval scores at every measurement point, plus best-in-class comparisons.",
+  "metric_notes": {
+    "bpt": "Bits per token (test eval at full depth D=12). Lower = better.",
+    "acc": "Accuracy (proportion correct). Higher = better.",
+    "acc_norm": "Length-normalized accuracy. Higher = better.",
+    "ppl": "Perplexity. Lower = better."
+  },
+  "sutra_runs": [
+    {
+      "version": "v0.6.0a",
+      "step": 12000,
+      "bpt": null,
+      "tokens_seen": "~393M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "Directional only, early checkpoint. BPT not recorded at this step.",
+      "benchmarks": {
+        "arc_easy": {
+          "acc": 0.279,
+          "acc_norm": null
+        },
+        "arc_challenge": {
+          "acc": 0.2005,
+          "acc_norm": null
+        },
+        "hellaswag": {
+          "acc": 0.2572,
+          "acc_norm": null
+        },
+        "piqa": {
+          "acc": 0.5479,
+          "acc_norm": null
+        },
+        "sciq": {
+          "acc": 0.259,
+          "acc_norm": null
+        },
+        "winogrande": {
+          "acc": 0.498
+        },
+        "lambada_openai": {
+          "acc": 0.0076,
+          "ppl": null
+        }
+      }
+    },
+    {
+      "version": "v0.6.0a",
+      "step": 20000,
+      "bpt": 6.7946,
+      "tokens_seen": "~655M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "Final v0.6.0a checkpoint. Best BPT achieved. Pass collapse confirmed.",
+      "benchmarks": {
+        "arc_easy": {
+          "acc": 0.3131,
+          "acc_norm": 0.3178
+        },
+        "arc_challenge": {
+          "acc": 0.1749,
+          "acc_norm": 0.2235
+        },
+        "hellaswag": {
+          "acc": 0.257,
+          "acc_norm": 0.2631
+        },
+        "piqa": {
+          "acc": 0.5452,
+          "acc_norm": 0.5141
+        },
+        "sciq": {
+          "acc": 0.481,
+          "acc_norm": 0.454
+        },
+        "winogrande": {
+          "acc": 0.5154
+        },
+        "lambada_openai": {
+          "acc": 0.1124,
+          "ppl": 2175.65
+        }
+      }
+    },
+    {
+      "version": "v0.6.0b-rd12",
+      "step": 500,
+      "bpt": 7.7887,
+      "tokens_seen": "~655M + ~16M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "Random-depth training, alpha=0.499. BPT regressed from WSD restart. Best depth D=8. Collapse FIXED: entropy smooth 7.14-5.57.",
+      "per_depth_bpt": {
+        "1": 10.02,
+        "2": 9.42,
+        "3": 8.33,
+        "4": 7.99,
+        "5": 7.86,
+        "6": 7.83,
+        "7": 7.81,
+        "8": 7.8,
+        "9": 7.8,
+        "10": 7.8,
+        "11": 7.82,
+        "12": 7.84
+      },
+      "benchmarks": "RUNNING \u00e2\u20ac\u201d lm-eval on CPU (PID 13740)"
+    },
+    {
+      "version": "v0.6.0b-rd12",
+      "step": 1000,
+      "bpt": 7.6007,
+      "tokens_seen": "~655M + ~33M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "Alpha fully ramped (0.999). BPT improving. Best depth shifted D=8\u00e2\u2020\u2019D=9. Late passes no longer hurt (D9-D12 gap=0.017). All depths improved 4-7%.",
+      "per_depth_bpt": {
+        "1": 9.46,
+        "2": 8.77,
+        "3": 8.01,
+        "4": 7.6,
+        "5": 7.41,
+        "6": 7.33,
+        "7": 7.31,
+        "8": 7.3,
+        "9": 7.3,
+        "10": 7.3,
+        "11": 7.31,
+        "12": 7.31
+      },
+      "per_pass_entropy": {
+        "1": 6.89,
+        "2": 6.42,
+        "3": 5.74,
+        "4": 5.42,
+        "5": 5.28,
+        "6": 5.24,
+        "7": 5.25,
+        "8": 5.26,
+        "9": 5.29,
+        "10": 5.31,
+        "11": 5.34,
+        "12": 5.38
+      },
+      "structural_metrics": {
+        "D8_D12_gap": 0.017,
+        "D9_D12_gap": 0.017,
+        "entropy_tail_rise_H12_Hmin": 0.142,
+        "entropy_min_pass": 6,
+        "best_depth": 9,
+        "elastic_savings_D8": "33% (0.0004 BPT loss)",
+        "elastic_savings_D6": "50% (0.033 BPT loss)",
+        "oracle_halting_note": "D=8 is free (0.0004 loss), D=12 is WORSE than D=9 by 0.017"
+      },
+      "benchmarks": "RUNNING \u00e2\u20ac\u201d lm-eval on CPU with offline datasets"
+    },
+    {
+      "version": "v0.6.0b-rd12",
+      "step": 1500,
+      "bpt": 7.5141,
+      "tokens_seen": "~655M + ~49M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "Steady improvement. Best depth still D=9. Entropy tail tightening (0.112 vs 0.142 at 1K). D=1 regressed slightly (9.55 vs 9.46).",
+      "per_depth_bpt": {
+        "1": 9.55,
+        "2": 8.53,
+        "3": 7.85,
+        "4": 7.58,
+        "5": 7.46,
+        "6": 7.4,
+        "7": 7.35,
+        "8": 7.33,
+        "9": 7.32,
+        "10": 7.32,
+        "11": 7.33,
+        "12": 7.34
+      },
+      "per_pass_entropy": {
+        "1": 7.43,
+        "2": 6.41,
+        "3": 5.64,
+        "4": 5.41,
+        "5": 5.35,
+        "6": 5.33,
+        "7": 5.3,
+        "8": 5.31,
+        "9": 5.31,
+        "10": 5.34,
+        "11": 5.37,
+        "12": 5.42
+      },
+      "structural_metrics": {
+        "D8_D12_gap": 0.007,
+        "D9_D12_gap": 0.014,
+        "entropy_tail_rise_H12_Hmin": 0.112,
+        "entropy_min_pass": 7,
+        "best_depth": 9,
+        "elastic_savings_D8": "33% (0.006 BPT loss)",
+        "elastic_savings_D7": "42% (0.023 BPT loss)"
+      },
+      "benchmarks": "PENDING"
+    },
+    {
+      "version": "v0.6.0b-rd12",
+      "step": 2000,
+      "bpt": 7.367,
+      "tokens_seen": "~655M + ~65M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "BPT rate RE-ACCELERATED (-0.15/500 vs -0.09/500 at 1.5K). Alpha ramp transient passed. D=1 RECOVERED (9.44 vs 9.55). Elastic boundary shifted shallower: D=7 saves 42% at 0.005 BPT loss.",
+      "per_depth_bpt": {
+        "1": 9.44,
+        "2": 8.51,
+        "3": 7.81,
+        "4": 7.56,
+        "5": 7.46,
+        "6": 7.42,
+        "7": 7.41,
+        "8": 7.4,
+        "9": 7.4,
+        "10": 7.4,
+        "11": 7.41,
+        "12": 7.41
+      },
+      "per_pass_entropy": {
+        "1": 6.71,
+        "2": 5.79,
+        "3": 5.23,
+        "4": 5.15,
+        "5": 5.13,
+        "6": 5.14,
+        "7": 5.15,
+        "8": 5.16,
+        "9": 5.18,
+        "10": 5.19,
+        "11": 5.21,
+        "12": 5.23
+      },
+      "structural_metrics": {
+        "D8_D12_gap": 0.01,
+        "D9_D12_gap": 0.011,
+        "entropy_tail_rise_H12_Hmin": 0.105,
+        "entropy_min_pass": 5,
+        "best_depth": 9,
+        "elastic_savings_D7": "42% (0.005 BPT loss)",
+        "elastic_savings_D6": "50% (0.021 BPT loss)",
+        "bpt_rate_per_500": -0.147,
+        "bpt_rate_reaccelerated": true
+      },
+      "benchmarks": {
+        "arc_easy": { "acc": 0.3098, "acc_norm": 0.2976 },
+        "arc_challenge": { "acc": 0.1869, "acc_norm": 0.2159 },
+        "hellaswag": { "acc": 0.2587, "acc_norm": 0.2587 },
+        "piqa": { "acc": 0.5294, "acc_norm": 0.5125 },
+        "sciq": { "acc": 0.358, "acc_norm": 0.341 },
+        "winogrande": { "acc": 0.5122 },
+        "lambada_openai": { "acc": 0.0147, "ppl": 20807.0 }
+      },
+      "benchmark_notes": "Comparable to v0.6.0a on reasoning (ARC, HellaSwag, PIQA), much worse on knowledge/recall (SciQ -12.3%, LAMBADA -9.7%). BPT 7.37 vs 6.79 explains gap."
+    },
+    {
+      "step": 2500,
+      "bpt": 7.4156,
+      "version": "v0.6.0b-rd12",
+      "per_depth_bpt": {
+        "D1": 9.78,
+        "D3": 8.18,
+        "D6": 7.82,
+        "D12": 7.81
+      },
+      "per_pass_entropy": {
+        "P1": 6.21,
+        "P6": 5.17,
+        "P12": 5.26
+      },
+      "structural_metrics": {
+        "bpt_rate": 0.049,
+        "bpt_regressed": true,
+        "D6_D12_gap": 0.01,
+        "D1_regressed": true,
+        "notes": "BPT regression 7.367->7.416 after crash/restart from step 2100. Optimizer state was restored but RNG had ByteTensor compatibility issue. D1 worst yet (9.78). D6 nearly matches D12."
+      },
+      "lm_eval": null
+    },
+    {
+      "version": "v0.6.0b-rd12",
+      "step": 3000,
+      "bpt": 7.2217,
+      "tokens_seen": "~655M + ~98M",
+      "params": "68.3M",
+      "date": "2026-03-22",
+      "notes": "BEST v0.6.0b. D=8 optimal (6.9014). Parent for v0.6.1.",
+      "per_depth_bpt": { "D8": 6.9014, "D9": 6.9017, "D12": 6.9129 },
+      "benchmarks": "PENDING — will run after v0.6.1 eval"
+    },
+    {
+      "version": "v0.6.1",
+      "step": 1000,
+      "bpt": 7.2075,
+      "tokens_seen": "~655M + ~98M + ~33M",
+      "params": "68.7M",
+      "date": "2026-03-23",
+      "notes": "Controller canary. BPT passes threshold but controller pass-global (mode_entropy=0.003). Verify collapse FIXED (0.01 vs 0.995). Adapters alive (max gate=0.005).",
+      "structural_metrics": {
+        "mode_entropy": 0.0026,
+        "late_verify_share": 0.0095,
+        "adapter_max_gate": 0.005,
+        "controller_verdict": "PASS-GLOBAL — not content-dependent"
+      },
+      "benchmarks": {
+        "arc_easy": { "acc": 0.3110 },
+        "arc_challenge": { "acc": 0.1672 },
+        "hellaswag": { "acc": 0.2576 },
+        "piqa": { "acc": 0.5435 },
+        "sciq": { "acc": 0.361 },
+        "winogrande": { "acc": 0.4886 },
+        "lambada_openai": { "acc": 0.0264 }
+      },
+      "benchmark_notes": "Matches v0.6.0a on PIQA/ARC-Easy. Worse on WinoGrande (48.9% vs 51.5%) and ARC-Chall (16.7% vs 17.5%). Controller changes didn't help benchmarks."
+    },
+    {
+      "version": "v0.5.4",
+      "step": 20000,
+      "bpt": null,
+      "tokens_seen": "~655M",
+      "params": "68.3M",
+      "date": "2026-03-23",
+      "notes": "Final v0.5.4 checkpoint. Detached history, 8 passes. Worst overall benchmarks — validates v0.6.0a improvements.",
+      "benchmarks": {
+        "arc_easy": { "acc": 0.2967, "acc_norm": 0.2896 },
+        "arc_challenge": { "acc": 0.2022, "acc_norm": 0.2304 },
+        "hellaswag": { "acc": 0.2575, "acc_norm": 0.2543 },
+        "piqa": { "acc": 0.5408, "acc_norm": 0.5359 },
+        "sciq": { "acc": 0.336, "acc_norm": 0.346 },
+        "winogrande": { "acc": 0.4909 },
+        "lambada_openai": { "acc": 0.0184, "ppl": 23417.14 }
+      },
+      "benchmark_notes": "Worst on SciQ (33.6%), ARC-Easy (29.7%), LAMBADA (1.8%). Best on ARC-Challenge acc_norm (23.0%) — surprising. Validates that attached history (v0.6.0a) was the key improvement."
+    }
+  ],
+  "best_in_class": {
+    "description": "Best published results for models under 200M parameters. Used as our competitive baseline.",
+    "models_considered": [
+      "Pythia-160M",
+      "SmolLM-135M",
+      "SmolLM2-135M",
+      "MobileLLM-125M",
+      "MobileLLM-350M",
+      "GPT-2-Small-124M",
+      "OPT-125M"
+    ],
+    "benchmarks": "PENDING \u00e2\u20ac\u201d research agent gathering data"
+  },
+  "overall_sota": {
+    "description": "Best known results regardless of model size. Context for how far from frontier we are.",
+    "benchmarks": "PENDING \u00e2\u20ac\u201d research agent gathering data"
+  },
+  "bpt_to_benchmark_correlation": {
+    "description": "Tracking BPT vs benchmark scores to find predictive relationships.",
+    "data_points": [
+      {
+        "bpt": null,
+        "step": "12K",
+        "version": "v0.6.0a",
+        "sciq": 0.259,
+        "piqa": 0.5479,
+        "arc_easy": 0.279
+      },
+      {
+        "bpt": 6.7946,
+        "step": "20K",
+        "version": "v0.6.0a",
+        "sciq": 0.481,
+        "piqa": 0.5452,
+        "arc_easy": 0.3131
+      },
+      {
+        "bpt": 7.7887,
+        "step": "500",
+        "version": "v0.6.0b",
+        "sciq": null,
+        "piqa": null,
+        "arc_easy": null
+      },
+      {
+        "bpt": 7.6007,
+        "step": "1K",
+        "version": "v0.6.0b",
+        "sciq": null,
+        "piqa": null,
+        "arc_easy": null
+      },
+      {
+        "bpt": 7.5141,
+        "step": "1.5K",
+        "version": "v0.6.0b",
+        "sciq": null,
+        "piqa": null,
+        "arc_easy": null
+      },
+      {
+        "bpt": 7.367,
+        "step": "2K",
+        "version": "v0.6.0b",
+        "sciq": 0.358,
+        "piqa": 0.5294,
+        "arc_easy": 0.3098,
+        "lambada": 0.0147
+      },
+      {
+        "bpt": 7.2075,
+        "step": "1K",
+        "version": "v0.6.1",
+        "sciq": 0.361,
+        "piqa": 0.5435,
+        "arc_easy": 0.3110,
+        "lambada": 0.0264
+      },
+      {
+        "bpt": null,
+        "step": "20K",
+        "version": "v0.5.4",
+        "sciq": 0.336,
+        "piqa": 0.5408,
+        "arc_easy": 0.2967,
+        "lambada": 0.0184
+      }
+    ],
+    "notes": "5 benchmarked data points now. v0.6.0a (BPT 6.79) best on knowledge (SciQ 48.1%, LAMBADA 11.2%). v0.5.4 worst overall despite same training tokens — validates attached history. v0.6.1 (BPT 7.21) close to v0.6.0a on reasoning but worse on knowledge. BPT alone doesn't predict benchmark quality."
+  }
+}

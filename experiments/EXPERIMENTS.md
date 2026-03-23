@@ -2,6 +2,21 @@
 
 Reverse chronological. See ledger.jsonl for machine-readable details.
 
+### [RUNNING] v060b-rd12-15k (2026-03-22 → ongoing)
+**Purpose:** v0.6.0b-rd12 extended to 15K steps (WSD restart, random-depth from v0.6.0a)
+**Key metrics (step 6500):** best_bpt=7.1434 (step 5500), D8=6.985, D12=6.991, D8 beats D12
+**Notes:** LR schedule discontinuity at step 3000→3500 (cosine recalculated 5K→15K, 2.17x LR jump). WSD optimizer reset at start destroyed knowledge (SciQ -12.3%, LAMBADA -9.7%). Pass collapse fixed. ETA 15K: ~14:30 2026-03-23.
+
+### [OK] v060c-p0-canary (2026-03-23)
+**Purpose:** P0: Knowledge-preserving random-depth canary (optimizer preserved from v0.6.0a)
+**Key metrics:** SciQ=47.3% (step 250), LAMBADA=9.5% (step 250), D8-D12 gap=-0.002
+**Learned:** Optimizer preservation recovered 70-90% of knowledge vs WSD reset. Step 250 is sweet spot (pass collapse fixed, knowledge barely degraded). Progressive knowledge loss with more random-depth steps (step 750: SciQ 44.7%, LAMBADA 6.7%). Rolling checkpoint lost — must restart from parent for 15K.
+
+### [FAIL] v061-controller-canary (2026-03-23)
+**Purpose:** v0.6.1 TokenwiseController + PassAdapters (falsified at 1K steps)
+**Key metrics:** BPT=7.2075, mode_entropy=0.003 (pass-global), SciQ=36.1%, LAMBADA=2.6%
+**Learned:** Controller-only repair FALSIFIED. Modes biased transition columns but didn't gate real computation. Zero content dependence (MI(mode,token)=0.02). BPT improved from continued base training, NOT controller/adapter innovation. Branch concept abandoned.
+
 ### [OK] v060a-20k-complete (2026-03-22)
 **Purpose:** v0.6.0a training milestone: 20K steps complete
 **Key metrics:** best_bpt=6.7946, sciq=48.1%, piqa=54.5%, lambada_acc=11.2%, pass_collapse_cos=0.293
