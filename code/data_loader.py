@@ -31,16 +31,37 @@ class ShardedDataset:
     Peak RAM: one hot shard at a time.
     """
 
-    def __init__(self, shard_dir=None, test_tokens=50000):
+    def __init__(self, shard_dir=None, test_tokens=50000, weight_file=None):
         self.shard_dir = Path(shard_dir) if shard_dir else SHARD_DIR
         self.test_tokens = test_tokens
         self.index = []  # list of shard metadata dicts
         self.sources = {}  # source_name -> total tokens
+        self._shard_weights = {}  # shard_name -> importance weight (from MiniPLM scoring)
         self._hot_shard = None  # cached shard tensor
         self._hot_path = None   # path of cached shard
         self._test_tokens = None
 
         self._build_index()
+        if weight_file is not None:
+            self._load_weights(weight_file)
+
+    def _load_weights(self, weight_file):
+        """Load MiniPLM importance weights from JSON file."""
+        import json
+        wf = Path(weight_file)
+        if not wf.exists():
+            print(f"  WARNING: weight file {wf} not found, using uniform weights")
+            return
+        with open(wf) as f:
+            data = json.load(f)
+        for entry in data.get("shard_scores", []):
+            name = entry.get("shard", "")
+            w = entry.get("importance_weight", None)
+            if name and w is not None:
+                self._shard_weights[name] = w
+        n_matched = sum(1 for m in self.index if m["path"].name in self._shard_weights)
+        print(f"  Loaded importance weights: {len(self._shard_weights)} shards, "
+              f"{n_matched}/{len(self.index)} matched to index")
 
     def _build_index(self):
         """Scan shard directory and build index."""
@@ -160,7 +181,13 @@ class ShardedDataset:
             if valid_starts <= 0:
                 continue
             candidates.append((meta, start, end))
-            weights.append(valid_starts)
+            # Apply MiniPLM importance weight if available (train split only)
+            base_weight = valid_starts
+            if split == "train" and self._shard_weights:
+                shard_name = meta["path"].name
+                importance = self._shard_weights.get(shard_name, 1.0)
+                base_weight *= importance
+            weights.append(base_weight)
         if not candidates:
             raise RuntimeError(f"No valid {split} shards available for seq_len={seq_len}")
         return candidates, weights
@@ -171,33 +198,36 @@ class ShardedDataset:
         Sticky shard: reuse the same shard for multiple batches to avoid
         I/O thrash. Re-sample shard every _sticky_budget batches.
         """
-        # Sticky shard logic: reuse current shard for N batches before resampling
-        if not hasattr(self, '_sticky_count'):
-            self._sticky_count = 0
-            self._sticky_meta = None
-            self._sticky_budget = 64  # batches per shard before resampling
+        # Sticky shard logic: per-split state to avoid train/test contamination
+        if not hasattr(self, '_sticky_state'):
+            self._sticky_state = {}  # split -> {count, meta, budget}
+
+        if split not in self._sticky_state:
+            self._sticky_state[split] = {"count": 0, "meta": None, "budget": 64}
+
+        ss = self._sticky_state[split]
 
         candidates, weights = self._split_candidates(seq_len, split)
 
         # Retry loop in case estimated n_tokens doesn't match actual shard size
         for _ in range(10):
             # Reuse sticky shard if budget remains and shard is still valid
-            if (self._sticky_meta is not None and self._sticky_count < self._sticky_budget
-                    and self._hot_path == self._sticky_meta["path"]):
-                meta = self._sticky_meta
+            if (ss["meta"] is not None and ss["count"] < ss["budget"]
+                    and self._hot_path == ss["meta"]["path"]):
+                meta = ss["meta"]
                 span = self._split_span(meta, split)
                 if span is not None:
                     span_start, span_end = span
                     tokens = self._load_shard(meta["path"])
-                    self._sticky_count += 1
+                    ss["count"] += 1
                 else:
-                    self._sticky_meta = None
+                    ss["meta"] = None
                     continue
             else:
                 meta, span_start, span_end = random.choices(candidates, weights=weights, k=1)[0]
                 tokens = self._load_shard(meta["path"])
-                self._sticky_meta = meta
-                self._sticky_count = 0
+                ss["meta"] = meta
+                ss["count"] = 0
             if tokens is None:
                 continue
 
@@ -247,23 +277,43 @@ class ShardedDataset:
 
     def state_dict(self):
         """Capture sticky shard state for faithful resume."""
-        return {
-            "sticky_count": getattr(self, '_sticky_count', 0),
-            "sticky_path": self._sticky_meta["path"] if getattr(self, '_sticky_meta', None) else None,
-            "sticky_budget": getattr(self, '_sticky_budget', 64),
-        }
+        ss = getattr(self, '_sticky_state', {})
+        per_split = {}
+        for split, state in ss.items():
+            per_split[split] = {
+                "count": state["count"],
+                "path": str(state["meta"]["path"]) if state["meta"] else None,
+                "budget": state["budget"],
+            }
+        return {"sticky_per_split": per_split}
 
     def load_state_dict(self, sd):
         """Restore sticky shard state from checkpoint."""
-        self._sticky_count = sd.get("sticky_count", 0)
-        self._sticky_budget = sd.get("sticky_budget", 64)
-        path = sd.get("sticky_path")
-        if path is not None:
-            self._sticky_meta = next((m for m in self.index if m["path"] == path), None)
-            if self._sticky_meta is not None:
-                self._load_shard(path)  # warm the cache
-        else:
-            self._sticky_meta = None
+        if not hasattr(self, '_sticky_state'):
+            self._sticky_state = {}
+        # Support old format (single sticky state)
+        if "sticky_per_split" not in sd:
+            count = sd.get("sticky_count", 0)
+            budget = sd.get("sticky_budget", 64)
+            path = sd.get("sticky_path")
+            meta = None
+            if path is not None:
+                meta = next((m for m in self.index if str(m["path"]) == str(path)), None)
+                if meta is not None:
+                    self._load_shard(meta["path"])
+            self._sticky_state["train"] = {"count": count, "meta": meta, "budget": budget}
+            return
+        # New per-split format
+        for split, state in sd["sticky_per_split"].items():
+            path = state.get("path")
+            meta = None
+            if path is not None:
+                meta = next((m for m in self.index if str(m["path"]) == str(path)), None)
+            self._sticky_state[split] = {
+                "count": state.get("count", 0),
+                "meta": meta,
+                "budget": state.get("budget", 64),
+            }
 
     @property
     def total_tokens(self):
