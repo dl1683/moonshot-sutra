@@ -51,6 +51,16 @@
 5. P2 tokenizer: BPE-from-scratch or GPT-2 top-16K subset?
 6. Should we increase eval batch count for more stable BPT estimates?
 
+### P4: INT4 Drift Audit (2026-03-23, v0.6.0a step 20K)
+**Result: CATASTROPHIC — INT4 PTQ destroys shared-weight recurrent models.**
+- FP32 BPT: 6.794 → INT4 BPT: 17.310 → **+155% degradation**
+- D=12: FP32=7.033, INT4=17.350, drift=+147% (quantization error compounds over 12 passes)
+- D=4: drift=-2.5% (negligible — model produces garbage at D=4 anyway since trained only at D=12)
+- 42 linear layers quantized, avg per-tensor error: 0.024
+- **Conclusion:** Post-training quantization is NOT viable for shared-weight recurrence. QAT mandatory.
+- **Implication:** Must incorporate QAT from the start of any production architecture. DyT (tanh instead of LayerNorm) + BitNet ternary weights should be explored early, not as afterthought.
+- **R12 research validated:** NeurIPS 2025 QEP paper predicted exponential error amplification in weight-sharing loops. Confirmed empirically.
+
 ### Standing Priorities (from R12)
 1. O4 (multi-source learning) BEFORE shared-core architectural work
 2. 15K minimum training, full 7-task eval + generation quality

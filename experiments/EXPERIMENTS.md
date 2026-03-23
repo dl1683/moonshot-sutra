@@ -2,6 +2,11 @@
 
 Reverse chronological. See ledger.jsonl for machine-readable details.
 
+### [OK] p4-int4-drift-audit (2026-03-23)
+**Purpose:** P4: INT4 post-training quantization drift audit on v0.6.0a step 20K
+**Key metrics:** fp32_bpt=6.794, int4_bpt=17.310, drift=+155%, D12 drift=+147%
+**Learned:** CATASTROPHIC: INT4 PTQ destroys shared-weight recurrent models. Error compounds over 12 passes. QAT mandatory. DyT/BitNet should be explored early. Validates NeurIPS 2025 QEP prediction.
+
 ### [RUNNING] v060b-rd12-15k (2026-03-22 → ongoing)
 **Purpose:** v0.6.0b-rd12 extended to 15K steps (WSD restart, random-depth from v0.6.0a)
 **Key metrics (step 6500):** best_bpt=7.1434 (step 5500), D8=6.985, D12=6.991, D8 beats D12
