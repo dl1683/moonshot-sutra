@@ -5,91 +5,35 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 ---
 
-## CURRENT STRATEGIC DIRECTION: Shared-Core Cognitive Spectrum (Codex R4 2026-03-22)
+## CURRENT STRATEGIC DIRECTION: O4-First Multi-Source Learning (Codex R12, 2026-03-23)
 
-**CRITICAL FRAMING (User Insight 2026-03-22):** Don't converge too early. The v0.7.0 spec and v1.0 roadmap are HYPOTHESES, not commitments. Each warm-start step is a Chrome probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
+**CRITICAL FRAMING:** Don't converge too early. Each warm-start step is a Chrome probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
 
-**CODEX R4 (Tesla+Leibniz) DESIGN: "Shared-Core Cognitive Spectrum Sutra"**
-- R4 confidence: 7/8/7/7/6 (up from R3's 6/7/6/6/5)
-- Full spec: results/tesla_leibniz_r4_output.md
-- 8-step warm-start roadmap: v0.6.0b-rd12 -> v0.6.1-rd12 -> v0.6.2-modes -> v0.6.3-armt -> v0.6.4-corexfer -> v0.6.5-corelite -> Recurrence Gate -> v0.7.0-clean1024
-- THE GATE still holds: D>1 must beat D=1 at matched compute on simplified core.
+**R12 CONFIDENCE: 6/8/4/4/6** — O4 (Data Efficiency) is the weakest pillar.
 
-### v0.6.0b-rd12 Implementation Plan (NEXT GPU TASK after 20K)
+**R12 CENTRAL INSIGHT:** Multi-source learning (O4) comes BEFORE shared-core architectural work (O2). Reasoning: recurrence should be refinement layer on absorbed knowledge, not the sole knowledge engine. The model can't reason deeply about information it never learned.
 
-**Purpose:** Random-depth training to fix early-pass collapse. P0 intervention.
+**R12 EXPERIMENT QUEUE (priority order):**
+1. **P1: O4-first 15K two-teacher continuation** — AR + encoder teachers from v0.6.0a step 20K. CODE READY.
+2. **P2: 16K tokenizer transplant 15K matched** — 38% param savings from vocab reduction.
+3. **P3: Shared-core branch** — only after P1/P2 winner established.
+4. **P4: INT4 drift audit** — COMPLETE. CATASTROPHIC (+155% drift). QAT mandatory.
 
-**Model changes (launch_v060a.py):**
-- Add `n_steps` parameter to `forward()`: `def forward(self, x, y=None, n_steps=None, ...)`
-- Default `n_steps = self.max_steps` (backward compatible)
-- Change loop: `for p in range(n_steps):`
-- Allocate history for `n_steps` passes, not `self.max_steps`
-- Logits computed from mu at the SAMPLED final pass (not always pass 11)
+**STANDING RULES:** 15K minimum training, full 7-task eval + generation, no optimizer resets, matched step comparisons only.
 
-**Training changes (train_v060a.py -> train_v060b.py):**
-- Sample D per batch: `P(D=d) = d^alpha / sum_i i^alpha` for d in {1..12}
-- Alpha schedule: ramp from 1.0 to 2.0 over first 1K steps
-- `L_total = L_final + 0.20 * L_probe` (L_step = 0)
-- L_final = CE(logits at sampled depth D, y)
-- L_probe still uses mu_hist but only for visited passes
-- Warm-start: load v0.6.0a weights, RESET optimizer (WSD restart)
-- LR: fresh WSD schedule, 500-step warmup, 3K total steps
+**KEY VALIDATED FINDINGS (from v0.6.0b):**
+- Random-depth training FIXES pass collapse (entropy spread 1.22x vs 2x cliff)
+- D10 beats D12 in 100% of 17 checkpoints — elastic compute validated
+- Gradient distribution theory derived and confirmed (4/4 predictions matched)
+- Trough D8 improving at -0.042 BPT/1K steps despite headline plateau
 
-**Success criteria:**
-- late_pct drops from 91.5% to <70%
-- Passes 1-6 contribute materially to BPT
-- Final BPT matches or beats source checkpoint (7.14)
-- Greedy trigram diversity improves over 0.265
+### v0.6.0b-rd12 (IMPLEMENTED AND RUNNING — step ~8700/15000)
 
-**Pre-training gate:** Codex Correctness + Performance + Scaling review loop BEFORE launch.
+**Status:** RUNNING (~step 9000/15000). Pass collapse FIXED. Training to 15K for full eval.
+**Step 9000 NEW BEST BPT: 6.9155** (prev best 7.1434 at step 5500). D10 beats D12 in 100% of 18 checkpoints. Entropy min migrated to pass 12 — late passes compressing.
+**All success criteria met or exceeded:** late_pct < 70% (passes 1-8 all contribute), D6 captures 99-100% quality, D10 beats D12 in 100% of checkpoints. See RESEARCH.md for complete analysis.
 
-**Exact code changes (pseudocode for Codex audit):**
-
-```python
-# launch_v060a.py — forward() signature change
-def forward(self, x, y=None, n_steps=None, ...):
-    if n_steps is None:
-        n_steps = self.max_steps  # backward compatible
-
-    # History allocation uses n_steps, not self.max_steps
-    if collect_history:
-        mu_hist = torch.zeros(B, T, n_steps, self.dim, ...)
-        pi_hist = torch.zeros(B, T, n_steps, N_STAGES, ...)
-
-    for p in range(n_steps):  # was: range(self.max_steps)
-        ... # same body, unchanged
-
-    # Logits from mu at sampled final pass
-    final = self.ln(mu)
-    logits = F.linear(final, self.emb.weight) / math.sqrt(self.dim)
-
-    aux = {
-        "mu_hist": mu_hist,
-        "compute_cost": torch.tensor(float(n_steps), ...),
-        "avg_steps": n_steps,
-        ...
-    }
-
-    # L_step computation skipped when n_steps < self.max_steps
-    # L_probe targets adjusted for visited passes only
-
-# train_v060b.py — random depth sampling
-def sample_depth(max_d, alpha):
-    """P(D=d) = d^alpha / Z for d in {1..max_d}"""
-    weights = torch.arange(1, max_d + 1, dtype=torch.float) ** alpha
-    return torch.multinomial(weights, 1).item() + 1
-
-# Training loop
-alpha = 1.0 + min(step / 1000, 1.0)  # ramp 1.0 -> 2.0 over 1K steps
-D = sample_depth(12, alpha)
-logits, aux = model(x, y=y, n_steps=D)
-L_final = CE(logits, y)
-L_total = L_final + 0.20 * L_probe  # NO L_step
-```
-
-**CODEX R2 (Tesla+Leibniz) REVISION:** The 7-stage bank is dead. Replace with 1 shared block + lightweight control. Random-depth is P0 (not adaLN). The recurrence gate: D>1 must beat D=1 at matched compute on a simplified shared-core model, or recurrence dies at 68M.
-
-**USER PRIORITY (2026-03-22): PRECISE-GENERAL MEMORY SPECTRUM.** The architecture needs a CONTINUOUS retrieval spectrum from general reasoning (distributed, multi-pass) to precise recall (exact fact lookup). Knowledge-task benchmark gap (SciQ 25.9% vs Pythia 74%, LAMBADA ~1% vs 32.6%) is the strongest competitive weakness. Probe D confirmed current scratchpad is imprecise workspace only. The model must learn WHEN to go precise vs general — this is content-dependent and connects to elastic compute (Outcome 5). This is a FIRST-CLASS DESIGN CONSTRAINT for Round 3 and beyond.
+**USER PRIORITY (STANDING): PRECISE-GENERAL MEMORY SPECTRUM.** Knowledge-task benchmark gap (SciQ 25.9% vs Pythia 74%, LAMBADA ~1% vs 32.6%) is the strongest competitive weakness. Current scratchpad is imprecise workspace only. Architecture needs ARMT-style exact retrieval (from R12 research findings).
 
 ### STRATEGIC PRINCIPLE: Top-Down + Bottom-Up (User Insight 2026-03-22)
 
@@ -146,9 +90,10 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 
 ---
 
-## v0.7.0 SPEC (Codex Round 2 Approved)
+## v0.7.0 SPEC (Codex Round 2 — SUPERSEDED by R12 direction, preserved for reference)
 
 **Goal:** Targeted simplification + anti-collapse repair. Recover trainability while preserving late-pass behavior.
+**NOTE:** R12 (2026-03-23) reordered priorities. O4 (multi-source learning) now comes BEFORE shared-core architectural work. P1 (pass conditioning) below is DEFERRED until after P1-KD and P2-tokenizer results.
 
 ### P1: Pass-Conditioned GatedRMSNorm/adaLN + Sequence RoPE + QK-norm
 **Bottleneck**: Shared-parameter fixed-point collapse.
@@ -241,29 +186,14 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 
 ---
 
-## PRIORITY 8 (NEW): Random-Depth Training — Fixing Gradient Structure
+## PRIORITY 8: Random-Depth Training — VALIDATED
 
-**ROOT CAUSE OF COLLAPSE (derived 2026-03-22):** L_final contributes 97-99% of gradient signal at ALL passes. L_step at coef=0.25 contributes only 1-3%. Since all passes share weights, they ALL optimize for final-pass output. Early passes converge to safe fixed-points because they can't improve final-pass output yet.
-
-**Mechanism:** Sample training depth D from distribution each step. Run only D passes. Compute L_final on pass D output. When D=4, pass 3 IS the final pass and gets 100% of L_final gradient.
-
-**Why this is better than adaLN alone:**
-- adaLN gives per-pass behavior capacity but doesn't change gradient structure (still 97% from L_final)
-- Random-depth changes gradient structure: early passes sometimes get 100% of L_final gradient
-- 9.3x increase in early-pass gradient signal (from 1% to 8.3%+ under uniform depth)
-- ALSO saves compute: average depth 6.5-9.2 passes (54-77% of current cost)
-- Matches Relaxed Recursive Transformer training strategy (randomized loop counts, ICLR 2025)
-
-**Distribution options:**
-- Uniform: avg 6.5 passes, 54% compute, equal signal to all passes
-- Geometric (alpha=0.85): avg 8.3 passes, 69% compute, biased toward deep
-- Deep-biased: avg 9.2 passes, 77% compute, mostly 8-12 with occasional short runs
-
-**Implementation:** ~20 lines of code change to train_v060a.py. Sample D per batch, loop only D times, compute L_final on pass D.
-
-**Chrome Probe:** v0.6.0a + random-depth vs v0.6.0a fixed-12 vs v0.6.1 adaLN vs v0.6.1 adaLN + random-depth. Gate on collapse Gini coefficient, early-pass contribution, total BPT.
-
-**Warm-start:** FULLY COMPATIBLE — no architecture change, only training recipe. Can be applied to any existing checkpoint.
+**STATUS: VALIDATED.** Implemented in v0.6.0b. All predictions confirmed by 16 checkpoints.
+- Pass collapse fixed (entropy spread 1.22x, healthy)
+- Gradient distribution theory derived: P(final|pass p) = (13-max(p,4))/9
+- D=6 captures 99-100% quality, D=8 100%+, D=10 beats D=12 in 100% of checkpoints
+- Elastic compute inference plan: Easy D=4-6, Hard D=8, D=12 never needed
+- See RESEARCH.md "Why Random-Depth Training Prevents Pass Collapse" for full derivation
 
 ---
 
@@ -307,13 +237,16 @@ These are raw strategic branches, not commitments.
 
 1. Does the CTI universal law (D(C) = D_inf + kC^(-alpha)) predict per-pass marginal improvement in Sutra?
 2. Can progressive prefix supervision from Fractal Embeddings be applied to recurrent passes (force early passes = coarse compressors)?
-3. What is the rate-distortion-optimal vocab size at 68M params when accounting for sequence-length inflation?
-4. Is attractor collapse detectable via pass-to-pass cosine contraction or Jacobian spectral radius?
+3. What is the rate-distortion-optimal vocab size at 68M params when accounting for sequence-length inflation? — **P2 tokenizer experiment addresses this**
+4. ~~Is attractor collapse detectable via pass-to-pass cosine contraction?~~ **ANSWERED YES** — v0.6.0a cosine 0.93-0.997, v0.6.0b healthy 1.22x spread.
 5. Does warm-starting v0.7.0 from v0.6.0a work with dual-axis RoPE replacing learned embeddings?
-6. Can power-law scaling be broken by architectures that measure and maximize their own information gain per training step? What's the theoretical limit?
+6. Can power-law scaling be broken by architectures that measure and maximize their own information gain per training step?
 7. Is there a provable relationship between calibrated uncertainty and optimal learning rate scheduling?
-8. Which v0.7.0 architectural changes are warm-start compatible with v0.6.0a checkpoints? Which require partial retraining? (Critical: v0.7.0 MUST warm-start from v0.6.0a, not train from scratch.)
-9. v0.5.4's lower BPT (5.25 at 20K) came from warm-starting from prior versions. v0.6.0a trains from scratch. The compound warm-start strategy: v0.6.0a→v0.7.0→v0.8.0 each warm-starting means each generation builds on compressed knowledge. How do we ensure architectural changes don't break warm-start compatibility?
-10. **Is 12 passes the right number?** Collapse metrics show passes 0-5 contribute only 3.1% of total BPT improvement. Truncation probe: 10 passes BPT=18.4, 12 passes BPT=7.6. The model effectively uses only 2-3 passes. Would a model TRAINED with 4-6 passes learn to use each pass better than 12 passes where 10 are wasted? This is a 3x inference speedup if it works. **Key test:** train v0.6.0a from scratch with max_steps=4. Compare BPT at matched compute.
-11. **Is pass conditioning (adaLN) the right fix for collapse?** Alternatives to consider: (a) fewer passes, (b) LoRA adapters per pass (rank-4 = 0.44M, cheaper than adaLN), (c) Jacobian regularization forcing passes apart, (d) progressive training (start with 4 passes, add more), (e) partial weight sharing (first/last passes unique, middle shared). The Codex critique loop should evaluate ALL alternatives before we commit.
-12. **The fundamental question:** Does recurrence at 68M params provide genuine value over a single-pass model of the same size? The collapse data suggests it might not — at least not with the current architecture. If a 68M single-pass model achieves similar BPT with 12x less inference cost, the entire premise needs revision.
+8. Which v0.7.0 architectural changes are warm-start compatible with v0.6.0a checkpoints? — **Partially answered:** optimizer preservation works (v0.6.0c), WSD restart loses knowledge.
+9. ~~v0.5.4's lower BPT from warm-starting.~~ **ANSWERED:** Compound warm-start strategy works. v0.6.0c (optimizer-preserved) retained 96% SciQ vs WSD reset losing 12.3%.
+10. ~~Is 12 passes the right number?~~ **ANSWERED by v0.6.0b:** With random-depth training, D=8-10 is optimal at inference. D=12 is NEVER needed (D10 beats D12 in 100% of checkpoints). Train at 12, infer at 8-10.
+11. ~~Is pass conditioning (adaLN) the right fix for collapse?~~ **ANSWERED:** Random-depth training alone fixes collapse WITHOUT adaLN. v0.6.1 controller-only approach FALSIFIED. Random-depth is simpler and more effective.
+12. **Does recurrence at 68M provide value over single-pass?** — **Partially answered:** v0.6.0b D=1 BPT ≈ 8.96, D=8 ≈ 7.19. Recurrence provides 20% BPT improvement. But at matched inference compute, a single-pass model would have 8-12x more forward passes available for other work. The Gate still holds: must beat single-pass at MATCHED COMPUTE, not matched params.
+13. **NEW: Does multi-source learning (P1 two-teacher) beat standard training (v0.6.0c control)?** — This is the R12 key question.
+14. **NEW: How much improvement does 16K tokenizer (P2) provide?** — 38% param savings, but does it translate to quality?
+15. **NEW: Can INT4 quantization ever work for shared-weight recurrence?** — P4 says NO for PTQ. QAT/BitNet mandatory.

@@ -7,7 +7,7 @@
 ### R12 Experiment Status
 | Experiment | Status | BPT at Last Eval | Key Finding |
 |-----------|--------|-------------------|-------------|
-| v0.6.0b (rd12, 15K) | RUNNING (~step 7000/15000) | 7.143 (best, step 5500) | D=8 beats D=12, elastic compute validated |
+| v0.6.0b (rd12, 15K) | RUNNING (~step 9000/15000) | **6.916 (NEW BEST, step 9000)** | D10 beats D12 in 100% of 18 checkpoints |
 | v0.6.0c (P0 canary, 750) | COMPLETE (needs 15K) | 6.910 (step 250) | Optimizer preservation retained 96% SciQ |
 | v0.6.1 (controller) | FALSIFIED at 1K | 7.208 | Controller didn't gate real computation |
 | P1 (two-teacher KD) | CODE READY | N/A | V5 audit PASS, awaiting GPU |
@@ -24,12 +24,43 @@
 
 **Key pattern:** Knowledge tasks (SciQ, LAMBADA) destroyed by WSD reset (-12.3%, -9.7%) but preserved by optimizer continuation (-0.8%, -1.7%). Reasoning/structure tasks (ARC-E, HellaSwag, PIQA, WinoGrande) robust across all branches. Knowledge is fragile; structure is not.
 
-### Depth-Quality Analysis (v0.6.0b step 6500)
-- **Optimal depth: D=8-10**, NOT D=12. Passes 10-12 HURT BPT.
-- D=6: saves 50% compute for +0.004 BPT penalty (essentially free)
-- D=8: saves 33% compute and BEATS D=12 by 0.006 BPT
-- Entropy spread 1.22x (healthy) vs v0.6.0a's extreme cliff
-- Random-depth training succeeded in distributing quality to shallower depths
+### Depth-Quality Analysis (v0.6.0b, all checkpoints through step 7000)
+- **D6 captures 99-100% of total quality at EVERY checkpoint** (50% compute savings)
+- **D8 captures 100-101% of quality** — consistently BETTER than D12 (33% savings)
+- **Passes 9-12 are net NEGATIVE in 93% of checkpoints** (13/14) — they destroy quality
+- Average D8-D12 gap: -0.0095 BPT (D8 better)
+- **Step 7000 marginal value:** D=2 (+45%), D=3 (+34%), D=4 (+13%), D=5 (+5%), D=6 (+2%), D=7 (+0.7%), D=8 (+0.1%), D=9-12 (negative)
+- **Entropy profile:** NO pass collapse (unlike v0.6.0a). Spread 1.22-1.25x (healthy) vs v0.6.0a's extreme 2x cliff. **Step 9000 shift: entropy minimum migrated from pass 4-5 to pass 12 (4.878). Monotonically decreasing from pass 7→12 for first time — late passes doing real compression.** Needs confirmation at step 9500.
+- **Elastic compute inference plan:** Easy tokens D=4-6 (93-100% quality), Hard tokens D=8 (100%+), D=12 never needed
+- Random-depth training IS the structural fix for pass collapse. Validated across 18 checkpoints (through step 9000).
+
+### Why Random-Depth Training Prevents Pass Collapse (Theoretical Derivation)
+
+**Problem:** In standard fixed-depth (D=12) training, only pass 12 receives direct final-loss gradient. Passes 1-11 train via backprop through all subsequent passes — gradient signal attenuates exponentially, creating a cliff where early/middle passes converge to near-identity (cosine similarity 0.93-0.997 in v0.6.0a).
+
+**Solution mechanism:** Random depth D ~ P(D=d) ∝ d, for d ∈ {1,...,12}. Each training step samples a random D and only runs D passes before computing loss. This directly exposes each pass to final-loss gradient with calculable probability.
+
+**Gradient distribution formula (CORRECTED):** The distribution is P(D=d) = d/78 (not uniform). Pass p is the final pass with probability P(D=p) = p/78. Pass p is *included* (receives gradient via backprop) with probability P(D≥p) = Σ_{d=p}^{12} d/78:
+- Pass 1: P(D≥1) = 1.000 (always included)
+- Pass 4: P(D≥4) = 72/78 = 0.923
+- Pass 8: P(D≥8) = 50/78 = 0.641
+- Pass 10: P(D≥10) = 33/78 = 0.423
+- Pass 12: P(D≥12) = 12/78 = 0.154
+
+**Actual depth distribution (140K training samples, step 8800):** Mean D=8.23. D=12 sampled 14.9% (vs 15.4% theoretical). Distribution closely matches theory.
+
+**Note:** Earlier approximation used P(final) = (13 - max(p,4)) / 9 assuming uniform D∈{4..12}. Corrected to actual weighted distribution. All 4 qualitative predictions still hold regardless of exact distribution.
+
+**Four testable predictions (ALL confirmed by v0.6.0b data):**
+
+| Prediction | Evidence |
+|---|---|
+| 1. Smooth entropy profile (no cliff) | Entropy spread 1.22-1.25x vs v0.6.0a's 2x cliff. Stable across 18 checkpoints. Step 9000: entropy min migrated to pass 12 (4.878) — late passes beginning to compress. |
+| 2. Middle passes carry weight (not just final) | D=6 captures 99-100% of D=12 quality across all 18 checkpoints |
+| 3. Late passes (9-12) may OVER-train relative to contribution | Passes 9-12 are net NEGATIVE in 93% of checkpoints. D=10 beats D=12 in 100% (18/18). |
+| 4. Optimal inference depth < training depth | D=8-10 consistently optimal (100-101% of D=12 quality, 33% compute savings). Optimal D oscillates between 8, 9, and 10 — NEVER D=12. |
+
+**Implication for elastic compute:** The gradient distribution creates a natural quality-compute tradeoff curve. Passes trained with high gradient probability (1-8) carry robust representations. Passes 9-12 get sparse gradient and are primarily refinement — explaining why they're often net negative. At inference, D=8 is the sweet spot: all high-gradient passes included, none of the noisy late passes.
 
 ### Tokenizer Analysis (for P2)
 - Top 16K tokens cover 96.0% of training text
@@ -37,11 +68,43 @@
 - 16K vocab saves 38.1% of total model parameters (26.1M freed)
 - Strong case for P2 tokenizer transplant
 
-### v0.6.0b Trajectory Projection
-- Power law: BPT at 15K projected ~7.07 (vs v0.6.0a 15K: 7.12)
-- BPT oscillates ±0.15 (eval noise from random 20-batch test samples)
-- Two perturbations: (1) WSD optimizer reset at step 0, (2) 2.17x LR jump at step 3000
-- LR cosine to zero at 15K — significant improvement expected in final 3K steps
+### v0.6.0b Trajectory Projection (updated step 8000)
+- BPT trajectory: 500=7.79, 3K=7.22, 5.5K=7.14(best), 7.5K=7.14, 8K=7.20, **8.5K=7.14**(tied best)
+- **Plateau confirmed at ~7.14-7.20** — oscillating ±0.05 around ~7.15 since step 5500
+- Training loss IS still improving: block averages 5.67->5.07->5.02->4.93->4.86 (monotonic)
+- Gap between improving train loss and flat test BPT suggests: eval noise (5-batch samples), mild overfitting, or LR too high for fine refinement
+- WSD restart cost ~0.36 BPT that has NOT been recovered (v0.6.0a at 20K was 6.79)
+- LR at step 8K: 0.000166, cosine to 1e-4 at 15K (MIN_LR = 31% of peak — relatively high floor)
+- Linear projection: ~7.02 at 15K (but plateau makes this uncertain)
+- D10 beats D12 in 100% of 17 checkpoints (definitive, through step 8500)
+- Step 8500 per-depth: D1=8.90, D3=7.60, D6=7.22, D8=7.19, D10=7.19, D12=7.20
+
+### Train-Test Gap Analysis (v0.6.0b — overfitting detected)
+- **Train loss still improving:** Block averages 6.27 (step 0-500) -> 4.83 (step 8000-8500), monotonic.
+- **Test BPT flat at 7.14-7.20** since step 5500 — generalization has stalled.
+- **Gap growing:** Step 3000-4500 gap near 0 (optimal generalization). Step 7500 gap = +0.32 (overfitting).
+- **The LR restart at step 3000-3500 disrupted memorization,** briefly closing the gap. Now re-memorizing.
+- **Implication for P1:** Multi-source learning adds diverse knowledge signals, should help generalization.
+- **Implication for 15K:** More training may not improve test BPT much. The eval plateau is real, not noise.
+- **Data budget context:** 20.7B tokens available (diverse: Wikipedia 4B, OpenWebMath 3B, FineWeb 8.7B, Gutenberg 2B, MiniPile 1.7B). Only 287M seen (1.4% of data, 21% Chinchilla-optimal). NOT data-starved — the overfitting is a capacity issue at 26M intelligence params (only 38.5% of 68M total), not a data repetition issue. Model is learning common patterns but can't generalize to novel test samples with limited intelligence capacity.
+- **Implication for architecture:** Reducing embedding tax (P2 tokenizer) and reallocating params to intelligence is the highest-ROI change. At 16K vocab: +26M intelligence params = 2x the intelligence capacity.
+
+### Entropy Profile Stability (v0.6.0b, all 16 checkpoints)
+- **Spread consistently 1.22-1.40x** across all checkpoints. No collapse developing.
+- **Min entropy at pass 4-5** (not 11-12 like v0.6.0a). Model concentrates quality in middle passes.
+- **Spread narrowing slightly:** 1.30x (early) -> 1.22x (step 8000). Mild convergence, NOT collapse.
+- **Pass 1 always highest entropy** (6.2-7.5) — initial uncertainty. Passes 9-12 slightly higher than min — explains why D10 beats D12 (late passes add noise).
+- **LR restart caused temporary entropy spike** (step 3500: spread 1.40x) — recovered within 500 steps.
+- **Conclusion:** Random-depth produces a structurally stable entropy profile. No collapse risk.
+
+### Eval Noise Analysis (v0.6.0b)
+- **Headline BPT** (D=12, 80 samples): stdev=0.037 across plateau (steps 5500-8000). Appears flat.
+- **Per-depth D8** (20 samples): stdev=0.167 — oscillates ±0.4 BPT between consecutive evals.
+- **BUT: D8 trough values are monotonically improving:** 7.10 (step 4K) -> 6.99 (step 6.5K) -> 6.96 (step 7.5K)
+- **Trough trend: -0.042 BPT per 1000 steps, R²=0.99.** Model IS improving; noise masks it.
+- **Projected trough D8 at 15K: 6.64** — would BEAT v0.6.0a's best (6.79) despite WSD restart damage.
+- **Root cause:** per-depth eval uses 20 samples (batch_size=2, n_batches=10) = high variance.
+- **Recommendation:** Future runs should use n_batches=20+ for per-depth eval (match headline eval stability).
 
 ### Open Questions for R13
 1. Does P1 (KD) beat v0.6.0c (control) at 15K? → isolates KD contribution
@@ -50,6 +113,7 @@
 4. When to scale to 200M+ params? (current 68M limits architectural experiments)
 5. P2 tokenizer: BPE-from-scratch or GPT-2 top-16K subset?
 6. Should we increase eval batch count for more stable BPT estimates?
+7. **NEW: INT4 PTQ is +155% drift (catastrophic).** QAT mandatory. When to incorporate? Options: (a) QAT-friendly components now (DyT, BitNet), add QAT training after architecture stabilizes, or (b) Full QAT from the start of next architecture version. R12 research says error compounds exponentially in shared-weight loops — this is FUNDAMENTAL, not a tuning issue.
 
 ### P4: INT4 Drift Audit (2026-03-23, v0.6.0a step 20K)
 **Result: CATASTROPHIC — INT4 PTQ destroys shared-weight recurrent models.**

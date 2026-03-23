@@ -166,14 +166,14 @@ Each token position carries a state tuple `(mu, lam, pi)`:
 
 | Parameter | Value | Justification |
 |-----------|-------|---------------|
-| **Depth** | D ~ Uniform{1..12} per batch | Random-depth: forces ALL passes to be useful |
+| **Depth** | D ~ P(D=d) ∝ d^α, d∈{1..12}, α ramps 0.5→1.0 over 1K steps | Random-depth: biased toward deep, but all passes see final loss |
 | **Loss** | L_final + 0.10 * L_step (attached) | L_step trains inter-pass dynamics |
 | **Optimizer** | AdamW (β1=0.9, β2=0.95) | Standard for small LMs |
 | **LR** | 1.5e-4, cosine decay to 1e-5 | INHERITED from v0.6.0a |
 | **Batch** | 4 × 512 tokens | VRAM-constrained (24GB) |
 | **Weight decay** | 0.1 | Standard |
 | **Grad clip** | 1.0 | Standard |
-| **Warm-start** | From v0.6.0a step 20K | Fresh optimizer (WSD restart) |
+| **Warm-start** | From v0.6.0a step 20K | Fresh optimizer (WSD restart) — CAUSED knowledge loss: SciQ -12.3%, LAMBADA -9.7% |
 
 ---
 
@@ -211,19 +211,23 @@ Every design decision must be either DERIVED (from first principles), VALIDATED 
 
 ---
 
-## Key Empirical Results (v0.6.0b step 3000)
+## Key Empirical Results (v0.6.0b step 9000, 18 checkpoints)
 
 | Metric | Value | Context |
 |--------|-------|---------|
-| **test_bpt** | 7.2217 | Best overall (bits per token) |
-| **D=8 BPT** | 6.9014 | Optimal depth (saves 33% vs D=12) |
-| **Late-pass share** | 63% of BPT improvement | Passes 7-11 most valuable |
-| **Pass collapse** | cos(p10,p11)=0.236 | Extreme late-pass collapse |
+| **test_bpt** | **6.9155** | Step 9000 (NEW BEST — broke 7.14 plateau, 0.228 improvement) |
+| **D=8 BPT** | 7.3421 (step 9000), 6.9014 (trough best, step 3000) | D=8-10 optimal depth |
+| **D10 beats D12** | 100% of 18 checkpoints | Elastic compute definitively validated |
+| **Optimal depth** | Oscillates D=8/9/10, NEVER D=12 | Passes 9-12 net negative in 93% of checkpoints |
+| **Entropy spread** | 1.22-1.25x (stable) | No pass collapse (vs v0.6.0a's 2x cliff) |
+| **Entropy shift** | Min entropy at pass 12 (4.878) at step 9000 | Late passes compressing for first time (prev min at pass 4-5) |
+| **Trough D8 trend** | -0.042 BPT/1K steps (R²=0.99) | Post-restart: 7.10→6.99→6.96 |
+| **Projected D8 at 15K** | ~6.65 | Would beat v0.6.0a (6.79) by 0.14 BPT |
+| **Train loss** | ~4.83 (block avg) | Still declining at -0.08/1K steps |
+| **Train-test gap** | ~+0.32 at step 7500 | Overfitting — capacity-starved (26M intelligence params) |
 | **Mode entropy** | 0.002 | Controller is pass-global, NOT content-dependent |
 | **MI(mode, token)** | 0.019 | Near-zero content dependence |
-| **MI(mode, pass)** | 0.558 | Strong pass dependence (bad — means pass-global) |
 | **Oracle halting** | D=8 saves 33% at 0.0004 BPT cost | Elastic compute validated |
-| **Lexical survival** | 93.6% retained across passes | Controller doesn't use lexical info |
 
 ## Benchmark Results (all evaluated versions)
 
