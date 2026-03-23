@@ -1,0 +1,40 @@
+{
+  "16000": {
+    "vocab_size": 16000,
+    "total_tokens": 517816,
+    "unique_used": 15476,
+    "usage_pct": 96.72500000000001,
+    "seq_length_inflation": 1.0,
+    "embedding_params_768": 12288000,
+    "embedding_pct_68M": 17.99121522693997,
+    "param_savings_vs_gpt2": 26309376
+  },
+  "24000": {
+    "vocab_size": 24000,
+    "total_tokens": 494014,
+    "unique_used": 22526,
+    "usage_pct": 93.85833333333333,
+    "seq_length_inflation": 1.0,
+    "embedding_params_768": 18432000,
+    "embedding_pct_68M": 26.986822840409957,
+    "param_savings_vs_gpt2": 20165376
+  },
+  "32000": {
+    "vocab_size": 32000,
+    "total_tokens": 482879,
+    "unique_used": 26484,
+    "usage_pct": 82.7625,
+    "seq_length_inflation": 1.0,
+    "embedding_params_768": 24576000,
+    "embedding_pct_68M": 35.98243045387994,
+    "param_savings_vs_gpt2": 14021376
+  },
+  "50257": {
+    "vocab_size": 50257,
+    "total_tokens": 502739,
+    "unique_used": 28698,
+    "usage_pct": 57.10249318502895,
+    "embedding_params_768": 38597376,
+    "embedding_pct_68M": 56.511531478770124
+  }
+}

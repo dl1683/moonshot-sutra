@@ -5,33 +5,59 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 ---
 
-## CURRENT STRATEGIC DIRECTION: O4-First Multi-Source Learning (Codex R12, 2026-03-23)
+## CURRENT STRATEGIC DIRECTION: O4-First Multi-Source Learning (R12→R13, 2026-03-23)
 
 **CRITICAL FRAMING:** Don't converge too early. Each warm-start step is a Chrome probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
 
-**R12 CONFIDENCE: 6/8/4/4/6** — O4 (Data Efficiency) is the weakest pillar.
+**R13 CONFIDENCE: 6/8/4/4/7** — O5 improved based on D8≈D12 elastic compute validation.
+**R14 PRELIMINARY: 5/8/4/4/8** — O1 dropped (benchmarks below parent), O5 raised (D10 at 96.7%, halting probe).
 
-**R12 CENTRAL INSIGHT:** Multi-source learning (O4) comes BEFORE shared-core architectural work (O2). Reasoning: recurrence should be refinement layer on absorbed knowledge, not the sole knowledge engine. The model can't reason deeply about information it never learned.
+**R14 DATA COMPLETE** — All R13 research complete, v0.6.0b training+benchmarks+generation complete, P1a smoke test complete.
 
-**R12 EXPERIMENT QUEUE (priority order):**
-1. **P1: O4-first 15K two-teacher continuation** — AR + encoder teachers from v0.6.0a step 20K. CODE READY.
-2. **P2: 16K tokenizer transplant 15K matched** — 38% param savings from vocab reduction.
-3. **P3: Shared-core branch** — only after P1/P2 winner established.
-4. **P4: INT4 drift audit** — COMPLETE. CATASTROPHIC (+155% drift). QAT mandatory.
+**R13 KEY UPDATES vs R12:**
+- O5 raised 6→7: D8 saves 33% compute with 0.0004 BPT loss at step 10K
+- Tokenizer target shifted 16K→32K (saves 14M params + 4% shorter sequences)
+- P1 AR teacher flagged as weak (GPT-2 small, not Pythia-160M)
+- Halting probe AUROC=0.854 — stop signal linearly extractable from representations
+- Pheromone deletion recommended (no-grad, never isolated, complexity without evidence)
+- **NEW: MiniPLM (ICLR 2025) = zero-overhead cross-tokenizer KD via offline data curation**
+- **NEW: TokAlign (ACL 2025) = 5K-step tokenizer transplant recovery on Pythia**
+
+**EXPERIMENT QUEUE (current priority):**
+1. ~~v0.6.0b 15K eval~~ — **COMPLETE** (SciQ 37.8%, LAMBADA 4.6%, generation poor)
+2. ~~P1a: Two-teacher KD 100-step smoke test~~ — **COMPLETE** (pipeline validated)
+3. **P1a: Two-teacher KD 15K** — **NEXT** (GPU free, D_DEFAULT updated to D10)
+4. **P2: 32K tokenizer transplant** — TokAlign init, 15K matched
+5. **Pheromone deletion canary** — 500 steps from best checkpoint
+6. **P3: Shared-core branch** — only after P1/P2 winner
 
 **STANDING RULES:** 15K minimum training, full 7-task eval + generation, no optimizer resets, matched step comparisons only.
 
-**KEY VALIDATED FINDINGS (from v0.6.0b):**
-- Random-depth training FIXES pass collapse (entropy spread 1.22x vs 2x cliff)
-- D10 beats D12 in 100% of 17 checkpoints — elastic compute validated
-- Gradient distribution theory derived and confirmed (4/4 predictions matched)
-- Trough D8 improving at -0.042 BPT/1K steps despite headline plateau
+**KEY VALIDATED FINDINGS (COMPLETE v0.6.0b trajectory, 30 checkpoints):**
+- Random-depth training FIXES pass collapse (entropy spread 1.22x, 30/30 clean)
+- D10 beats D12 in 96.7% of 30 checkpoints — elastic compute validated
+- D8 INVERTED at late steps (now worse than D12) — D10 is safe target, not D8
+- Halting probe AUROC=0.854, 58.5% oracle compute savings
+- 32K tokenizer saves 14M params (20.5%) + 4% shorter sequences
+- Gradient distribution theory confirmed (4/4 predictions)
+- Best BPT: 6.9155 (step 9K). Final 15K: 7.0703. 5pt avg: 7.018.
+- v0.6.0a still best benchmark model (SciQ 48.1%, BPT 6.7946)
+- Knowledge recovery slow: SciQ +0.44%/1K steps (projected ~41.5% at 15K vs parent 48.1%)
 
-### v0.6.0b-rd12 (IMPLEMENTED AND RUNNING — step ~8700/15000)
+### v0.6.0b-rd12 (COMPLETE — 15K steps, 30 checkpoints)
 
-**Status:** RUNNING (~step 9000/15000). Pass collapse FIXED. Training to 15K for full eval.
-**Step 9000 NEW BEST BPT: 6.9155** (prev best 7.1434 at step 5500). D10 beats D12 in 100% of 18 checkpoints. Entropy min migrated to pass 12 — late passes compressing.
-**All success criteria met or exceeded:** late_pct < 70% (passes 1-8 all contribute), D6 captures 99-100% quality, D10 beats D12 in 100% of checkpoints. See RESEARCH.md for complete analysis.
+**Status:** COMPLETE. 15K steps reached at 15:12 EDT. LR fully decayed to 4.1e-12.
+**Best headline BPT: 6.9155** (step 9K). Final: **7.0703** (noisy).
+**5pt avg BPT: 7.018**. 3pt avg: 7.032.
+**D10 optimal depth at 15K:** D10=7.101, D11=7.102, D12=7.105. D8=7.107 (WORSE than D12).
+**D10<D12 win rate: 96.7%** (29/30). D8<D12: 76.7% (23/30). D8 increasingly insufficient.
+**Per-pass entropy: P1=6.07, P4-5=5.00, P12=4.97. Spread=1.22x. NO collapse.**
+**Best per-depth BPT: D10=6.704 at step 14500** (but headline BPT=7.052 — eval noise).
+**Full 7-task benchmark COMPLETE:** SciQ 37.8% (-10.3%), LAMBADA 4.6% (-6.6%), reasoning intact.
+**SciQ NON-MONOTONIC** — peaked between 10K-15K then fell. WSD aggressive decay kills knowledge.
+**Generation quality POOR** across all temperatures. Repetitive at T=0, incoherent at T=0.8.
+**P1a smoke test COMPLETE** — pipeline validated, all losses finite, KD+CKA active, 7300 tok/s.
+**All R13 research COMPLETE** — 8 literature surveys ingested into RESEARCH.md.
 
 **USER PRIORITY (STANDING): PRECISE-GENERAL MEMORY SPECTRUM.** Knowledge-task benchmark gap (SciQ 25.9% vs Pythia 74%, LAMBADA ~1% vs 32.6%) is the strongest competitive weakness. Current scratchpad is imprecise workspace only. Architecture needs ARMT-style exact retrieval (from R12 research findings).
 

@@ -9,10 +9,10 @@ Reverse chronological. See ledger.jsonl for machine-readable details.
 
 ### [RUNNING] v060b-rd12-15k (2026-03-22 → ongoing)
 **Purpose:** v0.6.0b-rd12 extended to 15K steps (WSD restart, random-depth from v0.6.0a)
-**Key metrics (step 9000):** best_bpt=6.9155 (step 9000, NEW BEST), D10 beats D12 in 100% of 18 checkpoints.
-**Step 9000 breakthrough:** Headline BPT jumped from 7.14 plateau to 6.92 — largest single-step improvement since restart. Per-depth D=12=7.35 suggests headline partially favored by eval noise, but magnitude (0.23 BPT) exceeds typical oscillation (±0.05). Entropy minimum migrated to pass 12 (4.878) — late passes compressing for first time.
-**Eval noise finding:** Per-depth BPT oscillates ±0.4 due to 20-sample eval, but trough D8 values improve monotonically (-0.042 BPT/1000 steps, R²=0.99). Projected trough D8 at 15K: 6.64 (beats v0.6.0a).
-**Notes:** WSD optimizer reset destroyed knowledge. Pass collapse fixed (entropy spread 1.22-1.25x, stable across 18 checkpoints, vs v0.6.0a's 2x cliff). Training loss still improving (block avg 5.17→4.83, declining at -0.08/1K steps). Depth distribution P(D=d)∝d, mean D=8.23. Overfitting detected: train-test gap growing (0.00 at 3K → +0.32 at 7.5K) — capacity-starved at 26M intelligence params (56.5% embedding tax). ETA 15K: ~14:30 2026-03-23.
+**Key metrics (step 9500):** best_headline_bpt=6.9155 (step 9000), best_per_depth_D12=7.0546 (step 9500). D11 beats D12 in 100% of 19 checkpoints.
+**Step 9500 update:** Headline reverted to 7.2233 (confirming step 9000's 6.92 was partially noise). Per-depth values improved significantly: D12=7.05 (vs 7.35 at step 9000). D11=7.054 now best depth. Entropy min back at pass 5 — sequential maturation hypothesis NOT confirmed.
+**Eval noise confirmed:** Headline swings ±0.15, per-depth swings ±0.2. Trough-to-trough is only reliable metric. D8 troughs: 7.10(4K)→6.99(6.5K)→6.96(7.5K), improving -0.042/1K.
+**Notes:** WSD optimizer reset destroyed knowledge. Pass collapse fixed (entropy spread 1.20-1.25x, stable across 19 checkpoints). Training loss ~4.84, declining at -0.03/1K steps (slowing with LR decay at 1.1e-4). Overfitting: train-test gap ~2.38 at step 9500. ETA 15K: ~14:30 2026-03-23.
 
 ### [OK] v060c-p0-canary (2026-03-23)
 **Purpose:** P0: Knowledge-preserving random-depth canary (optimizer preserved from v0.6.0a)

@@ -40,11 +40,12 @@ This is the single source of truth for ALL architectural design decisions. Every
 
 **Why this was never questioned:** T+L rounds focused on new mechanisms (controller, modes), never audited inherited infrastructure. This is the biggest efficiency win available.
 
-**Alternatives (for T+L to decide):**
-1. **Custom 16K BPE** → save 26M params (1.86x core capacity at same total)
-2. **Custom 8K BPE** → save 32M params (2.07x core capacity)
-3. **Vocab pruning** → keep top 16K GPT-2 tokens, slice weights (warm-startable)
-4. **Byte-level + CNN** → 256 vocab, sequences 3.5x longer, ~38M saved
+**Alternatives (R13 validated 32K as sweet spot):**
+1. **Custom 32K BPE** → save 14M params (1.54x core capacity), **4% shorter sequences**, 82.8% vocab utilization. **RECOMMENDED (R13).**
+2. **Custom 24K BPE** → save 20M params (1.77x core capacity), 93.9% utilization, 1.7% shorter.
+3. **Custom 16K BPE** → save 26M params (1.86x core capacity), but 3% LONGER sequences.
+4. **Vocab pruning** → keep top 32K GPT-2 tokens, slice weights (warmest start).
+5. NeurIPS 2024 scaling law: optimal vocab for 68M is 32K-40K. Our 50K is oversized.
 
 **Migration path (head transplant):** Core operates in R^768, doesn't care about vocab. Train new tokenizer → retokenize data → freeze core → train embedding 2K steps → unfreeze.
 
@@ -174,6 +175,9 @@ Each token position carries a state tuple `(mu, lam, pi)`:
 | **Weight decay** | 0.1 | Standard |
 | **Grad clip** | 1.0 | Standard |
 | **Warm-start** | From v0.6.0a step 20K | Fresh optimizer (WSD restart) — CAUSED knowledge loss: SciQ -12.3%, LAMBADA -9.7% |
+| **LR discontinuity** | At step 3000-3500 | MAX_TRAIN_STEPS changed 5K→15K mid-run, causing 2.17x LR jump (effectively a warm restart) |
+| **Pass collapse** | ELIMINATED | Random-depth training fixed it. late_pct=1.5-2% vs 63% in v0.6.0a |
+| **Elastic compute** | VALIDATED | D8≈D12 (gap -0.0005 at step 12.5K). D10 optimal. Saves 17-33% compute. |
 
 ---
 
@@ -215,16 +219,16 @@ Every design decision must be either DERIVED (from first principles), VALIDATED 
 
 | Metric | Value | Context |
 |--------|-------|---------|
-| **test_bpt** | **6.9155** | Step 9000 (NEW BEST — broke 7.14 plateau, 0.228 improvement) |
-| **D=8 BPT** | 7.3421 (step 9000), 6.9014 (trough best, step 3000) | D=8-10 optimal depth |
-| **D10 beats D12** | 100% of 18 checkpoints | Elastic compute definitively validated |
-| **Optimal depth** | Oscillates D=8/9/10, NEVER D=12 | Passes 9-12 net negative in 93% of checkpoints |
-| **Entropy spread** | 1.22-1.25x (stable) | No pass collapse (vs v0.6.0a's 2x cliff) |
-| **Entropy shift** | Min entropy at pass 12 (4.878) at step 9000 | Late passes compressing for first time (prev min at pass 4-5) |
-| **Trough D8 trend** | -0.042 BPT/1K steps (R²=0.99) | Post-restart: 7.10→6.99→6.96 |
-| **Projected D8 at 15K** | ~6.65 | Would beat v0.6.0a (6.79) by 0.14 BPT |
-| **Train loss** | ~4.83 (block avg) | Still declining at -0.08/1K steps |
-| **Train-test gap** | ~+0.32 at step 7500 | Overfitting — capacity-starved (26M intelligence params) |
+| **test_bpt** | **6.9155** (headline best, step 9000) | Step 9500 reverted to 7.22 — headline partially noise. True BPT ~7.0-7.15 |
+| **Per-depth D12** | 7.0546 (step 9500 best) | Step 9000 D12=7.35 was outlier high |
+| **D11 beats D12** | 100% of 19 checkpoints | More consistent than D10>D12 (95%) |
+| **Optimal depth** | Oscillates D=8-11, D=12 never optimal | Passes 9-12 net negative in 93% of checkpoints |
+| **Entropy spread** | 1.20-1.25x (stable) | No pass collapse (vs v0.6.0a's 2x cliff) |
+| **Entropy min** | Pass 4-5 (17/19 checkpoints) | Step 9000 pass-12 shift was noise (reverted at 9500) |
+| **Trough D8 trend** | -0.042 BPT/1K steps (R²=0.99, 3 pts) | Post-restart: 7.10→6.99→6.96 |
+| **Projected D8 at 15K** | ~6.71 (conservative) to ~6.64 (aggressive) | Would beat v0.6.0a (6.79) |
+| **Train loss** | ~4.84 (block avg) | Declining at -0.03/1K steps (slowing with LR decay) |
+| **Train-test gap** | ~+2.38 at step 9500 | Overfitting — capacity-starved (26M intelligence params) |
 | **Mode entropy** | 0.002 | Controller is pass-global, NOT content-dependent |
 | **MI(mode, token)** | 0.019 | Near-zero content dependence |
 | **Oracle halting** | D=8 saves 33% at 0.0004 BPT cost | Elastic compute validated |
