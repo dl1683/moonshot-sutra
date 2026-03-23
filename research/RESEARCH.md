@@ -1,5 +1,64 @@
 # Sutra Research Log
 
+## T+L R13 Data Package (2026-03-23, DRAFT — update with v0.6.0b 15K results)
+
+**Purpose:** Complete experimental evidence from R12 cycle for next Tesla+Leibniz design round.
+
+### R12 Experiment Status
+| Experiment | Status | BPT at Last Eval | Key Finding |
+|-----------|--------|-------------------|-------------|
+| v0.6.0b (rd12, 15K) | RUNNING (~step 7000/15000) | 7.143 (best, step 5500) | D=8 beats D=12, elastic compute validated |
+| v0.6.0c (P0 canary, 750) | COMPLETE (needs 15K) | 6.910 (step 250) | Optimizer preservation retained 96% SciQ |
+| v0.6.1 (controller) | FALSIFIED at 1K | 7.208 | Controller didn't gate real computation |
+| P1 (two-teacher KD) | CODE READY | N/A | V5 audit PASS, awaiting GPU |
+
+### Cross-Model Benchmark Comparison
+| Model | ARC-E | ARC-C | Hella | PIQA | SciQ | Wino | LAMBADA |
+|-------|-------|-------|-------|------|------|------|---------|
+| v0.6.0a (20K, parent) | 31.3% | 17.5% | 25.7% | 54.5% | **48.1%** | 51.5% | **11.2%** |
+| v0.6.0b (2K, WSD reset) | 31.0% | 18.7% | 25.9% | 52.9% | 35.8% | 51.2% | 1.5% |
+| v0.6.1 (1K, controller) | 31.1% | 16.7% | 25.8% | 54.4% | 36.1% | 48.9% | 2.6% |
+| v0.5.4 (20K, old arch) | 29.7% | 20.2% | 25.8% | 54.1% | 33.6% | 49.1% | 1.8% |
+| v0.6.0c (250, opt-preserved) | — | — | — | — | 47.3% | — | 9.5% |
+| Random baseline | 25% | 25% | 25% | 50% | 25% | 50% | ~0% |
+
+**Key pattern:** Knowledge tasks (SciQ, LAMBADA) destroyed by WSD reset (-12.3%, -9.7%) but preserved by optimizer continuation (-0.8%, -1.7%). Reasoning/structure tasks (ARC-E, HellaSwag, PIQA, WinoGrande) robust across all branches. Knowledge is fragile; structure is not.
+
+### Depth-Quality Analysis (v0.6.0b step 6500)
+- **Optimal depth: D=8-10**, NOT D=12. Passes 10-12 HURT BPT.
+- D=6: saves 50% compute for +0.004 BPT penalty (essentially free)
+- D=8: saves 33% compute and BEATS D=12 by 0.006 BPT
+- Entropy spread 1.22x (healthy) vs v0.6.0a's extreme cliff
+- Random-depth training succeeded in distributing quality to shallower depths
+
+### Tokenizer Analysis (for P2)
+- Top 16K tokens cover 96.0% of training text
+- 38.1% of GPT-2 tokens NEVER appear in training data
+- 16K vocab saves 38.1% of total model parameters (26.1M freed)
+- Strong case for P2 tokenizer transplant
+
+### v0.6.0b Trajectory Projection
+- Power law: BPT at 15K projected ~7.07 (vs v0.6.0a 15K: 7.12)
+- BPT oscillates ±0.15 (eval noise from random 20-batch test samples)
+- Two perturbations: (1) WSD optimizer reset at step 0, (2) 2.17x LR jump at step 3000
+- LR cosine to zero at 15K — significant improvement expected in final 3K steps
+
+### Open Questions for R13
+1. Does P1 (KD) beat v0.6.0c (control) at 15K? → isolates KD contribution
+2. Did v0.6.0b recover knowledge at 15K? Or is WSD reset permanent?
+3. Should P1-v2 use reverse KL (better generation quality per MiniLLM)?
+4. When to scale to 200M+ params? (current 68M limits architectural experiments)
+5. P2 tokenizer: BPE-from-scratch or GPT-2 top-16K subset?
+6. Should we increase eval batch count for more stable BPT estimates?
+
+### Standing Priorities (from R12)
+1. O4 (multi-source learning) BEFORE shared-core architectural work
+2. 15K minimum training, full 7-task eval + generation quality
+3. Optimizer preservation mandatory (never WSD reset again)
+4. Parent for all branches: v0.6.0a step 20K
+
+---
+
 ## Codex Pre-Training Audit V3: P1 Two-Teacher Trainer (2026-03-23, post-fix re-audit)
 
 ### Verdict: ~~FAIL~~ → **INVALID (false positive, overruled 2026-03-23)**
