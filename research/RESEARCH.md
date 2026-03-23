@@ -144,6 +144,45 @@ R12's central insight: **multi-source learning (O4) should come BEFORE shared-co
 
 **Interpretation caveat:** v0.6.0b had TWO warm restarts: (1) WSD optimizer reset at step 0, (2) LR schedule recalculation at step 3000. Both are perturbations. The 15K eval will reflect recovery from both, not a clean 15K training trajectory.
 
+## v0.6.0b Depth-Quality Analysis (2026-03-23, step 6500)
+
+**Key finding: optimal depth is D=8-10, NOT D=12. Passes 10-12 HURT BPT.**
+
+Random-depth training succeeded in distributing quality to shallower depths. At step 6500:
+- D=8: BPT=6.985 (BEST among D=8-12)
+- D=10: BPT=6.984 (essentially tied)
+- D=12: BPT=6.991 (WORST among D=8-12)
+- D=6: BPT=6.994 (+0.004 vs D=12, saves 50% compute — essentially free)
+- D=5: BPT=7.018 (+0.028 vs D=12, saves 58% compute)
+
+**Marginal improvement by depth (avg last 3 evals):**
+| Transition | Delta BPT | Verdict |
+|-----------|-----------|---------|
+| D=1→2 | +0.893 | Essential |
+| D=2→3 | +0.570 | Essential |
+| D=3→4 | +0.240 | Essential |
+| D=4→5 | +0.091 | Valuable |
+| D=5→6 | +0.023 | Valuable |
+| D=6→7 | +0.007 | Marginal |
+| D=7→8 | +0.003 | Diminishing |
+| D=8→9 | +0.000 | None |
+| D=9→10 | -0.000 | Negative |
+| D=10→11 | -0.002 | Negative |
+| D=11→12 | -0.004 | Negative |
+
+**Implications for elastic compute:**
+1. D=8 is the natural halting point — no explicit halting mechanism needed, just truncate
+2. vs v0.6.0a: v0.6.0a had extreme collapse (pass 11 did 61.6% of quality). v0.6.0b distributes quality evenly, with optimal at D=8
+3. Entropy spread 1.22x (v0.6.0b) vs extreme cliff (v0.6.0a) — random-depth training worked
+4. For inference: D=6 gives 50% compute savings for +0.004 BPT penalty. D=8 gives 33% savings and BEATS full depth.
+
+**Comparison to oracle halting (step 1000):** Oracle halting sim showed D=8 saves 33% for 0.0004 BPT loss. Now at step 6500, D=8 BEATS D=12 by 0.006 BPT. The random-depth training has strengthened shallow depths over time.
+
+**v0.6.0a vs v0.6.0b trajectory comparison:**
+- v0.6.0b at step 500 (BPT=7.79) already better than v0.6.0a at step 7000 (BPT=7.89) — massive warm-start advantage
+- Power law projection: v0.6.0b at 15K → BPT ~7.07 (vs v0.6.0a 15K: 7.12) — slight improvement
+- Compute-adjusted (D=8 uses 67% of D=12): v0.6.0b is significantly more compute-efficient
+
 ---
 
 ## P1 Pre-Training Audit (2026-03-23)
