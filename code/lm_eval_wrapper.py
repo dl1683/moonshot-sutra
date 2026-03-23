@@ -27,7 +27,7 @@ from transformers import AutoTokenizer
 class SutraLMEval(LM):
     """lm-eval compatible wrapper for Sutra."""
 
-    def __init__(self, checkpoint=None, dim=768, ff_dim=1536, max_steps=12,
+    def __init__(self, checkpoint=None, dim=768, ff_dim=1536,
                  batch_size=8, device="cuda", version="v060a", **kwargs):
         super().__init__()
         self._device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -36,17 +36,20 @@ class SutraLMEval(LM):
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Load model based on version
-        if version == "v060a":
+        # Load model based on version (each version has its own default max_steps)
+        if version in ("v060a", "v060b", "v060c"):
             from launch_v060a import create_v060a
-            self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=max_steps,
+            self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=12,
                                        window=4, k_retrieval=8)
         elif version == "v054":
             from launch_v054 import create_v054
-            self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=max_steps,
+            self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=8,
                                       window=4, k_retrieval=8)
+        elif version == "v061":
+            from launch_v061 import SutraV061
+            self.model = SutraV061()
         else:
-            raise ValueError(f"Unknown version: {version}. Use 'v060a' or 'v054'.")
+            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v060c', 'v054', or 'v061'.")
 
         if checkpoint:
             ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
@@ -180,7 +183,8 @@ if __name__ == "__main__":
     parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--version", default="v060a", choices=["v060a", "v054"])
+    parser.add_argument("--version", default="v060a", choices=["v060a", "v054", "v061"])
+    parser.add_argument("--output", default=None, help="Output JSON path (default: results/sutra_lm_eval_results.json)")
     args = parser.parse_args()
 
     print(f"Running lm-eval on Sutra {args.version}")
@@ -210,6 +214,6 @@ if __name__ == "__main__":
                 print(f"  {metric}: {value:.4f}" if isinstance(value, float) else f"  {metric}: {value}")
 
     import json
-    out_path = REPO / "results" / "sutra_lm_eval_results.json"
+    out_path = Path(args.output) if args.output else REPO / "results" / "sutra_lm_eval_results.json"
     json.dump(results["results"], open(out_path, "w"), indent=2, default=str)
     print(f"\nSaved: {out_path}")

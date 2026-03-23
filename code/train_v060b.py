@@ -44,7 +44,7 @@ BATCH_SIZE = 4
 GRAD_ACCUM = 16         # Effective batch = 64
 LR = 3.5e-4
 WARMUP_STEPS = 500
-MAX_TRAIN_STEPS = 5000  # Extended from 3K: collapse fix needs more tokens
+MAX_TRAIN_STEPS = 15000  # 15K minimum for fair evaluation (was 5K)
 EVAL_EVERY = 500
 SAVE_EVERY = 1000
 ROLLING_SAVE = 100
@@ -256,11 +256,13 @@ def main():
         depth_history = resumed_ckpt.get("depth_history", [])
         # Restore RNG state for faithful resume (depth sampling + data loader)
         if "torch_rng" in resumed_ckpt:
-            torch.set_rng_state(resumed_ckpt["torch_rng"])
+            rng = resumed_ckpt["torch_rng"]
+            torch.set_rng_state(torch.ByteTensor(rng.cpu().numpy()))
         if "random_rng" in resumed_ckpt:
             random.setstate(resumed_ckpt["random_rng"])
         if "cuda_rng" in resumed_ckpt and torch.cuda.is_available():
-            torch.cuda.set_rng_state(resumed_ckpt["cuda_rng"])
+            cuda_rng = resumed_ckpt["cuda_rng"]
+            torch.cuda.set_rng_state(torch.ByteTensor(cuda_rng.cpu().numpy()))
         print(f"RESUMED v0.6.0b from step {start_step} ({resumed_ckpt['_path']})")
         # Restore dataset sticky shard state if available
         if "dataset" in resumed_ckpt:
