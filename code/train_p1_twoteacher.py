@@ -1228,6 +1228,8 @@ if __name__ == "__main__":
                         help="Override MAX_TRAIN_STEPS (changes LR schedule too)")
     parser.add_argument("--stop-at", type=int, default=None,
                         help="Stop training at this step (preserves LR schedule, for F2 A/B tests)")
+    parser.add_argument("--eval-cache", type=str, default=None,
+                        help="Override eval cache path (e.g. results/eval_cache_16k.pt for F3/F4)")
     parser.add_argument("--vocab-size", type=int, default=None,
                         help="Override vocab size (16000 for 16K tokenizer, default 50257)")
     parser.add_argument("--shard-dir", type=str, default=None,
@@ -1241,10 +1243,13 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.det_eval:
-        cache_path = REPO / "results" / "eval_cache.pt"
+        if args.eval_cache:
+            cache_path = Path(args.eval_cache)
+        else:
+            cache_path = REPO / "results" / "eval_cache.pt"
         if not cache_path.exists():
-            print("Building eval cache first...")
-            build_eval_cache()
+            print(f"ERROR: Eval cache not found: {cache_path}")
+            sys.exit(1)
         all_results = []
         for cp in args.det_eval.split(","):
             cp = cp.strip()
