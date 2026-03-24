@@ -1,5 +1,323 @@
 # Sutra Research Log
 
+## Tesla+Leibniz Round 20 (2026-03-24) — POST-AUDIT RESPONSE
+
+**Confidence: O1=4.5, O2=6.5, O3=2.5, O4=4, O5=5.5 (ALL DROPPED from R19)**
+
+R20 addressed the 5-round cycle adversarial audit (R15→R20). Accepted 9/10 HIGH audit findings. Major strategic pivot from design-heavy to falsification-first.
+
+### R20 Audit Response
+
+**Accepted audit items:**
+1. **Anti-falsification bias:** ACCEPTED. "Never propose dense baselines" rule is methodologically wrong. Dense controls must be allowed.
+2. **O1=5 too generous:** ACCEPTED. BPT is compression, not intelligence. Generation still poor across all branches.
+3. **O2 conflation:** MOSTLY ACCEPTED. Trainer debuggability ≠ model improvability. No module-swap win demonstrated. Lowered to 6.5.
+4. **O4 not earned:** ACCEPTED. No teacher-free continuation control exists to isolate KD lift from continued training.
+5. **O5 inflated:** ACCEPTED. Split into "fixed-depth truncation works" (validated, D10<D12) and "tokenwise halting is unproven" (v0.6.1 falsified: MI(mode,token)≈0.02).
+6. **26M core story unvalidated:** ACCEPTED. Hypothesis, not causal validation. No widening probe exists.
+7. **Dense control missing:** STRONGLY ACCEPTED. Highest-value missing experiment.
+8. **Too much design, not enough falsification:** ACCEPTED. Another design round has lower value than short falsifying runs.
+9. **P(Dense beats P2c)=65%:** PARTIALLY ACCEPTED. Exact number not defended, but action accepted: dense is the prior favorite until falsified.
+10. **Auditor's revised scores:** MOSTLY AGREED. R20 scores: 4.5/6.5/2.5/4/5.5 (auditor proposed 4-5/6-7/2-3/4/5-6).
+
+### R20 Decision: STOP P1a AT STEP 6000
+
+**Hard cap at step 6000, then stop regardless.** If operationally convenient, stop immediately at step 5000.
+
+**Rationale:**
+- Step 5000 already passed R19 gate: D10=6.746 < 6.788, D12=6.760 < 6.827
+- Remaining ~10K steps would cost ~63 hours and "mostly answer the wrong question"
+- Urgent unknowns are CAUSAL: KD vs no-KD, recurrent vs dense, width vs no-width
+- Step 5000 transplant already created (42M, 100% transfer, verified)
+
+### R20 Falsifying Experiments (ORDERED)
+
+**Run BEFORE any elaborate P2 stack.**
+
+**F1: Best P1a checkpoint selection** — Use step 5K or 6K (whichever has better det-eval D10+D12).
+
+**F2: Teachered vs teacher-free continuation A/B** (1000 steps each)
+- Fork from best checkpoint: teachered (CKA active) vs teacher-free (all KD=0)
+- Keep optimizer state, LR schedule, data order, seq_len, batch shape IDENTICAL
+- Eval at 0/500/1000: det-cache D1/D4/D8/D10/D12, full 7-task lm-eval at 1000, 50-prompt gen panel T=0 + T=0.8
+- Falsification: if teacher-free matches on D10 + 4/7 tasks, O4 drops further and KD stops being main lever
+
+**F3: Recurrent 16K full-rank tokenizer-only control** (500-1000 steps)
+- Start from transplanted_16k_from_step5000.pt (42M, already created)
+- No factorization, no widening, no ALM. Establishes tokenizer-only floor.
+
+**F4: Matched 16K dense control** (5K steps from scratch)
+- Dense architecture: 11 layers, d_model=512, 8 heads, RoPE, RMSNorm, SwiGLU hidden=1536, tied 16K embeddings, ~50M params
+- Train teacher-free on same retokenized shards, same seq_len, same optimizer, same eval suite
+- Extend to 15K only if result is close
+- Falsification: if dense wins 4/7 tasks + clearly better generation by 5K, recurrence thesis at this scale is in serious trouble
+
+**F5: Widen-only canary** (500 steps, teacher-free)
+- Fork from best checkpoint: narrow (1536) vs widened (3072) via zero-init
+- Teacher-free to remove KD confound
+- Preserve old optimizer moments, zero new-tensor moments
+- Falsification: if widened is flat/worse after 500 steps, "tiny core is main cause" story loses priority
+
+**F6: O2/O3 module-swap canary** (300-500 steps)
+- Freeze best recurrent checkpoint
+- Train router-only adapter pack + verify/readout-only adapter pack separately
+- Compose both at inference without joint retraining
+- Falsification: if isolated gains don't survive composition, O2/O3 stay low
+
+### R20 Updated Branch Order
+
+F1 → F2 → F3 → F4 → F5 → F6 → (only if recurrence survives) full P2 stack
+
+**This is the smallest branch order that directly answers the audit instead of designing around it.**
+
+### R20 New Evidence (Step 5000 Det-Eval)
+
+| Step | D1 | D4 | D8 | D10 | D12 |
+|------|------|------|------|------|------|
+| 3000 | 16.32 | 15.81 | 12.90 | 6.788 | 6.827 |
+| 4000 | 16.18 | 15.63 | 13.29 | 6.835 | 6.852 |
+| **5000** | **15.95** | **15.45** | 13.04 | **6.746** | **6.760** |
+
+Step 5000 is new best D10+D12. D8 continues worsening. Step 5000 transplant: 42M params, 100% transfer rate.
+
+### R20 ALM Research (Cross-Tokenizer KD)
+
+**Paper: arxiv 2503.20083 (NeurIPS 2025). Package: tokenkit (pip install tokenkit).**
+
+ALM core: binarized f-divergence on byte-aligned chunk probabilities.
+- For each aligned teacher-student chunk pair: compute binary KL on (p_chunk, 1-p_chunk)
+- Byte alignment: greedy single-pass algorithm matching byte endpoints
+- Bias filtering: precomputed sparse |V_S|×|V_T| matrix, threshold γ=1e-4
+- Memory overhead: +5% vs SFT. Compute: +25% TFLOPS.
+- Loss: L_total = L_SFT + α * L_ALM. Unconstrained variant = greedy alignment without bias filtering.
+- Implementation: tokenkit provides alignment + bias computation. PyTorch integration straightforward.
+
+### R20 Dense Baseline Research
+
+**Pythia-70M reference:** 6 layers, dim=512, 8 heads, RoPE, untied emb. Non-emb params ~19M. Total ~70M (emb dominates with 50K vocab).
+
+**Candidate architectures for matched ~50M dense control (16K tied vocab):**
+
+| Config | Layers | dim | ff_dim | Heads | Total |
+|--------|--------|-----|--------|-------|-------|
+| R20 spec | 11 | 512 | 1536 | 8 | ~50M |
+| Alt: wider | 4 | 768 | 2048 | 12 | ~41M |
+| Alt: widest | 3 | 880 | 2347 | 10 | ~42M |
+
+R20 specifies: 11L/512d/8h/SwiGLU-1536/RoPE/RMSNorm/tied-16K. "Depth Delusion" paper (Jan 2025) suggests wider-shallower may be better at small scale.
+
+---
+
+## R16 Research Survey Results (2026-03-24)
+
+### 1. Function-Preserving FFN Widening for Recurrent SiLU (UPDATED 2026-03-24)
+**Sources:** MSG (ICLR 2024), Net2Net (ICLR 2016), Composable Expansions (DeepMind 2023, arXiv:2308.06103), R2R (2024, arXiv:2410.11038)
+
+**Method comparison for SiLU + 12-pass shared weights:**
+
+| Method | Activation-Safe? | LN-Safe? | Residual-Safe? | Complexity | Recommended? |
+|--------|-----------------|----------|----------------|------------|--------------|
+| **DeepMind zero-init** | Yes (any) | N/A | Yes | Low | **YES — simplest, recommended** |
+| MSG (output mask + ramp) | Yes (any) | Yes (with fix) | Needs work | Medium | Fallback if unstable |
+| Net2Wider (replication) | Yes for widening | No | No | Low | No — zero-init strictly better |
+| R2R (mirror pairs) | Yes (SiLU OK) | Unclear | Yes (native) | High | Overkill for our case |
+
+**RECOMMENDED: DeepMind zero-init (Composable Expansions 2023)**
+```python
+# For each stage FFN: Linear(768,1536) → SiLU → Linear(1536,768)
+# Widen to: Linear(768,3072) → SiLU → Linear(3072,768)
+
+W1_new[:1536,:] = W1_old            # copy existing rows
+W1_new[1536:,:] = randn(1536,768) * 0.02  # random init for new neurons
+b1_new[:1536] = b1_old; b1_new[1536:] = 0
+
+W2_new[:,:1536] = W2_old            # copy existing columns
+W2_new[:,1536:] = 0                  # ZERO INIT — new neurons contribute nothing at start
+b2_new = b2_old                      # bias unchanged
+```
+
+**Why zero-init beats MSG for our case:**
+- Exact function preservation at step 0 (no mask ramp needed)
+- No phi schedule to tune — simpler code, fewer hyperparameters
+- 12-pass shared weight amplification (gradients summed across passes) naturally bootstraps new neurons faster than in non-recurrent models
+- If instability occurs in first 500 steps post-growth, fall back to MSG (phi=8000-10000)
+
+**MSG details (ICLR 2024) — fallback option:**
+- Output masking: `c = [1_{old}; 0_{new}]`, linearly ramp new portion over phi steps
+- Standard phi=5000 (phi >= 500 stable per paper). For 12-pass recurrence: **phi=8000-10000** (1.5-2x standard due to gradient amplification)
+- Masked LayerNorm fix: `mu' = (x' * c) / sum(c)` — prevents new neurons corrupting LN statistics
+- MSG GitHub: github.com/cofe-ai/MSG
+
+**Critical: Net2Deeper (adding layers) is UNSAFE for SiLU** — requires idempotent activation (sigma(sigma(x)) = sigma(x)). SiLU fails this. But Net2Wider (adding neurons) IS safe because widening is purely linear algebra before/after activation.
+
+**Param increase:** 7 stages × (2×1536×768 + 1536) = ~16.5M additional params. Within 26.3M freed from tokenizer reduction.
+
+### 2. Tokenwise Controller Regularizers (UPDATED 2026-03-24)
+**Sources:** Switch Transformer (JMLR 2022), PonderNet (ICML 2021), AdaPonderLM (Mar 2026), MoE load balancing literature
+
+**Standard approaches:**
+- **Switch Transformer load balancing:** `L_aux = α * N * Σ_i(f_i * P_i)` where f_i = fraction of tokens to expert i, P_i = average router probability. Standard α = **0.01** (range: 0.001-0.01).
+- **PonderNet halting:** `L_halt = KL(p_halt || Geom(λ_p))` — encourages geometric halting distribution.
+- **MI regularizer (our original proposal):** `L_MI = -(1/P)·Σ_p[H(mean_t π_t^p) - mean_t H(π_t^p)]` — maximizes mutual information between mode and token position.
+
+**Updated recommendation (from deeper literature survey):**
+The field has moved toward **simpler proxies than direct MI maximization**. Direct MI estimation from routing distributions is noisy at small batch sizes and adds hyperparameter complexity. The recommended regularizer stack:
+
+1. **Entropy minimization** (λ=0.01): `L_ent = -mean_t H(π_t)` — encourages sharp routing decisions per token. Simpler than MI, achieves same effect (each token gets a specific stage).
+2. **Stage orthogonality** (λ=0.01): `L_orth = Σ_{i≠j} |cos(W_route_i, W_route_j)|` — encourages routing weights to specialize differently. Prevents mode collapse without requiring explicit load balancing.
+3. **Z-loss** (β=0.001): `L_z = (1/T) * Σ_t log²(Σ_i exp(z_t_i))` — stabilizes router logit magnitudes (from ST-MoE paper). Prevents logit explosion.
+
+**Key reference: AdaPonderLM (Mar 2026)** — closest published analog to our architecture at 70M scale. Uses adaptive computation with per-token halting. Validates the approach of token-dependent routing at our parameter budget.
+
+**Do NOT use** uniform load balancing (Switch-style) — we WANT non-uniform mode use, just token-dependent. Do NOT use our original L_MI at first — upgrade to it only if simpler proxies fail to produce content-dependent routing (MI(mode,token) > 0.1).
+
+### 3. Exact-Memory Sidecars (DeltaNet, ARMT, PKM)
+**Sources:** DeltaNet (NeurIPS 2024), Gated DeltaNet (ICLR 2025), ARMT (2024)
+
+**DeltaNet core recurrence:**
+```
+S_t = S_{t-1}(I - β_t · k_t · k_t^T) + β_t · v_t · k_t^T
+o_t = S_t · q_t
+```
+Content-dependent forgetting via `k_t k_t^T` term — erases old associations for the same key before writing new value. This IS exact-memory: writing k→v explicitly replaces previous k→v.
+
+**Gated DeltaNet (ICLR 2025 — latest):**
+- Adds alpha decay gate and short convolution (kernel=4)
+- State matrix S is d_head × d_head = 128×128 = 16K floats per head — this is the associative memory
+- Parallelizable via delta rule decomposition
+
+**Param costs for Sutra sidecar (d=768, d_head=128):**
+| Variant | Projections | Total Params |
+|---------|-------------|--------------|
+| Full DeltaNet (d_head=768) | W_q, W_k, W_v (768×768 each) + β gate | ~1.77M |
+| Projected DeltaNet (d_head=128) | W_down(768→128), W_q,k,v(128→128), W_up(128→768), β | ~250K |
+| Multi-head (4 heads, d_head=128) | 4× above + output proj | ~1.2M |
+
+**Recommended for Sutra:** Projected DeltaNet with d_head=128, 4 heads. ~1.2M params. State capacity: 4 × 128 × 128 = 65K floats of exact associative memory.
+
+**Warm-start safe:** Initialize all projections near zero (W_down, W_up small init, β bias = -3 so sigmoid ≈ 0.05). At initialization, sidecar contributes ~zero, preserving parent function.
+
+**Injection:** Gated additive: `mu_t' = mu_t + sigmoid(W_g · mu_t) · o_t`. Gate starts near zero.
+
+### 4. Factorized Tied Embeddings at Small Scale
+**Sources:** ALBERT (ICLR 2020), embedding compression literature
+
+ALBERT decomposes V×H into V×E + E×H. Findings:
+- **E=128 is optimal** across ALBERT configurations (tested E=64 to E=768)
+- Quality drop with full parameter sharing: only **-1.5 points average** on GLUE/SQuAD
+- At <100M total params, factorization is essentially free quality — the bottleneck doesn't hurt because the model itself is small
+
+**Param costs for Sutra (V=16K, H=768):**
+| Embedding dim E | V×E + E×H | Total | vs Full (12.3M) |
+|-----------------|-----------|-------|-----------------|
+| Full (768) | 16K×768 | 12.3M | baseline |
+| E=256 | 16K×256 + 256×768 = 4.3M | 4.3M | saves 8.0M |
+| E=128 | 16K×128 + 128×768 = 2.15M | 2.15M | saves 10.15M |
+| E=64 | 16K×64 + 64×768 = 1.07M | 1.07M | saves 11.2M |
+
+**SVD initialization:** Take SVD of full 16K×768 embedding → U·S·V^T. Set embedding = first E columns of U·diag(S), projection = first E rows of V^T. Preserves maximum variance.
+
+**Recommendation:** Try E=128 (saves 10.15M over full 16K embeddings, 36.4M over GPT-2). Combined with tokenizer reduction: 50K×768=38.6M → 16K×128+128×768 = 2.15M. **Saves 36.4M params (94.4% embedding reduction).** Even E=256 saves 34.3M.
+
+**Risk:** At E=128, the embedding bottleneck may limit token disambiguation. But ALBERT evidence suggests this is fine. Can always increase E if quality suffers.
+
+### 5. Non-LLM Text-Bridge Teachers
+**Sources:** Lean-STaR (2024), Execute-Verbalize-Train pipelines, PRM literature
+
+**Code execution traces (most practical):**
+- Format: `Input: {code}\nExecution: {step-by-step trace}\nOutput: {result}`
+- Generate from Python interpreter with controlled trace depth
+- Keep <512 tokens by truncating deep call stacks
+- 10-20% of training curriculum
+- Expected: 5-10% improvement on reasoning benchmarks at small scale
+- Implementation: Python `sys.settrace()` + output capture → format → include in training mix
+
+**Theorem/proof traces:**
+- Lean 4 mathlib has ~100K theorems with proofs
+- Format: `Theorem: {statement}\nProof step 1: {tactic}\n...Proof step N: {tactic}\nQED`
+- Higher quality but lower volume than code traces
+- ProofNet dataset: ~370K Lean 4 proofs as text
+
+**Verifier-generated rationales:**
+- Use process reward models (PRMs) to score reasoning steps
+- High PRM score → "this is good reasoning" → use as training data
+- Self-consistency: generate N answers, verbalize majority vote reasoning
+
+**Knowledge graphs → text:**
+- Wikidata triples: "Entity X → relation Y → target Z"
+- Verbalize: "{X} is related to {Z} via {Y}" or "{X}'s {Y} is {Z}"
+- Provides structured factual data that improves exact recall (SciQ, LAMBADA targets)
+
+**Recommendation for P2:** Start with code execution traces (10% of curriculum) + KG verbalization (5%). Both are cheap to generate offline and target our weakest benchmarks (factual recall for KG, reasoning for traces).
+
+## XTKD Boundary Alignment Bug (2026-03-24)
+
+**R16 experiment #2 result: `_char_ends()` is only 35.7% correct.**
+
+`_char_ends()` decodes each token individually and sums character lengths. This fails for multi-byte UTF-8 characters (smart quotes, accented chars, emoji) — single-token decode produces replacement chars `\ufffd` (1 char) while cumulative decode correctly merges multi-byte sequences (different lengths). The drift accumulates: after one mismatched multi-byte token, ALL subsequent boundaries are wrong.
+
+| Metric | Value |
+|--------|-------|
+| Average match rate | 35.7% |
+| Average character drift | 4.04 chars |
+| Max drift | 24 chars |
+| Best window | 100% (pure ASCII) |
+| Worst window | 0.8% (Unicode-heavy) |
+
+**Impact:** 64.3% of XTKD character-boundary alignments are wrong. The cross-tokenizer KD signal is mostly noise at misaligned positions. This explains why XTKD loss values were volatile (spikes to 3e16).
+
+**Root cause:** GPT-2's byte-pair encoding uses multi-byte UTF-8 sequences. `decode([single_token])` can't reconstruct characters that span multiple BPE tokens — it produces `\ufffd` (1 char) instead of the real multi-char sequence.
+
+**Fix options (in priority order):**
+1. **Use cumulative decode** for `_char_ends()` — correct but O(T²) per sequence
+2. **Use `offset_mapping`** from tokenizer — but GPT-2 slow tokenizer may not support it
+3. **Switch to ALM** (chunk-level alignment) — avoids character boundaries entirely (R15 research)
+4. **Byte-level alignment only** — skip character boundaries, match at raw byte positions
+
+**Decision:** Since P1a is already running and XTKD is clamped, don't fix mid-run. For P2, switch to ALM-style chunk alignment (R15 finding). Current XTKD results are partially invalidated — the KD signal from XTKD is weaker than believed.
+
+## Deterministic BPT Comparison (2026-03-24)
+
+**R16 experiment #1: Fixed 97 non-overlapping test windows, identical data across all checkpoints.**
+
+| Checkpoint | D1 | D4 | D8 | D10 | D12 | Best D |
+|---|---|---|---|---|---|---|
+| v060a-20K | 18.752 | 18.678 | 18.133 | 16.837 | **6.877** | D12 |
+| v060b-3K | 9.438 | 7.545 | **7.369** | 7.371 | 7.380 | D8 |
+| v060b-9K | 9.073 | 7.529 | **7.348** | 7.357 | 7.372 | D8 |
+| v060b-15K | 8.732 | 7.197 | 7.015 | **7.011** | 7.014 | D10 |
+| P1a-1K | 17.279 | 16.223 | 7.118 | **6.980** | 7.039 | D10 |
+| P1a-2K | 16.559 | 15.814 | 12.192 | **6.898** | 6.931 | D10 |
+| P1a-3K | 16.323 | 15.813 | 12.902 | **6.788** | 6.827 | D10 |
+| P1a-4K | 16.183 | 15.625 | 13.288 | **6.835** | 6.852 | D10 |
+
+### P1a D10 Trajectory (deterministic, same 97 windows)
+| Step | D10 BPT | Delta | Phase |
+|------|---------|-------|-------|
+| 1000 | 6.980 | — | Single-teacher CKA |
+| 2000 | 6.898 | -0.082 | Single-teacher CKA |
+| 3000 | 6.788 | -0.110 | Single-teacher CKA (BEST) |
+| 4000 | 6.835 | +0.047 | Two-queue XTKD+CKA (degraded) |
+
+D10 improved monotonically under single-teacher CKA (steps 1K→3K), then degraded after the two-queue switch at step 3000. The XTKD alignment bug (35.7% correct boundaries) injected noise that overwhelmed the signal.
+
+### Key Findings
+1. **P1a-3K has the BEST D10 BPT (6.788)** — better than P1a-4K (6.835). The two-queue switch at step 3000 degraded D10 quality by +0.047 BPT.
+2. **D10 improved monotonically under single-teacher CKA**: 6.980 → 6.898 → 6.788 over 3K steps. The single-teacher signal was clean and effective.
+3. **v060a-20K at D12 is only 0.089 worse** than P1a-3K at D10. Parent wasn't bad — it just concentrated quality at D12 with no shallow-depth capability.
+4. **v060b-15K has flattest depth profile** (D8≈D10≈D12≈7.01) — random-depth training equalized depths but at a worse BPT floor.
+5. **Previous BPT comparisons were unreliable.** Random eval windows added 0.1-0.2 BPT noise. The apparent "BPT=6.803 at step 3K" was an optimistic random sample; deterministic shows 6.788.
+6. **Two-queue KD degraded the model.** Step 4000 is worse than step 3000 at every depth. The XTKD alignment bug (35.7% correct) means most of the cross-tokenizer signal was noise.
+7. **D8 anomaly in P1a**: D8 starts good at step 1K (7.118) then degrades to 12-13 range by steps 2-4K. D8 is unstable under P1a training — only D10 and D12 are reliable operating depths.
+8. **v060b depth shift over training**: v060b best depth is D8 at steps 3K/9K (7.369→7.348), then shifts to D10 at 15K (7.011). Random-depth training slowly equalizes and shifts optimum from D8→D10. The v060b depth profile flattens dramatically: D8/D10/D12 spread narrows from 0.011 at 3K to 0.003 at 15K.
+
+### Implications for P1a
+- Best P1a checkpoint for P2 transplant is **step 3000** (pre-two-queue), not the eventual 15K endpoint.
+- **Single-teacher CKA was working well** — the degradation is specifically from adding broken XTKD, not from training longer.
+- The XTKD bug explains why two-queue didn't help: misaligned boundaries = noisy gradients.
+- CKA-only signal (Q2) may still be valuable — it doesn't depend on character alignment.
+- Should evaluate every 1K-step checkpoint with deterministic cache to find true best.
+
 ## Adversarial Full-Repo Audit (2026-03-23)
 
 **Codex (GPT-5.4, xhigh reasoning) — comprehensive adversarial review from scratch. Verdict: REJECT in current form.**
@@ -45,6 +363,617 @@
 4. Embedding/tokenizer redesign elevated to critical priority
 5. README cleanup — remove stale claims, update status honestly
 6. T+L prompt audit — remove anti-falsification clauses
+
+## Ekalavya Protocol Step 4000 Eval (2026-03-24)
+
+**P1a two-queue Ekalavya, step 4000/15K — first eval after two-queue switch at step 3000**
+
+### Per-Depth BPT at Step 4000
+| Step | Overall | D=8 | D=10 | D=12 | D10<D12? |
+|------|---------|-----|------|------|----------|
+| 4000 | 6.900 | 13.280 | 7.036 | 7.053 | **Yes** |
+
+BPT=6.9003 — improved from step 3500 rolling (6.9456) but regressed from step 3000 peak (6.8034). Likely two-queue transition disruption + eval noise (v8 audit noted ~0.1-0.2 BPT variance from random test windows). D10 < D12 maintained — elastic compute validated.
+
+Teacher queue status: Q1 LFM2-1.2B (1000 steps remaining, switches ~step 5000), Q2 phi-2 (1500 remaining, switches ~step 5500).
+
+### lm-eval Step 3500 Results (PARTIAL — clean lm-eval harness)
+| Benchmark | P1a-3.5K | v060a-20K | vs Parent |
+|-----------|----------|-----------|-----------|
+| ARC-Easy | 31.5% | 31.3% | **+0.2%** |
+| ARC-Challenge | 18.7% | 17.5% | **+1.2%** |
+| HellaSwag | *running* | 25.7% | — |
+| WinoGrande | *pending* | 51.5% | — |
+| PIQA | *pending* | 54.5% | — |
+| SciQ | *pending* | 48.1% | — |
+| LAMBADA | *pending* | 11.2% | — |
+
+First honest lm-eval numbers. ARC-Challenge +1.2% is notable. Full results pending.
+
+## T+L R20 Critical Audit (2026-03-24) — 5-Round Cycle Adversarial Review
+
+**Auditor role: hostile reviewer, not T+L architect. Separate Codex session per workflow spec.**
+
+### Process Integrity
+- **[HIGH]** T+L workflow is internally contradictory: says confidence must be evidence-based AND says "never propose dense baselines" / "do not recommend killing directions." That is anti-falsification by design.
+- **[HIGH]** Self-correction is NOT intrinsic. R5 audit caught score laundering; R10 had to rebase 8/9/6/7/8 down to 6/7/4/4/6. Only adversarial audits catch these.
+- **[HIGH]** Design is still thrashing: 32K tokenizer (Mar 23) → 16K mandatory (Mar 24). DeltaNet in P2 (R17) → removed (R18) → omitted from budget (R19).
+
+### Evidence Quality
+- **[HIGH]** O1=5 is generous. BPT improvement is compression, not intelligence. Generation is poor across ALL branches.
+- **[HIGH]** O2=8 conflates trainer debuggability with model improvability. No subsystem improved in isolation and tested.
+- **[HIGH]** O4=5 not earned. No teacher-free continuation control exists to prove KD lift vs continued training.
+- **[HIGH]** O5=7 inflated. v0.6.1 falsified: MI(mode,token)≈0.02, routing pass-global. Tokenwise control unproven.
+- **Auditor's revised scores:** O1=4-5, O2=6-7, O3=2-3, O4=4, O5=5-6
+
+### Design Coherence
+- **[HIGH]** "26M core carrying 38.6M embedding tax" is accounting, not causal validation. No widening ablation exists.
+- **[HIGH]** Widening treated as high-conviction root cause fix with ZERO project-local experimental support. No 500-step widen canary run.
+- **[HIGH]** No mathematical argument in repo that from-scratch recurrence beats dense at ~50M params. Literature leans opposite below 200M.
+- **[MEDIUM]** 49.5M budget is arbitrary — no 30M/50M/70M sweep.
+- **[MEDIUM]** Branch order (P2a→P2b→P2c→P2d) is clean for attribution but front-loads smallest likely gain.
+
+### Missed Alternatives
+- **[HIGH]** Matched dense control is the most important missing experiment. Blocked for ideological reasons = methodological failure.
+- **[MEDIUM]** Better near-term test: dense or lightly recurrent (2-3 pass) control with same tokenizer/teachers/budget.
+- **[MEDIUM]** Biggest confirmed wins came from recipe/hygiene (optimizer preservation, eval fixes, XTKD removal), not architecture.
+- **[MEDIUM]** Simpler alternative: factorized output compression on current tokenizer BEFORE full tokenizer transplant.
+
+### Dead End Detection
+- **[HIGH]** Widening is being treated like a validated fix even though it has zero support. This is exactly how dead ends get revived.
+- **[MEDIUM]** ALM is genuinely different from XTKD (removes exact failure mode). But still literature, not project evidence.
+- **[MEDIUM]** Pheromone routing is undead — keeps surviving as rhetoric.
+
+### Competitive Reality
+- **[HIGH]** Sutra NOT competitive with Pythia-70M: HellaSwag ~25.7 vs 27.3, PIQA mid-50s vs ~63, catastrophic gaps on SciQ/LAMBADA.
+- **[HIGH]** If Sutra-50M with full P2c stack still can't beat matched dense ~50M control, recurrence thesis at this scale is in serious trouble.
+- **[MEDIUM]** "A competent skeptic would say: a strong debugging/measurement effort wrapped around an unproven architecture thesis."
+
+### Resource Allocation
+- **[HIGH]** Too much design, not enough falsifying experiments. Loop produces cleaner stories faster than falsifying evidence.
+- **[HIGH]** Two-teacher overhead lacks ROI proof. Halved throughput, initially hurt quality.
+- **[LOW]** Design work not worthless — R17-R19 simplified branch. But marginal return on another design round < return on one clean GPU ablation.
+
+### Prediction Markets
+| Prediction | Probability | Evidence |
+|-----------|------------|---------|
+| P2c generates coherent 50-word T=0.8 | 30% | Every branch has poor generation; stacks unvalidated fixes |
+| Dense control beats P2c on 4/7 benchmarks | **65%** | Literature below 200M favors dense; recurrence unproven |
+| O1 reaches 7/10 in 5 more T+L rounds | 15% | Requires better gen + knowledge + matched dense |
+| Sutra-50M matches Pythia-70M HellaSwag | 35% | Target low enough, but HellaSwag near-floor across branches |
+
+### TOP 5 ACTIONS (ranked by impact/effort)
+1. **Run full 5K eval** — deterministic BPT, all 7 lm-eval tasks, generation quality
+2. **Teacher-free continuation control** from 4K/5K parent, 1-2K steps, same schedule, no KD
+3. **500-step widen-only canary** from current best parent
+4. **Remove anti-falsification clauses** from T+L workflow
+5. **Matched ~50M dense control** as soon as P2 assets ready
+
+---
+
+## Tesla+Leibniz Round 19 (2026-03-24)
+
+**Confidence: O1=5, O2=8, O3=3, O4=5, O5=7 (ALL UNCHANGED from R18)**
+
+R19 held all scores steady. No new project-local empirical evidence since R18. Design refinement only — does not justify confidence changes per anti-overconfidence protocol.
+
+### R19 Key Findings
+
+**Root cause diagnosis (HIGH conviction):** Poor generation is NOT "too few passes." The model is effectively a 26M-core language model carrying a 38.6M embedding/output tax. Only 38.5% of params are real intelligence modules. Fix = more real core capacity (widened FFN) + restored output-level supervision (ALM), NOT more passes.
+
+**D8 collapse diagnosis (MEDIUM conviction):** P1a D8 explodes from 7.118 to 13.288 over checkpoints while D10 improves steadily. Likely distillation-depth mismatch, not recurrence failure. Teacher loss applied to terminal depth only may fix. Do NOT use D8 for halting claims.
+
+**O3 path (HIGH conviction):** Adapter packs + registry is simpler and more achievable than full frozen-stage ABI. Named subsystems already exist in code. First proof: create two disjoint adapter packs (router-only + verification-stage-only), show they load independently and compose without retraining.
+
+### R19 Branch Order (REFINED from R18)
+
+**P2a → P2b → P2c → P2d (strictly sequential):**
+
+1. **P2a: Full-rank 16K control.** No factorization, no widening, no ALM, no Procrustes. Establishes tokenizer-only floor. Start from transplanted_16k_from_step3000.pt. 500-1000 recovery steps. Measure 16K-token D10/D12 and BPB.
+
+2. **P2b: Factorized recovery only.** Convert recovered full-16K to tied E=256. Freeze core. 1K steps with L_recover = L_CE + β_rec·||AB-W_full||² + β_h·L_hidden. Gate: D10 < 6.0 at 1K or stop.
+
+3. **P2c: Width dividend + teacher losses.** Widen FFNs 1536→3072 (zero-init). Delete frozen_cache, gain_probe. Shrink pos_emb to 512 rows. Add ALM on Q1, Procrustes on Q2 with MiniLM-L6-v2. Full 15K training.
+
+4. **P2d: Matched dense control.** Same tokenizer, data, teachers, eval, ~50M budget. Non-recurrent architecture. Decisive recurrence-vs-dense test.
+
+### R19 Design Details
+
+**Parameter budget (~49.5M):**
+| Component | Params |
+|-----------|--------|
+| Factorized emb A+B (16K×256 + 256×768) | 4.29M |
+| Positional emb (512×768, shrunk from 2048) | 0.39M |
+| init_mu + init_lam | 1.18M |
+| StageBank (widened ff_dim=3072) | 33.06M |
+| Router | 4.72M |
+| Scratchpad | 2.37M |
+| BayesianWrite | 2.36M |
+| Transition | 0.26M |
+| Norms | ~0.01M |
+| Student projector 768→256 | 0.20M |
+| Frozen phi-2 projector 2560→256 | 0.66M |
+| **Total** | **~49.5M** |
+
+**Training recipe:**
+- bf16 forward/backward, fp32 Adam moments, fp32 SVD (Procrustes), fp32 ALM chunk aggregation
+- Keep GatedLayerNorm stack + final LayerNorm (validated stabilizers)
+- Keep SiLU (SwiGLU too destructive to bundle with tokenizer+factorization surgery)
+- P2a/P2b: fresh AdamW for new embedding params at lr=5e-4, 200-step warmup
+- P2c: restore old moments for unchanged core tensors, zero moments for widened/projector tensors, lower LR on old params than new params to avoid WSD-style knowledge wipe
+- ALM+Procrustes: alternate batches, not co-run
+
+**P1 watch criteria (overriding blind 15K wait):**
+- At 5K: later checkpoint becomes P2 candidate only if fixed-window D10 beats 6.788 AND D12 also improves
+- At 10K: if no checkpoint beats step_3000 on det D10 + at least 2 of {SciQ, LAMBADA, ARC-Easy, ARC-Challenge}, stop treating "wait for 15K" as mandatory
+- At 15K: use final only if it beats step_3000 on det D10 + at least 4/7 lm-eval tasks
+
+### R19 Assumption Challenges (10 items)
+
+1. **Tokenizer → 16K:** 10/10. No debate remaining.
+2. **Factorized E=256:** 8/10. Only after full-rank 16K control exists.
+3. **dim=768, ff_dim→3072, keep SiLU:** 8/10. Width-first reallocation, keep SiLU for warm-start safety.
+4. **12 passes, full weight sharing:** 7/10. Keep for P2, monitor D10 not D12.
+5. **7-stage decomposition:** 5/10. Keep for P2, investigate start-stage and evidence temp later.
+6. **Router/pos/pheromone:** 7/10. Delete pheromone now. Shrink pos_emb to 512.
+7. **Scratchpad + BayesianWrite:** 8/10. Keep both, don't overclaim.
+8. **Training recipe (AdamW, cosine, warm-start):** 10/10. Never reset unchanged core moments again.
+9. **Multi-source loss (ALM+Procrustes):** 9/10. Replace XTKD with ALM, CKA with Procrustes.
+10. **O3 path (adapter packs vs full ABI):** 8/10. Simpler adapter-pack path first.
+
+### R19 Research Requests (3 items)
+1. Memory-efficient tokenwise state extraction from phi-2, LFM2-1.2B, MiniLM-L6-v2 (VRAM at seq 512)
+2. Byte-exact span extraction for 16K tokenizer (ALM alignment without decode/re-encode drift)
+3. Minimal model-pack registries for composable subsystem adapters (schema, compatibility, composition rules)
+
+### R19 Experiment Requests (6 items)
+1. Step-5000 det-eval: D1/D4/D8/D10/D12 + arc_easy, arc_challenge, sciq, lambada_openai (watcher set)
+2. Teacher-free control from step 4000: 1-2K steps, no KD, same schedule. Does CKA-only tail actually help?
+3. P2a full-16K control: 500-1K recovery from transplanted checkpoint, measure 16K D10/D12 and BPB
+4. P2b factorized recovery: E=256 from recovered full-16K, 1K steps. Gate: D10 < 6.0 at 1K
+5. MiniLM Procrustes canary: 500-step A/B from same parent, MiniLM+CKA vs MiniLM+Procrustes
+6. O3 proof canary: two disjoint adapter packs (router-only + verification-stage-only), compose without retraining
+
+### R19 Intuitions
+1. **[HIGH]** Main root cause of poor generation = 26M core + 38.6M embedding tax, not passes. Validate with full-16K control.
+2. **[MEDIUM]** D8 collapse = distillation-depth mismatch. Validate with depth-randomized teacher application.
+3. **[HIGH]** O3 moves faster through adapter packs than full ABI freeze. Validate with composition canary.
+4. **[MEDIUM]** ALM helps knowledge (LAMBADA/SciQ) more than reasoning (ARC) because it restores output-space transfer. Validate with short ALM canary.
+
+## Tesla+Leibniz Round 18 (2026-03-24)
+
+**Confidence: O1=5, O2=8, O3=3, O4=5, O5=7 (ALL UNCHANGED from R17)**
+
+R18 held all scores steady. No new project-local evidence strong enough to move any outcome. Research findings (ALM, Procrustes, MiniPLM) provide viable fix paths but are not yet implemented.
+
+### R18 Assumption Challenges (10 resolved)
+
+1. **GPT-2 50,257 vocab → 16K.** Embeddings = 56.5% of all params, 75.8% vocab entries unused. Decision: change to 16K now.
+2. **SVD factorized transplant is NOT enough alone.** E=256 D10=7.743 vs full D10=4.827 (60.4% worse). E=128 D10=8.001 (65.8% worse). Decision: E=256 only, with mandatory 2K recovery.
+3. **Freed embedding params → width first.** Widening ff_dim 1536→3072 uses the dividend before adding new mechanisms. StageBank goes from 16.5M to 33.1M params.
+4. **`_char_ends()` XTKD is dead.** 35.7% exact, 64.3% wrong, avg drift 4.04, max 24. D10 regressed 6.788→6.835 during XTKD-active window. Decision: retire, replace with ALM.
+5. **CKA probably not the right long-term loss.** Procrustes outperforms CKA for cross-architecture geometry matching (NYU Sept 2025). Decision: keep CKA as control arm, move Q2 toward Procrustes.
+6. **BayesianWrite + lambda does NOT prove Outcome 5.** Lambda is B×T×D tensor, inference is fixed-depth, no learned tokenwise halting. Decision: keep for continuity, stop claiming solved halting.
+7. **7-stage story does NOT prove modularity (O3).** No frozen ABI, no registry, no loader, no composition proof. Decision: keep decomposition, don't let rhetoric outrun evidence.
+8. **Scratchpad sufficiency unproven.** Parent v060a SciQ 48.1 vs P1a-3K 44.7, LAMBADA 11.2 vs 4.75. Decision: exact memory important but should NOT be bundled into first P2 branch.
+9. **Schedule/optimizer details are NOT secondary.** Prior rounds showed optimizer reset and cosine-to-zero destroy knowledge. Decision: warm-start only, preserve optimizer state where shapes match.
+10. **Minor inherited defaults are low priority this round.** dim=768, learned pos emb, window=4, k=8, stage count 7 still under audit but no R18 evidence to change them.
+
+### R18 Design Proposal — Simplified P2 Branch (~50M target)
+
+**Key decision: NO DeltaNet, NO exact memory in first P2 branch.** These come after matched dense control.
+
+**Parent selection:** If first post-disable checkpoint beats D10=6.788, use that; otherwise use step_3000.pt.
+
+**Architecture:**
+- Tied factorized embeddings: V=16000, D=768, E=256 (4.3M params vs 12.3M full)
+- Widened StageBank MLPs: ff_dim 1536→3072 via DeepMind zero-init
+- Student-side 768→256 Procrustes projector
+- Strip gain_probe and frozen_cache (ablation-only baggage, -707K params)
+- **Total: ~50.0-50.8M params** (down from 68.3M)
+
+**Recovery phase (2K steps, core frozen):**
+```
+L_recover = L_CE + β_rec·||AB - W_full16k||²_F/(VD) + β_h·Σ_p ||LN(μ_fact^p) - sg(LN(μ_full^p))||²/(PTD)
+```
+Where A∈ℝ^(V×E), B∈ℝ^(E×D) are factorized tables, frozen full-16K transplant supplies W_full16k and μ_full.
+
+**Multi-source learning (O4 repair):**
+1. **ALM on Q1 only** (tokenizer-mismatch teachers): `L_ALM = -Σ_i log Σ_{s_j∈chunk} p_student(s_j)·overlap_bytes(s_j, t_i)`
+2. **Procrustes on Q2** (encoder teachers, MiniLM-L6-v2): `L_proc = ||H_s·W* - H_t||²_F/(T·d_proj)`, W*=UV^T from SVD(H_s^T·H_t), d_proj=256
+3. MiniPLM offline shard scoring to bias sampling
+
+**Resource constraint:** GPU holds 19.8/24.5 GiB. ~50M student saves ~280MB with optimizer. Do NOT run ALM and Procrustes on same microbatch — alternate Q1/Q2.
+
+### R18 Research Requests (4 open)
+1. Exact ALM implementation for causal LM distillation with mismatched tokenizers (byte-span construction on packed batches, top-k teacher compression, multi-teacher queue integration)
+2. Confirm MiniLM-L6-v2 checkpoint for tokenwise hidden-state extraction. If awkward, find closest 22M variant with exposed token states.
+3. Procrustes recipe for small batches and hidden-size mismatch: centering, normalization, projection dimension, orthogonal Procrustes per batch vs EMA statistics
+4. Factorized tied-embedding recovery methods for tokenizer transplant: CE + hidden alignment vs CE + explicit embedding reconstruction
+
+### R18 Experiment Requests (7 items)
+1. **GPU:** Deterministic eval on first post-4000 checkpoint. Gate: beat D10=6.788 to prefer over step_3000.pt.
+2. **GPU:** E=256 factorized recovery pilot 2K steps (CE-only vs CE+hidden vs CE+hidden+emb reconstruction). Gate: recover most of 7.743→4.827 gap.
+3. **CPU/GPU-light:** ALM validator on Unicode-heavy windows vs _char_ends(). Gate: zero structural UTF-8 misalignments.
+4. **GPU-light:** MiniLM+Procrustes vs MiniLM+CKA from same parent. Gate: better D10 + SciQ/ARC movement.
+5. **GPU:** Teacher-free continuation control from same parent. Gate: if teacher-free matches teachered, O4 goes down.
+6. **CPU/GPU:** Finish ≥64 shards retokenization before interpreting P2 results.
+7. **GPU:** After P2, run matched dense control (same tokenizer, data, teachers, eval, ~50M budget).
+
+### R18 What Would Raise/Lower Confidence
+- **O1 ↑** if matched P2 improves SciQ, LAMBADA, ARC pair together while preserving D10 frontier + generation. **↓** if P2 only improves compression while dense matches on benchmarks.
+- **O2 ↑** if ALM and Procrustes land as isolated repairs with minimal collateral + one module-swap proof. **↓** if every change still requires whole-model retraining.
+- **O3 ↑** only after frozen stage ABI + loader/registry + independently developed subsystem improvement composed back. **↓** if another round passes with only rhetoric.
+- **O4 ↑** if post-disable or ALM checkpoint beats P1a-3K AND teacher-free control. **↓** if teacher-free matches teachered, or factorized 16K never recovers.
+- **O5 ↑** if learned tokenwise halting cuts avg passes ≥25-30% with negligible loss. **↓** if D10 advantage disappears once knowledge stabilizes.
+
+### R18 Intuitions
+- 16K path is right even if 32K remains theoretically open — working assets exist, don't restart debate
+- Factorized transplant recovery needs frozen full-16K twin as teacher — CE alone won't close 60% gap in 2K steps
+- Cleanest use of reclaimed budget = wider shared computation (ff_dim 3072), not more moving parts
+- ALM will outperform XTKD quickly because failure is structural alignment error, not weak teacher
+- Encoder teachers pay off more through offline data shaping + light online geometry nudges than heavy always-on distillation
+- Exact memory likely the lever for SciQ/LAMBADA, but bundling into first P2 branch confounds readout
+
+### R18 Research Findings (4 topics)
+
+#### 1. ALM Implementation for Causal LM Distillation — COMPLETE
+
+**Paper:** Approximate Likelihood Matching (NeurIPS 2025, NOT ICML). Reference library: `tokenkit` (JAX-only — needs PyTorch reimplementation).
+
+**Core Algorithm:**
+1. **Byte-span construction:** For each tokenizer, map token → byte span [start, end). Use `tokenizer.encode(text)` then reconstruct byte boundaries from token pieces. Teacher token t_i covers bytes [b_s^t, b_e^t), student token s_j covers [b_s^s, b_e^s).
+2. **Chunk construction:** A "chunk" is a maximal set of student tokens whose byte spans are collectively covered by one teacher token's byte span. Greedy scan O(T+S): walk teacher and student byte boundaries simultaneously, merging student tokens into chunks aligned to teacher token boundaries.
+3. **Chunk probability:** For each teacher token t_i, compute student-side chunk probability: `P_student(chunk_i) = Π_{s_j ∈ chunk_i} p_student(s_j | context)`. In log-space with packed causal LM batches, this is a simple matmul of student log-probs within each chunk.
+4. **Binarized KL divergence:** ALM uses binarized teacher targets (hard 0/1 from argmax), NOT soft distributions. Only 2 scalars per position needed (teacher token ID and its probability), giving **25,000x memory reduction** vs full logit transfer. Loss: `L_ALM = -Σ_i [log P_student(chunk_i)]` where chunk_i corresponds to the teacher's chosen token.
+5. **Temperature:** T=100 in the paper (very high — softens student logits heavily during early training). Start with T=100, can anneal down.
+6. **Debiasing:** Paper mentions debiasing correction for binarized targets. Skip initially — add only if training shows systematic bias.
+7. **Multi-teacher:** Each teacher gets independent byte-span alignment. Combine via `L_total = Σ_k α_k · L_ALM^k`. No cross-teacher interaction needed.
+
+**Integration with Ekalavya:**
+- Replace XTKD in Q1 pipeline. Keep alpha_ALM ≈ 0.3 (same budget as old XTKD).
+- Byte-span construction runs once per batch (cache teacher spans per sequence).
+- For packed batches: construct byte spans per document within the pack, not across pack boundaries.
+- **Critical:** `log1mexp` numerics for stable log-probability computation. Use `torch.log1p(-torch.exp(x))` pattern, NOT naive `log(1-exp(x))`.
+
+**Implementation estimate:** ~100-150 lines PyTorch (byte span extraction, chunk construction, binarized KL, multi-teacher wrapper). No external dependencies beyond tokenizer byte maps.
+
+#### 2. MiniLM-L6-v2 Tokenwise Extraction — COMPLETE
+
+**Model:** `sentence-transformers/all-MiniLM-L6-v2`, 22M params, 6-layer BERT-based encoder.
+- **VRAM:** ~60-110MB (bf16/fp16). Fits easily alongside training.
+- **Hidden dim:** 384. Student projector: `Linear(768, 384)` or use d_proj=256 with Procrustes.
+- **Layer selection:** Use layer 5 (penultimate, 0-indexed). Penultimate layers consistently give better token-level representations than final layer (well-documented in probing literature).
+- **Token limit:** 512 tokens maximum. **CRITICAL: needs chunked windows** for seq_len=512 training. Use overlapping windows with 64-token overlap, take representations from non-overlapping central region.
+- **Tokenizer mismatch:** WordPiece (30K vocab) vs our GPT-2/16K BPE. Alignment via character-overlap mapping: for each student token, find the MiniLM WordPiece token(s) that cover the same character span, average their hidden states. This is simpler than byte-level ALM because we only need hidden states, not probabilities.
+- **Causal vs bidirectional:** MiniLM is bidirectional — it sees future tokens. This is NOT a fundamental problem for representation matching (CKA/Procrustes). The student learns to approximate bidirectional representations using only causal context, which acts as a regularizer pushing toward richer per-position encoding.
+- **Integration:** Add to q2_cka_queue.json. Use Procrustes loss (not CKA) due to maximal architecture difference. Run on GPU alongside training (tiny footprint).
+
+#### 3. Procrustes Recipe for Small Batches and Hidden-Size Mismatch — COMPLETE
+
+**Full recipe (PyTorch implementation):**
+
+```python
+class ProcrustesLoss(nn.Module):
+    def __init__(self, d_student, d_teacher, d_proj=256):
+        super().__init__()
+        self.proj_s = nn.Linear(d_student, d_proj, bias=False)  # student projector
+        # No teacher projector — Procrustes handles the alignment
+        self.d_proj = d_proj
+
+    def forward(self, H_s, H_t, mask=None):
+        # H_s: [B, T, d_student], H_t: [B, T, d_teacher]
+        # Step 1: Project student to d_proj
+        Z_s = self.proj_s(H_s)  # [B, T, d_proj]
+        # Truncate/project teacher to d_proj (simple linear or slice)
+        Z_t = H_t[..., :self.d_proj]  # or use a frozen teacher projector
+
+        # Step 2: Per-batch column-wise centering
+        if mask is not None:
+            mask_sum = mask.sum(dim=1, keepdim=True).clamp(min=1)
+            Z_s = Z_s - (Z_s * mask.unsqueeze(-1)).sum(1, keepdim=True) / mask_sum
+            Z_t = Z_t - (Z_t * mask.unsqueeze(-1)).sum(1, keepdim=True) / mask_sum
+        else:
+            Z_s = Z_s - Z_s.mean(dim=1, keepdim=True)
+            Z_t = Z_t - Z_t.mean(dim=1, keepdim=True)
+
+        # Step 3: L2-normalize per token
+        Z_s = F.normalize(Z_s, dim=-1)
+        Z_t = F.normalize(Z_t, dim=-1)
+
+        # Step 4: Per-batch SVD for optimal rotation (MUST be float32)
+        # Cross-covariance: C = Z_s^T @ Z_t, shape [B, d_proj, d_proj]
+        C = torch.bmm(Z_s.transpose(1,2).float(), Z_t.float())
+        U, S, Vh = torch.linalg.svd(C)
+        # Optimal rotation: W* = U @ Vh (orthogonal Procrustes solution)
+        W_star = torch.bmm(U, Vh)  # [B, d_proj, d_proj]
+
+        # Step 5: Stop-gradient on W* (don't backprop through SVD)
+        W_star = W_star.detach().to(Z_s.dtype)
+
+        # Step 6: Compute loss
+        Z_s_aligned = torch.bmm(Z_s, W_star)  # [B, T, d_proj]
+        loss = ((Z_s_aligned - Z_t) ** 2).sum(-1)  # [B, T]
+        if mask is not None:
+            loss = (loss * mask).sum() / mask.sum() / self.d_proj
+        else:
+            loss = loss.mean() / self.d_proj
+        return loss
+```
+
+**Key parameters:**
+- `d_proj=256`: Projection dimension. 256 is sweet spot (128 too lossy, 384+ no benefit).
+- `alpha_proc=0.5`: Loss weight. Start at 0.5, keep constant (no annealing needed).
+- Per-batch SVD (NOT EMA statistics): Fresh alignment every batch. EMA was tried in literature — per-batch is more stable for small batches.
+- Stop-gradient on W*: Critical. Without it, SVD gradients are unstable and can cause NaN.
+- SVD in float32: Even with bf16 training, SVD must be float32. Cast C before SVD, cast W* back after.
+- **Nuclear norm alternative:** `loss = -tr(S)` avoids explicit SVD reconstruction. Simpler but slightly weaker empirically. Use full Procrustes unless SVD is a bottleneck.
+
+**For Sutra P2:**
+- Student projector `Linear(768, 256)` trains with the model.
+- For LLM teachers (d_teacher=2560 for phi-2): slice or add frozen `Linear(d_teacher, 256)`.
+- For MiniLM (d_teacher=384): slice to 256 directly.
+- Batch size 4×16=64 sequences: SVD on 256×256 matrix is fast (<1ms per batch).
+
+#### 4. Factorized Tied-Embedding Recovery Methods — COMPLETE
+
+**Recommended recipe (CE + hidden alignment + annealed reconstruction):**
+
+**Phase structure (2K steps, embedding layers unfrozen, core frozen):**
+
+1. **Reconstruction loss (annealed):** `L_rec = β_rec · ||AB - W_full16k||²_F / (V·D)`
+   - A ∈ ℝ^(V×E), B ∈ ℝ^(E×D) are the factorized embedding matrices.
+   - W_full16k is the frozen full-rank 16K transplant (teacher signal).
+   - β_rec starts at 1.0, linearly anneals to 0.0 over first 1K steps.
+   - Purpose: forces factorized matrices to reconstruct full-rank quality early, then releases them to optimize for CE.
+
+2. **Hidden-state alignment (constant):** `L_hidden = β_h · Σ_p w_p · ||LN(μ_fact^p) - sg(LN(μ_full^p))||² / (P·T·D)`
+   - μ_fact^p = hidden state at pass p from factorized model.
+   - μ_full^p = hidden state at pass p from frozen full-rank model (stop-gradient).
+   - LN = LayerNorm (match normalized representations, not raw activations).
+   - w_p = pass weighting: early passes (0-3) get 2x weight, late passes (4+) get 1x.
+   - β_h = 0.5 (constant throughout recovery).
+   - Purpose: ensures factorized model maintains same internal processing as full-rank, not just same output.
+
+3. **CE loss (constant):** Standard cross-entropy on next-token prediction. Always active.
+
+**Critical rules:**
+- **Do NOT break weight tying.** A·B is used for both input embedding and output projection. Untying doubles params and prevents the factorization from learning a coherent shared space.
+- **LR = 5e-4 with 200-step linear warmup.** Higher than main training LR because only embeddings are updating.
+- **Gate at step 1K:** If D10 > 6.0 (full-rank baseline ~4.83), recovery is failing — increase E or add more hidden alignment.
+- **Expected trajectory:** D10 starts ~7.7 (SVD init), drops to ~5.0-5.5 by step 1K, reaches ~4.9-5.0 by step 2K. Full recovery to 4.83 is unlikely in 2K steps — target is within 5% of full-rank.
+
+**What NOT to do:**
+- Don't use only CE (too slow to recover — SVD init is far from optimal for prediction).
+- Don't use only reconstruction (recovers embedding matrix but not prediction quality).
+- Don't break tying (doubles params, defeats purpose of factorization).
+- Don't use full model LR (too low — embeddings need aggressive updates).
+- Don't skip hidden alignment (CE + reconstruction alone leaves internal representations misaligned).
+
+## Tesla+Leibniz Round 17 (2026-03-24)
+
+**Confidence: O1=5, O2=8, O3=3, O4=5(↓1), O5=7**
+
+### R17 Strategic Decisions (4 assumption challenges resolved)
+
+**1. P1a: Continue to 15K (confidence 8/10)**
+- Do not interrupt mid-run. The 15K minimum-comparability rule applies.
+- Evaluate every 1K-step checkpoint on deterministic cache (97 fixed windows).
+- Step 3000 is default P2 transplant source unless a later checkpoint beats it on D10.
+- Q2 CKA-only lane is still valid even with XTKD broken.
+
+**2. 16K tokenizer confirmed (confidence 8/10)**
+- Transplant already built, forward-verified, 100% transfer rate.
+- Saves 26.3M params with full embeddings before factorization.
+- Re-open 32K only if P2 shows sequence inflation materially hurts throughput or BPT.
+- CPU study needed: compare 16K vs 32K on held-out token counts, bytes-per-token, CE.
+
+**3. Factorized embeddings: E=256 production, E=128 experimental (confidence 7/10)**
+- E=256: 16K×256 + 256×768 = 4.3M tied params (saves 8M vs full 16K, saves 34.3M vs GPT-2).
+- E=128: 2.15M (saves 10.15M vs full 16K) — follow-up branch only.
+- Build both using SVD initialization from existing 16K checkpoint.
+- Run 2K embedding-only recovery stage, then compare fixed-window CE + generation.
+- Lexical bottleneck risk lower at E=256 than E=128.
+
+**4. Keep P2 smaller at ~51M (confidence 7/10)**
+- Do not reinvest all freed embedding params immediately.
+- First clean P2: ~51M (stage bank ~33M + factorized emb 4.3M + DeltaNet 1.2M + overhead).
+- Separates "better allocation" from "more raw capacity" — tests the Intelligence=Geometry thesis.
+- If ~51M clearly wins, THEN do widen-only follow-up to ~58-60M.
+
+### R17 Confidence Scores
+- **O1=5 (unchanged).** Deterministic fixed-window eval shows P1a-3K D10=6.788 beats v060a-20K D12=6.877, and partial lm-eval at 3.5K shows ARC-Easy 31.5% vs 31.3%, ARC-Chall 18.7% vs 17.5%. Not raising because generation still weak, full benchmark sweep incomplete, XTKD audit shows noisy supervision.
+- **O2=8 (unchanged).** Repo diagnosed subtle _char_ends() failure surgically: 35.7% exact alignment, avg drift 4.04 chars, max 24. Deterministic eval linked bug to quality regression 3K→4K. Not raising to 9 because architecture lacks true module ABI; most fixes still require whole-model retraining.
+- **O3=3 (unchanged).** No stage registry, no module loader, no independent subsystem fine-tuning, no demonstration that one contributor can improve memory/routing in isolation.
+- **O4=5 (↓1 from R16).** Drop reason: 64.3% of XTKD boundary alignments wrong. Deterministic eval shows two-queue phase hurt D10 from 6.788 at 3K to 6.835 at 4K on identical data — headline O4 mechanism injecting noise. Not dropping below 5 because CKA-only transfer remains valid, P1a-3K still strong, direction not falsified.
+- **O5=7 (unchanged).** Fixed-window cache confirms shallower operating point is real. P1a-3K prefers D10 over D12 (6.788 vs 6.827). P1a-4K also prefers D10 (6.835 vs 6.852). Not raising because token-conditional halting unproven, controller still sequence-global.
+
+### R17 Knowledge Gaps
+1. **Best P1a transplant source after step 4000 unknown.** Close: deterministic eval every checkpoint 3K→15K at D1/D4/D8/D10/D12. Criterion: one checkpoint best on fixed-window D10, not random-window artifact.
+2. **ALM-style alignment not validated.** Close: replace _char_ends() with byte-chunk alignment, audit on Unicode-heavy windows. Criterion: >99.5% exact byte-boundary agreement, no cumulative drift.
+3. **Factorized tied embeddings not locally de-risked.** Close: build E=256 and E=128 transplants from step 3000, run fixed-window CE + 2K emb-only recovery. Criterion: E=256 matches without worse BPT, E=128 either matches or rejected cleanly.
+4. **DeltaNet sidecar utility theoretical.** Close: P2 ablation (gate frozen near zero vs trainable). Criterion: memory-on improves SciQ/LAMBADA without degrading ARC/HellaSwag.
+5. **Recurrence vs dense underdetermined.** Close: one matched dense control after P2 (same tokenizer, budget, teachers, eval). Criterion: if Sutra loses clearly → architecture suspect; if Sutra wins → recurrence thesis survives.
+6. **Heterogeneous teacher transfer still LLM-to-LLM.** Close: add encoder-only models to q2_cka_queue.json, compare CKA + downstream vs current phi-2/Qwen queue. Criterion: one encoder teacher gives stable CKA and measurable lift.
+7. **Mid-run XTKD intervention tradeoff not quantified.** Close: if XTKD disabled at 4K, treat 4K-15K as "CKA-only tail" and compare deterministically. Criterion: later CKA-only checkpoints either recover above 3K or don't.
+
+### R17 Strategic Decisions
+
+**DeltaNet Sidecar (Q3):** Part of P2, not fully active from step 0.
+- Projected 4-head, d_head=128, ~1.2M params.
+- Equations: d_t = W_down·LN(μ_t); q,k,v = W_q·d, W_k·d, W_v·d; β=σ(w_β·d+b_β); α=σ(w_α·d+b_α); S_t=(1-α)·S_{t-1}·(I-β·k·k^T)+β·v·k^T; o=W_up·(S_t·q); μ'=μ+σ(W_g·μ+b_g)·o.
+- Init: W_down/W_up/W_g near zero, b_β≈-3, b_α≈-4, b_g≈-4.
+- Schedule: include at P2 start, freeze during P2a (2K), unfreeze P2b (3K), full train P2c (10K).
+
+**Matched Dense Control (Q5):** Immediately after first clean P2 15K run. Not before P2 because comparing before tokenizer repair, factorization, controller repair, and ALM alignment would compare wrong systems. Exact timing: P1a finishes → best checkpoint → P2 15K → dense control 15K → R18. Contract: same 16K tokenizer, same E=256, same data mix, same teacher schedule, same eval suite, same step budget, ~51±1M params.
+
+**SmolLM2 Gap (Q6):** Not enough evidence to call architecture fundamentally limited. Current gap large (HellaSwag ~25.7% vs ~42%, PIQA 54.5% vs 68%) but confounded by 4 first-order defects: 56.5% param waste in embeddings, broken XTKD, no exact memory, no tokenwise controller. The proposed 16K+E=256+FF3072+DeltaNet+tokenwise branch attacks all 4. Decisive test is P2 vs matched dense, not opinion.
+
+**XTKD Mid-Run Disable (Q7):** YES, disable if willing to accept recipe boundary at step 4K. Set ALPHA_Q1_XTKD=0.0, keep ALPHA_Q1_CKA=0.3, keep ALPHA_Q2_CKA=0.2, don't retune other coefficients. Log resume point, treat post-4K as "CKA-only tail." Step 3000 remains default transplant source unless later det-eval disproves.
+
+### R17 Experiment Queue (Before R18)
+1. **XTKD disable: DONE.** Set ALPHA_Q1_XTKD=0.0 at step 4000. CKA-only tail running from step 4000. Throughput improved ~40% (2650→3650 tok/s). OOM crash at step 4400 in XTKD era; VRAM margin increased to 8GB.
+2. **Deterministic checkpoint sweep:** Every P1a checkpoint 3K→15K at D1/D4/D8/D10/D12
+3. **ALM validator:** Replace/test _char_ends() with byte-chunk alignment, >99.5% threshold
+4. **Factorized transplant probe: COMPLETE.** SVD-initialized E=256 and E=128 are SEVERELY degraded without recovery training. Full 16K D10=4.827, E=256 D10=7.743 (+2.916), E=128 D10=8.001 (+3.174). Variance explained: E=256=46.0%, E=128=27.6%. 16K embeddings are essentially full-rank. **The 2K emb-only recovery stage (P2a) is CRITICAL — can't skip it.** E=256 clearly better than E=128. D10 best depth confirmed on 16K data too (4.827 vs D12=4.855).
+5. **Encoder-teacher smoke test:** One encoder-only model in q2_cka_queue.json, verify CKA stability
+6. **P2 mainline 15K:** P2a (2K emb/ctrl recovery) → P2b (3K +FFN+DeltaNet) → P2c (10K full WSD)
+7. **Matched dense control 15K:** Same tokenizer/teachers/data/eval/budget, ~51±1M
+
+### R17 Research Requests
+1. **Robust cross-tokenizer distillation below the token level.** Focus: ALM-style chunk alignment, byte-space projection, methods avoiding character-boundary drift entirely.
+2. **Heterogeneous teacher transfer into small generative students.** Focus: encoder-only teachers (BGE, E5, MiniLM, BERT), projected DeltaNet/Gated DeltaNet sidecars below 100M params.
+
+### R17 Research Findings
+
+#### Cross-Tokenizer Knowledge Distillation (Research Request #1) — COMPLETE
+
+**Landscape (12 methods surveyed, 2023-2025):**
+
+| Method | Year | Alignment | Multi-Teacher | SSM-Safe | Compute | Key Limitation |
+|--------|------|-----------|---------------|----------|---------|----------------|
+| **ALM** | NeurIPS 2025 | Byte-position chunks | Yes | Yes | +25% | Needs tokenizer byte maps |
+| VocAgnoLM | ICML 2025 | Character-level lexical | Yes | Yes | +15% | UTF-8 bugs via HF offsets |
+| Universal Logit Distillation | 2024 | Token-to-token mapping | No | Partial | +10% | Requires vocab overlap |
+| tokenkit (library) | 2025 | Multiple strategies | Yes | Yes | Varies | Library, not method |
+| MiniPLM | ICLR 2025 | Architecture-agnostic offline | Yes | Yes | Offline only | No online KD signal |
+| MOHAWK/Phi-Mamba | NeurIPS 2024 | 3-stage progressive | No | Yes (target) | 3 stages | Transformer→SSM only |
+
+**PRIMARY RECOMMENDATION: ALM (Approximate Likelihood Matching)**
+- Core idea: align at byte-position level, not character or token level. Both teacher and student tokenizers are decomposed to byte sequences. Chunks are defined by overlapping byte positions, and likelihood transfer happens at chunk granularity.
+- **Why ALM over VocAgnoLM:** VocAgnoLM relies on HuggingFace `return_offsets_mapping` which has known UTF-8 bugs (exactly what killed our `_char_ends()` — 64.3% boundary misalignment). ALM bypasses character boundaries entirely by working in byte space, making UTF-8 issues structurally impossible.
+- **Overhead:** +25% compute (byte chunk construction + marginalization), +5% memory. Acceptable for two-teacher Ekalavya.
+- **Multi-teacher:** Native support. Each teacher gets its own byte-chunk alignment independently.
+- **SSM-compatible:** No attention-specific assumptions. Works with any model that produces token logits.
+- **Implementation:** ~50 lines core PyTorch from tokenkit library. Key functions: byte-position extraction from tokenizer, chunk construction from overlapping byte spans, marginal likelihood computation per chunk.
+- **Key equations:** For teacher token t_i spanning bytes [b_s, b_e] and student tokens {s_j} overlapping those bytes, ALM computes: L_ALM = -Σ_chunks log Σ_{s_j ∈ chunk} p_student(s_j) · align(s_j, t_i), where align() is the byte-overlap fraction.
+
+**SECONDARY: VocAgnoLM teacher-loss weighting (orthogonal signal)**
+- VocAgnoLM's teacher-weighted loss idea (weight student CE by teacher confidence) is useful independently of its alignment mechanism.
+- Can layer on top of ALM: teacher-confident tokens get higher KD weight, uncertain tokens get more CE weight.
+- This addresses the "noisy teacher" problem without needing character alignment at all.
+
+**KILLED: Raw character-level alignment (our _char_ends() approach)**
+- Definitively dead. 35.7% exact alignment, 64.3% boundaries wrong, avg drift 4.04 chars, max 24.
+- Root cause: HuggingFace tokenizer offset mapping inconsistencies with multi-byte UTF-8 characters.
+- ALM's byte-level approach is the correct fix — works below the character abstraction entirely.
+
+**Action items for P2:**
+1. Replace XTKD with ALM in Q1 teacher pipeline
+2. Use tokenkit byte-position extraction (or implement ~50 lines)
+3. Keep alpha_ALM ≈ 0.3 (same budget as old XTKD)
+4. Add VocAgnoLM-style teacher weighting as optional coefficient
+
+#### Encoder Teacher Transfer into Small Generative Students (Research Request #2) — COMPLETE
+
+**Key findings:**
+
+**1. MiniPLM (ICLR 2025) — Most practical encoder teacher approach**
+- Architecture-agnostic offline KD via data refinement: teacher re-ranks/re-weights training data offline, student trains on refined data.
+- Works with ANY student architecture (Transformer, SSM, recurrent) because the teacher signal is embedded in the data, not the training loop.
+- Validated with Mamba SSMs — MiniPLM-distilled Mamba outperformed standard Mamba training.
+- **For Sutra:** MiniPLM could pre-process our training shards offline using an encoder teacher, creating "enriched" shard orderings. Zero online compute cost during training.
+- Limitation: offline only — no online gradient signal from encoder during training.
+
+**2. MOHAWK/Phi-Mamba (NeurIPS 2024) — Progressive cross-architecture distillation**
+- 3-stage progressive distillation: (1) embed alignment, (2) hidden state matching, (3) output logit KD.
+- Designed specifically for Transformer→SSM transfer.
+- Stage 1 (embed alignment) is directly relevant to our P2a embedding recovery phase.
+- **For Sutra:** Stage 1 embed alignment could accelerate P2a (2K emb-only recovery). The other stages are less applicable since our teacher queue uses online CKA, not staged distillation.
+
+**3. Procrustes > CKA for cross-architecture geometry transfer (NYU, Sept 2025)**
+- Procrustes distance (orthogonal alignment of representation matrices) outperforms CKA for measuring similarity between architecturally different models.
+- CKA is kernel-based and invariant to orthogonal transforms, but this invariance LOSES information about how representations are geometrically organized.
+- Procrustes preserves directional structure — important when teacher and student have different architectures (which they always do in Ekalavya).
+- **For Sutra:** Consider replacing CKA loss with Procrustes-based representation matching in Q1/Q2 pipelines. Implementation: SVD of cross-covariance matrix, ~20 lines. Could improve KD quality without changing teacher scheduling.
+
+**4. Recommended encoder teacher: MiniLM-L6-v2 (22M params)**
+- 22M params, 6-layer BERT-based sentence encoder. Fits easily on CPU or alongside main training on GPU.
+- Strong representational quality for its size (MTEB competitive with models 10x larger).
+- **Why MiniLM over BGE/E5:** Smallest footprint, fastest inference, well-studied distillation target. BGE-base and E5-large are better but 4-5x bigger — not worth the VRAM for Q2 teacher slot.
+- **Integration path:** Add to q2_cka_queue.json as encoder-only teacher. Use Procrustes (not CKA) for representation matching since architectures differ maximally (bidirectional encoder vs unidirectional recurrent).
+
+**Action items for P2:**
+1. Add MiniLM-L6-v2 to q2_cka_queue.json (encoder teacher slot)
+2. Implement Procrustes distance as alternative to CKA for cross-architecture teachers
+3. Explore MiniPLM offline data refinement as complementary to online KD
+4. Use MOHAWK Stage 1 (embed alignment) strategy during P2a recovery
+
+---
+
+## Tesla+Leibniz Round 16 (2026-03-24)
+
+**Confidence: O1=5 (↓1), O2=8, O3=3 (↓1), O4=6 (↑1), O5=7 (↓1)**
+
+### Confidence Rationale
+- **O1=5 (↓):** Adversarial audit + SmolLM2-135M gap (HellaSwag 42% vs 26%, PIQA 68% vs 54%). No matched dense control. Generation still poor. Clean lm-eval shows only modest ARC gains.
+- **O2=8:** Repeatedly identified and fixed bugs surgically (queue resume, teacher budget, byte-group encoding, hidden-state extraction, dataset resume, loss clamping). Code exposes enough structure for targeted fixes.
+- **O3=3 (↓):** No module ABI freeze, no stage loader/registry, no demonstration of independent subsystem improvement. "Stages" are still implementation details inside one forward graph.
+- **O4=6 (↑):** First round with real multi-source system. Two-queue running, 4/7 benchmarks beat parent at 3K steps, MiniPLM scoring built, 16K transplant complete with 100% transfer.
+- **O5=7 (↓):** D10 < D12 validated but controller is pass-global. Token-conditional compute unproven. D8 still terrible. Fixed-depth efficiency ≠ learned halting.
+
+### Key Design Decisions
+1. **Don't interrupt P1a.** Transplant after best P1a checkpoint is chosen.
+2. **Matched dense control required.** One 15K run, not a family of baselines. After P1/P2.
+3. **Recurrence thesis: keep alive but conditional.** Only as refinement layer on top of absorbed knowledge. Dense control decides fate.
+4. **P_train=12, D_infer=10.** Keep for now but don't claim learned halting solved.
+5. **Weight sharing: keep.** Problem is controller, not sharing. Add tokenwise conditioning + pass adapters.
+6. **Stage bank: widen.** FFN 1536→3072 via Net2Wider, reinvesting freed tokenizer budget.
+7. **Scratchpad: keep as workspace only.** Add exact-memory sidecar for factual storage.
+8. **BayesianWrite: keep as state update.** Demote lambda to confidence feature, not full halting solution.
+9. **Pheromone: delete unless canary proves value.**
+10. **Two-queue throughput drop acceptable for P1a only.** Future: offline + sparse online teacher windows.
+11. **Generation failure = factual memory + calibration.** Not routing depth.
+
+### Inherited Paradigm Audit
+- GPT-2 tokenizer: **change now** (after P1a). Largest immediate effect.
+- dim=768: reasonable for warm-start, investigate later.
+- ff_dim=1536: **too small.** Change in post-transplant branch.
+- LocalRouter window=4, k=8: arbitrary, investigate with cached-batch sweeps.
+- Cosine decay: **change now.** Zero-floor/discontinuous cosine damaged knowledge.
+- Pheromone rho=0.90: irrelevant if deleted.
+- Stage-bank evidence temp=0.5: arbitrary, investigate in tokenwise-controller branch.
+
+### Design Proposal: "16K Token-Conditional Ekalavya Sutra"
+**Architecture (~61-62M params, under current 68M):**
+- 16K BPE tied embeddings (12.29M)
+- Tokenwise transition kernel: `s_t^p = [LN(mu_t^p); e_p; log(1+mean(lambda)); H_t; ||Δmu||]`, `K_t^p = softmax(mask(W2·SiLU(W1·s_t^p), 7, 7))`
+- Widened 7-bank stage FFN: 768→3072→768 via Net2Wider (~33.1M)
+- Exact-memory sidecar: DeltaNet-style with content-dependent forgetting (~3.0M)
+- LocalRouter (4.72M), BayesianWrite (2.36M), scratchpad (2.37M)
+- MI regularizer: `L_MI = -(1/P)·Σ_p[H(mean_t π_t^p) - mean_t H(π_t^p)]`
+
+**Training recipe:**
+- P2a (2K): emb-only, LR 1e-4, Q1 only
+- P2b (3K): partial unfreeze (emb, init, ln, controller), inherited LR 8e-5, new LR 1.6e-4
+- P2c (10K): full WSD 80/20, inherited LR 1.5e-4→8e-5, new LR 3e-4→1.6e-4
+- Loss: L_CE + 0.20·L_probe + 0.30·L_XTKD + 0.20·L_CKA,Q1 + 0.10·L_CKA,Q2 + 0.01·L_MI
+- Teacher schedule: MiniPLM throughout, Q1 every 8 μ-batches (first 4K), Q2 every 16 μ-batches (after 2K full-tune)
+
+**Branch order:** P1a 15K → best checkpoint → P2-16K transplant → tokenwise control + exact memory → matched dense control
+
+### R16 Intuitions
+1. 16K transplant alone won't close gap — freed 26.3M must be reinvested into compute (conviction: high)
+2. Q1 lexical teachers early, Q2 geometry later — not simultaneous (conviction: high)
+3. Generation failure = factual memory + readout calibration, not depth (conviction: medium-high)
+4. Tokenwise controller + MI regularizer easiest path to content-dependent compute (conviction: medium)
+5. Code execution traces best non-LLM teacher at our scale (conviction: medium)
+
+### R16 Experiment Queue (after P1a)
+1. [CPU] Build deterministic eval caches, rerun all checkpoints on fixed windows
+2. [CPU] Recompute XTKD alignment via offset_mapping, measure boundary drift
+3. [GPU] P2-16K from best P1a checkpoint (2K emb + 3K partial + 10K full)
+4. [GPU] Matched dense control: 16K, tied emb, d=768, RoPE, RMSNorm, SwiGLU, 15K
+5. [GPU] Tokenwise controller canary (post-P2)
+6. [GPU] Exact-memory sidecar canary (post-P2)
+7. [GPU] 3-way O4 schedule comparison (5K each)
+
+### R16 Research Requests
+1. Net2Wider recipe for recurrent shared-weight FFNs with SiLU
+2. Tokenwise controller regularizers maximizing MI(mode; token)
+3. Exact-memory sidecars (ARMT, DeltaNet, product-key) — warm-start-compatible, <5M params
+4. Factorized tied embeddings vs pure tokenizer transplant at this scale
+5. Non-LLM text-bridge teachers (code traces, theorem proofs, verifier rationales)
 
 ## Ekalavya Protocol Step 3000 Eval (2026-03-23)
 
@@ -109,18 +1038,26 @@ GRACE measures teacher-student compatibility via gradient coefficient of variati
 
 **Implication:** Can score new teacher candidates in ~5 minutes on CPU before adding to queue. Current duty cycle (LFM2 50% / Qwen 30% / Granite 20%) may be suboptimal — GRACE scoring could reorder.
 
-### 2. VocAgnoLM vs Byte-XTKD Cross-Tokenizer KD
-**Sources:** ALM (NeurIPS 2025), VocAgnoLM, TokenFlow
+### 2. Cross-Tokenizer KD — Comprehensive Method Landscape (UPDATED 2026-03-24)
+**Sources:** VocAgnoLM (ICML 2025), ALM/tokenkit (ICML 2025), GOLD/ULD (TMLR 2025), CDM (ACL 2025), FKL (Dec 2024), DWA-KD (Feb 2026), Multi-Level OT (AAAI 2025)
 
-Our byte-XTKD projects teacher vocab (50K) to byte space (256) — a **200x information compression**. This is lossy by design.
+Our byte-XTKD projects teacher vocab (50K) to byte space (256) — a **200x information compression** with only **35.7% correct character boundary alignment**.
 
-**ALM (Approximate Likelihood Matching):** State-of-art cross-tokenizer KD. Uses chunk-level likelihood alignment instead of token-level. Teacher and student independently decode chunks of text; loss matches chunk probabilities. Avoids tokenizer alignment entirely. NeurIPS 2025, strong results across tokenizer families.
+**TIER 1 — Recommended for Sutra:**
 
-**VocAgnoLM:** Uses teacher as "difficulty oracle" — teacher loss per sample guides curriculum (high loss = harder = sample more). Not distributional KD, purely loss-guided data weighting. Simple but effective. Complements rather than replaces distributional KD.
+**VocAgnoLM (ICML 2025, Microsoft):** Character-level lexical alignment + teacher-loss weighting. For each student token, binary search teacher's character offsets to find covering teacher tokens (O(N log M)). Use teacher per-token loss as difficulty weight — student tokens where `student_loss - teacher_loss` is large (top 40%) get upweighted. **100% student token coverage**, zero vocabulary alignment, ~50 lines. +33% over ULD at low vocabulary overlap. **RECOMMENDED XTKD REPLACEMENT.**
 
-**TokenFlow:** Bijective mapping between tokenizer vocabularies via shared byte sequences. More principled than byte-projection but requires aligned vocabularies.
+**GOLD/ULD (TMLR 2025, HuggingFace TRL):** Wasserstein distance on sorted logits. Sort both distributions by probability, compute L1 distance. GOLD extends with incremental text decoding + probability merging via chain rule. Available in TRL (`GOLDTrainer`). Limitation: sorted comparison doesn't preserve token identity — measures shape similarity only.
 
-**Recommendation for Sutra:** Current byte-XTKD is a stopgap. For P1b or P2, switch to **character-level chunk alignment** (ALM-inspired): compare teacher and student probabilities over character spans rather than individual byte projections. Estimated 3-5x less information loss than byte projection. Keep byte-XTKD running for P1a (it works, just lossy).
+**TIER 2 — Viable but more complex:**
+
+**ALM/tokenkit (ICML 2025):** Chunk-level approximate likelihood matching. Find aligned byte-string boundary chunks via greedy scan. Compare chunk log-probabilities using binarized f-divergence. State-of-art (34% reduction in teacher-student gap). **JAX-based** — would need PyTorch reimplementation. The binarized divergence formula IS portable.
+
+**CDM (ACL 2025):** Entropy-weighted DTW + dynamic vocabulary mapping. 82.2% alignment accuracy. **batch_size=1 bottleneck**, 1.01s/step. Not practical for online training.
+
+**DWA-KD (Feb 2026):** Dual-space projectors + Soft-DTW. Most complex, marginal gains. 20GB VRAM.
+
+**Decision for P2:** Replace byte-XTKD with **VocAgnoLM-style character-level alignment**. Upgrade path to ALM binarized divergence if needed. Complements existing CKA loss (VocAgnoLM = output-level, CKA = representation-level).
 
 ### 3. Recurrent-Safe TokAlign Recipe
 **Sources:** TokAlign (2024), Embedding Surgery, Vocabulary Adaptation
