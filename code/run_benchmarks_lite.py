@@ -151,12 +151,16 @@ def score_piqa(model, tok, device):
 
 
 def score_sciq(model, tok, device):
+    import random as _rng
     ds = load_dataset("allenai/sciq", split="validation", trust_remote_code=True)
     correct = total = 0
     for i, item in enumerate(ds):
         q = item["question"]
         choices = [item["correct_answer"], item["distractor1"], item["distractor2"], item["distractor3"]]
-        label = 0  # correct_answer is always first in our list
+        # Shuffle choices with per-question seed to eliminate position bias
+        rng = _rng.Random(hash(q) ^ i)
+        rng.shuffle(choices)
+        label = choices.index(item["correct_answer"])
 
         best_ll, best_idx = float("-inf"), 0
         for j, choice in enumerate(choices):
@@ -220,10 +224,18 @@ def score_lambada(model, tok, device):
         with torch.no_grad():
             logits, _ = model(input_ids)
 
-        # Position ctx_len-1 predicts token at ctx_len (first continuation token)
+        # Check ALL continuation tokens (greedy), not just the first
         if ctx_len > 0 and ctx_len - 1 < logits.size(1):
-            pred_id = logits[0, ctx_len - 1].argmax().item()
-            if pred_id == cont_ids[0]:
+            all_match = True
+            for k, target_id in enumerate(cont_ids):
+                pos = ctx_len - 1 + k
+                if pos >= logits.size(1):
+                    all_match = False
+                    break
+                if logits[0, pos].argmax().item() != target_id:
+                    all_match = False
+                    break
+            if all_match:
                 correct += 1
         total += 1
         del input_ids, logits

@@ -1,5 +1,51 @@
 # Sutra Research Log
 
+## Adversarial Full-Repo Audit (2026-03-23)
+
+**Codex (GPT-5.4, xhigh reasoning) — comprehensive adversarial review from scratch. Verdict: REJECT in current form.**
+
+### Critical Findings
+1. **No matched dense baseline.** The decisive falsification experiment was never run. "Intelligence = Geometry" is underdetermined without it.
+2. **Benchmark gap is fatal.** SmolLM2-135M (half our params) beats us on HellaSwag (42% vs 26%), PIQA (68% vs 54%), ARC avg (44% vs ~22%). Gap is structural, not cosmetic.
+3. **Content-dependent computation is asserted, not proven.** Controller is pass-global. Internal docs admit "no mechanism to vary strategy by token type."
+4. **56.5% of params in embeddings, ~29M dead weight.** GPT-2 tokenizer: 76% unused vocab = wasted capacity.
+5. **T+L workflow is anti-falsification.** Prompt says "never propose baselines" and "don't recommend killing directions." Confirmation bias by design.
+6. **Benchmark code had disqualifying defects:** SciQ answer always at index 0 (position bias), LAMBADA checked first token only. **BOTH FIXED 2026-03-23.**
+7. **Structural wins ≠ intelligence wins.** Pass collapse elimination and elastic compute are real but don't make the model smarter.
+
+### What Codex Says to Kill
+- Homegrown benchmark runner as decision authority → use lm-eval harness only
+- `frozen_cache` (dead weight, ablation NaN-prone)
+- Fiction of best-in-class comparison before matched controls
+- Theory expansion while decisive experiments unrun
+
+### What Codex Says to Double Down On
+- Clean lm-eval evaluation pipeline
+- Embedding/tokenizer redesign (56% of params wasted)
+- Fewer, decisive experiments run cleanly
+- Multi-teacher KD (only thing actually moving benchmarks)
+
+### Hard Questions Raised
+- "Does this beat dense under matched conditions?"
+- "Is the controller actually token-conditional?"
+- "Why is generation still bad if the thesis is right?"
+- "Are we discovering a new principle, or rebranding a hard-to-train recurrent LM?"
+
+### What IS Real (acknowledged)
+- Pass collapse eliminated via random-depth training
+- Optimizer reset destroys knowledge (real finding)
+- Elastic compute validated: D10 saves 33% compute for 0.0004 BPT cost
+- Failure documentation is honest internally
+- Multi-teacher KD (Ekalavya) is most promising current lever
+
+### Action Items
+1. ~~Fix SciQ position bias~~ DONE
+2. ~~Fix LAMBADA first-token-only~~ DONE
+3. All future benchmark claims must use lm-eval harness
+4. Embedding/tokenizer redesign elevated to critical priority
+5. README cleanup — remove stale claims, update status honestly
+6. T+L prompt audit — remove anti-falsification clauses
+
 ## Ekalavya Protocol Step 3000 Eval (2026-03-23)
 
 **P1a two-teacher KD, step 3000/15K — benchmarks taken before two-queue switch (single-teacher KD phase)**
