@@ -11,8 +11,9 @@ Usage:
     python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v060a/step_20000.pt --tasks arc_easy,arc_challenge
 """
 
-import sys, argparse, torch
+import sys, argparse, gc, torch
 from pathlib import Path
+from tqdm import tqdm
 
 REPO = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO / "code"))
@@ -28,10 +29,12 @@ class SutraLMEval(LM):
     """lm-eval compatible wrapper for Sutra."""
 
     def __init__(self, checkpoint=None, dim=768, ff_dim=1536,
-                 batch_size=8, device="cuda", version="v060a", **kwargs):
+                 batch_size=4, device="cuda", version="v060a",
+                 fp16=False, **kwargs):
         super().__init__()
         self._device = torch.device(device if torch.cuda.is_available() else "cpu")
         self._batch_size = batch_size
+        self._fp16 = fp16
 
         self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -52,6 +55,8 @@ class SutraLMEval(LM):
             ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
             state = ckpt["model"] if "model" in ckpt else ckpt
             self.model.load_state_dict(state, strict=False)
+        if fp16:
+            self.model.half()
         self.model.to(self._device).eval()
 
     @property
@@ -84,12 +89,18 @@ class SutraLMEval(LM):
         return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
 
     def _loglikelihood_tokens(self, requests, disable_tqdm=False):
-        import time as _time
         results = []
         n_total = len(requests)
-        t0 = _time.time()
+        batch_starts = range(0, n_total, self._batch_size)
+        if not disable_tqdm:
+            total_batches = (n_total + self._batch_size - 1) // self._batch_size
+            batch_starts = tqdm(
+                batch_starts,
+                total=total_batches,
+                desc=f"loglikelihood ({self._device.type})",
+            )
 
-        for batch_start in range(0, n_total, self._batch_size):
+        for batch_start in batch_starts:
             batch = requests[batch_start:batch_start + self._batch_size]
 
             # Encode all in batch
@@ -109,7 +120,7 @@ class SutraLMEval(LM):
                 padded[j, :len(ids)] = torch.tensor(ids, device=self._device)
 
             # Forward pass — one call for entire batch
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits, _ = self.model(padded)
             log_probs = torch.nn.functional.log_softmax(logits.float(), dim=-1)
 
@@ -124,14 +135,6 @@ class SutraLMEval(LM):
                         if lp[i - 1].argmax().item() != all_ids[i]:
                             is_greedy = False
                 results.append((total_ll, is_greedy))
-
-            # Progress logging every 200 requests
-            done = batch_start + len(batch)
-            if done % 200 < self._batch_size or done == n_total:
-                elapsed = _time.time() - t0
-                rps = done / elapsed if elapsed > 0 else 0
-                eta = (n_total - done) / rps if rps > 0 else 0
-                print(f"  loglikelihood: {done}/{n_total} ({rps:.0f} req/s, ETA {eta:.0f}s)", flush=True)
 
         return results
 
@@ -150,7 +153,7 @@ class SutraLMEval(LM):
             string = req.args[0] if hasattr(req, 'args') else req[0]
             ids = self.tokenizer.encode(string)[-512:]
             input_ids = torch.tensor([ids], device=self._device)
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits, _ = self.model(input_ids)
             log_probs = torch.nn.functional.log_softmax(logits[0].float(), dim=-1)
             total_ll = sum(log_probs[i, ids[i + 1]].item() for i in range(len(ids) - 1))
@@ -169,7 +172,7 @@ class SutraLMEval(LM):
             input_ids = torch.tensor([ids], device=self._device)
 
             for _ in range(self.max_gen_toks):
-                with torch.no_grad():
+                with torch.inference_mode():
                     logits, _ = self.model(input_ids[:, -512:])
                 next_id = logits[0, -1].argmax().item()
                 input_ids = torch.cat([input_ids, torch.tensor([[next_id]], device=self._device)], dim=1)
@@ -188,9 +191,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v060a/rolling_latest.pt"))
     parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--batch_size", type=int, default=4,
+                        help="Batch size (default 4; 12 recurrent passes need ~100MB/sample)")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v054", "v061"])
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--fp16", action="store_true", help="Run inference in FP16 (halves VRAM)")
     parser.add_argument("--output", default=None, help="Output JSON path (default: results/sutra_lm_eval_results.json)")
     args = parser.parse_args()
 
@@ -202,7 +208,7 @@ if __name__ == "__main__":
     print(f"Device: {args.device}")
 
     model = SutraLMEval(checkpoint=args.checkpoint, batch_size=args.batch_size,
-                         device=args.device, version=args.version)
+                         device=args.device, version=args.version, fp16=args.fp16)
 
     task_list = args.tasks.split(",")
 
@@ -220,12 +226,22 @@ if __name__ == "__main__":
         if task_name in all_results:
             print(f"\n  {task_name}: SKIPPED (already done)")
             continue
-        print(f"\nRunning {task_name}...", flush=True)
+
+        # Clear CUDA cache between tasks to prevent fragmentation OOM
+        if torch.cuda.is_available():
+            gc.collect()
+            torch.cuda.empty_cache()
+            free_mb = (torch.cuda.get_device_properties(0).total_mem
+                       - torch.cuda.memory_allocated()) / 1e6
+            print(f"\n  VRAM free: {free_mb:.0f}MB", flush=True)
+
+        print(f"Running {task_name}...", flush=True)
         try:
             result = lm_eval.simple_evaluate(
                 model=model,
                 tasks=[task_name],
                 batch_size=args.batch_size,
+                limit=args.limit,
                 bootstrap_iters=0,
                 log_samples=False,
             )
