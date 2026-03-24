@@ -152,9 +152,9 @@ TokAlign performs tokenizer transplant via GloVe-based alignment + two-stage fin
 
 **Intuitions:** Main bottleneck is parameter placement not count (26M core wearing 38.6M tokenizer backpack). Queue duty cycle matters more than teacher benchmark strength. Geometry-only teachers more useful after lexical recovery. Byte-XTKD is stopgap, not end-state.
 
-## Codex Audit Summary: Ekalavya Trainer v1-v7 (2026-03-23)
+## Codex Audit Summary: Ekalavya Trainer v1-v8 (2026-03-23)
 
-**7 audit rounds (Correctness v1-v6, Performance v1-v6). All HIGH findings fixed. 3 MED deferred.**
+**8 audit rounds (Correctness v1-v8, Performance v1-v7). All HIGH findings fixed. 0 HIGH for 3 consecutive rounds (v6-v8). Reviewer loop converging to clean.**
 
 ### Fixed Findings (HIGH)
 - Queue resume skipped in-flight teacher (v3) → state_dict saves/loads current_name + steps_remaining + reloads teacher
@@ -199,6 +199,12 @@ TokAlign performs tokenizer transplant via GloVe-based alignment + two-stage fin
 - MEDIUM: CPU text path (decode/re-tokenize) is the bottleneck, not data loader. Cache texts and use fast-tokenizer offsets. **Deferred.**
 - LOW: get_slot_repr fix confirmed good — saves ~1.25GB for phi-2-class teachers. **APPLIED.**
 - **APPLIED:** `CKA_EVERY_N` raised from 4 to 8 — halves XTKD per-sample forwards (biggest cost component), same CKA gradient per step. Conservative batch size increase (32 texts vs 16). Estimated ~10-15% throughput recovery. Will take effect at next rolling checkpoint restart.
+
+### v8 Correctness Findings (0 HIGH, 2 MED, 1 LOW — all deferred)
+- **ALL v7 FIXES VERIFIED CORRECT**: get_slot_repr branching ✓, CKA_EVERY_N=8 gradient compensation ✓, data loader resume shard warming ✓. Teacher swap/CKA buffer safety confirmed clean — no stale-graph leakage.
+- MED: Sustained sub-clamp XTKD spikes (~49.9) could dominate CE (~4.5) via ALPHA*CKA_EVERY_N compensation. Current values 0.39-0.54 — NOT at risk. Fix: CE-relative cap or EMA-based clamping. **Deferred — monitoring.**
+- MED: Eval BPT uses random test windows (not fixed held-out tail). Makes checkpoint comparisons noisy (~0.1-0.2 BPT variance). Fix: build deterministic eval batches from `get_test_tokens()`. **Deferred.**
+- LOW: `_is_causal_lm()` re-infers model type from `lm_head`/`cls` instead of using TeacherSlot's known load type. Could regress with future remote-code models. **Deferred.**
 
 ### v7 Entropy Audit
 - KEEP: benchmark_tracker.json (actively maintained comparison tracker)
