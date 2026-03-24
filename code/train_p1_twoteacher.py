@@ -1,29 +1,30 @@
-"""Sutra P1: O4-First Two-Teacher 15K Continuation (R12 top priority).
+"""Sutra Ekalavya Protocol: Two-Queue Multi-Teacher Knowledge Distillation.
 
-PURPOSE: First multi-source learning experiment. Absorb external knowledge from
-pretrained models into Sutra's recurrent architecture.
+PURPOSE: Absorb external knowledge from diverse pretrained models into Sutra's
+recurrent architecture via two independent teacher queues (guru parampara).
 
 Parent: v0.6.0a step 20K (model + optimizer, preserved)
-Teachers (frozen):
-  1. GPT-2 small (124M) — AR logit teacher (same tokenizer = direct KL, no remapping)
-  2. all-MiniLM-L6-v2 — Encoder geometry teacher (CKA alignment)
+Architecture:
+  Q1 (CKA+XTKD): Light intelligent models — teach representations AND output
+    - LFM2-1.2B, Qwen3-0.6B-Base, Granite-4.0-h-350m
+  Q2 (CKA-only): Heavy diverse models — teach representational geometry
+    - Phi-2, Qwen3-4B, Gemma-1B, Pythia, BERT, MiniLM, bge, GPT-2, etc.
 
-Loss = L_CE + α_logit * L_KD + α_repr * L_CKA + 0.20 * L_probe
+Zero permanent teachers. Only student always loaded. Two queue slots active.
+Benchmark-based static step allocations (no runtime adaptation).
+
+Loss = L_CE + alpha_q1_cka * L_CKA_Q1 + alpha_q1_xtkd * L_XTKD_Q1
+     + alpha_q2_cka * L_CKA_Q2 + 0.20 * L_probe
 
 Key design:
-  - Top-30% highest-entropy tokens selected for distillation (R12 spec)
-  - Steps 0-250: deep-biased rd burst (protect knowledge)
-  - Steps 251+: mostly D=8 with occasional D=12 refresh
+  - CKA every N micro-batches for stable Gram matrices
+  - XTKD: byte-level cross-tokenizer logit KD from Q1 teachers
+  - Auto VRAM management: GPU bf16 -> GPU NF4 -> CPU fallback
+  - Steps 0-250: deep-biased rd burst, then D=10 default
   - 15K steps, full 7-task eval + generation at 15K
-  - Teachers run with no_grad, frozen, ~0.4GB extra VRAM
 
-Success criteria (from R12):
-  - Beat v0.6.0a on SciQ (>48.1%) or LAMBADA (>11.2%) or both
-  - No regression on PIQA, ARC-E
-  - Better generation quality
-  - Prove O4 (data efficiency via multi-source learning) is viable
-
-Usage: python code/train_p1_twoteacher.py
+Usage:
+  python code/train_p1_twoteacher.py --q1-queue code/q1_xtkd_queue.json --q2-queue code/q2_cka_queue.json
 """
 
 import json, math, os, random, time
@@ -55,13 +56,11 @@ VOCAB_SIZE = 50257
 PROBE_LOSS_COEF = 0.20
 GRAD_CLIP_NORM = 0.5
 
-# Distillation coefficients
-ALPHA_LOGIT = 0.5        # KL divergence from AR teacher
-ALPHA_REPR = 0.3         # CKA from encoder teacher (MiniLM)
-ALPHA_REPR_QWEN = 0.3    # CKA from Qwen3-0.6B (representation alignment)
-ALPHA_XTKD = 0.3         # Cross-tokenizer logit KD (byte-level, from Qwen)
-KD_TEMP = 2.0            # Temperature for KL distillation
-ENTROPY_TOP_FRAC = 0.30  # Top-30% entropy tokens for distillation
+# Distillation coefficients (two-queue Ekalavya Protocol)
+ALPHA_Q1_CKA = 0.3       # CKA weight for Q1 (CKA+XTKD) teachers
+ALPHA_Q1_XTKD = 0.3      # XTKD weight for Q1 teachers (byte-level logit KD)
+ALPHA_Q2_CKA = 0.2       # CKA weight for Q2 (CKA-only) teachers
+KD_TEMP = 2.0            # Temperature for XTKD byte-level distillation
 CKA_EVERY_N = 4          # Compute CKA every N micro-batches (accumulate between)
 
 # Training schedule
@@ -87,166 +86,223 @@ from launch_v060a import create_v060a
 from data_loader import ShardedDataset
 
 
-# ---- Teacher loading ----
-
-def load_ar_teacher():
-    """Load GPT-2 small (124M) as frozen AR logit teacher.
-    Same GPT-2 tokenizer and vocab (50257) as the student = direct KL, no remapping.
-    """
-    from transformers import AutoModelForCausalLM
-    print("Loading AR teacher: GPT-2 small (124M)...", flush=True)
-    teacher = AutoModelForCausalLM.from_pretrained(
-        "gpt2",
-        torch_dtype=torch.bfloat16,
-    ).to(DEVICE)
-    teacher.eval()
-    for p in teacher.parameters():
-        p.requires_grad = False
-    n_params = sum(p.numel() for p in teacher.parameters())
-    vram_mb = n_params * 2 / 1e6  # bf16
-    print(f"  GPT-2 loaded: {n_params/1e6:.0f}M params, ~{vram_mb:.0f}MB VRAM")
-    return teacher
-
-
-def load_encoder_teacher():
-    """Load all-MiniLM-L6-v2 as frozen encoder geometry teacher.
-    Different tokenizer — we align at sentence/batch level via CKA.
-    """
-    from transformers import AutoModel, AutoTokenizer
-    print("Loading encoder teacher: all-MiniLM-L6-v2...", flush=True)
-    enc_tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-    enc_model = AutoModel.from_pretrained(
-        "sentence-transformers/all-MiniLM-L6-v2",
-        torch_dtype=torch.bfloat16,
-    ).to(DEVICE)
-    enc_model.eval()
-    for p in enc_model.parameters():
-        p.requires_grad = False
-    n_params = sum(p.numel() for p in enc_model.parameters())
-    vram_mb = n_params * 2 / 1e6
-    print(f"  MiniLM loaded: {n_params/1e6:.0f}M params, ~{vram_mb:.0f}MB VRAM")
-    return enc_model, enc_tokenizer
-
-
-def load_qwen_teacher():
-    """Load Qwen3-0.6B-Base as frozen representation teacher.
-    Different tokenizer (152K Qwen vocab) — we align via CKA, not logit KL.
-    ~1.2GB VRAM in bf16. Hidden dim=1024.
-    """
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    print("Loading Qwen teacher: Qwen3-0.6B-Base...", flush=True)
-    qwen_tokenizer = AutoTokenizer.from_pretrained(
-        "Qwen/Qwen3-0.6B-Base", trust_remote_code=True)
-    qwen_model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen3-0.6B-Base",
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-    ).to(DEVICE)
-    qwen_model.eval()
-    for p in qwen_model.parameters():
-        p.requires_grad = False
-    n_params = sum(p.numel() for p in qwen_model.parameters())
-    vram_mb = n_params * 2 / 1e6
-    print(f"  Qwen3-0.6B loaded: {n_params/1e6:.0f}M params, ~{vram_mb:.0f}MB VRAM")
-    return qwen_model, qwen_tokenizer
-
-
-def get_qwen_repr(qwen_model, qwen_tokenizer, texts):
-    """Get mean-pooled Qwen hidden state representations for CKA alignment.
-    Uses Qwen's own tokenizer — CKA handles dimension mismatch (1024 vs 768).
-    """
-    enc_inputs = qwen_tokenizer(
-        texts, padding=True, truncation=True, max_length=512,
-        return_tensors="pt"
-    ).to(DEVICE)
-    with torch.no_grad():
-        out = qwen_model(**enc_inputs, output_hidden_states=True)
-        hidden = out.hidden_states[-1]  # (B, T_qwen, D_qwen=1024)
-        attn_mask = enc_inputs["attention_mask"].unsqueeze(-1).float()
-        q_repr = (hidden * attn_mask).sum(dim=1) / attn_mask.sum(dim=1).clamp(min=1)
-    return q_repr.float()  # (N, 1024)
-
-
-# ---- Sequential Teacher Queue ----
+# ---- Teacher Queue (Ekalavya Protocol: guru parampara) ----
 
 class TeacherSlot:
-    """A rotating teacher slot. Loads one teacher at a time, swaps every N steps.
-    Never OOMs — only one extra model loaded at any time. Unlimited teacher queue.
+    """Rotating teacher slot with benchmark-based static step allocations.
 
-    Usage:
-        slot = TeacherSlot([
-            {"name": "Qwen/Qwen3-0.6B-Base", "type": "cka", "steps": 3000, "trust_remote_code": True},
-            {"name": "EleutherAI/pythia-410m", "type": "ar", "steps": 3000},
-            {"name": "BAAI/bge-small-en-v1.5", "type": "cka", "steps": 2000},
-        ], device)
+    Loads one teacher at a time from a queue. Each teacher gets a fixed number
+    of training steps (set in the queue JSON based on model benchmark quality).
+    Stronger models get more steps, weaker ones act as regularizers.
 
-    Types: "cka" = representation alignment (any tokenizer), "ar" = logit KD (same tokenizer),
-           "xtkd" = cross-tokenizer byte-level logit KD.
+    Auto VRAM management: GPU bf16 -> GPU NF4 -> CPU bf16 fallback chain.
     """
 
-    def __init__(self, queue, device):
+    def __init__(self, queue, device, slot_name="slot"):
         self.queue = queue
         self.device = device
+        self.slot_name = slot_name  # "Q1" or "Q2" for logging
         self.idx = 0
         self.model = None
         self.tokenizer = None
         self.steps_remaining = 0
-        self.current_type = None
         self.current_name = None
+        self.cycle = 0
 
     def check_swap(self, step):
-        """Check if it's time to swap. Call once per optimizer step.
-        Returns (model, tokenizer, type) — None if queue empty.
+        """Check if current teacher's window is done. Swap if needed.
+        Returns (model, tokenizer) or (None, None) if queue empty/all failed.
         """
         if not self.queue:
-            return None, None, None
+            return None, None
 
         if self.model is None or self.steps_remaining <= 0:
             self._swap_next()
 
-        self.steps_remaining -= 1
-        return self.model, self.tokenizer, self.current_type
+        if self.model is not None:
+            self.steps_remaining -= 1
+        return self.model, self.tokenizer
 
     def _swap_next(self):
         self._unload()
-        if self.idx >= len(self.queue):
-            self.idx = 0
-        entry = self.queue[self.idx]
-        self._load(entry)
-        self.steps_remaining = entry.get("steps", 2000)
-        self.current_type = entry["type"]
-        self.current_name = entry["name"]
-        self.idx += 1
+        attempts = 0
+        while attempts < len(self.queue):
+            if self.idx >= len(self.queue):
+                self.idx = 0
+                self.cycle += 1
+            entry = self.queue[self.idx]
+            self.idx += 1
+            attempts += 1
+
+            self.steps_remaining = entry.get("steps", 2000)
+            self._load(entry)
+            if self.model is not None:
+                self.current_name = entry["name"]
+                return
+
+        # All teachers failed — clear state, retry after 1000 steps
+        print(f"[{self.slot_name}] WARNING: No teachers could be loaded!", flush=True)
+        self.current_name = None
+        self.steps_remaining = 1000
+
+    def state_dict(self):
+        """Save slot state for checkpoint resume."""
+        return {
+            "idx": self.idx,
+            "cycle": self.cycle,
+            "steps_remaining": self.steps_remaining,
+            "current_name": self.current_name,
+        }
+
+    def load_state_dict(self, state):
+        """Restore slot state from checkpoint. Model re-loaded on next check_swap."""
+        self.idx = state.get("idx", 0)
+        self.cycle = state.get("cycle", 0)
+        self.steps_remaining = state.get("steps_remaining", 0)
+        self.current_name = state.get("current_name", None)
+        # Force reload on next check_swap
+        self.model = None
+        self.tokenizer = None
+
+    @staticmethod
+    def _free_vram_gb():
+        """Get free GPU VRAM in GB."""
+        if torch.cuda.is_available():
+            free, _ = torch.cuda.mem_get_info()
+            return free / 1e9
+        return 0.0
+
+    @staticmethod
+    def _estimate_model_gb(name, trust):
+        """Quick estimate of model size in GB (bf16). Downloads config only."""
+        try:
+            from transformers import AutoConfig
+            cfg = AutoConfig.from_pretrained(name, trust_remote_code=trust)
+            # Rough estimate: most models store total params in config
+            if hasattr(cfg, 'num_parameters'):
+                return cfg.num_parameters * 2 / 1e9  # bf16 = 2 bytes
+            # Fallback: vocab * hidden + layers * (4 * hidden^2) * 2 bytes
+            v = getattr(cfg, 'vocab_size', 50000)
+            h = getattr(cfg, 'hidden_size', 768)
+            n = getattr(cfg, 'num_hidden_layers', 12)
+            params = v * h + n * 4 * h * h
+            return params * 2 / 1e9
+        except Exception:
+            return 2.0  # conservative default
 
     def _load(self, entry):
         from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
         name = entry["name"]
         trust = entry.get("trust_remote_code", False)
-        print(f"\n[TeacherSlot] Loading: {name} (type={entry['type']}, "
-              f"{entry.get('steps', 2000)} steps)", flush=True)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=trust)
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=trust)
+        except Exception as e:
+            print(f"[{self.slot_name}] Tokenizer load failed for {name}: {e}", flush=True)
+            self.model = None
+            return
 
-        if entry["type"] in ("ar", "xtkd"):
-            self.model = AutoModelForCausalLM.from_pretrained(
-                name, torch_dtype=torch.bfloat16, trust_remote_code=trust).to(self.device)
+        # Auto VRAM check -> decide: GPU bf16, GPU NF4, or CPU
+        free_vram = self._free_vram_gb()
+        est_size = self._estimate_model_gb(name, trust)
+        vram_margin = 2.0  # keep 2GB free for training activations
+
+        load_device = "cpu"
+        quant_mode = "none"
+        if free_vram > est_size + vram_margin:
+            load_device = str(self.device)
+            quant_mode = "bf16"
+        elif free_vram > est_size * 0.25 + vram_margin:
+            load_device = str(self.device)
+            quant_mode = "int4"
         else:
-            try:
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    name, torch_dtype=torch.bfloat16, trust_remote_code=trust).to(self.device)
-            except Exception:
-                self.model = AutoModel.from_pretrained(
-                    name, torch_dtype=torch.bfloat16, trust_remote_code=trust).to(self.device)
+            load_device = "cpu"
+            quant_mode = "cpu_bf16"
+
+        print(f"\n[{self.slot_name}] Loading: {name} "
+              f"({self.steps_remaining} steps, cycle={self.cycle})", flush=True)
+        print(f"[{self.slot_name}] VRAM free={free_vram:.1f}GB, est={est_size:.1f}GB "
+              f"-> {quant_mode} on {load_device}", flush=True)
+
+        self.model = self._try_load_model(entry, name, trust, quant_mode, load_device)
+
+        if self.model is None:
+            print(f"[{self.slot_name}] Skipping {name} (load failed)", flush=True)
+            return
 
         self.model.eval()
         for p in self.model.parameters():
             p.requires_grad = False
         n = sum(p.numel() for p in self.model.parameters())
-        print(f"[TeacherSlot] Loaded: {n / 1e6:.0f}M params", flush=True)
+        loc = "CPU" if self._on_cpu else f"GPU ({quant_mode})"
+        print(f"[{self.slot_name}] Loaded: {n / 1e6:.0f}M params on {loc}", flush=True)
+
+    def _try_load_model(self, entry, name, trust, quant_mode, load_device):
+        """Load model with automatic fallback: GPU bf16 -> GPU NF4 -> CPU bf16.
+        Returns loaded model or None. Handles OOM gracefully."""
+        from transformers import AutoModelForCausalLM, AutoModel
+
+        needs_logits = entry.get("xtkd", False)  # Q1 teachers need logit head
+
+        def _load_with(kwargs, target_device=None):
+            if needs_logits:
+                m = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+            else:
+                # Try CausalLM first (has hidden_states), fallback to AutoModel
+                try:
+                    m = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+                except Exception:
+                    m = AutoModel.from_pretrained(name, **kwargs)
+            if target_device:
+                m = m.to(target_device)
+            return m
+
+        # NF4 = most aggressive GPU quantization (~4x compression)
+        nf4_kwargs = {
+            "load_in_4bit": True,
+            "bnb_4bit_quant_type": "nf4",
+            "bnb_4bit_compute_dtype": torch.bfloat16,
+            "device_map": "auto",
+            "trust_remote_code": trust,
+        }
+
+        attempts = []
+        if quant_mode == "bf16":
+            attempts = [
+                ("GPU bf16", {"torch_dtype": torch.bfloat16, "trust_remote_code": trust}, self.device),
+                ("GPU NF4", nf4_kwargs, None),
+                ("CPU bf16", {"torch_dtype": torch.bfloat16, "trust_remote_code": trust}, None),
+            ]
+        elif quant_mode == "int4":
+            attempts = [
+                ("GPU NF4", nf4_kwargs, None),
+                ("CPU bf16", {"torch_dtype": torch.bfloat16, "trust_remote_code": trust}, None),
+            ]
+        else:  # cpu_bf16
+            attempts = [
+                ("CPU bf16", {"torch_dtype": torch.bfloat16, "trust_remote_code": trust}, None),
+            ]
+
+        for label, kwargs, target in attempts:
+            try:
+                model = _load_with(kwargs, target)
+                self._on_cpu = (target is None and "device_map" not in kwargs)
+                if label != f"{'GPU' if quant_mode == 'bf16' else quant_mode}":
+                    print(f"[{self.slot_name}] Fallback -> {label}", flush=True)
+                return model
+            except Exception as e:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                print(f"[{self.slot_name}] {label} failed: {type(e).__name__}: {e}", flush=True)
+                continue
+
+        print(f"[{self.slot_name}] WARNING: All load attempts failed for {name}", flush=True)
+        self._on_cpu = True
+        return None
 
     def _unload(self):
         if self.model is not None:
-            print(f"[TeacherSlot] Unloading: {self.current_name}", flush=True)
+            print(f"[{self.slot_name}] Unloading: {self.current_name}", flush=True)
             del self.model, self.tokenizer
             self.model = self.tokenizer = None
             if torch.cuda.is_available():
@@ -254,9 +310,12 @@ class TeacherSlot:
 
 
 def get_slot_repr(model, tokenizer, texts):
-    """Generic mean-pooled representations from any HuggingFace model (encoder or decoder)."""
+    """Generic mean-pooled representations from any HuggingFace model (encoder or decoder).
+    Auto-detects model device (GPU or CPU) and routes inputs accordingly.
+    Always returns result on DEVICE (GPU) for CKA computation."""
+    model_device = next(model.parameters()).device
     enc = tokenizer(texts, padding=True, truncation=True, max_length=512,
-                     return_tensors="pt").to(DEVICE)
+                     return_tensors="pt").to(model_device)
     with torch.no_grad():
         out = model(**enc, output_hidden_states=True)
         if hasattr(out, 'hidden_states') and out.hidden_states is not None:
@@ -265,32 +324,10 @@ def get_slot_repr(model, tokenizer, texts):
             hidden = out.last_hidden_state
         attn_mask = enc["attention_mask"].unsqueeze(-1).float()
         r = (hidden * attn_mask).sum(dim=1) / attn_mask.sum(dim=1).clamp(min=1)
-    return r.float()
+    return r.float().to(DEVICE)  # always return on GPU for CKA
 
 
 # ---- Distillation losses ----
-
-def compute_kd_loss(student_logits, teacher_logits, mask):
-    """KL divergence distillation on masked (top-entropy) tokens.
-
-    Args:
-        student_logits: (B, T, V=50257) student output logits
-        teacher_logits: (B, T, V=50257) teacher output logits (same tokenizer)
-        mask: (B, T) bool mask — True for tokens to distill
-    Returns:
-        scalar KL loss (averaged over masked tokens)
-    """
-    if mask.sum() == 0:
-        return torch.tensor(0.0, device=student_logits.device)
-
-    s_flat = student_logits[mask]   # (N, V)
-    t_flat = teacher_logits[mask]   # (N, V)
-
-    # Temperature-scaled KL divergence
-    s_probs = F.log_softmax(s_flat / KD_TEMP, dim=-1)
-    t_probs = F.softmax(t_flat / KD_TEMP, dim=-1)
-    kl = F.kl_div(s_probs, t_probs, reduction="batchmean") * (KD_TEMP ** 2)
-    return kl
 
 
 def linear_cka(X, Y):
@@ -319,19 +356,6 @@ def linear_cka(X, Y):
     return hsic_xy / denom
 
 
-def get_encoder_repr(enc_model, enc_tokenizer, texts):
-    """Get mean-pooled encoder representations for a list of texts."""
-    enc_inputs = enc_tokenizer(
-        texts, padding=True, truncation=True, max_length=256,
-        return_tensors="pt"
-    ).to(DEVICE)
-    with torch.no_grad():
-        enc_out = enc_model(**enc_inputs)
-        attn_mask = enc_inputs["attention_mask"].unsqueeze(-1).float()
-        t_repr = (enc_out.last_hidden_state * attn_mask).sum(dim=1) / attn_mask.sum(dim=1).clamp(min=1)
-    return t_repr.float()  # (N, D_encoder=384)
-
-
 def compute_cka_loss(student_reprs, teacher_reprs):
     """CKA alignment loss between accumulated student and teacher representations.
 
@@ -345,27 +369,7 @@ def compute_cka_loss(student_reprs, teacher_reprs):
     return 1.0 - cka_sim
 
 
-def select_high_entropy_mask(logits, top_frac=ENTROPY_TOP_FRAC):
-    """Select top-fraction highest-entropy tokens for distillation.
-
-    Args:
-        logits: (B, T, V) student logits
-        top_frac: fraction of tokens to select (0.3 = top 30%)
-    Returns:
-        mask: (B, T) bool tensor
-    """
-    with torch.no_grad():
-        probs = F.softmax(logits.float(), dim=-1)
-        entropy = -(probs * (probs + 1e-10).log()).sum(dim=-1)  # (B, T)
-        # Top-k per sample
-        k = max(1, int(entropy.size(1) * top_frac))
-        _, top_idx = entropy.topk(k, dim=1)
-        mask = torch.zeros_like(entropy, dtype=torch.bool)
-        mask.scatter_(1, top_idx, True)
-    return mask
-
-
-# ---- Cross-tokenizer logit KD (Phase 2: byte-level alignment) ----
+# ---- Cross-tokenizer logit KD (XTKD: byte-level alignment for Q1 teachers) ----
 
 _byte_groups_cache = {}
 
@@ -424,22 +428,25 @@ def _char_ends(tokenizer, token_ids):
     return ends
 
 
-def compute_cross_tok_kd_loss(s_logits, x_tokens, qwen_model, qwen_tokenizer,
+def compute_cross_tok_kd_loss(s_logits, x_tokens, teacher_model, teacher_tokenizer,
                                gpt2_tokenizer, s_byte_groups, t_byte_groups,
                                temperature=2.0):
     """Cross-tokenizer KL at aligned character boundaries in byte space.
 
-    For each text, finds positions where both GPT-2 and Qwen tokenizers have
+    For each text, finds positions where both GPT-2 and teacher tokenizers have
     a token ending at the same character. At those aligned boundaries, projects
     both models' next-token distributions to 256-byte space and computes KL.
 
     Args:
-        s_logits: (B, T, V_student) — HAS gradients (student predictions)
+        s_logits: (B, T, V_student) -- HAS gradients (student predictions)
         x_tokens: (B, T) GPT-2 token IDs
+        teacher_model: any CausalLM teacher (frozen, any tokenizer)
+        teacher_tokenizer: teacher's tokenizer
     Returns:
         scalar KL loss (temperature-scaled, averaged over aligned positions)
     """
     device = s_logits.device
+    teacher_device = next(teacher_model.parameters()).device
     aligned_s, aligned_t = [], []
 
     for b in range(s_logits.shape[0]):
@@ -452,12 +459,12 @@ def compute_cross_tok_kd_loss(s_logits, x_tokens, qwen_model, qwen_tokenizer,
 
         # Teacher forward + character boundaries
         with torch.no_grad():
-            q_enc = qwen_tokenizer(text, return_tensors="pt",
-                                    truncation=True, max_length=512).to(device)
-            q_logits = qwen_model(q_enc["input_ids"]).logits[0]  # (T_q, V_q)
-            t_ends = _char_ends(qwen_tokenizer, q_enc["input_ids"][0].tolist())
+            t_enc = teacher_tokenizer(text, return_tensors="pt",
+                                       truncation=True, max_length=512).to(teacher_device)
+            t_logits = teacher_model(t_enc["input_ids"]).logits[0].to(device)  # (T_t, V_t)
+            t_ends = _char_ends(teacher_tokenizer, t_enc["input_ids"][0].tolist())
 
-        # Build teacher end→position lookup (first token ending at each char pos)
+        # Build teacher end->position lookup (first token ending at each char pos)
         t_map = {}
         for i, e in enumerate(t_ends):
             if e not in t_map:
@@ -467,9 +474,9 @@ def compute_cross_tok_kd_loss(s_logits, x_tokens, qwen_model, qwen_tokenizer,
         for s_pos, s_end in enumerate(s_ends):
             if s_end in t_map:
                 t_pos = t_map[s_end]
-                if s_pos < s_logits.shape[1] and t_pos < q_logits.shape[0]:
+                if s_pos < s_logits.shape[1] and t_pos < t_logits.shape[0]:
                     aligned_s.append(s_logits[b, s_pos])  # (V_s,) with grad
-                    aligned_t.append(q_logits[t_pos])      # (V_t,) no grad
+                    aligned_t.append(t_logits[t_pos])      # (V_t,) no grad
 
     if len(aligned_s) < 4:
         return torch.tensor(0.0, device=device)
@@ -646,8 +653,9 @@ def run_eval(model, dataset, step, ckpt_dir, metrics_history, best_bpt):
     return best_bpt, metrics_history
 
 
-def save_rolling(model, opt, dataset, step, best_bpt, metrics_history, depth_counts, ckpt_dir):
-    atomic_torch_save({
+def save_rolling(model, opt, dataset, step, best_bpt, metrics_history, depth_counts, ckpt_dir,
+                  q1_slot=None, q2_slot=None):
+    state = {
         "model": model.state_dict(),
         "optimizer": opt.state_dict(),
         "step": step,
@@ -658,7 +666,12 @@ def save_rolling(model, opt, dataset, step, best_bpt, metrics_history, depth_cou
         "torch_rng": torch.random.get_rng_state(),
         "random_rng": random.getstate(),
         "cuda_rng": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-    }, ckpt_dir / "rolling_latest.pt")
+    }
+    if q1_slot is not None:
+        state["q1_state"] = q1_slot.state_dict()
+    if q2_slot is not None:
+        state["q2_state"] = q2_slot.state_dict()
+    atomic_torch_save(state, ckpt_dir / "rolling_latest.pt")
 
 
 # ---- GPT-2 tokenizer for text decoding ----
@@ -685,18 +698,14 @@ def decode_tokens_to_texts(token_ids):
 
 # ---- Main ----
 
-def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False,
-         teacher_queue=None):
+def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     variant = "P1b (MiniPLM weighted)" if weight_file else "P1a (uniform)"
-    teacher_count = 3 if use_qwen else 2
-    print(f"SUTRA P1: O4-FIRST {teacher_count}-TEACHER CONTINUATION — {variant}")
+    n_q1 = len(q1_queue) if q1_queue else 0
+    n_q2 = len(q2_queue) if q2_queue else 0
+    print(f"SUTRA EKALAVYA PROTOCOL: TWO-QUEUE MULTI-TEACHER KD -- {variant}")
     print(f"  Parent: v0.6.0a step 20K (model + optimizer, preserved)")
-    print(f"  AR Teacher: GPT-2 small (KL, alpha={ALPHA_LOGIT})")
-    print(f"  Enc Teacher: all-MiniLM-L6-v2 (CKA, alpha={ALPHA_REPR})")
-    if use_qwen:
-        print(f"  LM Teacher: Qwen3-0.6B-Base (CKA={ALPHA_REPR_QWEN}"
-              f"{f', XTKD={ALPHA_XTKD}' if use_cross_tok_kd else ''})")
-    print(f"  Entropy selection: top {ENTROPY_TOP_FRAC*100:.0f}%")
+    print(f"  Q1 (CKA+XTKD): {n_q1} teachers, alpha_cka={ALPHA_Q1_CKA}, alpha_xtkd={ALPHA_Q1_XTKD}")
+    print(f"  Q2 (CKA-only): {n_q2} teachers, alpha_cka={ALPHA_Q2_CKA}")
     print(f"  Depth: rd burst 0-{RD_BURST_END}, then D={D_DEFAULT}")
     print(f"  LR: {CONTINUATION_LR:.1e} -> {MIN_LR:.1e} cosine")
     print(f"  Steps: {MAX_TRAIN_STEPS}, eval every {EVAL_EVERY}")
@@ -781,7 +790,6 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
     if resumed and "optimizer" in resumed_ckpt:
         opt.load_state_dict(resumed_ckpt["optimizer"])
         print(f"  Restored optimizer state from {resumed_ckpt['_path']}")
-        del resumed_ckpt
     elif not resumed:
         opt.load_state_dict(source_ckpt["optimizer"])
         for pg in opt.param_groups:
@@ -791,27 +799,34 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
 
     model.train()
 
-    # ---- Load teachers ----
-    ar_teacher = load_ar_teacher()
-    enc_model, enc_tokenizer = load_encoder_teacher()
-    qwen_model, qwen_tokenizer = (None, None)
-    s_byte_groups, t_byte_groups = None, None
-    if use_qwen:
-        qwen_model, qwen_tokenizer = load_qwen_teacher()
-        if use_cross_tok_kd:
-            print("Precomputing byte groups for cross-tokenizer KD...", flush=True)
-            gpt2_tok = get_gpt2_tokenizer()
-            s_byte_groups = _build_byte_groups(gpt2_tok, DEVICE)
-            t_byte_groups = _build_byte_groups(qwen_tokenizer, DEVICE)
+    # ---- Initialize teacher queues (Ekalavya Protocol) ----
+    # Mark Q1 teachers as needing logits for XTKD
+    if q1_queue:
+        for entry in q1_queue:
+            entry["xtkd"] = True  # flag for _try_load_model to use CausalLM
 
-    # ---- Optional teacher queue (sequential rotation) ----
-    teacher_slot = None
-    if teacher_queue:
-        teacher_slot = TeacherSlot(teacher_queue, DEVICE)
-        print(f"  Teacher queue: {len(teacher_queue)} teachers queued for rotation")
+    q1_slot = TeacherSlot(q1_queue or [], DEVICE, slot_name="Q1") if q1_queue else None
+    q2_slot = TeacherSlot(q2_queue or [], DEVICE, slot_name="Q2") if q2_queue else None
+
+    # Pre-build student byte groups for XTKD (GPT-2 tokenizer, constant)
+    s_byte_groups = None
+    gpt2_tok = get_gpt2_tokenizer()
+    if q1_slot is not None:
+        print("Precomputing student byte groups for XTKD...", flush=True)
+        s_byte_groups = _build_byte_groups(gpt2_tok, DEVICE)
+
+    # Restore queue state from checkpoint if resuming
+    if resumed and resumed_ckpt is not None:
+        if q1_slot and "q1_state" in resumed_ckpt:
+            q1_slot.load_state_dict(resumed_ckpt["q1_state"])
+            print(f"  Restored Q1 queue state (idx={q1_slot.idx}, cycle={q1_slot.cycle})")
+        if q2_slot and "q2_state" in resumed_ckpt:
+            q2_slot.load_state_dict(resumed_ckpt["q2_state"])
+            print(f"  Restored Q2 queue state (idx={q2_slot.idx}, cycle={q2_slot.cycle})")
+        del resumed_ckpt
 
     print(f"\n{'='*60}")
-    print(f"All models loaded ({teacher_count} teachers). Starting training...")
+    print(f"Ekalavya Protocol ready: Q1={n_q1} teachers, Q2={n_q2} teachers")
     print(f"{'='*60}\n")
 
     # Step 0 eval
@@ -822,14 +837,18 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
 
     # ---- Training loop ----
     step = start_step
-    running_losses = {"L_CE": 0, "L_probe": 0, "L_KD": 0, "L_CKA": 0, "L_CKA_Q": 0, "L_XTKD": 0, "L_slot": 0, "L_total": 0}
+    running_losses = {"L_CE": 0, "L_probe": 0, "L_CKA_Q1": 0, "L_XTKD": 0, "L_CKA_Q2": 0, "L_total": 0}
     running_depth = 0
     loss_count = 0
     start_time = time.time()
 
-    # CKA accumulation buffers (Fix #3: larger effective batch for stable Gram matrices)
-    cka_student_buf = []   # list of (B, D) detached tensors
+    # CKA accumulation buffers (larger effective batch for stable Gram matrices)
+    cka_student_buf = []   # list of (B, D) tensors — DETACHED except last
     cka_text_buf = []      # list of text strings
+    cka_x_buf = []         # list of (B, T) token tensors for XTKD
+
+    # Cache for teacher byte groups (rebuilt on teacher swap)
+    _t_byte_groups_cache = {}  # {teacher_name: byte_groups}
 
     while step < MAX_TRAIN_STEPS:
         x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE, split="train")
@@ -852,75 +871,70 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
             # Base losses (CE + probe)
             L_CE, L_probe = compute_base_losses(s_logits, aux, y[:, :Tc])
 
-            # ---- Distillation losses ----
-            # 1. AR teacher logits (GPT-2 small, same tokenizer = direct alignment)
-            with torch.no_grad():
-                t_out = ar_teacher(x, use_cache=False)
-                t_logits = t_out.logits[:, :Tc]  # (B, T, V=50257) same space
-
-            # Select high-entropy tokens for distillation
-            entropy_mask = select_high_entropy_mask(s_logits)
-
-            # KL divergence on selected tokens
-            L_KD = compute_kd_loss(s_logits, t_logits, entropy_mask)
-
-            # 2. CKA with encoder + Qwen teachers — accumulate across CKA_EVERY_N micro-batches
-            #    Fix #3: larger Gram matrix (N=CKA_EVERY_N*B) + unbiased weighting
-            L_CKA = torch.tensor(0.0, device=DEVICE)
-            L_CKA_Q = torch.tensor(0.0, device=DEVICE)
+            # ---- Two-Queue Distillation (Ekalavya Protocol) ----
+            L_CKA_Q1 = torch.tensor(0.0, device=DEVICE)
             L_XTKD = torch.tensor(0.0, device=DEVICE)
-            L_slot = torch.tensor(0.0, device=DEVICE)
+            L_CKA_Q2 = torch.tensor(0.0, device=DEVICE)
+
             if "mu_hist" in aux and aux["mu_hist"] is not None:
                 student_hidden = aux["mu_hist"][:, :Tc, -1, :]  # (B, T, D)
                 s_repr_live = student_hidden.float().mean(dim=1)  # (B, D) with gradients
                 texts = decode_tokens_to_texts(x)
 
-                # Accumulate LIVE representations (keep gradients for all micro-batches)
-                cka_student_buf.append(s_repr_live)
+                # FIX: Detach all prior micro-batch reps (their graphs were consumed
+                # by earlier backward passes). Only keep current batch live.
+                for i in range(len(cka_student_buf)):
+                    if cka_student_buf[i].requires_grad:
+                        cka_student_buf[i] = cka_student_buf[i].detach()
+                cka_student_buf.append(s_repr_live)  # only this one has live graph
                 cka_text_buf.extend(texts)
+                cka_x_buf.append(x.detach())  # for XTKD (always detached, teacher uses it)
 
-                # Compute CKA at end of accumulation window
+                # Compute distillation at end of CKA accumulation window
                 if len(cka_student_buf) >= CKA_EVERY_N:
-                    # Concat all live buffers (all have gradients now)
-                    all_s = torch.cat(cka_student_buf, dim=0)
+                    all_s = torch.cat(cka_student_buf, dim=0)  # (N*B, D)
                     all_texts = cka_text_buf[:]
 
-                    # MiniLM encoder CKA (existing)
-                    t_repr = get_encoder_repr(enc_model, enc_tokenizer, all_texts)
-                    L_CKA = compute_cka_loss(all_s, t_repr)
+                    # Q1: CKA + XTKD from light intelligent teacher
+                    if q1_slot is not None:
+                        q1_model, q1_tok = q1_slot.check_swap(step)
+                        if q1_model is not None:
+                            # CKA alignment
+                            q1_repr = get_slot_repr(q1_model, q1_tok, all_texts)
+                            L_CKA_Q1 = compute_cka_loss(all_s, q1_repr)
 
-                    # Qwen3-0.6B CKA (new — cross-tokenizer safe)
-                    if qwen_model is not None:
-                        q_repr = get_qwen_repr(qwen_model, qwen_tokenizer, all_texts)
-                        L_CKA_Q = compute_cka_loss(all_s, q_repr)
+                            # XTKD: byte-level cross-tokenizer logit KD
+                            if s_byte_groups is not None:
+                                t_name = q1_slot.current_name or ""
+                                if t_name not in _t_byte_groups_cache:
+                                    _t_byte_groups_cache[t_name] = _build_byte_groups(q1_tok, DEVICE)
+                                t_bg = _t_byte_groups_cache[t_name]
+                                L_XTKD = compute_cross_tok_kd_loss(
+                                    s_logits, x[:, :Tc], q1_model, q1_tok,
+                                    gpt2_tok, s_byte_groups, t_bg,
+                                    temperature=KD_TEMP)
 
-                    # Cross-tokenizer logit KD (byte-level, current batch only)
-                    if use_cross_tok_kd and s_byte_groups is not None:
-                        gpt2_tok = get_gpt2_tokenizer()
-                        L_XTKD = compute_cross_tok_kd_loss(
-                            s_logits, x[:, :Tc], qwen_model, qwen_tokenizer,
-                            gpt2_tok, s_byte_groups, t_byte_groups,
-                            temperature=KD_TEMP)
-
-                    # Teacher queue slot (sequential rotation — one extra teacher at a time)
-                    if teacher_slot is not None:
-                        slot_model, slot_tok, slot_type = teacher_slot.check_swap(step)
-                        if slot_model is not None and slot_type == "cka":
-                            slot_repr = get_slot_repr(slot_model, slot_tok, all_texts)
-                            L_slot = compute_cka_loss(all_s, slot_repr)
+                    # Q2: CKA-only from heavy diverse teacher
+                    if q2_slot is not None:
+                        q2_model, q2_tok = q2_slot.check_swap(step)
+                        if q2_model is not None:
+                            q2_repr = get_slot_repr(q2_model, q2_tok, all_texts)
+                            L_CKA_Q2 = compute_cka_loss(all_s, q2_repr)
 
                     # Clear buffers
                     cka_student_buf.clear()
                     cka_text_buf.clear()
+                    cka_x_buf.clear()
 
             # Combined loss (CKA compensated for 1-in-N frequency)
-            cka_weight = ALPHA_REPR * CKA_EVERY_N if L_CKA.item() > 0 else 0.0
-            cka_q_weight = ALPHA_REPR_QWEN * CKA_EVERY_N if L_CKA_Q.item() > 0 else 0.0
-            xtkd_weight = ALPHA_XTKD * CKA_EVERY_N if L_XTKD.item() > 0 else 0.0
-            slot_weight = ALPHA_REPR * CKA_EVERY_N if L_slot.item() > 0 else 0.0
-            L_total = (L_CE + ALPHA_LOGIT * L_KD + cka_weight * L_CKA
-                       + cka_q_weight * L_CKA_Q + xtkd_weight * L_XTKD
-                       + slot_weight * L_slot + PROBE_LOSS_COEF * L_probe)
+            q1_cka_w = ALPHA_Q1_CKA * CKA_EVERY_N if L_CKA_Q1.item() > 0 else 0.0
+            q1_xtkd_w = ALPHA_Q1_XTKD * CKA_EVERY_N if L_XTKD.item() > 0 else 0.0
+            q2_cka_w = ALPHA_Q2_CKA * CKA_EVERY_N if L_CKA_Q2.item() > 0 else 0.0
+            L_total = (L_CE
+                       + q1_cka_w * L_CKA_Q1
+                       + q1_xtkd_w * L_XTKD
+                       + q2_cka_w * L_CKA_Q2
+                       + PROBE_LOSS_COEF * L_probe)
             L_total = L_total / GRAD_ACCUM
 
         if not torch.isfinite(L_total):
@@ -931,16 +945,15 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
             running_depth = 0
             cka_student_buf.clear()
             cka_text_buf.clear()
+            cka_x_buf.clear()
             continue
 
         L_total.backward()
         running_losses["L_CE"] += L_CE.item()
         running_losses["L_probe"] += L_probe.item()
-        running_losses["L_KD"] += L_KD.item()
-        running_losses["L_CKA"] += L_CKA.item()
-        running_losses["L_CKA_Q"] += L_CKA_Q.item()
+        running_losses["L_CKA_Q1"] += L_CKA_Q1.item()
         running_losses["L_XTKD"] += L_XTKD.item()
-        running_losses["L_slot"] += L_slot.item()
+        running_losses["L_CKA_Q2"] += L_CKA_Q2.item()
         running_losses["L_total"] += (L_total * GRAD_ACCUM).item()
         running_depth += D
         loss_count += 1
@@ -955,6 +968,7 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
                 running_depth = 0
                 cka_student_buf.clear()
                 cka_text_buf.clear()
+                cka_x_buf.clear()
                 continue
 
             nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
@@ -967,17 +981,15 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
                 avg_d = running_depth / loss_count
                 elapsed = time.time() - start_time
                 tps = (step - start_step) * BATCH_SIZE * GRAD_ACCUM * SEQ_LEN / max(elapsed, 1)
-                qwen_str = ""
-                if qwen_model is not None:
-                    qwen_str = f" CKA_Q={avgs['L_CKA_Q']:.3f}"
-                    if use_cross_tok_kd:
-                        qwen_str += f" XTKD={avgs['L_XTKD']:.3f}"
-                if teacher_slot is not None and avgs['L_slot'] > 0:
-                    qwen_str += f" slot={avgs['L_slot']:.3f}"
+                q1_name = (q1_slot.current_name or "none").split("/")[-1] if q1_slot else "off"
+                q2_name = (q2_slot.current_name or "none").split("/")[-1] if q2_slot else "off"
                 msg = (f"Step {step:>5d}: L={avgs['L_total']:.4f} "
-                       f"(CE={avgs['L_CE']:.3f} KD={avgs['L_KD']:.3f} "
-                       f"CKA={avgs['L_CKA']:.3f}{qwen_str} prb={avgs['L_probe']:.3f}) "
-                       f"D={avg_d:.1f} lr={lr:.2e} {tps:.0f}tok/s")
+                       f"(CE={avgs['L_CE']:.3f} "
+                       f"Q1cka={avgs['L_CKA_Q1']:.3f} XTKD={avgs['L_XTKD']:.3f} "
+                       f"Q2cka={avgs['L_CKA_Q2']:.3f} "
+                       f"prb={avgs['L_probe']:.3f}) "
+                       f"D={avg_d:.1f} lr={lr:.2e} {tps:.0f}tok/s "
+                       f"[Q1:{q1_name} Q2:{q2_name}]")
                 print(msg, flush=True)
                 with open(log_file, "a") as f:
                     f.write(msg + "\n")
@@ -993,7 +1005,8 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
                     json.dump(metrics_history, mf, indent=2)
 
             if step % ROLLING_SAVE == 0:
-                save_rolling(model, opt, dataset, step, best_bpt, metrics_history, depth_counts, ckpt_dir)
+                save_rolling(model, opt, dataset, step, best_bpt, metrics_history,
+                             depth_counts, ckpt_dir, q1_slot=q1_slot, q2_slot=q2_slot)
 
     # Final eval
     if step > 0 and step % EVAL_EVERY != 0:
@@ -1015,29 +1028,30 @@ def main(weight_file=None, run_name="p1", use_qwen=False, use_cross_tok_kd=False
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Sutra Ekalavya Protocol: Two-Queue Multi-Teacher KD")
     parser.add_argument("--weight-file", type=str, default=None,
                         help="MiniPLM shard weight file for P1b weighted sampling")
     parser.add_argument("--run-name", type=str, default="p1",
                         help="Run name for checkpoint/metrics dirs (default: p1)")
-    parser.add_argument("--qwen-teacher", action="store_true", default=False,
-                        help="Add Qwen3-0.6B-Base as CKA representation teacher")
-    parser.add_argument("--cross-tok-kd", action="store_true", default=False,
-                        help="Enable cross-tokenizer logit KD from Qwen (byte-level)")
-    parser.add_argument("--teacher-queue", type=str, default=None,
-                        help="JSON file with teacher rotation schedule (sequential learning)")
+    parser.add_argument("--q1-queue", type=str, default=None,
+                        help="JSON file for Q1 teachers (CKA+XTKD, light intelligent models)")
+    parser.add_argument("--q2-queue", type=str, default=None,
+                        help="JSON file for Q2 teachers (CKA-only, heavy diverse models)")
     args = parser.parse_args()
 
-    # Load teacher queue from JSON if specified
-    tq = None
-    if args.teacher_queue:
-        tq_path = Path(args.teacher_queue)
-        if tq_path.exists():
-            tq = json.load(open(tq_path))
-            print(f"Loaded teacher queue: {len(tq)} teachers from {tq_path}")
-        else:
-            print(f"WARNING: Teacher queue file not found: {tq_path}")
+    def _load_queue(path_str, label):
+        if path_str is None:
+            return None
+        p = Path(path_str)
+        if p.exists():
+            q = json.load(open(p))
+            print(f"Loaded {label}: {len(q)} teachers from {p}")
+            return q
+        print(f"WARNING: {label} file not found: {p}")
+        return None
+
+    q1 = _load_queue(args.q1_queue, "Q1 (CKA+XTKD)")
+    q2 = _load_queue(args.q2_queue, "Q2 (CKA-only)")
 
     main(weight_file=args.weight_file, run_name=args.run_name,
-         use_qwen=args.qwen_teacher, use_cross_tok_kd=args.cross_tok_kd,
-         teacher_queue=tq)
+         q1_queue=q1, q2_queue=q2)

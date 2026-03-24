@@ -1,0 +1,20 @@
+[
+  {
+    "name": "LiquidAI/LFM2-1.2B",
+    "steps": 2000,
+    "trust_remote_code": true,
+    "_note": "1.2B hybrid SSM+attention. Strong representations, diverse architecture."
+  },
+  {
+    "name": "Qwen/Qwen3-0.6B-Base",
+    "steps": 1500,
+    "trust_remote_code": true,
+    "_note": "0.6B decoder. Strong benchmarks for size. Different tokenizer (152K vocab)."
+  },
+  {
+    "name": "ibm-granite/granite-4.0-h-350m",
+    "steps": 1000,
+    "trust_remote_code": true,
+    "_note": "350M hybrid (SSM+attention). Smallest Q1 teacher, regularizer role."
+  }
+]
