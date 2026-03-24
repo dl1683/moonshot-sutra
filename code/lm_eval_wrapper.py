@@ -89,8 +89,18 @@ class SutraLMEval(LM):
         return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
 
     def _loglikelihood_tokens(self, requests, disable_tqdm=False):
-        results = []
-        n_total = len(requests)
+        # Pre-encode and sort by length to minimize padding waste
+        encoded = []
+        for idx, (context, continuation) in enumerate(requests):
+            ctx_ids = self.tokenizer.encode(context)
+            cont_ids = self.tokenizer.encode(continuation)
+            all_ids = (ctx_ids + cont_ids)[-512:]
+            ctx_len = len(all_ids) - len(cont_ids)
+            encoded.append((idx, all_ids, ctx_len))
+        encoded.sort(key=lambda x: len(x[1]))
+
+        results_by_idx = {}
+        n_total = len(encoded)
         batch_starts = range(0, n_total, self._batch_size)
         if not disable_tqdm:
             total_batches = (n_total + self._batch_size - 1) // self._batch_size
@@ -101,16 +111,9 @@ class SutraLMEval(LM):
             )
 
         for batch_start in batch_starts:
-            batch = requests[batch_start:batch_start + self._batch_size]
-
-            # Encode all in batch
-            batch_encoded = []
-            for context, continuation in batch:
-                ctx_ids = self.tokenizer.encode(context)
-                cont_ids = self.tokenizer.encode(continuation)
-                all_ids = (ctx_ids + cont_ids)[-512:]
-                ctx_len = len(all_ids) - len(cont_ids)
-                batch_encoded.append((all_ids, ctx_len))
+            batch = encoded[batch_start:batch_start + self._batch_size]
+            batch_encoded = [(ids, cl) for _, ids, cl in batch]
+            batch_indices = [idx for idx, _, _ in batch]
 
             # Pad to max length in batch
             max_len = max(len(ids) for ids, _ in batch_encoded)
@@ -137,10 +140,10 @@ class SutraLMEval(LM):
                         total_ll += target_lp
                         if logits_f[j, i - 1].argmax().item() != all_ids[i]:
                             is_greedy = False
-                results.append((total_ll, is_greedy))
-            del logits, logits_f, lse
+                results_by_idx[batch_indices[j]] = (total_ll, is_greedy)
+            del logits, logits_f, lse, padded
 
-        return results
+        return [results_by_idx[i] for i in range(n_total)]
 
     def loglikelihood(self, requests, disable_tqdm=False):
         new_reqs = []
