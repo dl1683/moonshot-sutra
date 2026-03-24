@@ -231,7 +231,7 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             gc.collect()
             torch.cuda.empty_cache()
-            free_mb = (torch.cuda.get_device_properties(0).total_mem
+            free_mb = (torch.cuda.get_device_properties(0).total_memory
                        - torch.cuda.memory_allocated()) / 1e6
             print(f"\n  VRAM free: {free_mb:.0f}MB", flush=True)
 
