@@ -112,7 +112,9 @@ By iteration 12:
 #### Final: Output
 The hidden state `mu` has been refined through 12 iterations of evidence accumulation. It's projected through the output head to produce logits for the next token prediction.
 
-**The key insight**: this isn't a fixed 12-layer network. It's a dynamical system where each token follows its own path through the stage graph. The stage probabilities evolve differently per token — some concentrate on readout quickly while others spend more mass on routing and memory. True early-exit and verify/reroute are design goals for future versions, but the stage distributions already create **content-dependent processing** within the fixed recurrent loop.
+**The key insight**: this isn't a fixed 12-layer network. It's a dynamical system where each token follows its own path through the stage graph. The stage probabilities evolve differently per token — some concentrate on readout quickly while others spend more mass on routing and memory. True early-exit and verify/reroute are design goals for future versions.
+
+**Honesty note**: The walkthrough above shows the *design intent*. In the current 68M model, the controller is pass-global rather than per-token adaptive — stage distributions don't yet vary meaningfully by token type. Proving genuine content-dependent computation is an open challenge.
 
 ### Why This Matters
 
@@ -122,7 +124,7 @@ In a transformer, every token gets the same 32 or 64 layers of computation regar
 - **Connectives and references** ("because", "it", "however") spend more time routing
 - **Ambiguous or complex tokens** loop through more iterations
 
-This is how humans read. You don't spend equal time on every word. You skim the easy parts and slow down for the hard parts. Sutra does this naturally through the stage-superposition mechanism.
+This is how humans read. You don't spend equal time on every word. You skim the easy parts and slow down for the hard parts. Sutra is designed to learn this pattern through the stage-superposition mechanism — though achieving genuine per-token adaptive compute remains an open challenge at our current scale.
 
 ---
 
@@ -176,46 +178,43 @@ The warm-start chain means every improvement from every contributor compounds au
 
 ## Current Status
 
-**v0.6.0a** — Training in progress (~step 9500, BPT improving monotonically)
+**P1a Ekalavya** — Multi-teacher knowledge distillation training in progress
 
 | Metric | Value |
 |--------|-------|
-| Parameters | 68.3M |
-| Architecture | Stage-Superposition + 12 recurrent passes + Attached history + Probe-driven aux loss |
+| Parameters | 68.3M (56.5% in embeddings — tokenizer redesign is critical priority) |
+| Architecture | Stage-Superposition + 12 recurrent passes + Attached history |
 | Training data | 20.72B tokens (FineWeb-Edu + 17 diverse sources, 246 shards) |
-| Current best eval | **7.54 BPT** at step 9K (improving) |
+| Current phase | P1a: two-queue multi-teacher KD from v0.6.0a-20K parent |
 | Hardware | Single NVIDIA RTX 5090 (24GB VRAM) |
 
-### Benchmark Comparison (Full Standard Suites)
+### Benchmark Comparison (lm-eval harness, 0-shot)
 
-All benchmarks run on the complete standard evaluation sets (1,000–10,042 items each). No hand-picked samples.
+| Benchmark | Sutra v0.6.0a-20K | Sutra P1a-3K | SmolLM2-135M | Pythia-70M |
+|-----------|-------------------|--------------|--------------|------------|
+| **PIQA** | 54.5% | 54.0% | 68.4% | 60.5% |
+| **WinoGrande** | 48.9% | 51.1% | 51.3% | 51.9% |
+| **ARC-Easy** | 31.3% | 31.9% | ~44% | 38.5% |
+| **HellaSwag** | 25.8% | 25.9% | 42.1% | 27.2% |
+| **SciQ** | 48.1% | 44.7% | — | 74.0% |
+| **ARC-Challenge** | 16.7% | 18.2% | — | 21.4% |
+| **LAMBADA** | 11.2% | 4.75% | — | 32.6% |
 
-| Benchmark | Items | Sutra v0.5.4 | Pythia-70M | Random | Gap |
-|-----------|-------|-------------|-----------|--------|-----|
-| **PIQA** | 1,838 | **54.8%** | 60.5% | 50% | -5.7pp |
-| **WinoGrande** | 1,267 | **49.8%** | 51.9% | 50% | -2.1pp |
-| **ARC-Easy** | 2,376 | 27.9% | 38.5% | 25% | -10.6pp |
-| **HellaSwag** | 10,042 | 25.7% | 27.2% | 25% | -1.5pp |
-| **SciQ** | 1,000 | 25.9% | 74.0% | 25% | -48.1pp |
-| **ARC-Challenge** | 1,172 | 20.1% | 21.4% | 25% | -1.3pp |
-| **LAMBADA** | 5,153 | ~1% | 32.6% | 0% | -31.6pp |
+**Honest assessment:** Sutra is not yet competitive with published baselines in its parameter class. SmolLM2-135M (half our params) significantly outperforms us on PIQA, HellaSwag, and ARC. The gap is structural, not cosmetic — our architecture carries significant overhead (56.5% params in GPT-2 embeddings, ~29M effectively dead weight). Multi-teacher KD (P1a) shows promising early results (4/7 tasks improved at only 3K steps), but generation quality remains poor and the core thesis is unvalidated without a matched dense baseline.
 
-**Honest assessment:** Sutra is competitive with Pythia-70M on PIQA (-5.7pp), WinoGrande (-2.1pp), HellaSwag (-1.5pp), and ARC-Challenge (-1.3pp). It falls behind significantly on knowledge-intensive benchmarks (SciQ, LAMBADA) because it was trained on only 1.7B tokens of academic papers vs Pythia's 300B tokens of diverse web text.
+### What's Actually Been Proven
 
-### The Efficiency Story
+- **Pass collapse elimination**: Random-depth training keeps all 12 passes productive (30/30 checkpoints clean)
+- **Elastic compute validated**: D=10 passes matches D=12 quality while saving 33% compute (AUROC 0.854 halting probe)
+- **Optimizer reset destroys knowledge**: WSD restart caused SciQ -12.3%, LAMBADA -9.7% — optimizer state preservation is mandatory
+- **Multi-teacher KD works**: Ekalavya protocol beats parent model on 4/7 tasks at only 3K steps
 
-| | Pythia-70M | Sutra v0.5.4 | Ratio |
-|---|-----------|-------------|-------|
-| **Training tokens** | 300B | 1.7B | Pythia used **176x more data** |
-| **Training hardware** | 64x A100 (80GB) | 1x RTX 5090 (24GB) | Pythia used **~130x more GPU memory** |
-| **Estimated compute cost** | ~$10,000+ | ~$15 | Pythia cost **~700x more** |
-| **PIQA accuracy** | 60.5% | 54.8% | Sutra at **90% of Pythia's score** |
-| **WinoGrande accuracy** | 51.9% | 49.8% | Sutra at **96% of Pythia's score** |
-| **HellaSwag accuracy** | 27.2% | 25.7% | Sutra at **94% of Pythia's score** |
+### What's NOT Been Proven
 
-**The takeaway:** On reasoning-style benchmarks (PIQA, WinoGrande, HellaSwag), Sutra achieves 90-96% of Pythia-70M's performance with **176x less data and ~700x less compute cost**. The model is weak on knowledge-intensive tasks because it hasn't seen diverse text — that's a data problem, not an architecture problem.
-
-We have 14B+ diverse tokens ready for the next training run (v0.6.0a). If the efficiency ratio holds, training on 8x more diverse data should close the remaining gaps on knowledge benchmarks while maintaining the reasoning parity.
+- **"Intelligence = Geometry" thesis**: No matched dense baseline exists to validate this claim
+- **Content-dependent computation**: Controller is pass-global, not per-token adaptive. Internal probes confirm uniform processing
+- **Competitive with best-in-class**: We target Phi-4/Qwen3-4B/Gemma-3-1B but aren't close yet
+- **Generation quality**: Poor at all temperatures — repetitive at T=0, incoherent at T=0.8
 
 ### Architecture Evolution
 
@@ -226,22 +225,18 @@ v0.5.2  + Switching Kernel (+4.1%) + Gain Clamp (eliminates NaN)
   |
 v0.5.3  + Scratchpad Memory (+10.2%)
   |
-v0.5.4  + Gated Peri-LN + Delayed Pheromone — reached 5.25 BPT at 20K steps
+v0.5.4  + Gated Peri-LN + Delayed Pheromone — 5.25 BPT at 20K (MiniPile only)
   |
-v0.6.0a + 12 passes + Attached history + Probe-driven aux loss (current, training)
+v0.6.0a + 12 passes + Attached history — 6.79 BPT at 20K (20.7B diverse tokens)
   |
-v0.7.0  Architecture redesign informed by Leibniz research loop (designing)
+v0.6.0b + Random-depth training — pass collapse eliminated, elastic compute validated
+  |
+P1a     + Multi-teacher KD (Ekalavya Protocol) — training in progress
 ```
 
-### What's Next: v0.7.0 Architecture
+### Current Focus: Knowledge Absorption
 
-We're running a structured research-to-invention loop (codenamed Leibniz) — surveying 2024-2026 innovations, understanding driving mechanisms, and deriving novel improvements. Top proposals from Codex's analysis:
-
-1. **Dual-axis RoPE** — Rotary position encoding plus pass-phase encoding. Same shared weights, different effective function per pass.
-2. **Orthogonal BayesianWrite** — Decompose proposals into parallel + orthogonal components vs current state. Conflicting evidence can REDUCE confidence.
-3. **Micro-expert StageBank** — Each of 7 stages gets 2-4 tiny SwiGLU experts, routed within the stage.
-
-The goal is not to adopt existing innovations but to derive something better from the principles underlying them.
+The architecture has structural properties we like (elastic compute, modular stages, warm-startability). The bottleneck is **knowledge**: benchmark gaps are largest on knowledge-intensive tasks (SciQ, LAMBADA). Multi-teacher KD (Ekalavya Protocol) is the current strategy — distilling from diverse teachers (LFM2-1.2B, phi-2, Granite, Qwen, etc.) to inject knowledge the model can't learn from data alone at 68M scale.
 
 ---
 
@@ -307,14 +302,16 @@ Training on academic papers alone teaches the model to write like a journal, not
 
 ## Scaling Plan
 
-| Phase | Params | Data | Goal |
-|-------|--------|------|------|
-| **v0.5.4** (done) | 69M (dim=768) | 1.7B tokens (MiniPile) | Validate architecture |
-| **v0.6.0a** (current) | 68M (dim=768) | 20.7B tokens (diverse) | Training on real data at scale |
-| **v0.7.0** (designing) | TBD | 20.7B+ tokens | Architecture redesign via Leibniz research |
-| **Target** | <4B | Full corpus | Competitive with Phi-4, Qwen3-4B, Gemma-3-1B |
+| Phase | Params | Data | Goal | Status |
+|-------|--------|------|------|--------|
+| **v0.5.4** | 69M (dim=768) | 1.7B tokens (MiniPile) | Validate architecture | DONE |
+| **v0.6.0a** | 68M (dim=768) | 20.7B tokens (diverse) | From-scratch diverse training | DONE (20K steps) |
+| **v0.6.0b** | 68M (dim=768) | 20.7B tokens | Random-depth + elastic compute | DONE (15K steps) |
+| **P1a Ekalavya** | 68M (dim=768) | 20.7B tokens | Multi-teacher KD | IN PROGRESS |
+| **P2** | 68M (dim=768) | 20.7B tokens | 32K tokenizer transplant | PLANNED |
+| **Target** | <4B | Full corpus | Competitive with best-in-class | LONG-TERM |
 
-The target is not to beat dense baselines — it's to compete with **the best models in our parameter class**.
+**Critical blocker:** 56.5% of params are in GPT-2 embeddings (76% of vocab unused). Tokenizer redesign is the highest-leverage single change. The matched dense baseline experiment remains the decisive test of the core thesis.
 
 ---
 
@@ -347,18 +344,16 @@ If intelligence requires a data center, it will always be controlled by those wh
 sutra/
 ├── code/
 │   ├── sutra_v05_ssm.py          # Core architecture (stages, routing, BayesianWrite)
-│   ├── launch_v060a.py            # Current model (12 passes, attached history)
-│   ├── train_v060a.py             # Production trainer (3-part loss)
+│   ├── launch_v060a.py            # v0.6.0a model factory (12 passes, attached history)
+│   ├── train_p1_twoteacher.py     # P1a Ekalavya trainer (multi-teacher KD)
 │   ├── scratchpad.py              # Shared discourse memory
-│   ├── data_loader.py             # Sharded data pipeline
-│   ├── gen_quality_test.py        # Generation quality assessment
-│   ├── run_benchmarks_lite.py     # Standard benchmarks (ARC, PIQA, HellaSwag, etc.)
-│   └── lm_eval_wrapper.py         # lm-eval framework integration
+│   ├── data_loader.py             # Sharded streaming data pipeline
+│   ├── run_benchmarks_lite.py     # Lightweight benchmarks (ARC, PIQA, HellaSwag, etc.)
+│   └── lm_eval_wrapper.py         # lm-eval harness integration
 ├── research/
-│   ├── RESEARCH.md                # All findings (~7000 lines)
+│   ├── RESEARCH.md                # All findings (~12000 lines)
 │   ├── VISION.md                  # The full infrastructure vision
-│   ├── SCRATCHPAD.md              # Strategic ideas and test queue
-│   └── STAGE_ANALYSIS.md          # Deep theoretical design for 7 stages
+│   └── SCRATCHPAD.md              # Strategic ideas and test queue
 ├── results/
 │   └── *.json                     # Probe results, metrics, benchmarks
 ├── experiments/
