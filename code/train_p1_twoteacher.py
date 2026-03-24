@@ -61,21 +61,18 @@ ALPHA_Q1_CKA = 0.3       # CKA weight for Q1 (CKA+XTKD) teachers
 ALPHA_Q1_XTKD = 0.3      # XTKD weight for Q1 teachers (byte-level logit KD)
 ALPHA_Q2_CKA = 0.2       # CKA weight for Q2 (CKA-only) teachers
 KD_TEMP = 2.0            # Temperature for XTKD byte-level distillation
-CKA_EVERY_N = 4          # Compute CKA every N micro-batches (accumulate between)
+CKA_EVERY_N = 8          # Compute CKA every N micro-batches (halved from 4 — reduces XTKD 50%, same CKA gradient per step)
 
 # Training schedule
 MAX_TRAIN_STEPS = 15000
 EVAL_EVERY = 1000
-SAVE_EVERY = 1000
 ROLLING_SAVE = 500  # Reduced from 100 to avoid OneDrive sync I/O bottleneck
 LOG_EVERY = 50
 
 # LR: continuation from parent
 CONTINUATION_LR = 3.2e-4
 MIN_LR = 1e-4
-WARMUP_STEPS = 0
-
-# Depth schedule: rd burst then D=8 default
+# Depth schedule: rd burst then D=10 default
 RD_BURST_END = 250      # Deep-biased rd burst for 250 steps
 D_DEFAULT = 10          # Default depth after burst (D8 INVERTED at v060b 15K, D10 optimal at 96.7%)
 D_REFRESH_PROB = 0.05   # 5% chance of D=12 refresh after burst
@@ -108,22 +105,31 @@ class TeacherSlot:
         self.steps_remaining = 0
         self.current_name = None
         self.cycle = 0
+        self._last_dec_step = -1      # track last step we decremented (1 decrement per optimizer step)
+        self._retry_after_step = -1   # backoff: don't retry failed teachers until this step
 
     def check_swap(self, step):
-        """Check if current teacher's window is done. Swap if needed.
+        """Get current teacher. Swap if exhausted. Does NOT consume a step.
         Returns (model, tokenizer) or (None, None) if queue empty/all failed.
-        """
+        Call commit_step() after a SUCCESSFUL optimizer step to consume budget."""
         if not self.queue:
             return None, None
 
         if self.model is None or self.steps_remaining <= 0:
-            self._swap_next()
+            if self._retry_after_step > step:
+                return None, None  # backoff period after all-fail
+            self._swap_next(step)
 
-        if self.model is not None:
-            self.steps_remaining -= 1
         return self.model, self.tokenizer
 
-    def _swap_next(self):
+    def commit_step(self, step):
+        """Consume one step of teacher budget. Call ONLY after successful opt.step().
+        Decrements once per optimizer step (not per CKA window)."""
+        if self.model is not None and step != self._last_dec_step:
+            self.steps_remaining -= 1
+            self._last_dec_step = step
+
+    def _swap_next(self, step=0):
         self._unload()
         attempts = 0
         while attempts < len(self.queue):
@@ -138,12 +144,14 @@ class TeacherSlot:
             self._load(entry)
             if self.model is not None:
                 self.current_name = entry["name"]
+                self._last_dec_step = -1  # reset so first check_swap decrements
                 return
 
-        # All teachers failed — clear state, retry after 1000 steps
+        # All teachers failed — backoff for 1000 optimizer steps
         print(f"[{self.slot_name}] WARNING: No teachers could be loaded!", flush=True)
         self.current_name = None
-        self.steps_remaining = 1000
+        self.steps_remaining = 0
+        self._retry_after_step = step + 1000
 
     def state_dict(self):
         """Save slot state for checkpoint resume."""
@@ -152,15 +160,30 @@ class TeacherSlot:
             "cycle": self.cycle,
             "steps_remaining": self.steps_remaining,
             "current_name": self.current_name,
+            "_last_dec_step": self._last_dec_step,
+            "_retry_after_step": self._retry_after_step,
         }
 
     def load_state_dict(self, state):
-        """Restore slot state from checkpoint. Model re-loaded on next check_swap."""
+        """Restore slot state from checkpoint. Reloads in-flight teacher if steps remain."""
         self.idx = state.get("idx", 0)
         self.cycle = state.get("cycle", 0)
         self.steps_remaining = state.get("steps_remaining", 0)
         self.current_name = state.get("current_name", None)
-        # Force reload on next check_swap
+        self._last_dec_step = state.get("_last_dec_step", -1)
+        self._retry_after_step = state.get("_retry_after_step", -1)
+
+        # Reload in-flight teacher if it had steps remaining
+        if self.current_name and self.steps_remaining > 0:
+            entry = next((e for e in self.queue if e["name"] == self.current_name), None)
+            if entry:
+                self._load(entry)
+                if self.model is not None:
+                    print(f"[{self.slot_name}] Resumed in-flight: {self.current_name} "
+                          f"({self.steps_remaining} steps left)", flush=True)
+                    return
+            print(f"[{self.slot_name}] Could not reload {self.current_name}, will advance", flush=True)
+
         self.model = None
         self.tokenizer = None
 
@@ -197,22 +220,34 @@ class TeacherSlot:
 
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=trust)
+            # Many tokenizers lack pad_token — set to eos_token for batched encoding
+            if self.tokenizer.pad_token is None:
+                if self.tokenizer.eos_token is not None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                else:
+                    self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         except Exception as e:
             print(f"[{self.slot_name}] Tokenizer load failed for {name}: {e}", flush=True)
             self.model = None
             return
 
-        # Auto VRAM check -> decide: GPU bf16, GPU NF4, or CPU
+        # Auto VRAM check -> decide: GPU NF4, GPU bf16 (tiny only), or CPU
+        # NF4 is default for ALL teachers ≥300M params — byte-level XTKD
+        # projection smooths quantization noise. VRAM savings critical.
+        # bf16 only for tiny models (est <0.3GB ≈ <150M actual params).
         free_vram = self._free_vram_gb()
         est_size = self._estimate_model_gb(name, trust)
-        vram_margin = 2.0  # keep 2GB free for training activations
+        vram_margin = 5.0  # keep 5GB free for teacher activations + transient tensors during forward
 
         load_device = "cpu"
         quant_mode = "none"
-        if free_vram > est_size + vram_margin:
+        is_tiny = est_size < 0.3  # <150M actual params → bf16 is fine
+        if is_tiny and free_vram > est_size * 3 + vram_margin:
+            # Tiny model bf16 (est underestimates by ~3x, so multiply)
             load_device = str(self.device)
             quant_mode = "bf16"
-        elif free_vram > est_size * 0.25 + vram_margin:
+        elif free_vram > est_size * 0.75 + vram_margin:
+            # NF4 — default for all teachers (est*0.25 actual, but est underestimates)
             load_device = str(self.device)
             quant_mode = "int4"
         else:
@@ -231,6 +266,9 @@ class TeacherSlot:
             return
 
         self.model.eval()
+        # Disable KV-cache for all teacher forwards (full-sequence, not autoregressive)
+        if hasattr(self.model, 'config') and hasattr(self.model.config, 'use_cache'):
+            self.model.config.use_cache = False
         for p in self.model.parameters():
             p.requires_grad = False
         n = sum(p.numel() for p in self.model.parameters())
@@ -246,13 +284,14 @@ class TeacherSlot:
 
         def _load_with(kwargs, target_device=None):
             if needs_logits:
+                # Q1: need logit head for XTKD
                 m = AutoModelForCausalLM.from_pretrained(name, **kwargs)
             else:
-                # Try CausalLM first (has hidden_states), fallback to AutoModel
+                # Q2 CKA-only: prefer AutoModel (no LM head, cheaper repr extraction)
                 try:
-                    m = AutoModelForCausalLM.from_pretrained(name, **kwargs)
-                except Exception:
                     m = AutoModel.from_pretrained(name, **kwargs)
+                except Exception:
+                    m = AutoModelForCausalLM.from_pretrained(name, **kwargs)
             if target_device:
                 m = m.to(target_device)
             return m
@@ -303,24 +342,39 @@ class TeacherSlot:
     def _unload(self):
         if self.model is not None:
             print(f"[{self.slot_name}] Unloading: {self.current_name}", flush=True)
+            # Evict byte groups cache by teacher name (matches cache_key used in _build_byte_groups)
+            if self.current_name:
+                _byte_groups_cache.pop(self.current_name, None)
             del self.model, self.tokenizer
             self.model = self.tokenizer = None
+            import gc; gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+
+
+def _is_causal_lm(model):
+    """Check if model has a language modeling head (needs output_hidden_states for repr)."""
+    return hasattr(model, 'lm_head') or hasattr(model, 'cls')
 
 
 def get_slot_repr(model, tokenizer, texts):
     """Generic mean-pooled representations from any HuggingFace model (encoder or decoder).
     Auto-detects model device (GPU or CPU) and routes inputs accordingly.
-    Always returns result on DEVICE (GPU) for CKA computation."""
+    Always returns result on DEVICE (GPU) for CKA computation.
+
+    AutoModel (Q2): uses last_hidden_state directly — no all-layer materialization (~1.3GB savings).
+    CausalLM (Q1): uses output_hidden_states=True — single forward, takes hidden_states[-1]."""
     model_device = next(model.parameters()).device
     enc = tokenizer(texts, padding=True, truncation=True, max_length=512,
                      return_tensors="pt").to(model_device)
+    needs_hidden_states = _is_causal_lm(model)
     with torch.no_grad():
-        out = model(**enc, output_hidden_states=True)
-        if hasattr(out, 'hidden_states') and out.hidden_states is not None:
+        out = model(**enc, output_hidden_states=needs_hidden_states)
+        if needs_hidden_states:
+            # CausalLM: must use hidden_states[-1] (last layer before LM head)
             hidden = out.hidden_states[-1]
         else:
+            # AutoModel: use last_hidden_state directly (no all-layer materialization)
             hidden = out.last_hidden_state
         attn_mask = enc["attention_mask"].unsqueeze(-1).float()
         r = (hidden * attn_mask).sum(dim=1) / attn_mask.sum(dim=1).clamp(min=1)
@@ -374,10 +428,12 @@ def compute_cka_loss(student_reprs, teacher_reprs):
 _byte_groups_cache = {}
 
 
-def _build_byte_groups(tokenizer, device):
+def _build_byte_groups(tokenizer, device, cache_key=None):
     """For each byte (0-255), precompute a tensor of token IDs whose decoded
-    string starts with that byte. Cached per tokenizer instance."""
-    key = id(tokenizer)
+    string starts with that byte. Cached per cache_key (teacher name or id).
+
+    Uses actual UTF-8 first byte (not Unicode codepoint) for correct non-ASCII handling."""
+    key = cache_key or id(tokenizer)
     if key in _byte_groups_cache:
         cached = _byte_groups_cache[key]
         if cached[0].device == device:
@@ -389,7 +445,9 @@ def _build_byte_groups(tokenizer, device):
         try:
             s = tokenizer.decode([vid])
             if s:
-                groups[min(ord(s[0]), 255)].append(vid)
+                # Use actual first UTF-8 byte, not Unicode codepoint
+                first_byte = s.encode('utf-8')[0]
+                groups[first_byte].append(vid)
         except Exception:
             pass
 
@@ -488,10 +546,23 @@ def compute_cross_tok_kd_loss(s_logits, x_tokens, teacher_model, teacher_tokeniz
     s_byte = _byte_logsumexp(s_stack / temperature, s_byte_groups)  # (N, 256)
     t_byte = _byte_logsumexp(t_stack / temperature, t_byte_groups)  # (N, 256)
 
+    # Mask: only bytes active in BOTH student and teacher tokenizers.
+    # Bytes missing from either side have logsumexp = -1e20 → KL explodes.
+    INACTIVE_THRESH = -1e10
+    active_mask = (s_byte > INACTIVE_THRESH) & (t_byte > INACTIVE_THRESH)  # (N, 256)
+    if not active_mask.any():
+        return torch.tensor(0.0, device=device)
+
+    # Mask inactive bytes to -inf before softmax (they get zero probability)
+    s_masked = s_byte.clone()
+    t_masked = t_byte.clone()
+    s_masked[~active_mask] = -1e20
+    t_masked[~active_mask] = -1e20
+
     # KL divergence in byte space (student learns teacher's byte-level preferences)
     return F.kl_div(
-        F.log_softmax(s_byte, dim=-1),
-        F.softmax(t_byte, dim=-1),
+        F.log_softmax(s_masked, dim=-1),
+        F.softmax(t_masked, dim=-1),
         reduction='batchmean'
     ) * (temperature ** 2)
 
@@ -499,7 +570,7 @@ def compute_cross_tok_kd_loss(s_logits, x_tokens, teacher_model, teacher_tokeniz
 # ---- Depth sampling ----
 
 def sample_depth_p1(step):
-    """P1 depth schedule: rd burst then D=8 default with occasional D=12."""
+    """P1 depth schedule: rd burst then D=10 default with occasional D=12."""
     if step <= RD_BURST_END:
         # Deep-biased burst (same as P0)
         if step <= 100:
@@ -509,7 +580,7 @@ def sample_depth_p1(step):
             idx = torch.multinomial(weights, 1).item()
             return idx + 8
     else:
-        # Mostly D=8 with occasional D=12 refresh
+        # Mostly D=10 with occasional D=12 refresh
         if random.random() < D_REFRESH_PROB:
             return 12
         return D_DEFAULT
@@ -687,12 +758,13 @@ def get_gpt2_tokenizer():
 
 
 def decode_tokens_to_texts(token_ids):
-    """Decode GPT-2 token IDs to text strings for encoder teacher."""
+    """Decode GPT-2 token IDs to text strings for teacher CKA/XTKD.
+    No character truncation — each teacher's tokenizer handles max_length in get_slot_repr."""
     tok = get_gpt2_tokenizer()
     texts = []
     for seq in token_ids:
         text = tok.decode(seq.tolist(), skip_special_tokens=True)
-        texts.append(text[:1024])  # truncate for encoder
+        texts.append(text)
     return texts
 
 
@@ -813,7 +885,7 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     gpt2_tok = get_gpt2_tokenizer()
     if q1_slot is not None:
         print("Precomputing student byte groups for XTKD...", flush=True)
-        s_byte_groups = _build_byte_groups(gpt2_tok, DEVICE)
+        s_byte_groups = _build_byte_groups(gpt2_tok, DEVICE, cache_key="student_gpt2")
 
     # Restore queue state from checkpoint if resuming
     if resumed and resumed_ckpt is not None:
@@ -845,7 +917,6 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     # CKA accumulation buffers (larger effective batch for stable Gram matrices)
     cka_student_buf = []   # list of (B, D) tensors — DETACHED except last
     cka_text_buf = []      # list of text strings
-    cka_x_buf = []         # list of (B, T) token tensors for XTKD
 
     # Cache for teacher byte groups (rebuilt on teacher swap)
     _t_byte_groups_cache = {}  # {teacher_name: byte_groups}
@@ -888,7 +959,6 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
                         cka_student_buf[i] = cka_student_buf[i].detach()
                 cka_student_buf.append(s_repr_live)  # only this one has live graph
                 cka_text_buf.extend(texts)
-                cka_x_buf.append(x.detach())  # for XTKD (always detached, teacher uses it)
 
                 # Compute distillation at end of CKA accumulation window
                 if len(cka_student_buf) >= CKA_EVERY_N:
@@ -907,7 +977,7 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
                             if s_byte_groups is not None:
                                 t_name = q1_slot.current_name or ""
                                 if t_name not in _t_byte_groups_cache:
-                                    _t_byte_groups_cache[t_name] = _build_byte_groups(q1_tok, DEVICE)
+                                    _t_byte_groups_cache[t_name] = _build_byte_groups(q1_tok, DEVICE, cache_key=t_name)
                                 t_bg = _t_byte_groups_cache[t_name]
                                 L_XTKD = compute_cross_tok_kd_loss(
                                     s_logits, x[:, :Tc], q1_model, q1_tok,
@@ -924,7 +994,17 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
                     # Clear buffers
                     cka_student_buf.clear()
                     cka_text_buf.clear()
-                    cka_x_buf.clear()
+
+            # Clamp distillation losses to prevent extreme-but-finite spikes
+            # (XTKD spike to 3e16 at step 3050 was finite, bypassed NaN guard)
+            MAX_DISTILL_LOSS = 50.0
+            if L_XTKD.item() > MAX_DISTILL_LOSS:
+                print(f"WARNING: XTKD spike ({L_XTKD.item():.1f}), clamping to {MAX_DISTILL_LOSS}", flush=True)
+                L_XTKD = L_XTKD.clamp(max=MAX_DISTILL_LOSS)
+            if L_CKA_Q1.item() > MAX_DISTILL_LOSS:
+                L_CKA_Q1 = L_CKA_Q1.clamp(max=MAX_DISTILL_LOSS)
+            if L_CKA_Q2.item() > MAX_DISTILL_LOSS:
+                L_CKA_Q2 = L_CKA_Q2.clamp(max=MAX_DISTILL_LOSS)
 
             # Combined loss (CKA compensated for 1-in-N frequency)
             q1_cka_w = ALPHA_Q1_CKA * CKA_EVERY_N if L_CKA_Q1.item() > 0 else 0.0
@@ -937,15 +1017,14 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
                        + PROBE_LOSS_COEF * L_probe)
             L_total = L_total / GRAD_ACCUM
 
-        if not torch.isfinite(L_total):
-            print(f"WARNING: Non-finite loss at step {step} (D={D}), skipping", flush=True)
+        if not torch.isfinite(L_total) or L_total.item() > 1e6:
+            print(f"WARNING: Bad loss at step {step} (L={L_total.item():.2f}, D={D}), skipping", flush=True)
             opt.zero_grad()
             loss_count = 0
             running_losses = {k: 0 for k in running_losses}
             running_depth = 0
             cka_student_buf.clear()
             cka_text_buf.clear()
-            cka_x_buf.clear()
             continue
 
         L_total.backward()
@@ -968,13 +1047,18 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
                 running_depth = 0
                 cka_student_buf.clear()
                 cka_text_buf.clear()
-                cka_x_buf.clear()
                 continue
 
             nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
             opt.step()
             opt.zero_grad()
             step += 1
+
+            # Commit teacher step budget AFTER successful optimizer update
+            if q1_slot is not None:
+                q1_slot.commit_step(step)
+            if q2_slot is not None:
+                q2_slot.commit_step(step)
 
             if step % LOG_EVERY == 0:
                 avgs = {k: v / loss_count for k, v in running_losses.items()}

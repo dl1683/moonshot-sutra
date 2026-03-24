@@ -309,6 +309,8 @@ class ShardedDataset:
             meta = None
             if path is not None:
                 meta = next((m for m in self.index if str(m["path"]) == str(path)), None)
+                if meta is not None:
+                    self._load_shard(meta["path"])  # Warm cache (mirrors old-format branch)
             self._sticky_state[split] = {
                 "count": state.get("count", 0),
                 "meta": meta,

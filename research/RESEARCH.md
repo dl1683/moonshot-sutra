@@ -1,5 +1,220 @@
 # Sutra Research Log
 
+## Ekalavya Protocol Step 3000 Eval (2026-03-23)
+
+**P1a two-teacher KD, step 3000/15K — benchmarks taken before two-queue switch (single-teacher KD phase)**
+
+### Benchmarks vs All Baselines
+
+| Benchmark | P1a-3K | v060a-20K | v060b-15K | R15 Gate | vs Parent |
+|-----------|--------|-----------|-----------|----------|-----------|
+| SciQ | **44.7%** | 48.1% | 37.8% | >=46% | -3.4% |
+| ARC-Easy | **31.9%** | 31.3% | 31.3% | — | **+0.6%** |
+| ARC-Chall | **18.2%** | 16.7% | 16.7% | — | **+1.5%** |
+| HellaSwag | **25.9%** | 25.8% | 25.8% | — | **+0.1%** |
+| PIQA | **54.0%** | 54.5% | 54.4% | >=54% | -0.5% |
+| WinoGrande | **51.1%** | 48.9% | 48.9% | — | **+2.2%** |
+| LAMBADA | **4.75%** | 11.2% | 4.6% | >=6% | -6.4% |
+
+**At only 3K steps, P1a already EXCEEDS v060a-20K parent on 4/7 tasks** (ARC-Easy, ARC-Chall, HellaSwag, WinoGrande). SciQ recovery far faster than v060b (44.7% at 3K vs 37.8% at 15K). LAMBADA still the main gap.
+
+### Per-Depth BPT Trajectory
+
+| Step | Overall | D=8 | D=10 | D=12 | D10<D12? |
+|------|---------|-----|------|------|----------|
+| 0 | 6.946 | 18.015 | 16.650 | 6.737 | No |
+| 1000 | 7.043 | 7.029 | 6.909 | 6.957 | **Yes** |
+| 2000 | 7.015 | 12.260 | 7.007 | 7.034 | **Yes** |
+| 3000 | **6.803** | 12.802 | **6.695** | 6.736 | **Yes** |
+
+**BPT=6.8034 — NEW BEST**, approaching parent's 6.7946. D10=6.695 < D12=6.736 — elastic compute validated at every checkpoint. D10 is consistently optimal.
+
+### XTKD Spike Incident (Step 3050)
+Training log shows XTKD loss spiked to **3.65e16** at step 3050. This was FINITE, so the `torch.isfinite()` guard didn't catch it. The rolling checkpoint restart at step 3000 picked up the new code with component-level clamping (MAX_DISTILL_LOSS=50.0) and the spike was contained on restart (XTKD=0.473 post-fix). Three-layer safety system validated.
+
+### Two-Queue Switch
+After step 3000 eval, process restarted from rolling checkpoint with new two-queue Ekalavya code. Training now shows Q1cka, XTKD, Q2cka loss components. Throughput dropped from ~6600 to ~2635 tok/s due to additional teacher forward passes and XTKD tokenization overhead.
+
+### Generation Quality (Step 3000)
+Still poor. T=0: extreme repetition ("the village of the village of the village..."). T=0.5: somewhat structured but factually empty. T=0.8: more diverse (trigram_div likely better) but incoherent. T=1.0: word-salad. Knowledge tasks improving but generation quality lags — consistent with prior findings that BPT ≠ generation quality.
+
+### Gate Status
+- SciQ 44.7% → needs +1.3% to gate (46%) — **on track, projected to pass by step ~5K**
+- LAMBADA 4.75% → needs +1.25% to gate (6%) — **slower, may need 8-10K**
+- PIQA 54.0% → **essentially at gate** (54%)
+- D10 <= D12 → **PASSING at every checkpoint**
+- No repeated XTKD spikes > 5x median → **PASSING** (spike was one-time, clamping active)
+
+## R15 Research Survey Findings (2026-03-23)
+
+### 1. GRACE-lite Teacher Compatibility Scoring
+**Source:** GraCe (Gradient-CV Score), Chen et al. 2024
+
+GRACE measures teacher-student compatibility via gradient coefficient of variation: for each teacher, compute 14 backward passes on 500 held-out samples, measure CV of gradient norms across passes. Lower CV = more stable/compatible teacher.
+
+**Key numbers:** GRACE has **74-86% Spearman correlation** with actual KD performance outcomes. Teacher benchmark performance has only **11% correlation** — confirming R14 intuition that teacher "quality" ≠ KD usefulness. Procrustes distance (shape-preserving alignment) **outperforms CKA** for predicting geometry transfer.
+
+**GRACE-lite protocol for Sutra:**
+1. 500 held-out samples from mixed shards
+2. 14 backward passes per teacher candidate
+3. Compute gradient CV per teacher
+4. Rank by GRACE score, allocate duty cycles proportionally (low CV = more steps)
+5. Procrustes distance as secondary filter (replaces CKA for teacher selection)
+
+**Implication:** Can score new teacher candidates in ~5 minutes on CPU before adding to queue. Current duty cycle (LFM2 50% / Qwen 30% / Granite 20%) may be suboptimal — GRACE scoring could reorder.
+
+### 2. VocAgnoLM vs Byte-XTKD Cross-Tokenizer KD
+**Sources:** ALM (NeurIPS 2025), VocAgnoLM, TokenFlow
+
+Our byte-XTKD projects teacher vocab (50K) to byte space (256) — a **200x information compression**. This is lossy by design.
+
+**ALM (Approximate Likelihood Matching):** State-of-art cross-tokenizer KD. Uses chunk-level likelihood alignment instead of token-level. Teacher and student independently decode chunks of text; loss matches chunk probabilities. Avoids tokenizer alignment entirely. NeurIPS 2025, strong results across tokenizer families.
+
+**VocAgnoLM:** Uses teacher as "difficulty oracle" — teacher loss per sample guides curriculum (high loss = harder = sample more). Not distributional KD, purely loss-guided data weighting. Simple but effective. Complements rather than replaces distributional KD.
+
+**TokenFlow:** Bijective mapping between tokenizer vocabularies via shared byte sequences. More principled than byte-projection but requires aligned vocabularies.
+
+**Recommendation for Sutra:** Current byte-XTKD is a stopgap. For P1b or P2, switch to **character-level chunk alignment** (ALM-inspired): compare teacher and student probabilities over character spans rather than individual byte projections. Estimated 3-5x less information loss than byte projection. Keep byte-XTKD running for P1a (it works, just lossy).
+
+### 3. Recurrent-Safe TokAlign Recipe
+**Sources:** TokAlign (2024), Embedding Surgery, Vocabulary Adaptation
+
+TokAlign performs tokenizer transplant via GloVe-based alignment + two-stage fine-tuning. **Safe for recurrent models** — the alignment only touches the embedding/unembedding layers, not the recurrence.
+
+**5-Phase Recipe for Sutra P2 (50K→32K):**
+1. **Train 32K tokenizer** on corpus (already done — 32K BPE from R12)
+2. **GloVe alignment** — train 64-dim GloVe on byte-pair co-occurrence, compute Procrustes rotation from old to new vocab
+3. **Initialize new embeddings** — Procrustes-rotated old embeddings for shared subwords, GloVe-interpolated for new tokens
+4. **Frozen fine-tune** (2.5K steps) — freeze everything except embed/unembed, LR=1e-4
+5. **Full fine-tune** (2.5K steps) — unfreeze all, LR=5e-5
+
+**Expected:** 94.5% performance recovery for 50K→32K reduction. Saves ~14M params (56.5% → ~38% tokenizer overhead). Net effect: core model gets 14M more params to work with. **Do AFTER P1a completes** — tokenizer change resets all KD alignment.
+
+### 4. Task-Agnostic Multi-Teacher KD
+**Sources:** NeurIPS 2025 conditional entropy minimization, ProKD, Multi-Teacher KD Survey (2024)
+
+**Key findings:**
+- **Conditional entropy minimization:** Minimize H(Y|T1,...,Tk,X) — what can the student learn that ALL teachers agree on? Better than simple averaging. NeurIPS 2025.
+- **Procrustes distance > CKA** for measuring geometry transfer between teacher and student. More sensitive to shape-preserving transformations. Replace CKA similarity metric with Procrustes for teacher selection.
+- **Curriculum ordering matters:** Weaker teachers first, stronger later. The student needs easy lessons before hard ones. Current Q1 queue (LFM2→Qwen→Granite) should be reordered by GRACE score.
+- **CKA-progress gating:** Switch to next teacher when CKA improvement plateaus (Δ < threshold for N steps), not on fixed step budget. Prevents wasting steps on teachers the student has already absorbed.
+
+**5 Recommendations for Ekalavya:**
+1. Score all teachers with GRACE-lite before assigning duty cycles
+2. Reorder Q1 queue by GRACE score (weakest-compatible first)
+3. Replace fixed step budgets with CKA-progress gating (switch when Δ<0.001 for 500 steps)
+4. Add Procrustes distance as secondary compatibility metric
+5. For Q2 (geometry teachers), use conditional entropy across teacher ensemble rather than averaging CKA
+
+### 5. Non-LLM Text-Bridged Teaching
+**Sources:** Lean-STaR, VPD, Execute→Verbalize→Train pipelines
+
+**Core idea:** Non-language models (code interpreters, theorem provers, physics simulators, vision models) can teach language models via text-bridge: execute → verbalize result → train on verbalized trace.
+
+**Most mature pipelines:**
+- **Code execution traces:** Run Python interpreter, capture stdout+stack frames, train on traces. Most practical for 68M model with <512 token traces.
+- **Lean-STaR (theorem provers):** Lean 4 proof steps as training data. Mathematical reasoning from formal verification.
+- **VPD (vision):** Image→VLM caption→text description pipeline. Vision knowledge via language bridge.
+
+**Practical for Sutra:**
+- Code execution traces: trivial to implement, generate training data offline
+- Theorem proof traces: requires Lean 4 corpus, more complex but high-quality reasoning data
+- Vision descriptions: requires VLM inference, useful for grounding but low priority for text-only model
+
+**Recommendation:** For P1b data curation, include code execution traces (10-20% of offline curriculum). Each trace: input code → execution result → explanation. Provides structured reasoning data that complements raw text. <512 tokens each, compatible with current context length.
+
+## Tesla+Leibniz Round 15 (2026-03-23)
+
+**Confidence: O1=6, O2=8, O3=4, O4=5 (+1), O5=8**
+
+**Hard Calls:**
+- GPT-2 tokenizer burns 38.6M params (56.5% of model). 32K transplant saves 14M params, raises effective core from ~26.3M to ~40.3M.
+- 68M is a mechanism incubator, not the target. Only 38.5% of params are "intelligence."
+- 15K P1a steps = ~491.5M tokens, cumulative ~1.15B (84% of Chinchilla target for this size).
+- Teacher duty cycle over 15K: LFM2 ~7.5K / Qwen0.6B ~4.5K / Granite ~3.0K (Q1); Phi-2 ~4.1K / Qwen3-4B ~2.5K / Gemma ~2.0K / ... (Q2).
+
+**O4 raised to 5/10:** New empirical data — KD 2.849→2.545, CKA_Q 0.044→0.035, test_bpt 6.8034 at step 3000. MiniPLM scoring complete (242 shards). But no benchmarked two-queue checkpoint yet.
+
+**Path to raise each outcome:**
+- O1→7: P2 32K tokenizer transplant (free 14M params for core)
+- O2→9: Freeze real module ABI for memory/routing/halting/distillation sidecars
+- O3→5: Stage/pass-local LoRA or sidecar adapters with frozen ABI + loader/registry
+- O4→6: P1b hybrid (two-queue + MiniPLM offline weighting + GRACE-style teacher reweighting)
+- O5→9: Learned halting head (after knowledge stable). 60% tokens at D=6, 40% at D=10 = avg D=7.6 (24% cut)
+
+**P1a gate criteria:** SciQ >= 46, LAMBADA >= 6, PIQA >= 54, D10 <= D12, no repeated XTKD spikes > 5x moving median.
+
+**Design decisions:** Keep dim=768 through P1/P2. Investigate ff_dim, LocalRouter params, and learned positional later. Delete pheromone (no isolated evidence), frozen_cache (dead weight). Pure cosine-to-zero rejected — need floor or WSD stable phase.
+
+**Research requests (5):** GRACE-lite teacher compatibility score, NeurIPS 2025 task-agnostic multi-teacher loss, VocAgnoLM vs byte-XTKD comparison, recurrent-safe TokAlign recipe, non-LLM text-bridged teacher methods.
+
+**Experiment requests (4):** Keep P1a to eval checkpoint → gate on criteria. Teacher utility shadow probe. P1b hybrid canary. P2 32K TokAlign canary.
+
+**Intuitions:** Main bottleneck is parameter placement not count (26M core wearing 38.6M tokenizer backpack). Queue duty cycle matters more than teacher benchmark strength. Geometry-only teachers more useful after lexical recovery. Byte-XTKD is stopgap, not end-state.
+
+## Codex Audit Summary: Ekalavya Trainer v1-v7 (2026-03-23)
+
+**7 audit rounds (Correctness v1-v6, Performance v1-v6). All HIGH findings fixed. 3 MED deferred.**
+
+### Fixed Findings (HIGH)
+- Queue resume skipped in-flight teacher (v3) → state_dict saves/loads current_name + steps_remaining + reloads teacher
+- Teacher steps consumed per CKA window not per optimizer step (v3) → commit_step() called only after opt.step()
+- XTKD byte groups used Unicode codepoint not UTF-8 byte (v3) → s.encode('utf-8')[0]
+- CKA teacher loaded as CausalLM with full LM head (v4) → AutoModel for Q2 CKA-only teachers
+- get_slot_repr double-forward regression (v4) → single pass with output_hidden_states=True always
+- KV-cache not disabled on teacher models (v5) → model.config.use_cache = False at load
+
+### Fixed Findings (MED)
+- Teacher step budget consumed before optimizer succeeds (v4) → commit_step() after opt.step()
+- CKA input hard-truncated to 1024 characters (v4) → removed character truncation
+- Stale constants SAVE_EVERY, WARMUP_STEPS (v4) → deleted
+- Byte groups cache keyed by id(tokenizer) — leaks on swap (v4) → keyed by teacher name
+
+### Open Findings (MED, from v5 — some fixed, rest deferred to post-15K)
+- ~~Dataset resume doesn't warm saved shard~~ — **FIXED in v7.** Added `_load_shard(meta["path"])` to new-format branch in `data_loader.py:load_state_dict()`.
+- Teacher inputs diverge on special tokens: CKA strips (skip_special_tokens=True), XTKD literalizes (skip_special_tokens=False)
+- CKA truncates teacher at 512 tokens but student pooled over full sequence — mismatched spans
+
+### Stability Fix (post-v5)
+- XTKD loss spiked to 3e16 at step 3050 (finite, bypassed NaN guard) → added loss component clamping (MAX_DISTILL_LOSS=50.0) + magnitude guard (L_total > 1e6 triggers skip)
+
+### v6 Correctness Findings (0 HIGH, 2 MED, 1 LOW)
+- MED: XTKD char boundary alignment brittle — `_char_ends()` sums per-token decode lengths, can drift with context-sensitive tokenizers. Fix: use `return_offsets_mapping=True`. **Deferred.**
+- MED: Dataset resume doesn't warm saved shard (same as v5). **FIXED in v7.**
+- LOW: Depth comment said "D=8" but code uses D=10. **FIXED.**
+
+### v6 Performance Findings (3 HIGH, 1 MED)
+- HIGH: XTKD serialized per-sample path — batch teacher forward across microbatch. **Deferred to post-15K** (structural optimization).
+- HIGH: Teacher placement during peak VRAM (1.48GB free) → all non-tiny teachers CPU-fall back. Fix: swap after opt.step() when activations freed. **Deferred to post-15K.**
+- HIGH: `output_hidden_states=True` materializes all layers for AutoModel Q2 teachers (~1.3GB waste). **FIXED** — detect model type, AutoModel uses `last_hidden_state` directly.
+- MED: Memory estimation heuristic not calibrated for placement. **Deferred.**
+
+### v7 Correctness Findings (0 HIGH, 1 MED — FIXED)
+- MED: `get_slot_repr()` branch logic was fragile — sniffed output schema (`last_hidden_state` → `hidden_states` → `out[0]`) instead of branching on model type. CausalLM with `last_hidden_state` field would use wrong tensor. Fallback `out[0]` could silently pool logits. **FIXED** — explicit branch: if `needs_hidden_states`: use `hidden_states[-1]`, else use `last_hidden_state`. No fallback.
+
+### v7 Performance Findings (2 HIGH, 2 MED, 1 LOW — 1 applied, rest documented)
+- HIGH: XTKD serialized per-sample path (4 sequential teacher forwards per CKA window). Batch with `return_offsets_mapping=True`. **Deferred — structural change.** Estimated +15-30% throughput.
+- HIGH: Q1 CKA + XTKD + Q2 CKA all fire in same window — stagger them to avoid triple-forward spikes. **Deferred — structural change.** Estimated +25-45% throughput.
+- MEDIUM: Teacher placement heuristic rough (`_estimate_model_gb` is config guess). Could fail when large Q2 teachers (Qwen3-4B) rotate in. **Deferred.**
+- MEDIUM: CPU text path (decode/re-tokenize) is the bottleneck, not data loader. Cache texts and use fast-tokenizer offsets. **Deferred.**
+- LOW: get_slot_repr fix confirmed good — saves ~1.25GB for phi-2-class teachers. **APPLIED.**
+- **APPLIED:** `CKA_EVERY_N` raised from 4 to 8 — halves XTKD per-sample forwards (biggest cost component), same CKA gradient per step. Conservative batch size increase (32 texts vs 16). Estimated ~10-15% throughput recovery. Will take effect at next rolling checkpoint restart.
+
+### v7 Entropy Audit
+- KEEP: benchmark_tracker.json (actively maintained comparison tracker)
+- KEEP: v060b_15k_eval.json (unique generation samples + baselines)
+- DEFER: merge run_lm_eval_sequential.py into lm_eval_wrapper.py (workaround for lm-eval hang)
+- DEFER: consolidate run_benchmarks_lite.py (different functionality from lm-eval)
+- DELETED: train_v060a.py, train_v060b.py (-766 LOC, completed experiments, no imports)
+
+### v6 Confirmed Clean
+- Loss clamping (`clamp(max=50)`) correctly placed, doesn't break autograd ✓
+- commit_step() timing correct (post opt.step, post-incremented step) ✓
+- Teacher queue state_dict/load_state_dict correct ✓
+- CKA student buffer not leaking (detach/clear logic memory-safe) ✓
+- XTKD batch>1 correct (per-sample loop aggregates properly) ✓
+- Peak VRAM estimate: swap is safe (unload before load), but large Q2 on GPU with all-layer hidden states would hit ~26.6GB → OOM. Fixed by removing output_hidden_states for AutoModel.
+
 ## Ekalavya Protocol Step 1000 Eval (2026-03-23)
 
 **P1a "Ekalavya" — 3-teacher KD (GPT-2 + MiniLM + Qwen3-0.6B), step 1000/15K**
