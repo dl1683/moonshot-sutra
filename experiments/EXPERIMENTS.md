@@ -114,42 +114,42 @@ Reverse chronological. See ledger.jsonl for machine-readable details.
 **Key metrics:** tokens_completed=4324885915, pct_complete=49.5
 **Learned:** FAIL: OOM at 49.5% (4.32B tokens). Python list accumulation ~70GB RAM. Fixed with shard-based writes.
 
-### [OK] chrome-true-optimal (2026-03-20)
+### [OK] probe-true-optimal (2026-03-20)
 **Purpose:** True optimal: Peri-LN + Pheromone + Grokfast (no Surprise Bank)
 **Key metrics:** test_bpt=6.154, baseline_bpt=7.317, delta_pct=15.9
 **Learned:** TRUE OPTIMAL: +15.9% BPT. Removing Surprise Bank drag gained extra 2.3pp over ablation best.
 
-### [OK] chrome-v054-ablation-6arm (2026-03-20)
+### [OK] probe-v054-ablation-6arm (2026-03-20)
 **Purpose:** 6-arm ablation: baseline, Peri-LN, +Surprise, +Pheromone, Full, +Grokfast
 **Key metrics:** baseline_bpt=7.317, peri_ln_bpt=6.888, peri_surprise_bpt=7.004
 **Learned:** Winner: v0.5.4+Grokfast (+13.6%). Surprise Bank KILLED (hurts all arms). Peri-LN+Pheromone=+5.9%.
 
-### [OK] chrome-peri-ln (2026-03-20)
+### [OK] probe-peri-ln (2026-03-20)
 **Purpose:** Test Peri-LN (pre+post LayerNorm on each sublayer)
 **Key metrics:** test_bpt=6.995, baseline_bpt=7.182, delta_pct=2.6
 **Learned:** PASS: +2.6% BPT with fewer params. Zero-cost normalization. Already in OLMo2/Gemma2/Gemma3.
 
-### [OK] chrome-grokfast-a095-l2 (2026-03-20)
+### [OK] probe-grokfast-a095-l2 (2026-03-20)
 **Purpose:** Test Grokfast gradient EMA filter (alpha=0.95, lambda=2.0)
 **Key metrics:** test_bpt=6.468, baseline_bpt=7.265, delta_pct=11.0
 **Learned:** STRONG PASS: +11.0% BPT. Benefit grows with training steps. 5 lines of code.
 
-### [FAIL] chrome-grokfast-a098-l5 (2026-03-20)
+### [FAIL] probe-grokfast-a098-l5 (2026-03-20)
 **Purpose:** Test Grokfast (alpha=0.98, lambda=5.0) - too aggressive
 **Key metrics:** test_bpt=NaN, baseline_bpt=7.265
 **Learned:** KILL: lambda=5.0 too aggressive, caused NaN divergence.
 
-### [FAIL] chrome-v054-error-scratchpad (2026-03-20)
+### [FAIL] probe-v054-error-scratchpad (2026-03-20)
 **Purpose:** Test error scratchpad (write delta not state) on v0.5.3
 **Key metrics:** test_bpt=7.343, baseline_bpt=7.317, delta_pct=-0.35
 **Learned:** KILL: early noise from meaningless deltas. Late steps 2.2x better but overall BPT worse.
 
-### [FAIL] chrome-v054-pheromone-router (2026-03-20)
+### [FAIL] probe-v054-pheromone-router (2026-03-20)
 **Purpose:** Test pheromone-style decaying scalar trace in router
 **Key metrics:** test_bpt=7.327, baseline_bpt=7.317, delta_pct=-0.14
 **Learned:** KILL: marginal BPT but best late-step value. Pheromone trace needs time to accumulate.
 
-### [FAIL] chrome-v054-depth-drop (2026-03-20)
+### [FAIL] probe-v054-depth-drop (2026-03-20)
 **Purpose:** Test depth-drop bootstrap (random truncation + KL to teacher)
 **Key metrics:** test_bpt=NaN, baseline_bpt=7.317
 **Learned:** KILL: KL to teacher diverged to NaN at step 169. Numerically unstable at dim=128.

@@ -2,7 +2,7 @@
 
 **Last updated: 2026-03-23 | Update this file whenever the architecture changes.**
 
-This is the single source of truth for ALL architectural design decisions. Every T+L round MUST read this file. Every component must justify its existence — "inherited from GPT-2" or "everyone does it" is NOT justification.
+This is the single source of truth for ALL architectural design decisions. Every design session MUST read this file. Every component must justify its existence — "inherited from GPT-2" or "everyone does it" is NOT justification.
 
 ---
 
@@ -38,7 +38,7 @@ This is the single source of truth for ALL architectural design decisions. Every
 - Embedding is NOT low-rank: rank-256 captures only 45.9% variance → ALBERT won't work
 - Weight-tied with output head (saves one copy)
 
-**Why this was never questioned:** T+L rounds focused on new mechanisms (controller, modes), never audited inherited infrastructure. This is the biggest efficiency win available.
+**Why this was never questioned:** Design sessions focused on new mechanisms (controller, modes), never audited inherited infrastructure. This is the biggest efficiency win available.
 
 **Alternatives (R13 validated 32K as sweet spot):**
 1. **Custom 32K BPE** → save 14M params (1.54x core capacity), **4% shorter sequences**, 82.8% vocab utilization. **RECOMMENDED (R13).**
@@ -190,7 +190,7 @@ Every design decision must be either DERIVED (from first principles), VALIDATED 
 | GPT-2 tokenizer (50K vocab) | **INHERITED** | None. 75.8% of vocab unused. 56.5% of params. | R10+ (2026-03-23) |
 | dim=768 | **INHERITED** | Copied from GPT-2 small. Not derived for this model/scale. | Never |
 | ff_dim=1536 (2x dim) | **INHERITED** | Standard 2x ratio. Not derived. | Never |
-| 7 stage graph | DERIVED | Codex debate (4 rounds, R4). Compressed from 12 stages. | R1 (v0.5.0) |
+| 7 stage graph | DERIVED | Architectural debate (4 rounds, R4). Compressed from 12 stages. | R1 (v0.5.0) |
 | Top-2 projection | DERIVED | Bounded compute per position. Sparse execution. | R1 (v0.5.0) |
 | Bayesian write | DERIVED | Info theory: precision-weighted > residual addition. | R1 (v0.5.0) |
 | Scratchpad (8 slots) | VALIDATED | +3.27% BPT when removed. Load-bearing. | R3 (v0.5.4) |
@@ -260,7 +260,7 @@ Every design decision must be either DERIVED (from first principles), VALIDATED 
 
 ## What This File Is For
 
-1. **T+L rounds:** Codex reads this before every design session. Questions anything marked INHERITED or ARBITRARY.
+1. **Design sessions:** Read this before every design session. Question anything marked INHERITED or ARBITRARY.
 2. **Inherited Paradigm Audit:** The Decision Audit table makes inherited assumptions visible and questionable.
 3. **Architecture changes:** When ANY component changes, update this file FIRST. The code follows the doc.
 4. **Parameter accountability:** Every param must earn its keep. If a component's justification is "inherited," it's a candidate for redesign.

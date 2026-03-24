@@ -5,11 +5,11 @@ v0.5.3 improvements (retained):
   - BayesianWrite gain clamp(max=10.0) (eliminates NaN)
   - 8-slot scratchpad memory (+10.2% BPT)
 
-v0.5.4 additions (Chrome-validated):
+v0.5.4 additions (experimentally validated):
   - GATED Peri-LN: LayerNorm with bypass gate, starts as identity for warm-start
     Gate init alpha=-5 (sigmoid~0.007), ramps up during training
     Fixes warm-start bug: standard LN destroys v0.5.3 activation statistics
-    Chrome-validated: +5.9% BPT (from-scratch), warm-start BPT=6.08 (vs 5.96)
+    Experimentally validated: +5.9% BPT (from-scratch), warm-start BPT=6.08 (vs 5.96)
   - Delayed Pheromone: scalar position trace in global retrieval (best late-step 2.6x)
 
 Surprise Bank was KILLED (hurts every arm it touches in ablation).
@@ -60,12 +60,12 @@ class SutraV054(nn.Module):
     1. Peri-LN: LayerNorm before AND after StageBank, Router, Writer
        - Stabilizes recurrent composition (contraction analysis)
        - Shape-gain factorization (rate-distortion optimal)
-       - Chrome-validated: +5.9% BPT
+       - Experimentally validated: +5.9% BPT
 
     2. Delayed Pheromone: scalar trace over positions in global retrieval
        - Stigmergic routing by public traces of usefulness
        - Activates only at recurrent step 3+ (delayed start principle)
-       - Chrome-validated: best late-step value (2.6x baseline)
+       - Experimentally validated: best late-step value (2.6x baseline)
     """
 
     def __init__(self, vocab_size=50257, dim=768, ff_dim=1536,

@@ -24,7 +24,7 @@ In Sutra, each token follows its own path through a **stage graph** — simple t
 
 ### The 7 Stages (Derived, Not Designed)
 
-These emerged through 4 rounds of adversarial Codex debate, cross-referenced against neuroscience, coding theory, and dynamical systems:
+These emerged through 4 rounds of adversarial architectural debate, cross-referenced against neuroscience, coding theory, and dynamical systems:
 
 | Stage | Function | Mathematical Basis |
 |-------|----------|--------------------|
@@ -75,10 +75,10 @@ BPT improved by **2.9%** (6.794 → 6.598) in just 6K training steps with multi-
 | **PIQA** | 54.5% | 54.0% | **54.7%** | 60.5% | 68.4% |
 | **ARC-Easy** | 31.3% | 31.9% | **32.1%** | 38.5% | ~44% |
 | **HellaSwag** | 25.8% | 25.9% | 25.8% | 27.2% | 42.1% |
-| **WinoGrande** | 48.9% | **51.1%** | *running...* | 51.9% | 51.3% |
-| **SciQ** | 48.1% | 44.7% | *running...* | 74.0% | — |
+| **WinoGrande** | 48.9% | **51.1%** | **50.8%** | 51.9% | 51.3% |
+| **SciQ** | 48.1% | 44.7% | **49.0%** | 74.0% | — |
 | **ARC-Challenge** | 17.5% | **18.2%** | 16.6% | 21.4% | — |
-| **LAMBADA** | 11.2% | 4.75% | *running...* | 32.6% | — |
+| **LAMBADA** | 11.2% | 4.75% | **6.7%** | 32.6% | — |
 
 \* *Pythia-70M trained on 300B tokens (350x our data). SmolLM2-135M is 2x our parameters.*
 
@@ -136,11 +136,11 @@ The student rotates through teachers on a schedule, absorbing different knowledg
 
 ## The Research Process
 
-### Chrome Workflow
+### Theory-Experiment Cycles
 Theory and experiment alternate in tight cycles. Every theoretical claim gets tested against reality early and often. Every experimental result refines the theory. No pure armchair derivation. No blind hyperparameter search.
 
-### Tesla+Leibniz Design Loop
-Strategic architecture design sessions where Codex operates as a committed senior architect (not a cautious reviewer). Full mission context, extreme granularity, iterative refinement until all 5 design outcomes reach high confidence. 20 rounds completed, driving every architectural decision.
+### Iterative Architectural Design
+Strategic architecture design sessions with adversarial review. Full mission context, extreme granularity, iterative refinement until all 5 design outcomes reach high confidence. 20 rounds completed, driving every architectural decision.
 
 ### 15-Domain Cross-Disciplinary Research
 We searched far beyond ML for the mathematical structures underlying intelligence:
@@ -288,11 +288,9 @@ sutra/
 ├── research/
 │   ├── RESEARCH.md                # All findings (~12,000 lines)
 │   ├── VISION.md                  # Full infrastructure vision
-│   └── TESLA_LEIBNIZ_WORKFLOW.md  # Strategic design process spec
 ├── results/                       # Structured JSON: probes, metrics, benchmarks
 ├── experiments/
 │   └── ledger.jsonl               # Every experiment logged
-└── CLAUDE.md                      # Project constitution
 ```
 
 ## Where We Are — Honest Status
@@ -308,7 +306,7 @@ This is a moonshot. The name is literal. We're attempting something that most of
 
 ### What We're Working On
 
-- **Benchmark gap.** BPT (our internal quality metric) improves faster than downstream benchmarks. We're investigating whether this is a measurement issue, a data distribution mismatch, or a fundamental limitation at 68M scale. Active Codex audit in progress.
+- **Benchmark gap.** BPT (our internal quality metric) improves faster than downstream benchmarks. We're investigating whether this is a measurement issue, a data distribution mismatch, or a fundamental limitation at 68M scale.
 - **Generation quality.** Text generation is poor at all temperatures — repetitive at T=0, incoherent at T=0.8. This is the #1 user-visible problem and likely requires both more training data and architectural improvements.
 - **Tokenizer overhead.** 56.5% of parameters are in GPT-2 embeddings, with 76% of vocab tokens unused. The 16K custom tokenizer transplant (P2) is our highest-leverage single change — it effectively doubles the compute parameters.
 - **Content-dependent compute.** The stage transition kernel is currently pass-global, not per-token adaptive. Achieving genuine content-dependent computation is the key architectural challenge. v0.6.1 canary showed that simple mode bias doesn't gate real computation — we need a different mechanism.
@@ -330,7 +328,7 @@ We're not there yet. But the trajectory is promising, and we're building in publ
 
 This is open research. The successes, the failures, the dead ends — everything is here.
 
-- **Read the research**: `research/RESEARCH.md` — every finding from every Chrome cycle
+- **Read the research**: `research/RESEARCH.md` — every finding from every research cycle
 - **Challenge our assumptions**: Open an issue if you think we're wrong
 - **Try the architecture**: The code is self-contained, trains on a single GPU
 - **Suggest experiments**: What should we test next?

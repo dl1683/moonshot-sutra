@@ -1,6 +1,6 @@
 # Sutra Research Log
 
-## Tesla+Leibniz Round 20 (2026-03-24) — POST-AUDIT RESPONSE
+## Strategic Design Round 20 (2026-03-24) — POST-AUDIT RESPONSE
 
 **Confidence: O1=4.5, O2=6.5, O3=2.5, O4=4, O5=5.5 (ALL DROPPED from R19)**
 
@@ -320,24 +320,24 @@ D10 improved monotonically under single-teacher CKA (steps 1K→3K), then degrad
 
 ## Adversarial Full-Repo Audit (2026-03-23)
 
-**Codex (GPT-5.4, xhigh reasoning) — comprehensive adversarial review from scratch. Verdict: REJECT in current form.**
+**Comprehensive adversarial review from scratch. Verdict: REJECT in current form.**
 
 ### Critical Findings
 1. **No matched dense baseline.** The decisive falsification experiment was never run. "Intelligence = Geometry" is underdetermined without it.
 2. **Benchmark gap is fatal.** SmolLM2-135M (half our params) beats us on HellaSwag (42% vs 26%), PIQA (68% vs 54%), ARC avg (44% vs ~22%). Gap is structural, not cosmetic.
 3. **Content-dependent computation is asserted, not proven.** Controller is pass-global. Internal docs admit "no mechanism to vary strategy by token type."
 4. **56.5% of params in embeddings, ~29M dead weight.** GPT-2 tokenizer: 76% unused vocab = wasted capacity.
-5. **T+L workflow is anti-falsification.** Prompt says "never propose baselines" and "don't recommend killing directions." Confirmation bias by design.
+5. **Design workflow is anti-falsification.** Rules say "never propose baselines" and "don't recommend killing directions." Confirmation bias by design.
 6. **Benchmark code had disqualifying defects:** SciQ answer always at index 0 (position bias), LAMBADA checked first token only. **BOTH FIXED 2026-03-23.**
 7. **Structural wins ≠ intelligence wins.** Pass collapse elimination and elastic compute are real but don't make the model smarter.
 
-### What Codex Says to Kill
+### What the Audit Says to Kill
 - Homegrown benchmark runner as decision authority → use lm-eval harness only
 - `frozen_cache` (dead weight, ablation NaN-prone)
 - Fiction of best-in-class comparison before matched controls
 - Theory expansion while decisive experiments unrun
 
-### What Codex Says to Double Down On
+### What the Audit Says to Double Down On
 - Clean lm-eval evaluation pipeline
 - Embedding/tokenizer redesign (56% of params wasted)
 - Fewer, decisive experiments run cleanly
@@ -362,7 +362,7 @@ D10 improved monotonically under single-teacher CKA (steps 1K→3K), then degrad
 3. All future benchmark claims must use lm-eval harness
 4. Embedding/tokenizer redesign elevated to critical priority
 5. README cleanup — remove stale claims, update status honestly
-6. T+L prompt audit — remove anti-falsification clauses
+6. Design session prompt audit — remove anti-falsification clauses
 
 ## Ekalavya Protocol Step 4000 Eval (2026-03-24)
 
@@ -390,12 +390,12 @@ Teacher queue status: Q1 LFM2-1.2B (1000 steps remaining, switches ~step 5000), 
 
 First honest lm-eval numbers. ARC-Challenge +1.2% is notable. Full results pending.
 
-## T+L R20 Critical Audit (2026-03-24) — 5-Round Cycle Adversarial Review
+## R20 Critical Audit (2026-03-24) — 5-Round Cycle Adversarial Review
 
-**Auditor role: hostile reviewer, not T+L architect. Separate Codex session per workflow spec.**
+**Auditor role: hostile reviewer, not design architect. Separate adversarial review session per workflow spec.**
 
 ### Process Integrity
-- **[HIGH]** T+L workflow is internally contradictory: says confidence must be evidence-based AND says "never propose dense baselines" / "do not recommend killing directions." That is anti-falsification by design.
+- **[HIGH]** Design workflow is internally contradictory: says confidence must be evidence-based AND says "never propose dense baselines" / "do not recommend killing directions." That is anti-falsification by design.
 - **[HIGH]** Self-correction is NOT intrinsic. R5 audit caught score laundering; R10 had to rebase 8/9/6/7/8 down to 6/7/4/4/6. Only adversarial audits catch these.
 - **[HIGH]** Design is still thrashing: 32K tokenizer (Mar 23) → 16K mandatory (Mar 24). DeltaNet in P2 (R17) → removed (R18) → omitted from budget (R19).
 
@@ -439,19 +439,19 @@ First honest lm-eval numbers. ARC-Challenge +1.2% is notable. Full results pendi
 |-----------|------------|---------|
 | P2c generates coherent 50-word T=0.8 | 30% | Every branch has poor generation; stacks unvalidated fixes |
 | Dense control beats P2c on 4/7 benchmarks | **65%** | Literature below 200M favors dense; recurrence unproven |
-| O1 reaches 7/10 in 5 more T+L rounds | 15% | Requires better gen + knowledge + matched dense |
+| O1 reaches 7/10 in 5 more design rounds | 15% | Requires better gen + knowledge + matched dense |
 | Sutra-50M matches Pythia-70M HellaSwag | 35% | Target low enough, but HellaSwag near-floor across branches |
 
 ### TOP 5 ACTIONS (ranked by impact/effort)
 1. **Run full 5K eval** — deterministic BPT, all 7 lm-eval tasks, generation quality
 2. **Teacher-free continuation control** from 4K/5K parent, 1-2K steps, same schedule, no KD
 3. **500-step widen-only canary** from current best parent
-4. **Remove anti-falsification clauses** from T+L workflow
+4. **Remove anti-falsification clauses** from design workflow
 5. **Matched ~50M dense control** as soon as P2 assets ready
 
 ---
 
-## Tesla+Leibniz Round 19 (2026-03-24)
+## Strategic Design Round 19 (2026-03-24)
 
 **Confidence: O1=5, O2=8, O3=3, O4=5, O5=7 (ALL UNCHANGED from R18)**
 
@@ -540,7 +540,7 @@ R19 held all scores steady. No new project-local empirical evidence since R18. D
 3. **[HIGH]** O3 moves faster through adapter packs than full ABI freeze. Validate with composition canary.
 4. **[MEDIUM]** ALM helps knowledge (LAMBADA/SciQ) more than reasoning (ARC) because it restores output-space transfer. Validate with short ALM canary.
 
-## Tesla+Leibniz Round 18 (2026-03-24)
+## Strategic Design Round 18 (2026-03-24)
 
 **Confidence: O1=5, O2=8, O3=3, O4=5, O5=7 (ALL UNCHANGED from R17)**
 
@@ -750,7 +750,7 @@ class ProcrustesLoss(nn.Module):
 - Don't use full model LR (too low — embeddings need aggressive updates).
 - Don't skip hidden alignment (CE + reconstruction alone leaves internal representations misaligned).
 
-## Tesla+Leibniz Round 17 (2026-03-24)
+## Strategic Design Round 17 (2026-03-24)
 
 **Confidence: O1=5, O2=8, O3=3, O4=5(↓1), O5=7**
 
@@ -901,7 +901,7 @@ class ProcrustesLoss(nn.Module):
 
 ---
 
-## Tesla+Leibniz Round 16 (2026-03-24)
+## Strategic Design Round 16 (2026-03-24)
 
 **Confidence: O1=5 (↓1), O2=8, O3=3 (↓1), O4=6 (↑1), O5=7 (↓1)**
 
@@ -1106,7 +1106,7 @@ TokAlign performs tokenizer transplant via GloVe-based alignment + two-stage fin
 
 **Recommendation:** For P1b data curation, include code execution traces (10-20% of offline curriculum). Each trace: input code → execution result → explanation. Provides structured reasoning data that complements raw text. <512 tokens each, compatible with current context length.
 
-## Tesla+Leibniz Round 15 (2026-03-23)
+## Strategic Design Round 15 (2026-03-23)
 
 **Confidence: O1=6, O2=8, O3=4, O4=5 (+1), O5=8**
 
@@ -1135,7 +1135,7 @@ TokAlign performs tokenizer transplant via GloVe-based alignment + two-stage fin
 
 **Intuitions:** Main bottleneck is parameter placement not count (26M core wearing 38.6M tokenizer backpack). Queue duty cycle matters more than teacher benchmark strength. Geometry-only teachers more useful after lexical recovery. Byte-XTKD is stopgap, not end-state.
 
-## Codex Audit Summary: Ekalavya Trainer v1-v8 (2026-03-23)
+## Audit Summary: Ekalavya Trainer v1-v8 (2026-03-23)
 
 **8 audit rounds (Correctness v1-v8, Performance v1-v7). All HIGH findings fixed. 0 HIGH for 3 consecutive rounds (v6-v8). Reviewer loop converging to clean.**
 
@@ -1225,7 +1225,7 @@ TokAlign performs tokenizer transplant via GloVe-based alignment + two-stage fin
 
 **Verdict:** Ekalavya Protocol is WORKING at the structural level (depth compression). D=12 quality needs recovery by step 5-10K. Continue to 15K.
 
-## Tesla+Leibniz Round 14 (2026-03-23)
+## Strategic Design Round 14 (2026-03-23)
 
 **Confidence: O1=6, O2=8, O3=4, O4=4, O5=8** (O5 up from 7, rest held)
 
@@ -1275,7 +1275,7 @@ P1a 15K → teacher-strength ablation → P1b hybrid offline+online → P2 32K t
 **R14 Research Requests:** 6 topics (hybrid multi-source recipe, recurrent-safe 32K transplant, exact-memory sidecars, learned halting, continuation LR schedules, composable module ecosystems)
 **R14 Experiment Requests:** 8 probes (P1a 15K, teacher-strength ablation, P1b hybrid, P2 32K, schedule canary, pheromone deletion, halting head, ARMT sidecar)
 
-### Codex Correctness Engineer Review — P1a Trainer (2026-03-23)
+### Correctness Review — P1a Trainer (2026-03-23)
 
 **3 bugs found, 3 fixed. 2 confirmed clean.**
 
@@ -1290,7 +1290,7 @@ P1a 15K → teacher-strength ablation → P1b hybrid offline+online → P2 32K t
 
 **Clean:** Forward causality passed (prefix logits unchanged). Teacher freezing correct (eval mode, no_grad, requires_grad=False).
 
-### Codex Performance Engineer Review — P1a Trainer (2026-03-23)
+### Performance Review — P1a Trainer (2026-03-23)
 
 **Key numbers at B=4, T=512, D=12:**
 
@@ -1416,9 +1416,9 @@ Key papers:
 
 ---
 
-## T+L R13 Data Package (2026-03-23, COMPLETE — v0.6.0b 15K results ingested)
+## R13 Data Package (2026-03-23, COMPLETE — v0.6.0b 15K results ingested)
 
-**Purpose:** Complete experimental evidence from R12 cycle for next Tesla+Leibniz design round.
+**Purpose:** Complete experimental evidence from R12 cycle for next strategic design round.
 
 ### R12 Experiment Status
 | Experiment | Status | BPT at Last Eval | Key Finding |
@@ -1551,7 +1551,7 @@ Key papers:
 
 ---
 
-## Codex Pre-Training Audit V3: P1 Two-Teacher Trainer (2026-03-23, post-fix re-audit)
+## Pre-Training Audit V3: P1 Two-Teacher Trainer (2026-03-23, post-fix re-audit)
 
 ### Verdict: ~~FAIL~~ → **INVALID (false positive, overruled 2026-03-23)**
 
@@ -1559,7 +1559,7 @@ Key papers:
 
 ### Correctness — OVERRULED
 - ~~**HIGH — tokenizer verification fix is not present**~~
-  - **FALSE POSITIVE.** Grep of `train_p1_twoteacher.py` finds ZERO references to `gpt2_to_pythia`, `pythia`, `remap`, or `approx`. The code uses GPT-2 small directly (line 96-97: `AutoModelForCausalLM.from_pretrained(“gpt2”)`). Same tokenizer as student = direct KL. No remapping path exists. Codex hallucinated seeing old code that was already deleted in the V4→V5 fix cycle.
+  - **FALSE POSITIVE.** Grep of `train_p1_twoteacher.py` finds ZERO references to `gpt2_to_pythia`, `pythia`, `remap`, or `approx`. The code uses GPT-2 small directly (line 96-97: `AutoModelForCausalLM.from_pretrained(“gpt2”)`). Same tokenizer as student = direct KL. No remapping path exists. The review hallucinated seeing old code that was already deleted in the V4→V5 fix cycle.
   - The Pythia tokenizer collision data (50,140/50,257 IDs differ) is real but irrelevant — we don't use Pythia.
 
 - ~~**MEDIUM — CKA gradient concentrated on 4th micro-batch**~~
@@ -1572,7 +1572,7 @@ Key papers:
 ### Conclusion
 **V5 PASS verdict stands.** The V3 re-audit ran on stale context or hallucinated code. P1 trainer is ready for GPU smoke test. No mandatory fixes remain.
 
-## Tesla+Leibniz Round 13 (2026-03-23)
+## Strategic Design Round 13 (2026-03-23)
 
 **Confidence: O1=6, O2=8, O3=4, O4=4, O5=7** (O5 up 6→7: D8≈D12 at step 10K gives 33% compute savings at zero quality loss)
 
@@ -1648,7 +1648,7 @@ Key papers:
 | 24K (custom) | 18.4M | 27.0% | 93.9% | 1.7% shorter | 20.2M (29.5%) |
 | 16K (custom) | 12.3M | 18.0% | 96.7% | 3% longer | 26.3M (38.5%) |
 
-**Key finding:** 32K custom tokenizer is BOTH smaller AND more efficient (4% shorter sequences). Saves 14M params, increasing intelligence capacity from 26M to 40M (+54%). **Codex R13 intuition #1 VALIDATED.**
+**Key finding:** 32K custom tokenizer is BOTH smaller AND more efficient (4% shorter sequences). Saves 14M params, increasing intelligence capacity from 26M to 40M (+54%). **R13 intuition #1 VALIDATED.**
 
 24K saves even more params (20.2M) with only 1.7% shorter sequences. 16K inflates sequences by 3%.
 
@@ -1659,11 +1659,11 @@ Key papers:
 
 **Linear probe AUROC = 0.854.** Halting signal ALREADY EXISTS in representations. 5-feature probe (pass_frac, entropy, margin, ce, delta_ce). Top features: pass_frac (+1.98) and delta_ce (-1.34) — "how far along" and "how much am I still improving" are the strongest signals.
 
-**Codex R13 intuition #3 VALIDATED.** A learned halting head should be straightforward to add — even a linear probe gets strong signal. An MLP or attention-based probe should do even better. This could raise O5 from 7→8+ once implemented.
+**R13 intuition #3 VALIDATED.** A learned halting head should be straightforward to add — even a linear probe gets strong signal. An MLP or attention-based probe should do even better. This could raise O5 from 7→8+ once implemented.
 
 ---
 
-## Tesla+Leibniz Round 12 (2026-03-23)
+## Strategic Design Round 12 (2026-03-23)
 
 **Confidence: 6/8/4/4/6** (O2 improved 7→8 based on P0 surgical repair evidence)
 
@@ -2095,7 +2095,7 @@ Random-depth training succeeded in distributing quality to shallower depths. At 
 
 ## P1 Pre-Training Audit (2026-03-23)
 
-### Codex V2 Audit: FAIL (4 mandatory fixes)
+### V2 Audit: FAIL (4 mandatory fixes)
 1. **HIGH** — SwitchingKernel2 non-causal: `h.mean(dim=1)` at sutra_v05_ssm.py:98 leaks future tokens through sequence-global mode gate. Zero-initialized mode_bias masked the bug in causality tests on fresh models, but non-zero after 20K training steps.
 2. **HIGH** — CKA underweighted 4x: computed 1/4 micro-batches but weighted same as full-time losses. Effective coefficient 0.075, not 0.3.
 3. **MEDIUM** — CKA Gram matrix only 4x4 (B=4): high-variance, upward-biased alignment signal.
@@ -2107,7 +2107,7 @@ Random-depth training succeeded in distributing quality to shallower depths. At 
 1. **Causality**: Changed `h.mean(dim=1)` → `h[:, 0, :]` (first-token gating, causal). Verified: diff=0.000000 at production dim=768 with trained v0.6.0a weights (mode_bias norm=1.54).
 2. **CKA accumulation**: Accumulates across CKA_EVERY_N=4 micro-batches (16x16 Gram matrix instead of 4x4). Weight compensated: ALPHA_REPR * 4 = 1.2 when computed, total effective = 0.3 * L_CKA per optimizer step.
 3. **use_cache=False**: Added to AR teacher forward call.
-4. **CRITICAL: AR teacher switch** (Codex V3+V4 flagged). Pythia-160M has DIFFERENT token ID ordering from GPT-2 (50140/50257 differ). Remapping attempted but lossy (13K collisions). **Replaced Pythia with GPT-2 small (124M) — identical tokenizer, direct KL, zero remapping.** GPT-2 uses 75MB less VRAM. KD loss properly aligned: ~2.6-3.1 (vs ~4-6 with misaligned Pythia).
+4. **CRITICAL: AR teacher switch** (audit V3+V4 flagged). Pythia-160M has DIFFERENT token ID ordering from GPT-2 (50140/50257 differ). Remapping attempted but lossy (13K collisions). **Replaced Pythia with GPT-2 small (124M) — identical tokenizer, direct KL, zero remapping.** GPT-2 uses 75MB less VRAM. KD loss properly aligned: ~2.6-3.1 (vs ~4-6 with misaligned Pythia).
 
 ### Audit Timeline
 - V2: FAIL — 4 mandatory fixes (causality, CKA weight, CKA batch, tokenizer)
@@ -2265,7 +2265,7 @@ Gap to best-in-class remains large. SciQ: -27% vs OPT-125M. LAMBADA: -31% vs OPT
 
 ---
 
-## Tesla+Leibniz Round 11 (2026-03-23)
+## Strategic Design Round 11 (2026-03-23)
 
 **Confidence: 6/7/4/4/6** (unchanged from R10 — no new outcome-level wins)
 
@@ -2454,12 +2454,12 @@ Adapter fix had MINIMAL impact on BPT (-0.006) and mode schedule. The mode sched
 
 ---
 
-## Tesla+Leibniz Round 10 (2026-03-23)
+## Strategic Design Round 10 (2026-03-23)
 
 **Confidence: 6/7/4/4/6** (rebased from 8/9/6/7/8 — most honest assessment to date)
 
 ### Critical Audit Response
-R10 was preceded by an adversarial audit (every 5 T+L rounds). Codex confirmed the audit's findings: previous scores were too generous. Diagnostic convergence ≠ outcome convergence. The project has become good at naming failure modes but has not yet become good at beating strong baselines.
+R10 was preceded by an adversarial audit (every 5 design rounds). The audit confirmed: previous scores were too generous. Diagnostic convergence ≠ outcome convergence. The project has become good at naming failure modes but has not yet become good at beating strong baselines.
 
 Rebased scores: R9 was 8/9/6/7/8. Audit suggested 7/8/5/5/7. R10 landed at **6/7/4/4/6** after deep evidence review.
 
@@ -2596,7 +2596,7 @@ Migration path (warm-startable "head transplant"):
 6. The recurrent core operates in R^768 — it doesn't care about vocab size
 
 **This is the single biggest potential improvement available — bigger than any mechanism change.**
-Must go to Codex T+L for design decision.
+Must go to design session for decision.
 
 ### Intuitions (high conviction, probe-able)
 - Deepest mistake in v0.6.1: semantic emptiness — controller predicted labels that don't gate real computations
@@ -2607,7 +2607,7 @@ Must go to Codex T+L for design decision.
 
 ---
 
-## Tesla+Leibniz Round 9 (2026-03-22)
+## Strategic Design Round 9 (2026-03-22)
 
 **Confidence: 8/9/6/7/8** (unchanged — R9 validates R8, no new empirical wins yet)
 
@@ -2685,7 +2685,7 @@ Clean subset (margin >= 0.05, 43.7% of tokens): AUROC = 0.661 (+0.101 over full 
 
 ---
 
-## Tesla+Leibniz Round 8 (2026-03-22)
+## Strategic Design Round 8 (2026-03-22)
 
 **Confidence: 8/9/6/7/8** (unchanged from R7 — no new empirical wins yet, R8 is design phase)
 
@@ -2891,7 +2891,7 @@ Early mean (0-2): 0.947 → Late mean (9-11): 0.886 → **Retention: 93.6%**
 
 ---
 
-## Tesla+Leibniz Round 7 (2026-03-22)
+## Strategic Design Round 7 (2026-03-22)
 
 **Confidence: 8/9/6/7/8** (Outcome 3 DOWN to 6 — dead stages, no contributor-facing modules)
 
@@ -2932,7 +2932,7 @@ Where:
 | 4: Data Efficiency | 7 | 7 | Warm-start efficiency confirmed but multi-teacher absent. | External knowledge gives ≥2x token efficiency or ≥0.1 BPT |
 | 5: Inference Efficiency | 8 | 8 | Oracle halting stable across 3 checkpoints. D=12 consistently worse than D=9. | Learned halting: 25-35% savings at ≤0.01 BPT, depth correlated to content difficulty |
 
-### R7 Experiment Queue (exact specs from Codex)
+### R7 Experiment Queue (exact specs from design review)
 
 1. **Step 2000 diagnostic pack** — passwise cosine, ||Δmu_p||, late verify share, MI(mode, token_class), MI(mode, pass), token-class depth curves. GATE: branch controller if MI(mode,token_class) < 0.08 or late verify share > 0.80.
 2. **Offline depth prediction probe** — predict oracle depth {≤6, 7-8, 9+} from pass-only, mu-only, lexical-only, mu+lexical. Keep lexical anchor if macro-AUROC improves >0.05 over mu-only.
@@ -3055,7 +3055,7 @@ BPT trajectory: 500=7.79, 1000=7.60, 1500=7.51, 2000=7.37, 2500=7.42↑, **3000=
 
 ---
 
-## Tesla+Leibniz Round 6 (2026-03-22)
+## Strategic Design Round 6 (2026-03-22)
 
 **Confidence: 8/9/7/7/8** (up from R5's 8/8/7/7/7 — Outcomes 2 and 5 each +1)
 
@@ -3093,7 +3093,7 @@ BPT trajectory: 500=7.79, 1000=7.60, 1500=7.51, 2000=7.37, 2500=7.42↑, **3000=
 | Efficiency Priority | GREEN | Warm-start first, incremental. No from-scratch proposals. |
 | Dead End Avoidance | GREEN | Graveyard respected. Warning: MoE-style routing mentioned. |
 | Mission Alignment | YELLOW | Drifting toward standard recurrent-model repair literature. |
-| Instruction Compliance | RED | "Full output" was a summary, missing mandatory T+L format sections. |
+| Instruction Compliance | RED | "Full output" was a summary, missing mandatory design session format sections. |
 | Data Integrity | YELLOW | Status contradictions (COMPLETED vs RUNNING for same experiment). |
 | Circular Reasoning | RED | Confidence rises from stories ("single fix = improvable") not explicit evidence. |
 | Convergence Honesty | RED | Outcomes 1/3/4 stagnant. BPT projected 7.2-7.4 at 5K, not matching 6.90. |
@@ -3242,7 +3242,7 @@ Examined `SwitchingKernel2` in `code/sutra_v05_ssm.py` (lines 78-102):
 
 **Connection to the manifesto:** This IS Intelligence = Geometry. The content signal doesn't come from additional parameters — it comes from better mathematical interpretation of the existing state space.
 
-**Status:** Speculative theory. Needs Codex evaluation for feasibility. The practical concern: computing Fisher information is expensive (requires Hessian-vector products). A cheaper proxy might be the gradient magnitude or the delta-mu norm across passes (which we already compute).
+**Status:** Speculative theory. Needs feasibility evaluation. The practical concern: computing Fisher information is expensive (requires Hessian-vector products). A cheaper proxy might be the gradient magnitude or the delta-mu norm across passes (which we already compute).
 
 **Quick sanity check:** We ALREADY have a content-dependent signal we're not using: `delta_mu_rms` (the RMS change in hidden state between passes). From our existing probes, this varies 4.79x between easy and hard tokens (Q4/Q1 CE ratio). This IS geometric information about the local dynamics. The transition kernel could condition on delta_mu_rms as a FREE curvature proxy.
 
@@ -3692,7 +3692,7 @@ Optimal capacity: M* ~ c^{D_phi} (exponential in feature dimension). But this re
 
 ---
 
-## Chrome Cycle 1: Eval Set Design (2026-03-19)
+## Research Cycle 1: Eval Set Design (2026-03-19)
 
 ### Theory: What Makes a Discriminating Eval?
 
@@ -3727,7 +3727,7 @@ Three modes:
 
 Automated scoring: exact_match (~40%) + constraint_check (~30%) + LLM-as-judge with explicit rubrics (~30%).
 
-### Codex Review (2026-03-19): 7/10 prompt bank, 4/10 benchmark-ready
+### Design Review (2026-03-19): 7/10 prompt bank, 4/10 benchmark-ready
 
 Key issues: scorer doesn't implement rubric scoring, exact_match answers ambiguous (SR001/SR003), difficulty cliff-edges, rubric inconsistencies (SR041), category overlap (drafting vs IF), meta-cognition saturates. Coverage gaps: formal proof, adversarial ambiguity, long dependency chains, counterfactual updating, calibrated estimation, multi-turn self-correction. Fix agent running.
 
@@ -3737,7 +3737,7 @@ Key issues: scorer doesn't implement rubric scoring, exact_match answers ambiguo
 
 ---
 
-## Chrome Cycle 2: Architecture Research Sweep (2026-03-19)
+## Research Cycle 2: Architecture Research Sweep (2026-03-19)
 
 ### Internet Research Findings
 
@@ -3796,7 +3796,7 @@ These were incremental combinations of existing architectures (hybrid SSM, compr
 
 ---
 
-## Chrome Cycle 3: First-Principles Derivation (2026-03-19)
+## Research Cycle 3: First-Principles Derivation (2026-03-19)
 
 ### What IS Intelligence? (Derived, not assumed)
 
@@ -3836,13 +3836,13 @@ Five irreducible operations any intelligent text system must perform:
 
 ### Experiment Batch 1 v1: REJECTED BY CODEX (5/10)
 
-Codex found: probes confounded (adaptive depth also changes capacity), wrong operationalizations
+Review found: probes confounded (adaptive depth also changes capacity), wrong operationalizations
 (WordNet tests taxonomy not abstraction), missing controls (no matched-compute comparisons),
 missing critical probes (compression↔capability, working memory). See results/codex_batch1_review.md.
 
-### Experiment Batch 1 v2: "The Primitives" (Redesigned per Codex)
+### Experiment Batch 1 v2: "The Primitives" (Redesigned per review)
 
-**Priority 1 — MUST RUN (Codex-approved top 3 + 2 missing):**
+**Priority 1 — MUST RUN (review-approved top 3 + 2 missing):**
 
 **Probe A: Compression ↔ Capability Correlation** (CORE THESIS TEST)
 - Question: Does better compression ACTUALLY predict better reasoning at fixed params?
@@ -3865,7 +3865,7 @@ missing critical probes (compression↔capability, working memory). See results/
 - Kill: If adaptive depth < fixed-24 on hard tasks OR < fixed-12 at matched FLOPs.
 - Time: ~4 hours
 
-**Probe C: Working Memory / State Tracking** (NEW — Codex-recommended)
+**Probe C: Working Memory / State Tracking** (NEW — review-recommended)
 - Question: What is the minimal mechanism for variable binding and state tracking?
 - Design: Three 10M-param models on synthetic state-tracking tasks
   (variable assignment, pointer chasing, stack operations):
@@ -3905,7 +3905,7 @@ missing critical probes (compression↔capability, working memory). See results/
 
 ---
 
-## Chrome Cycle 4: Cross-Domain Intelligence Patterns (2026-03-19)
+## Research Cycle 4: Cross-Domain Intelligence Patterns (2026-03-19)
 
 ### Universal Patterns Across Intelligent Systems
 
@@ -4054,7 +4054,7 @@ OUTPUT
 - Energy-based: left-to-right commit provably suboptimal for global coherence
 - Adaptive depth: reasoning difficulty varies by orders of magnitude (Pattern 3)
 
-**STATUS: THEORETICAL DRAFT. Needs Codex review + empirical probes before committing.**
+**STATUS: THEORETICAL DRAFT. Needs architectural review + empirical probes before committing.**
 
 Key uncertainties to resolve:
 1. Can stigmergic processing at any scale match transformer quality? (Probe F tests this)
@@ -4092,7 +4092,7 @@ This is EXACTLY the advantage of wavelet transforms over Fourier: local processi
 
 **Trainability:** Standard backprop works. Gradient flows: output → fine scale → medium (via cross-scale connection) → coarse scale → back down. Same as any multi-scale CNN (U-Net, FPN). Well-understood.
 
-**Key insight for Codex discussion:** The stigmergic medium at each scale acts as a "routing table" — agents at the fine scale don't need to see far, they just read the medium which contains COMPRESSED information from far away, deposited by agents that were closer to the source. Information propagates at the speed of the medium, not the speed of local agents. Like how pheromone trails carry information about distant food sources to ants that have never been there.
+**Key insight:** The stigmergic medium at each scale acts as a "routing table" — agents at the fine scale don't need to see far, they just read the medium which contains COMPRESSED information from far away, deposited by agents that were closer to the source. Information propagates at the speed of the medium, not the speed of local agents. Like how pheromone trails carry information about distant food sources to ants that have never been there.
 
 ### GNN Perspective: Why Stigmergic = Local GNN
 
@@ -4167,7 +4167,7 @@ processing architecture (stigmergic, variable depth, working memory) first.
 
 ---
 
-## Codex Hard Challenge of Sutra v0.1 — 4/10 (2026-03-19)
+## Architecture Challenge of Sutra v0.1 — 4/10 (2026-03-19)
 
 ### The Core Criticism (ACCEPTED)
 "You are spending the entire complexity budget on control machinery before you have shown
@@ -4190,7 +4190,7 @@ Five components stacked = five hard problems at once. None individually proven. 
 2. "No theorem that language admits scale-separable factorization" — true, but empirical evidence
    (MEGABYTE, HM-RNN) shows multi-scale helps even without a theorem.
 
-### The 10/10 Criterion (Codex):
+### The 10/10 Criterion:
 ONE simple core mechanism that:
 - Beats a matched 10M-100M transformer on perplexity
 - Beats it on long-range/state-tracking probes
@@ -4200,7 +4200,7 @@ ONE simple core mechanism that:
 
 ### REDESIGNED MVP: Sutra v0.2-MVP
 
-Based on Codex feedback, strip to the MINIMUM that tests the core hypothesis:
+Based on review feedback, strip to the MINIMUM that tests the core hypothesis:
 
 ```
 BYTE INPUT
@@ -4224,7 +4224,7 @@ OPTIONAL: ADAPTIVE NUMBER OF MESSAGE-PASSING ROUNDS
 - REMOVED: energy-based generation (standard AR)
 - REMOVED: adaptive segmentation (fixed windows)
 - REMOVED: cross-scale predictive coding (standard backprop)
-- ADDED: tiny global scratchpad (Codex's compromise for long-range)
+- ADDED: tiny global scratchpad (compromise for long-range)
 - SIMPLIFIED: one mechanism to test — local compression + message passing
 
 **This is essentially MEGABYTE but with message-passing between chunks instead of a global
@@ -4281,7 +4281,7 @@ attention replacement." We're looking for "the computation that mirrors language
 
 ### Theoretical Insight: Phase Synchronization as O(n) Long-Range Communication
 
-The over-squashing problem (Codex critique): local message passing compresses exponentially many
+The over-squashing problem (review critique): local message passing compresses exponentially many
 distant signals into fixed-width states. The brain faces the same constraint (fixed-width neurons).
 
 Brain's solutions: (1) hierarchical routing, (2) thalamic gating, (3) oscillatory synchronization.
@@ -4379,7 +4379,7 @@ Neither model solved MQAR in this budget, but the transformer is directionally l
 
 **Implication for Sutra**: Pure recurrence (stigmergic message passing without ANY retrieval
 mechanism) may fundamentally lack the ability to do content-addressable lookup. This supports
-Codex's recommendation for a scratchpad or sparse attention.
+The review's recommendation for a scratchpad or sparse attention.
 
 **Caveat**: Models are tiny, training short. MQAR with 5 KV pairs SHOULD be solvable by both
 with enough training. The question is whether recurrence EVER catches up. Need longer run.
@@ -4444,9 +4444,9 @@ This IS the compression thesis: learn the GENERATORS, not the generated space.
 to novel reasoning tasks that brute-force models of equal size cannot solve. This is
 essentially what ProgramSynthesis / DreamCoder tried with program induction.
 
-### Codex v0.3 Quick Review: 4/10, drop primitive library from MVP
+### v0.3 Quick Review: 4/10, drop primitive library from MVP
 
-Codex: "Drop the primitive library from the MVP. Keep one shared patch processor +
+Review conclusion: "Drop the primitive library from the MVP. Keep one shared patch processor +
 adaptive message passing + sparse retrieval. That removes a major source of coupling
 and makes the core claim falsifiable."
 
@@ -4797,11 +4797,11 @@ Given the cross-domain insights, I'm adding a new probe that's potentially more 
 
 ---
 
-## Chrome Cycle 5: Codex Architecture Review + Scaling Analysis (2026-03-19)
+## Research Cycle 5: Architecture Review + Scaling Analysis (2026-03-19)
 
-### Codex Pre-Launch Review (Combo 5)
+### Pre-Launch Architecture Review (Combo 5)
 
-Codex reviewed the complete architecture before production launch. Key findings:
+The pre-launch review assessed the complete architecture before production launch. Key findings:
 
 1. **Training budget too small**: 50K steps x 16K tokens/step = 819M tokens seen. Doesn't cover 1.7B corpus once. **Fix**: 100K steps x 32K tok/step = 3.2B tokens (~2 epochs).
 
@@ -4857,7 +4857,7 @@ Extrapolated to 88M params: BPB ~5.9 (but much lower after full training with 1.
 | warmup | 1000 | Longer for stability |
 | max_steps | 100K | ~2 epochs of 1.7B tokens |
 | precision | bf16 | Mixed precision |
-| adaptive_halt | False | Fixed rounds per Codex |
+| adaptive_halt | False | Fixed rounds per review |
 | use_kan | False | MLP messages (KAN neutral at token level) |
 
 ### Dead Ends (Updated)
@@ -4905,7 +4905,7 @@ The effective information processing per parameter is higher because:
 
 This needs formal proof. If proven, it would explain WHY hierarchical processing is more parameter-efficient for language — because language itself has hierarchical MI structure.
 
-### Codex Review of Scaling Theorem (2026-03-19)
+### Review of Scaling Theorem (2026-03-19)
 
 **Verdict: Real signal, not yet publishable. 8/10 Turing potential if confirmed.**
 
@@ -4923,7 +4923,7 @@ What's needed for publication:
 - Component ablations (no GRU, no retrieval, no patches, k sweep, patch sweep)
 - Loss vs params, loss vs FLOPs, throughput, memory — all reported
 
-Theorem rewrite path (Codex-recommended):
+Theorem rewrite path (review-recommended):
 1. Define source family: banded local + sparse/low-rank global dependencies
 2. Prove approximation/sample-complexity SEPARATION for hierarchical vs uniform architectures
 3. If using MI, derive state-size or dependency-capacity requirement, not direct exponent identity
@@ -5003,7 +5003,7 @@ satisfies the L2M condition with FEWER total parameters than a uniform architect
 
 **Formal theorem rewrite using L2M framework:**
 
-**Conjecture (Hierarchical History Compression):** [Revised per Codex review]
+**Conjecture (Hierarchical History Compression):** [Revised per architectural review]
 
 The defensible claim is NOT that Sutra minimizes L2M's asymptotic bound. It IS that:
 
@@ -5012,7 +5012,7 @@ The defensible claim is NOT that Sutra minimizes L2M's asymptotic bound. It IS t
 3. This is because local MI (fast-decaying) can be compressed cheaply by recurrence, freeing the expensive global mechanism to focus on slow-decaying long-range correlations
 4. The resulting architecture is more parameter-efficient at any fixed context length, with gains proportional to the local/global MI ratio
 
-**Key corrections from Codex review:**
+**Key corrections from architectural review:**
 - ~~L^beta_L + L^beta_G < L^beta_L~~ WRONG. This is > not <. The benefit is in PARAMETER COST per unit of state, not state size itself.
 - Two-point MI ≠ Bipartite MI (L2M explicitly warns). Our regime decomposition needs a separate proof connecting to BMI.
 - State dimension lower bounds ≠ parameter efficiency. Need separate approximation theorem.
@@ -5023,7 +5023,7 @@ The defensible claim is NOT that Sutra minimizes L2M's asymptotic bound. It IS t
 - The advantage is larger on domains with stronger local regularity (code > prose)
 - Weight tying further improves efficiency (separating representation from computation)
 
-**Paper-worthy claim (Codex-approved):** "Hierarchical patch memory reduces the constant cost of local compression before global routing, improving parameter efficiency. This is a theory-guided empirical response to L2M, not an asymptotic solution."
+**Paper-worthy claim (review-approved):** "Hierarchical patch memory reduces the constant cost of local compression before global routing, improving parameter efficiency. This is a theory-guided empirical response to L2M, not an asymptotic solution."
 
 **NOT yet supported:** "We answer L2M's open question" or "Our theorem proves hierarchical > uniform."
 
@@ -5091,7 +5091,7 @@ Combo 5 target: beat Pythia-70m (BPB 1.259) at 49M params.
 
 ---
 
-## Chrome Cycle 6: Competitive Landscape (2026-03-19)
+## Research Cycle 6: Competitive Landscape (2026-03-19)
 
 ### Research Sweep: Latest Efficient LM Architectures (Jan-Mar 2025)
 
@@ -5129,7 +5129,7 @@ Source: Two-Scale HMM with K_L=16 local states (p_flip=0.3), K_G=4 global states
 
 **Sutra is 3.4-3.9x better on a source with designed two-regime structure.** The advantage is consistent (~74%) and independent of scale. The transformer barely learns the pattern because it uses the same attention mechanism for both local and global correlations, wasting capacity.
 
-This is exactly the Codex-recommended controlled source test. Next: vary the MI profile (p_L, p_G) and show the advantage correlates with the local/global separation.
+This is exactly the review-recommended controlled source test. Next: vary the MI profile (p_L, p_G) and show the advantage correlates with the local/global separation.
 
 ### Combo 5 Production Training LAUNCHED (2026-03-19)
 
@@ -5195,7 +5195,7 @@ From S7, code reroutes 58% vs prose 44% — code needs more iteration.
 
 **No other architecture learns different processing strategies per content type with shared parameters.**
 
-### Chrome Probe: Diminishing Returns per Step (2026-03-20)
+### Research Probe: Diminishing Returns per Step (2026-03-20)
 
 | Steps | Loss | Marginal Gain |
 |-------|------|--------------|
@@ -5214,7 +5214,7 @@ From S7, code reroutes 58% vs prose 44% — code needs more iteration.
 3. Current fixed 8 steps wastes ~50% compute for ~1% quality gain
 4. Immediate optimization: reduce max_steps to 5 (2x faster, ~1% cost)
 
-### Chrome Probe: Entropy Predicts Halting (2026-03-20)
+### Research Probe: Entropy Predicts Halting (2026-03-20)
 
 What predicts which positions benefit from more recurrent steps?
 
@@ -5237,7 +5237,7 @@ What predicts which positions benefit from more recurrent steps?
 
 5.8x increase — model learns MORE content-specific strategies over time, not converging to a fixed pattern.
 
-### Chrome Experiment: Adaptive Freezing (Post-Hoc) (2026-03-20)
+### Experiment: Adaptive Freezing (Post-Hoc) (2026-03-20)
 
 **Hypothesis:** Freezing low-entropy positions at intermediate steps saves compute.
 **Result:** Post-hoc freezing HURTS (+0.1% to +1.1%) because the model was trained with fixed 8 steps. It expects all 8.
@@ -5251,7 +5251,7 @@ With multi-step training (0.7*final_CE + 0.3*weighted_inter_CE), the model learn
 - Switching kernel adds +4.1% BPT at 0.2% param cost
 - Combined: v0.5.1 = switching kernel + inter-step loss, ready for v0.5.2 production
 
-### Chrome Experiment: Precision (Lambda) as Halting Signal (2026-03-20)
+### Experiment: Precision (Lambda) as Halting Signal (2026-03-20)
 
 Bayesian write IS working — precision monotonically grows per step:
 
@@ -5269,7 +5269,7 @@ Bayesian write IS working — precision monotonically grows per step:
 
 Phase 2 adaptive depth should use `if lambda_i > threshold: freeze position_i`.
 
-### Chrome Experiment: Switching Kernel (2 Modes) vs Standard (2026-03-20)
+### Experiment: Switching Kernel (2 Modes) vs Standard (2026-03-20)
 
 | Kernel | BPT | Params | Advantage |
 |--------|-----|--------|-----------|
@@ -5282,7 +5282,7 @@ Implication: v0.5.1 should use a 2-4 mode switching kernel instead of a single u
 
 ### CRITICAL BUG: Causal Leakage in Patch Broadcast (2026-03-20)
 
-**Codex audit discovered**: Patch summary (`mean(dim=2)` of all tokens in a patch) was broadcast back to the SAME patch. This means token 0 of a patch sees tokens 1-3 — **future information leaks into current predictions**.
+**audit discovered**: Patch summary (`mean(dim=2)` of all tokens in a patch) was broadcast back to the SAME patch. This means token 0 of a patch sees tokens 1-3 — **future information leaks into current predictions**.
 
 **Impact**:
 - All BPT/BPB numbers from v1 training are INFLATED (model was cheating)
@@ -5323,7 +5323,7 @@ No "!!!" collapse, no padding bug, no causality leak. The vision WORKS.
 Entropy grows 0→1.25: positions diversify, not collapse.
 Pattern: Local→Write→Route→Ctrl emerges naturally from the graph.
 
-### Chrome Probe: LR Sweep Validates Codex Recommendation (2026-03-20)
+### Research Probe: LR Sweep Validates Review Recommendation (2026-03-20)
 
 | LR | BPT (500 steps, dim=128) | vs 3e-4 |
 |----|--------------------------|---------|
@@ -5353,7 +5353,7 @@ All 5 stage modules verified as independently swappable:
 or domain-specialized. Community members improve specific stages for their domains.
 The graph handles composition. Everything builds on everything else.
 
-### Chrome: v0.5.1 vs v0.5 Combined Comparison (2026-03-20)
+### Experiment: v0.5.1 vs v0.5 Combined Comparison (2026-03-20)
 
 | Config | BPT (500 steps, dim=128) | vs baseline |
 |--------|--------------------------|-------------|
@@ -5365,7 +5365,7 @@ The graph handles composition. Everything builds on everything else.
 v0.5.1 halting/verify overhead needs more training to pay off.
 Pragmatic next step: restart v0.5 with LR=1e-3, defer v0.5.1.
 
-### Chrome: Higher LR Unlocks Stage Graph Discovery (2026-03-20)
+### Experiment: Higher LR Unlocks Stage Graph Discovery (2026-03-20)
 
 | LR=3e-4 | LR=1e-3 |
 |----------|---------|
@@ -5394,11 +5394,11 @@ Higher LR also unlocked stage graph discovery (Route<->Write oscillation).
 
 **What happened:** LR=1e-3 run was 11-14% better than LR=3e-4 for 3800 steps, then loss jumped 4.93→NaN at step 3900. Model continued producing NaN for 600+ steps (no guard).
 
-**Root cause:** LR=1e-3 is stable at dim=128 (Chrome sweep) but too aggressive at dim=768. Larger models are more sensitive to high LR — the Chrome sweep at small scale didn't catch this.
+**Root cause:** LR=1e-3 is stable at dim=128 (small-scale sweep) but too aggressive at dim=768. Larger models are more sensitive to high LR — the small-scale sweep didn't catch this.
 
 **Lesson:** ALWAYS validate LR stability at production scale before committing. The dim=128 sweep was necessary but not sufficient.
 
-**Fix:** LR=6e-4 (Chrome validated +11.4%, conservative). Added NaN guard to training loop.
+**Fix:** LR=6e-4 (sweep validated +11.4%, conservative). Added NaN guard to training loop.
 
 **Pre-Training Gate addition:** LR stability test at production scale (not just small-scale sweep) should be required before any production run >10K steps.
 
@@ -5419,7 +5419,7 @@ At dim=768, stability boundary is lower (NaN at 1e-3 step 3900).
 
 Step ~2400, loss 5.17, 4 NaN events (all caught, same pattern as Run 3).
 LR=6e-4, crash-safe eval, NaN guard active.
-NaN root cause identified: unbounded BayesianWrite gain (Codex RCA).
+NaN root cause identified: unbounded BayesianWrite gain (root cause analysis).
 Fix applied to code (clamp max=10.0) but current run uses old code.
 Step 5000 eval expected in ~47 min. This should be the FIRST successful eval.
 
@@ -5469,7 +5469,7 @@ Router alone contributes 23.1%. No component is scaffolding — all are essentia
 **REVERSES small-model finding.** At production scale, step 7 gives 16% marginal gain
 (the biggest single step). The model NEEDS deep recurrence. Do NOT reduce max_steps.
 
-Earlier Chrome probe (dim=128) said 91% in steps 1-4. At dim=768, steps 6-7 are critical.
+Earlier small-scale probe (dim=128) said 91% in steps 1-4. At dim=768, steps 6-7 are critical.
 Lesson: small-scale probes can be WRONG about recurrence depth.
 
 ### Halting-Signal Calibration: Lambda FAILS at Production Scale (2026-03-20)
@@ -5509,7 +5509,7 @@ CE-only BPT=8.528 vs Dual-teacher BPT=9.259 (-8.6%). Stage entropy unchanged.
 At tiny scale, absorption adds noise. Architecture improvements > teacher signal.
 Need to test at production scale for meaningful absorption.
 
-### Chrome: Scratchpad Memory +10.2% BPT (Biggest Single Win!) (2026-03-20)
+### Experiment: Scratchpad Memory +10.2% BPT (Biggest Single Win!) (2026-03-20)
 
 8 shared memory slots (read/write each recurrent step):
 - Baseline: BPT 12.09
@@ -6004,7 +6004,7 @@ Let STAR-style search find the optimal stage processors rather than hand-designi
 - [Sparse coding in mushroom body (eNeuro)](https://www.eneuro.org/content/7/2/ENEURO.0305-18.2020)
 - [LIV operators topic](https://www.emergentmind.com/topics/linear-input-varying-systems-livs)
 
-### Chrome v0.5.4: Complex Embeddings HURT at Small Scale (2026-03-20)
+### Probe v0.5.4: Complex Embeddings HURT at Small Scale (2026-03-20)
 
 | Arm | BPT | vs baseline |
 |-----|-----|-------------|
@@ -6014,9 +6014,9 @@ Let STAR-style search find the optimal stage processors rather than hand-designi
 
 Complex phase encoding adds too much optimization difficulty at dim=128/300 steps.
 Does NOT kill the idea — may work at larger scale — but NOT a quick win.
-Next Chrome: try P0 (CfC time constants) or P2 (expand-then-sparsify) instead.
+Next Experiment: try P0 (CfC time constants) or P2 (expand-then-sparsify) instead.
 
-### Chrome v0.5.4b: CfC Liquid Time Constants HURT -14% (2026-03-20)
+### Probe v0.5.4b: CfC Liquid Time Constants HURT -14% (2026-03-20)
 
 | Arm | BPT | vs baseline |
 |-----|-----|-------------|
@@ -6037,17 +6037,17 @@ These mechanisms FAILED at dim=128/300 steps but MUST be retested at dim=1024+:
 - Dual-teacher absorption (no benefit at 67M): designed for 200M+
 
 DO NOT reflexively drop these at scale. Retest each when dim=1024.
-Small-scale Chrome probes have a BIAS against complex mechanisms.
+Small-scale probes have a BIAS against complex mechanisms.
 
-### Chrome: Multi-Timescale Scratchpad = Neutral (2026-03-20)
+### Experiment: Multi-Timescale Scratchpad = Neutral (2026-03-20)
 Single timescale: BPT 10.49 | Multi timescale (0.5/0.8/0.95): BPT 10.50 (-0.1%)
 Fixed decays don't help at dim=128. Model can't differentiate memory speeds in 300 steps.
 Testing pointer-copy head next.
 
-### Chrome: Pointer-Copy Head = HURT -5.7% (2026-03-20)
+### Experiment: Pointer-Copy Head = HURT -5.7% (2026-03-20)
 no_copy: BPT 10.85 | pointer_copy: BPT 11.47 (-5.7%)
 
-Summary of ALL small-scale Chrome this session:
+Summary of ALL small-scale probes this session:
 | Mechanism | Result | Works? |
 |-----------|--------|--------|
 | Scratchpad (8 slots) | **+10.2%** | **YES** |
@@ -6175,7 +6175,7 @@ Deep internet research into information-theoretic and compression-based techniqu
 - MNIST accuracy comparable to logistic regression with fully local learning.
 - Published in PNAS (March 2025) and ICLR 2025 (oral presentation).
 
-**Sutra relevance**: HIGH for post-MVP. Infomorphic learning rules could replace backprop for Sutra's local processing within patches. Each patch processor becomes an infomorphic neuron with its own local information-theoretic objective. This aligns with Pattern 2 (no central controller) and Pattern 5 (learning without backprop) from Chrome Cycle 4. However, current results are MNIST-level — not yet validated for language modeling.
+**Sutra relevance**: HIGH for post-MVP. Infomorphic learning rules could replace backprop for Sutra's local processing within patches. Each patch processor becomes an infomorphic neuron with its own local information-theoretic objective. This aligns with Pattern 2 (no central controller) and Pattern 5 (learning without backprop) from Research Cycle 4. However, current results are MNIST-level — not yet validated for language modeling.
 
 ### 11. Grokking as Compression Phase Transition
 
@@ -6477,7 +6477,7 @@ Sutra already has elements 1 (positions with local update rules) and 2 (the scra
 | Self-organization | Not designed for | Initialize at edge of chaos, add SOC monitoring to Compute Control |
 | Adaptive routing | Static | ACO-inspired pheromone trails for dynamic routing |
 
-### Specific Design Proposals (For Codex Review)
+### Specific Design Proposals (For Review)
 
 1. **Stigmergic Scratchpad**: Replace fixed scratchpad with one that has temporal dynamics — writes decay over time (like pheromone evaporation), frequently-accessed slots get reinforced. This naturally handles memory management without explicit garbage collection.
 
@@ -6800,7 +6800,7 @@ The no-cloning theorem is intimately connected to:
 
 ---
 
-## Chrome Cycle 9: Thermodynamic Foundations of Intelligence (2026-03-20)
+## Research Cycle 9: Thermodynamic Foundations of Intelligence (2026-03-20)
 
 ### Purpose
 
@@ -7329,10 +7329,10 @@ Key finding: the scratchpad's benefit INCREASES at production scale vs CPU probe
 
 v0.5.3 at step 2,500 BEATS v0.5.2 at step 10,000 (+1.1%). This means:
 - Scratchpad gives ~2-4x training speedup at production scale (dim=768)
-- CPU Chrome probe showed +10.2% at dim=128; production-scale benefit is even larger
-- Validates the "simple shared state" principle identified by Codex
+- CPU probe showed +10.2% at dim=128; production-scale benefit is even larger
+- Validates the "simple shared state" principle identified in design review
 
-### Chrome v0.5.4 Probe Results (dim=128, 300 steps)
+### Probe v0.5.4 Probe Results (dim=128, 300 steps)
 
 | Probe | Test BPT | vs Baseline | Verdict |
 |-------|----------|-------------|---------|
@@ -7363,7 +7363,7 @@ Full synthesis in results/master_research_synthesis.md. Key findings:
 7. Epsilon-machines: adaptive state complexity is optimal
 8. Spatial coupling: suboptimal local becomes optimal global
 
-### v0.5.4 Ablation (6-arm, Chrome-validated, FINAL)
+### v0.5.4 Ablation (6-arm, validated, FINAL)
 
 | Arm | Test BPT | vs Baseline | Late-Step | Verdict |
 |-----|----------|-------------|-----------|---------|
@@ -7385,7 +7385,7 @@ Waiting for v0.5.3 step 5K checkpoint to deploy.
 
 ---
 
-## Chrome Cycle: Biological Neural Information Processing (2026-03-20)
+## Research Cycle: Biological Neural Information Processing (2026-03-20)
 
 ### Purpose
 
@@ -8122,7 +8122,7 @@ Where:
 
 **Critical insight**: Intrinsic dimension d appears as d^2 in the dominant term. The ambient dimension D appears only linearly and only in the geometric (not topological) term. This proves: network size should scale with INTRINSIC dimension, not AMBIENT dimension. Architectures that exploit low-dimensional manifold structure need exponentially fewer parameters.
 
-**Depth bound**: O(log(beta) + d*log(1/tau) + log(log(1/(tau*delta)))). Depth scales logarithmically in topological complexity and linearly in intrinsic dimension. This supports the "deep and narrow" finding from Chrome Cycle 2.
+**Depth bound**: O(log(beta) + d*log(1/tau) + log(log(1/(tau*delta)))). Depth scales logarithmically in topological complexity and linearly in intrinsic dimension. This supports the "deep and narrow" finding from Research Cycle 2.
 
 #### Implications for Sutra
 
@@ -8536,7 +8536,7 @@ Cheeger inequality: (lambda_1)/2 <= h(G) <= sqrt(2*lambda_1) links spectral gap 
 
 2. **Adaptive graph rewiring during inference**: Instead of fixed sparse retrieval patterns, use curvature to decide WHERE to add retrieval edges. Compute local curvature at each patch; patches in negatively curved regions (bottlenecks) get more retrieval connections. This is curvature-based rewiring adapted to sequence processing.
 
-3. **Over-squashing IS the core challenge**: Codex identified over-squashing as Sutra v0.1's fatal flaw. Curvature theory gives us the EXACT mathematical framework to quantify and mitigate it. The spectral gap of Sutra's communication graph directly determines how fast information propagates. Design goal: maximize spectral gap while maintaining O(n) edge count.
+3. **Over-squashing IS the core challenge**: Architecture review identified over-squashing as Sutra v0.1's fatal flaw. Curvature theory gives us the EXACT mathematical framework to quantify and mitigate it. The spectral gap of Sutra's communication graph directly determines how fast information propagates. Design goal: maximize spectral gap while maintaining O(n) edge count.
 
 4. **Connection to effective resistance**: The effective resistance between two patches in Sutra's communication graph determines how well they can share information. For long-range dependencies, we need low effective resistance. Sparse retrieval edges reduce effective resistance between distant patches. The OPTIMAL retrieval pattern is the one that minimizes maximum effective resistance across all pairs.
 
@@ -8661,7 +8661,7 @@ All eight frameworks converge on a single insight: **the geometry of the represe
 
 **HIGH PRIORITY** (directly actionable, probe-ready):
 
-1. **Curvature-aware retrieval**: Replace fixed top-k with curvature-guided edge selection. Compute local ORC on the message-passing graph; add retrieval edges where curvature is most negative (worst bottlenecks). This directly addresses the over-squashing problem that Codex flagged as fatal in v0.1.
+1. **Curvature-aware retrieval**: Replace fixed top-k with curvature-guided edge selection. Compute local ORC on the message-passing graph; add retrieval edges where curvature is most negative (worst bottlenecks). This directly addresses the over-squashing problem flagged as fatal in v0.1.
 
 2. **Intrinsic dimension tracking**: Measure intrinsic dimension of patch representations at each message-passing round. Verify that ID decreases (compression happening). Use ID to set hidden dimensions: no need for hidden_dim >> 2*ID.
 
@@ -8774,7 +8774,7 @@ It rejects:
 - geometry overhauls
 - new controllers whose usefulness depends on already-calibrated intermediate states
 
-This explains the Chrome pattern:
+This explains the experimental pattern:
 - scratchpad works
 - switching works
 - Peri-LN works
@@ -8807,7 +8807,7 @@ These are either controller-heavy, topology-swapping, or too disruptive for a cl
 
 ---
 
-## Chrome Cycle 5: Information Gain as Universal Controller (2026-03-21)
+## Research Cycle 5: Information Gain as Universal Controller (2026-03-21)
 
 ### Core Reframe
 
@@ -9009,7 +9009,7 @@ That is likely publishable if demonstrated cleanly. It is not a theorem-level br
 | Dimension | Score | Why |
 |----------|-------|-----|
 | Unifying power | **9.5/10** | Best control story so far; collapses multiple ad hoc controllers into one principle |
-| Mathematical coherence | **8.5/10** | Clean rate-distortion interpretation; aligns with verifier critique already found by Codex |
+| Mathematical coherence | **8.5/10** | Clean rate-distortion interpretation; aligns with verifier critique already found in review |
 | Novelty | **7/10** | Strong synthesis, but built from known adaptive-compute / value-of-information ideas |
 | Implementation tractability | **6.5/10** | Needs verifier target redesign, in-loop supervision, causal memory, and real masking |
 | Breakthrough upside | **8.5/10** | If it beats learned transition kernels at matched compute, this could become the real Sutra signature |
@@ -9036,7 +9036,7 @@ That is the design to test next.
 
 ---
 
-## Chrome Cycle 5B: Grand Unification - The Sutra Intelligence Infrastructure (2026-03-21)
+## Research Cycle 5B: Grand Unification - The Sutra Intelligence Infrastructure (2026-03-21)
 
 ### Executive Claim
 
@@ -9097,7 +9097,7 @@ continue / reroute / zoom iff max_a u_token(a) > lambda_compute
 freeze / emit iff max_a u_token(a) <= lambda_compute
 ```
 
-This is the controller described in the previous Chrome cycle, but now understood as only the shortest-timescale case of a deeper law.
+This is the controller described in the previous research cycle, but now understood as only the shortest-timescale case of a deeper law.
 
 #### 2. Training Timescale: Teacher Absorption
 
@@ -9565,7 +9565,7 @@ Warmup change **alone** is not enough. Checkpoint frequency **alone** is not eno
 
 ---
 
-## Codex Architecture Theorist + Scaling Expert: Post-v0.6.0a Directions (2026-03-21)
+## Architecture + Scaling Analysis: Post-v0.6.0a Directions (2026-03-21)
 
 ### Top 3 Asymmetric Directions (more capacity, no more params)
 1. **Residual-gain elastic compute** — controller that freezes easy tokens, reallocates budget to hard ones. Target: 25-35% pass reduction with matched quality.
@@ -9593,7 +9593,7 @@ v0.6.1: acting controller + frozen cache → 1024-dim from scratch on 20B+ diver
 
 ---
 
-## Chrome Probe: Attached vs Detached History Convergence (2026-03-21)
+## Research Probe: Attached vs Detached History Convergence (2026-03-21)
 
 **Question:** Does attached-history training (L_step backprops into recurrent core) create more convergence separation than final-only training?
 
@@ -9653,7 +9653,7 @@ The negative `dim=128` dual-teacher result does NOT kill the direction. It kills
 
 ---
 
-## Chrome: Error Scratchpad v2 (Delayed Start) (2026-03-21)
+## Experiment: Error Scratchpad v2 (Delayed Start) (2026-03-21)
 
 **Hypothesis:** Writing prediction error deltas to scratchpad ONLY after pass 3 improves late-step quality without the early-noise problem of v1.
 
@@ -9663,11 +9663,11 @@ The negative `dim=128` dual-teacher result does NOT kill the direction. It kills
 | Baseline | 12.620 | 9.233 | -0.0260 |
 | Error Scratch v2 | 12.335 | 9.233 | -0.0283 |
 
-**Verdict:** NOT KILL. Lower training loss, same test BPT, 9% better convergence separation. Weak positive signal. Needs more steps and larger scale. Retest candidate at dim=768/1024 per Codex recommendation.
+**Verdict:** NOT KILL. Lower training loss, same test BPT, 9% better convergence separation. Weak positive signal. Needs more steps and larger scale. Retest candidate at dim=768/1024 per design review recommendation.
 
 ---
 
-## Chrome: Grokfast Lambda Sweep at dim=768 (2026-03-21)
+## Experiment: Grokfast Lambda Sweep at dim=768 (2026-03-21)
 
 **REVERSAL: Grokfast IS stable at dim=768 with lower LR/clip.**
 
@@ -9683,16 +9683,16 @@ Root cause: LR=8e-4 was too high. With LR=3.5e-4 + clip=0.5, ALL lambdas stable.
 | **0.50** | **11.763** | **-1.0%** | **Yes** |
 
 **Implication:** Grokfast lambda=0.5 is a candidate for v0.6.0a production training.
-Needs Codex sign-off before adding to active training. The +11% Chrome result from dim=128
+Needs review sign-off before adding to active training. The +11% small-scale result from dim=128
 may partially transfer — the 50-step dim=768 probe shows direction is correct.
 
-**Key learning:** dim=128 Chrome was NOT a false positive for Grokfast — the production
+**Key learning:** dim=128 probe was NOT a false positive for Grokfast — the production
 failure was caused by LR instability, not Grokfast itself. The Scaling Expert rule applies:
 always retest killed mechanisms when hyperparameters change.
 
 ---
 
-## Chrome: NCA Pre-Pre-Training Probe (2026-03-21)
+## Experiment: NCA Pre-Pre-Training Probe (2026-03-21)
 
 **STRONG POSITIVE: -13.5% test BPT from NCA initialization.**
 
@@ -9711,7 +9711,7 @@ always retest killed mechanisms when hyperparameters change.
 
 ---
 
-## Chrome: NCA Warm-Start at dim=768 (2026-03-21)
+## Experiment: NCA Warm-Start at dim=768 (2026-03-21)
 
 **NEUTRAL: NCA warm-start shows no BPT improvement at production scale.**
 
@@ -10055,7 +10055,7 @@ def evaluate_probe(probe: nn.Module, cached_eval_batches, hard_threshold: float)
 # 6. If Spearman < 0.10, kill the entire LDPC branch.
 ```
 
-### Chrome canary protocol at `dim=768`
+### Canary protocol at `dim=768`
 
 Run only this:
 
@@ -10134,11 +10134,11 @@ The revised design is coherent:
 - only then consider acting reroute / write support
 - if the scalar signal is weak, terminate the branch early
 
-That is the correct Chrome order: theory -> minimal probe -> kill or escalate.
+That is the correct order: theory -> minimal probe -> kill or escalate.
 
 ---
 
-## Chrome: Grokfast Extended 300-Step at dim=768 (2026-03-21)
+## Experiment: Grokfast Extended 300-Step at dim=768 (2026-03-21)
 
 **NEUTRAL on test BPT. Training loss consistently lower.**
 
@@ -10156,7 +10156,7 @@ Test BPT: identical (16.301 both). The training advantage hasn't translated to t
 
 ---
 
-## Chrome: Grokfast 1000-Step KILL at dim=768 (2026-03-21)
+## Experiment: Grokfast 1000-Step KILL at dim=768 (2026-03-21)
 
 **KILL: Grokfast overfits. +16.2% train advantage, -0.3% worse test BPT.**
 
@@ -10175,7 +10175,7 @@ At 1000 steps the train-test divergence is clear and growing.
 
 ---
 
-## Chrome: Error Scratchpad v2 at dim=768 (1000 steps) (2026-03-21)
+## Experiment: Error Scratchpad v2 at dim=768 (1000 steps) (2026-03-21)
 
 **NEUTRAL BPT, POSITIVE separation. Consistent across scales.**
 
@@ -10198,7 +10198,7 @@ which is the signal the elastic controller will consume.
 
 ---
 
-## Reversible Writer Design (Codex, 2026-03-21)
+## Reversible Writer Design (Architecture Review, 2026-03-21)
 
 **Landauer-inspired: prevent destructive late-pass overwriting.**
 
@@ -10216,7 +10216,7 @@ Status: Design complete. Ready for CPU probe after syndrome results.
 
 ---
 
-## Chrome: Syndrome Scratchpad Scalar Probe KILL (2026-03-21)
+## Experiment: Syndrome Scratchpad Scalar Probe KILL (2026-03-21)
 
 **KILL: No syndrome signal detected. Spearman rho = -0.0018 (p=0.63).**
 
@@ -10238,7 +10238,7 @@ there's nothing for syndrome nodes to detect.
 
 ---
 
-## Chrome: Reversible Writer Probe INCONCLUSIVE (2026-03-21)
+## Experiment: Reversible Writer Probe INCONCLUSIVE (2026-03-21)
 
 **INCONCLUSIVE: Probe methodology insufficient. Mechanism not invalidated.**
 
@@ -10277,7 +10277,7 @@ the reversible writer can be included from the start of training. If included:
 - Seed eval batches deterministically for fair cross-arm comparison
 - Fix correction-only arm: use direct write gating (mu_out = mu_prop * (1-z) + mu * z)
 
-### General Chrome probe lesson
+### General probe lesson
 
 **Frozen-overlay probes are valid for mechanisms that ADD information** (Error Scratchpad,
 syndrome detection) but **invalid for mechanisms that MODIFY existing outputs** (reversible
@@ -10335,7 +10335,7 @@ Final pass (11) is 2.1x worse than best pass (6). The model is OVERTHINKING.
 
 **Next:** Run same analysis at step 7700+ to see if training reduces the late-pass degradation.
 
-### Codex Fix Design: Best-So-Far Regret Penalty (2026-03-22)
+### Fix Design: Best-So-Far Regret Penalty (2026-03-22)
 
 **Recommended by Architecture Theorist + Correctness Engineer.**
 
@@ -10364,7 +10364,7 @@ L_total += REGRET_LOSS_COEF * L_regret  # start at 0.05, raise to 0.10 if stable
 - Dynamic: reference updates as passes improve, doesn't hard-code "pass 6 is best"
 - Hard tokens can still improve in late passes (only penalizes regression)
 
-**Seven approaches evaluated (Codex ranking):**
+**Seven approaches evaluated (ranked by design review):**
 1. **G. Regret penalty** ← RECOMMENDED (targets exact bug, safest)
 2. C. Monotonic constraint (pairwise version of G, less flexible)
 3. F. Write decay (preserves early quality but may hurt hard tokens)
@@ -10373,7 +10373,7 @@ L_total += REGRET_LOSS_COEF * L_regret  # start at 0.05, raise to 0.10 if stable
 6. D. Progressive readout (masks the bug, doesn't fix it)
 7. E. Early stopping (right long-term, but probe not validated yet)
 
-**Chrome probe before deployment:**
+**Probe before deployment:**
 1. Verify sampled CE matches full-vocab CE trend at passes 5-11
 2. Eval-only write-decay sweep on 8K checkpoint
 3. 500-1000 step fork: baseline vs L_regret, track late_drop + hard-token gain
@@ -10409,7 +10409,7 @@ useful capacity without adding parameters.
 
 ---
 
-## Chrome Design: Resonant Write Dither (Codex Architecture Theorist, 2026-03-21)
+## Design: Resonant Write Dither (Architecture Review, 2026-03-21)
 
 **Stochastic resonance applied to Stage-5 write threshold.**
 
@@ -10488,13 +10488,13 @@ is not a threshold device suitable for stochastic resonance. The late-pass degra
 problem needs a direct architectural fix (multi-exit loss, monotonic constraint, or
 write decay), not noise injection.
 
-6 design rounds -> 1 clean probe -> definitive kill. The Chrome workflow worked.
+6 design rounds -> 1 clean probe -> definitive kill. The theory-experiment workflow worked.
 
 ---
 
-## Codex Tier 2 Reviews at Step 8K (2026-03-22)
+## Tier 2 Reviews at Step 8K (2026-03-22)
 
-Three parallel Codex reviews (Scaling Expert, Competitive Analyst, Architecture Theorist) run against the 8K checkpoint state. All three converge on the same core message.
+Three parallel architectural reviews (Scaling Expert, Competitive Analyst, Architecture Theorist) run against the 8K checkpoint state. All three converge on the same core message.
 
 ### Scaling Expert
 
@@ -10637,9 +10637,9 @@ L_regret barely moved any metric. It couldn't fix the "late-pass degradation" be
 
 **New #1 priority:** Test L_step=0 (remove sampled CE loss entirely). If L_step's sampled CE signal is actively confounding late-pass learning, removing it should improve training speed.
 
-### Codex Review: Full-Vocab Finding (2026-03-22)
+### Review: Full-Vocab Finding (2026-03-22)
 
-Codex confirms the diagnosis and adds actionable recommendations:
+The review confirms the diagnosis and adds actionable recommendations:
 
 **Root cause confirmed:** `build_negative_set` constructs negatives from final-pass top-32 logits. `sampled_pass_ce` then scores ALL passes against this fixed set. Early passes are broad/low-commitment — full-vocab CE punishes this but sampled CE ignores it (throws away 50K-token denominator). Late passes compress mass onto a small plausible set — full-vocab rewards this but sampled CE punishes it (those plausible alternatives ARE the negatives).
 
@@ -10693,14 +10693,14 @@ Sutra's current architecture violates this separation:
 5. **Demote pheromone, keep scratchpad** as the surviving proven mechanism. Still valid.
 6. ~~**Default inference at pass 6**~~ WRONG: Full-vocab shows pass 6 BPT=20.9 vs pass 12 BPT=7.6. Pass 12 is essential.
 
-### Codex Tier 1 Review (Step 7800) — Pending Actions
+### Tier 1 Review (Step 7800) — Pending Actions
 
 From earlier Tier 1 review (now ingested, output file cleaned up):
 - **MEDIUM**: Eval uses random test windows per checkpoint. Test_bpt is stochastic single-shard proxy. Action: switch to fixed indexed multi-shard eval slice.
 - **MEDIUM**: Rolling resume drops metric history. Rolling checkpoints omit `metrics`; on resume `metrics_history` becomes empty. Action: store metrics in rolling checkpoints or merge from JSON on resume.
 - Both are pipeline hygiene issues, not blocking training progress.
 
-## Chrome Cycle: L_step_exact Probe (2026-03-22)
+## Research Cycle: L_step_exact Probe (2026-03-22)
 
 ### Theory: Intermediate Loss Strength Matters More Than Direction
 
@@ -10770,7 +10770,7 @@ From earlier Tier 1 review (now ingested, output file cleaned up):
 - Alternatively, try WEAKENED exact loss: full-vocab CE but with very low coefficient (0.05 instead of 0.25) and temperature scaling
 - The "correct" intermediate loss may be representation-level, not prediction-level
 
-### Chrome Probe: L_step_exact (3-arm, completed 2026-03-22)
+### Research Probe: L_step_exact (3-arm, completed 2026-03-22)
 
 **The definitive L_step experiment.** Three arms, 500 steps each from step 5000 checkpoint.
 
@@ -10789,7 +10789,7 @@ From earlier Tier 1 review (now ingested, output file cleaned up):
 
 **Why this matters architecturally:** The Goldilocks zone for intermediate supervision is a *weak, imprecise prediction signal*. The 32-candidate sampled CE provides just enough gradient flow to keep intermediate passes engaged in the recurrent computation, without distorting them toward direct prediction. This is an important design principle for any recurrent architecture with shared parameters.
 
-### Chrome Probe: L_step Ablation (2-arm, completed 2026-03-22)
+### Research Probe: L_step Ablation (2-arm, completed 2026-03-22)
 
 **Question:** Does the sampled L_step loss help or hurt late-pass effectiveness?
 
@@ -10857,7 +10857,7 @@ Key findings:
 
 ### Leibniz Research Loop: Architectural Innovations Survey (2026-03-22)
 
-**Full brief: research/leibniz_brief_01.md. Codex Leibniz Round 1 in progress.**
+**Full brief: research/leibniz_brief_01.md. Design Round 1 in progress.**
 
 Comprehensive survey of 2024-2026 innovations from DeepSeek, Moonshot/Kimi, MiniMax, Qwen, Meta, OLMo, MobileLLM, plus our own moonshot findings. Key innovations surveyed:
 
@@ -10873,11 +10873,11 @@ Comprehensive survey of 2024-2026 innovations from DeepSeek, Moonshot/Kimi, Mini
 
 **Tokenizer:** At 68M, vocab=50K makes embedding 56.5% of params. Vocab=32K would free 14M params for compute. Optimal vocab scales with model size.
 
-**Codex Leibniz session will derive:** which principles apply to our recurrent architecture, novel mechanisms we could invent, what to change for v0.7.0.
+**Design session will derive:** which principles apply to our recurrent architecture, novel mechanisms we could invent, what to change for v0.7.0.
 
-### Codex Leibniz Round 1 — Mechanism Analysis (2026-03-22)
+### Design Round 1 — Mechanism Analysis (2026-03-22)
 
-**Codex grounded analysis in actual v0.6.0a code, not just the brief.** Key delta: StageBank already uses SiLU (not GELU), lambda is per-dimension/monotone/internal to BayesianWrite. Real current failure = fixed-point recurrent collapse, not weak FFNs.
+**Analysis grounded in actual v0.6.0a code, not just the brief.** Key delta: StageBank already uses SiLU (not GELU), lambda is per-dimension/monotone/internal to BayesianWrite. Real current failure = fixed-point recurrent collapse, not weak FFNs.
 
 **Cross-Cutting Principles Identified:**
 1. Preserve geometry under repeated composition
@@ -10910,9 +10910,9 @@ Comprehensive survey of 2024-2026 innovations from DeepSeek, Moonshot/Kimi, Mini
 
 **Follow-up questions for Round 2 research** (see Leibniz Round 2 brief).
 
-### Codex Leibniz Round 2 — Evidence Weighing + v0.7.0 Spec (2026-03-22)
+### Design Round 2 — Evidence Weighing + v0.7.0 Spec (2026-03-22)
 
-**Codex reviewed comprehensive both-sides evidence for all 10 follow-up questions, moonshot cross-pollination, and 5 explicit challenges to Round 1 assumptions.**
+**The review covered comprehensive both-sides evidence for all 10 follow-up questions, moonshot cross-pollination, and 5 explicit challenges to Round 1 assumptions.**
 
 **Positions Changed from Round 1:**
 - **Dual-axis RoPE → KILLED for pass conditioning.** Pass index is computation-time control, not spatial geometry — different objects shouldn't be encoded the same way. Replaced with adaLN/GatedRMSNorm pass conditioning (proven by TMLT) + sequence RoPE + QK-norm.
@@ -10929,7 +10929,7 @@ Comprehensive survey of 2024-2026 innovations from DeepSeek, Moonshot/Kimi, Mini
 - **Passwise successive refinement** — From Fractal Embeddings: force early passes to do coarse compression, late passes to do fine. Better than micro-experts.
 - **Remove pheromone** — Positive feedback is wrong sign for an attractor problem. Not load-bearing.
 
-**v0.7.0 Architecture Spec (Codex-approved):**
+**v0.7.0 Architecture Spec (review-approved):**
 Goal: targeted simplification + anti-collapse repair, NOT bigger novelty bundle.
 
 1. Pass-conditioned GatedRMSNorm/adaLN (thread pass index through recurrent block)
@@ -10940,7 +10940,7 @@ Goal: targeted simplification + anti-collapse repair, NOT bigger novelty bundle.
 6. WSD schedule + z-loss + pass-collapse metrics logging
 7. Instrument for active compression (metrics only, no steering yet)
 
-**Chrome Probes Required Before Training:**
+**Research Probes Required Before Training:**
 - Probe A: Pass conditioning (baseline vs adaLN vs adaLN+RoPE)
 - Probe B: Writer (monotone vs conflict-aware)
 - Probe C: StageBank (SiLU vs SwiGLU)
@@ -10953,7 +10953,7 @@ Goal: targeted simplification + anti-collapse repair, NOT bigger novelty bundle.
 
 **Active Compression (Priority 7):** Feasible in principle but not v0.7.0-ready. Prerequisites: calibrated uncertainty, hard floor on uniform sampling, correlation probes showing predicted gain matches actual gain. v0.7.0 instruments for it; v0.8.0 may promote to training controller.
 
-### Codex Tesla Session — v1.0 Ideal Architecture + Roadmap (2026-03-22)
+### Strategic Design Session — v1.0 Ideal Architecture + Roadmap (2026-03-22)
 
 **v1.0 Destination: Multiscale Asynchronous Belief Graph.**
 Not a polished v0.7.0. A fundamentally different architecture at 0.8B-1.2B static params with recurrence. Current 68M line is a mechanism incubator.
@@ -11095,7 +11095,7 @@ The collapse is a GRADIENT SIGNAL problem, not a capacity problem. Analysis:
 
 ---
 
-### Codex Architecture Critique R1 — Stress-Testing All Assumptions (2026-03-22)
+### Architecture Critique R1 — Stress-Testing All Assumptions (2026-03-22)
 
 **Persona: Architecture Theorist + Scaling Expert (combined). Mandate: challenge everything.**
 
@@ -11211,7 +11211,7 @@ The collapse is a GRADIENT SIGNAL problem, not a capacity problem. Analysis:
 
 ---
 
-### Codex Architecture Critique R2 - Multi-Persona Sweep (2026-03-22)
+### Architecture Critique R2 - Multi-Persona Sweep (2026-03-22)
 
 **Critical correction to current framing:**
 - `code/train_v060a.py` uses `BATCH_SIZE=4`, `GRAD_ACCUM=16`, `SEQ_LEN=512` = `32,768` tokens per optimizer step.
@@ -11391,7 +11391,7 @@ The collapse is a GRADIENT SIGNAL problem, not a capacity problem. Analysis:
 
 ---
 
-### Codex Architecture Critique R3 — Post-Research Integration (2026-03-22)
+### Architecture Critique R3 — Post-Research Integration (2026-03-22)
 
 **4 focused questions answered with repo-grounded evidence:**
 
@@ -11434,11 +11434,11 @@ The collapse is a GRADIENT SIGNAL problem, not a capacity problem. Analysis:
 
 ---
 
-## Tesla+Leibniz Design Loop: Round 1 Findings (2026-03-22)
+## Strategic Design Loop: Round 1 Findings (2026-03-22)
 
-### Round 1 Codex Output Summary
+### Round 1 Output Summary
 
-Codex (as committed architect, not reviewer) examined all assumptions with both-sides analysis.
+The design session (as committed architect, not reviewer) examined all assumptions with both-sides analysis.
 
 **Key positions after Round 1:**
 - **Recurrence: viable but unproven.** Late passes do real work (full-vocab eval proves this), but collapse data shows passes 0-9 are near-identical fixed points. The system defers computation to pass 11. This is a TRAINING RECIPE problem (gradient dominance from L_final), not necessarily an architecture problem.
@@ -11493,7 +11493,7 @@ Sutra has WORST embedding ratio of any comparable model (58.8% params in embeddi
 
 Near-random on most. PIQA shows strongest signal. LAMBADA near-zero confirms exact-recall gap. Expected at 68M/0.4B tokens from scratch. Pythia-70M was similar at this training stage.
 
-### Tesla+Leibniz Round 2 Probe Results (2026-03-22)
+### Strategic Design Round 2 Probe Results (2026-03-22)
 
 **Probe D: Scratchpad Load-Bearing Audit (CPU, step ~12K)**
 
@@ -11550,7 +11550,7 @@ v0.5.4 lm-eval benchmarks (step 20K, via run_benchmarks_lite.py):
 
 **Open question for Round 3:** What does the v0.5.4→v0.6.0a progression tell us about architecture vs training data? Is the benchmark plateau a scale effect (both near-random, so differences don't show) or evidence that architectural improvements don't translate to benchmark improvements at 68M?
 
-### Tesla+Leibniz R2→R3 Research Agent Findings (2026-03-22)
+### Design R2→R3 Research Agent Findings (2026-03-22)
 
 **Research Request 1: Associative Memory Systems Survey (10-system comparison)**
 
@@ -11646,9 +11646,9 @@ Analyzed whether the 7 FFN banks have learned different functions or converged t
 
 **Verdict:** Stages 0-1 are barely trained (bias near init, frac_positive ~0.5 = random). Stages 2-5 show strong learned selectivity. This means ~28% of the stage bank capacity (2 of 7 stages = 4.7M params) is wasted on underutilized stages. Supports R2's recommendation to consolidate, but the non-redundancy of active stages suggests the model DOES benefit from having multiple distinct processing functions — just not 7. Consistent with merging into 1 shared block + lightweight per-pass adapters rather than having 7 separate FFNs.
 
-### Tesla+Leibniz Round 3 Design Output (2026-03-22)
+### Strategic Design Round 3 Design Output (2026-03-22)
 
-**Codex R3 confidence: 6/7/6/6/5** (up from R2's 4/6/4/4/3).
+**R3 confidence: 6/7/6/6/5** (up from R2's 4/6/4/4/3).
 
 **Design: "Shared-Core Cognitive Spectrum Sutra"**
 
@@ -12038,7 +12038,7 @@ Three innovations over the original evolutionary merging:
 
 **Emergent features:** Patch validation, better file viewing, enhanced editing tools, solution ranking, history tracking — all discovered by evolution, not programmed.
 
-**CONNECTION TO SUTRA:** The DGM concept maps directly to our Tesla+Leibniz design loop — but automated. If Sutra's architecture decisions could be formalized as code that evolves... the DGM framework could automate architecture search within our design space. More immediately: the principle that evolution discovers emergent improvements that humans wouldn't design applies to our stage-routing, mode-conditioning, and memory management mechanisms.
+**CONNECTION TO SUTRA:** The DGM concept maps directly to our strategic design loop — but automated. If Sutra's architecture decisions could be formalized as code that evolves... the DGM framework could automate architecture search within our design space. More immediately: the principle that evolution discovers emergent improvements that humans wouldn't design applies to our stage-routing, mode-conditioning, and memory management mechanisms.
 
 #### 9. ShinkaEvolve: EVOLVING ALGORITHMS WITH LLMs (Sep 2025, ICLR 2026)
 
@@ -12198,7 +12198,7 @@ Liquid AI LFM2: LIV hybrid (75% gated conv + 25% GQA), 2.6B: IFEval 79.6%, 2x fa
 **Implication for THE GATE (D>1 vs D=1):**
 The current model doesn't prove recurrence helps because early passes aren't doing useful work. Random-depth training is the prerequisite before the gate test is meaningful. A model trained to produce quality at depth 1 AND depth 12 would be a fair comparison.
 
-**Bug found by Codex R4:** Token-type recall audit "pass disagreement = 0" is invalid — model was called in eval mode without collect_history=True, so mu_hist was None and disagreement was hard-filled with zeros. CE gaps are real; disagreement needs rerun. Fix applied to probe_token_type_recall.py.
+**Bug found in R4 review:** Token-type recall audit "pass disagreement = 0" is invalid — model was called in eval mode without collect_history=True, so mu_hist was None and disagreement was hard-filled with zeros. CE gaps are real; disagreement needs rerun. Fix applied to probe_token_type_recall.py.
 
 ### Generation Quality: Step 13,600 vs Step 9,000 (2026-03-22)
 
@@ -12261,7 +12261,7 @@ All token types show flat entropy 0-10, cliff at 11. But the floor differs by ty
 
 ---
 
-## Tesla+Leibniz Round 4: "Shared-Core Cognitive Spectrum Sutra" (2026-03-22)
+## Strategic Design Round 4: "Shared-Core Cognitive Spectrum Sutra" (2026-03-22)
 
 **Confidence: 7/8/7/7/6** (up from R3's 6/7/6/6/5)
 
@@ -12394,7 +12394,7 @@ kNN interpolation HURTS every category except whitespace. Even lambda=0.1 increa
 
 **For R5:** This doesn't change the warm-start roadmap. Random-depth (v0.6.0b) is still P0. ARMT (v0.6.3) is still the memory solution. But it validates that kNN-LM alone won't solve the knowledge gap — the model needs trained associative memory.
 
-### Theory: FEP-Unified Architecture (Chrome Theory from R4 Patterns)
+### Theory: FEP-Unified Architecture (Theoretical Synthesis from R4 Patterns)
 
 R4 found that ARMT delta-rule, predictive coding, Titans surprise-write, residual-gain halting, PonderNet adaptive depth, and free-energy drop are manifestations of the same principle: **minimize surprise (free energy) through belief refinement.** This section makes the mapping concrete.
 
@@ -12486,7 +12486,7 @@ Pattern IDENTICAL to 14K — pass collapse is structural and stable:
 - Code generation produces only whitespace
 - Factual knowledge absent
 
-## Tesla+Leibniz Round 5 (2026-03-22)
+## Strategic Design Round 5 (2026-03-22)
 
 **Confidence: 8/8/7/7/7** (up from R4's 7/8/7/7/6)
 

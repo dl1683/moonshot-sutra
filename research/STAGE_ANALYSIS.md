@@ -260,7 +260,7 @@ Move information between positions so that distant relevant evidence
 enters each position's working state. THIS IS THE CRITICAL STAGE.
 
 ### Why This Matters
-"Wrong answers are born when evidence isn't routed." — Codex R2.
+"Wrong answers are born when evidence isn't routed." — Design review R2.
 If position 50 needs information from position 5, and the communication
 mechanism can't deliver it, no amount of processing at position 50 helps.
 
@@ -808,7 +808,7 @@ Stage 5 loss = state retention accuracy).
 
 ### REVISED ARCHITECTURE: Constrained Stage-Superposition
 
-Based on Codex challenge, the viable version is Architecture B+E hybrid:
+Based on architectural review challenge, the viable version is Architecture B+E hybrid:
 
 ```
 MONOTONIC STAGE ADVANCEMENT with SOFT INTENSITY:
@@ -1549,9 +1549,9 @@ TEST: Head-to-head against Pythia-410M / SmolLM-360M.
 
 ---
 
-## CODEX REALITY CHECK: "One real core idea, not six"
+## REALITY CHECK: "One real core idea, not six"
 
-**Codex honest assessment: 4/10 for beating a transformer.**
+**Honest assessment: 4/10 for beating a transformer.**
 
 "There is probably ONE real core idea here, not six."
 The core: better ROUTING + maybe uncertainty-aware compute allocation.

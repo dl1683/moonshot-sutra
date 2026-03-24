@@ -28,7 +28,7 @@ Thumbs.db
 # Build
 *.log
 
-# Codex review outputs (transient — ingest into RESEARCH.md then delete)
+# Review outputs (transient)
 results/codex_*.md
 
 # Large text data
@@ -36,6 +36,11 @@ data/*.txt
 
 # Claude local state
 .claude/
+
+# Private methodology docs
+CLAUDE.md
+research/TESLA_LEIBNIZ_*.md
+results/tesla_leibniz_*.md
 
 # Ruff cache
 .ruff_cache/

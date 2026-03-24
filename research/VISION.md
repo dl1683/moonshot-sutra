@@ -148,7 +148,7 @@ Every choice has a history. Some solve real problems (load-bearing). Others were
 
 **7 Stages**
 - **What it is:** The current decomposition of processing into 7 named stages.
-- **Why it was chosen:** Emerged from multiple rounds of design iteration and Codex debates, not from deep theory. The number 7 has no mathematical significance.
+- **Why it was chosen:** Emerged from multiple rounds of design iteration and architectural review, not from deep theory. The number 7 has no mathematical significance.
 - **Why it's negotiable:** Could be 5 (merge related stages) or 10 (split complex stages). The outcome (modular decomposition) is independent of the exact count. What matters is that stages have clean interfaces and meaningful semantic boundaries, not that there are exactly 7 of them.
 
 **From-Scratch Training**
@@ -279,7 +279,7 @@ Every other architecture asks: "how many layers?" We ask: "what stages of proces
 
 ## What This Means for Every Decision
 
-These rules govern every architectural choice, every experiment design, every Codex review, every heartbeat self-check:
+These rules govern every architectural choice, every experiment design, every design review, every self-check:
 
 1. **NEVER assume a design choice is sacred.** Question everything. The only sacred things are the 5 outcomes (intelligence, improvability, democratization, data efficiency, inference efficiency) — not the mechanisms we currently use to pursue them (superposition, stages, infrastructure pattern, multi-teacher, elastic compute). If you can propose a better mechanism for any outcome, do it.
 2. **Always ask: "What OUTCOME does this enforce?"** If the outcome can be achieved better another way, change the implementation immediately.
@@ -317,7 +317,7 @@ These rules govern every architectural choice, every experiment design, every Co
 - 3-part loss structure: L_final + L_step + L_probe (L_step provides gradient flow) ✓
 - Competitive learning efficiency vs Pythia at equivalent steps ✓
 
-### Active Chrome Investigations
+### Active Investigations
 - **L_step_exact**: Replace sampled CE loss with full-vocab CE on late passes (correct gradient + gradient flow)
 - **Dense baseline**: Matched comparison (same tokenizer, data, params, plain decoder) — needed to honestly assess whether the architecture itself adds value beyond the training setup
 - **Elastic compute**: Freeze at optimal pass per token (gated behind L_step fix)

@@ -7,7 +7,7 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 ## CURRENT STRATEGIC DIRECTION: O4-First Multi-Source Learning (R12→R13, 2026-03-23)
 
-**CRITICAL FRAMING:** Don't converge too early. Each warm-start step is a Chrome probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
+**CRITICAL FRAMING:** Don't converge too early. Each warm-start step is a research probe that earns the right to proceed. If the data contradicts the plan, we pivot. Keep the search space wide.
 
 **R13 CONFIDENCE: 6/8/4/4/7** — O5 improved based on D8≈D12 elastic compute validation.
 **R14 PRELIMINARY: 5/8/4/4/8** — O1 dropped (benchmarks below parent), O5 raised (D10 at 96.7%, halting probe).
@@ -67,13 +67,13 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 1. **TOP-DOWN (primary):** Design the ideal Sutra v1.0 architecture from first principles. What properties must it have? What does it look like unconstrained by current code? This is the DESTINATION. Use Tesla-style mental modeling — fully map the ideal system before building.
 
-2. **BOTTOM-UP (supporting):** The Leibniz research loop discovers mechanisms and validates them through Chrome probes. But each mechanism is evaluated against "does this move us toward the v1.0 vision?" — not just "does this improve current BPT?"
+2. **BOTTOM-UP (supporting):** The research loop discovers mechanisms and validates them through experimental probes. But each mechanism is evaluated against "does this move us toward the v1.0 vision?" — not just "does this improve current BPT?"
 
 3. **THE BRIDGE:** Reverse-engineer the path from v0.6.0a → v1.0 as a sequence of warm-started incremental versions. Each step is validated, each builds on the last, and each moves toward the ideal architecture.
 
 **The Leibniz loop is a TOOL, not the goal.** It informs the vision and validates specific mechanisms. But the architecture vision drives the priorities, not the other way around.
 
-### v1.0 DESTINATION (Codex Tesla Session 2026-03-22) — HYPOTHESIS, NOT PLAN
+### v1.0 DESTINATION (Strategic Design Session 2026-03-22) — HYPOTHESIS, NOT PLAN
 
 **Multiscale Asynchronous Belief Graph at 0.8B-1.2B params.** Current 68M = mechanism incubator.
 
@@ -81,7 +81,7 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 
 **8 Properties we're EXPLORING (non-negotiable as goals, negotiable as implementations):** explicit uncertainty, content/control separation, successive refinement, sparse exact recall, revision under contradiction, elastic async compute, stable module ABI, function-preserving growth.
 
-**Full details in RESEARCH.md under "Codex Tesla Session."**
+**Full details in RESEARCH.md under "Strategic Design Session."**
 
 ### STRATEGIC PRINCIPLE: Iterative Warm-Start Evolution (User Insight 2026-03-22)
 
@@ -104,7 +104,7 @@ Format: Mechanism -> What bottleneck it solves -> How we'd know it worked -> Pri
 - Vocab change: DESTRUCTIVE (reshapes all embeddings) ✗ — defer or do last
 - SwiGLU: PARTIALLY DESTRUCTIVE (changes FFN shape) — needs careful warm-start strategy
 
-Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
+Design rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 
 **Cross-cutting principles:**
 1. Preserve geometry under repeated composition
@@ -116,7 +116,7 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 
 ---
 
-## v0.7.0 SPEC (Codex Round 2 — SUPERSEDED by R12 direction, preserved for reference)
+## v0.7.0 SPEC (Design Round 2 — SUPERSEDED by R12 direction, preserved for reference)
 
 **Goal:** Targeted simplification + anti-collapse repair. Recover trainability while preserving late-pass behavior.
 **NOTE:** R12 (2026-03-23) reordered priorities. O4 (multi-source learning) now comes BEFORE shared-core architectural work. P1 (pass conditioning) below is DEFERRED until after P1-KD and P2-tokenizer results.
@@ -126,20 +126,20 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 **Mechanism**: adaLN/GatedRMSNorm conditioned on pass index (proven by TMLT). Sequence RoPE replaces learned pos embeddings. QK-norm for stability.
 **Why not dual-axis RoPE**: Pass index is computation-time control, not spatial geometry. Different objects shouldn't be encoded the same way. adaLN is proven; dual-axis RoPE is untested.
 **Warm-start**: ADDITIVE — new LN params initialized, existing weights unchanged. ✓
-**Chrome Probe A**: Baseline vs adaLN-only vs adaLN+RoPE+QK-norm. Gate on BPT, pass cosine collapse, trigram diversity.
+**Probe A**: Baseline vs adaLN-only vs adaLN+RoPE+QK-norm. Gate on BPT, pass cosine collapse, trigram diversity.
 
 ### P2: Conflict-Aware BayesianWrite
 **Bottleneck**: Monotone lambda = confidence only increases. Can't reduce confidence on conflicting evidence.
 **Mechanism**: Agreement raises precision, conflict/novelty can decay it. Separate parallel refinement from orthogonal correction. Bounded forgetting (not unbounded).
 **Novelty**: Genuine gap — no prior work on orthogonal STATE updates in iterative LMs (only weight matrices).
 **Warm-start**: ADDITIVE — modifies update rule, weights compatible. ✓
-**Chrome Probe B**: Monotone vs conflict-aware. Kill if lambda oscillates, NaNs, or late-pass contribution drops.
+**Probe B**: Monotone vs conflict-aware. Kill if lambda oscillates, NaNs, or late-pass contribution drops.
 
 ### P3: Param-Matched SwiGLU StageBank
 **Bottleneck**: SiLU FFN is weaker than SwiGLU (universal evidence).
 **Mechanism**: Replace 768→1536→768 SiLU with param-matched 768→1024 SwiGLU.
 **Warm-start**: PARTIALLY DESTRUCTIVE — FFN shapes change. Needs careful init strategy.
-**Chrome Probe C**: SiLU vs SwiGLU, gate on BPT + throughput.
+**Probe C**: SiLU vs SwiGLU, gate on BPT + throughput.
 
 ### P4: Remove Pheromone
 **Bottleneck**: Positive feedback is wrong sign for an attractor problem. Not load-bearing.
@@ -150,12 +150,12 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 **Bottleneck**: Cosine schedule may be suboptimal. z-loss prevents logit drift. No current collapse monitoring.
 **Mechanism**: WSD schedule, z-loss term, log pass-to-pass cosine contraction + lambda decay stats + router logit norms.
 **Warm-start**: ADDITIVE (training recipe change). ✓
-**Chrome Probe D**: 2×2 canary for cosine/WSD × z-loss on/off.
+**Probe D**: 2×2 canary for cosine/WSD × z-loss on/off.
 
 ### P6 (PROBE-ONLY): Passwise Successive Refinement
 **Bottleneck**: Early passes contribute almost nothing (BPT 20-22 for passes 0-7, then dramatic drop in 8-11).
 **Mechanism**: Force early passes to do coarse compression via progressive targets (from Fractal Embeddings insight).
-**Chrome Probe E**: Short branch comparing current L_step vs coarse-target early passes.
+**Probe E**: Short branch comparing current L_step vs coarse-target early passes.
 
 ### DEFERRED TO v0.8.0+
 - Micro-experts (KILLED — zero evidence below 100M)
@@ -187,11 +187,11 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 
 ---
 
-## CHROME METHODOLOGY
+## EXPERIMENTAL METHODOLOGY
 
 **What transfers across scales**: mechanism class, stability properties, causality.
 **What doesn't transfer**: hyperparameter optima, absolute BPT numbers.
-**Key learning**: dim=128 Chrome gave false positive for Grokfast. Decision gate is dim=768 canary + generation quality eval.
+**Key learning**: dim=128 probe gave false positive for Grokfast. Decision gate is dim=768 canary + generation quality eval.
 
 ---
 
@@ -208,7 +208,7 @@ Codex Leibniz Rounds 1+2 (2026-03-22) produced the v0.7.0 spec below.
 **Failure signal**: Model avoids hard examples (takes the easy way out). Uncertainty estimates are miscalibrated → steers learning wrong.
 **Connection to Sacred 5**: Serves Outcomes 1 (intelligence), 2 (improvability — the model improves its own learning), 4 (data efficiency).
 **Both-sides check**: Self-paced learning literature shows models CAN game their own difficulty metric. Requires well-calibrated uncertainty (Moonshot 3). Curriculum learning results are mixed — sometimes hurts. BUT: those results are for external curricula on passive models. An architecture that natively measures information gain per pass is different from bolting curriculum on top.
-**Status**: User insight (2026-03-22). Needs Codex design review and literature survey on information-gain-driven training.
+**Status**: User insight (2026-03-22). Needs design review and literature survey on information-gain-driven training.
 
 ---
 

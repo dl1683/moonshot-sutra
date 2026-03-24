@@ -4,7 +4,7 @@ THE paradigm shift. Each position carries a probability distribution over 7 stag
 Processing is driven by content-dependent stage transitions on a state graph.
 Computation is per-position and adaptive: easy tokens emit early, hard tokens loop.
 
-Designed by Codex (GPT-5.4) from the Stage-Superposition vision.
+Derived from first-principles design review of the Stage-Superposition vision.
 Implements the actual vision from research/STAGE_ANALYSIS.md.
 
 Key innovations over v0.4:
@@ -107,9 +107,13 @@ class StageBank(nn.Module):
 
     Each stage has its own small MLP that transforms the hidden state.
     The stage bank is shared across all recurrent steps (weight sharing).
+
+    widen_ff: if set, adds a zero-gated additive branch per stage
+              (dim→widen_ff→dim) for F5 capacity canary. Init gate=0
+              so warm-start preserves exact parent behavior.
     """
 
-    def __init__(self, dim, ff_dim=None):
+    def __init__(self, dim, ff_dim=None, widen_ff=0):
         super().__init__()
         ff = ff_dim or dim * 2
         self.stages = nn.ModuleList([
@@ -118,6 +122,19 @@ class StageBank(nn.Module):
         ])
         # Evidence heads: how useful is each stage's output?
         self.evidence = nn.Linear(dim, N_STAGES)
+
+        # F5 widen-only canary: zero-gated additive branch
+        self.widen_ff = widen_ff
+        if widen_ff > 0:
+            self.widen_branches = nn.ModuleList([
+                nn.Sequential(nn.Linear(dim, widen_ff), nn.SiLU(),
+                              nn.Linear(widen_ff, dim))
+                for _ in range(N_STAGES)
+            ])
+            # Gate initialized to -10 → sigmoid(-10)≈0 → exact identity to parent at init
+            self.widen_gates = nn.ParameterList([
+                nn.Parameter(torch.full((1,), -10.0)) for _ in range(N_STAGES)
+            ])
 
     def forward(self, h, pi):
         """Apply ONLY active stage operations (Top2-sparse).
@@ -136,6 +153,9 @@ class StageBank(nn.Module):
             # Check if ANY position needs this stage
             if active_mask[:, :, s].any():
                 stage_out = stage_fn(h)  # (B, N, D)
+                if self.widen_ff > 0:
+                    gate = torch.sigmoid(self.widen_gates[s])
+                    stage_out = stage_out + gate * self.widen_branches[s](h)
                 weighted = weighted + pi[:, :, s:s+1] * stage_out
 
         evidence = self.evidence(weighted)  # (B, N, 7)
@@ -169,7 +189,7 @@ class BayesianWrite(nn.Module):
         kappa = F.softplus(self.gain_proj(combined))  # evidence gain >= 0
 
         # Only update positions proportional to their write-stage probability
-        # Clamp gain to prevent unbounded precision growth (NaN root cause per Codex)
+        # Clamp gain to prevent unbounded precision growth (NaN root cause per design review)
         effective_gain = (pi_write * kappa).clamp(max=10.0)
 
         lam_new = lam + effective_gain

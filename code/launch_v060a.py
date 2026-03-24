@@ -11,7 +11,7 @@ Built on v0.5.4 core. Changes:
   - Shadow ResidualGainProbe (predicts future improvement, doesn't act)
   - Optional FrozenPrefixCache for ablations only
 
-Conventions (from 8 Chrome rounds):
+Conventions (from 8 design iterations):
   - Pass index: p in {0..11}, 0-based
   - mu_hist shape: (B, T, 12, D)
   - sampled_ce_hist shape: (B, T, 12)
@@ -217,7 +217,7 @@ class SutraV060a(nn.Module):
 
     def __init__(self, vocab_size=50257, dim=768, ff_dim=1536,
                  max_steps=12, window=4, k_retrieval=8, n_scratch_slots=8,
-                 pheromone_rho=0.90):
+                 pheromone_rho=0.90, widen_ff=0):
         super().__init__()
         self.dim = dim
         self.vocab_size = vocab_size
@@ -230,7 +230,7 @@ class SutraV060a(nn.Module):
         self.init_mu = nn.Linear(dim, dim)
         self.init_lam = nn.Linear(dim, dim)
         self.transition = SwitchingKernel2(dim)
-        self.stage_bank = StageBank(dim, ff_dim)
+        self.stage_bank = StageBank(dim, ff_dim, widen_ff=widen_ff)
         self.router = LocalRouter(dim, window=window, k=k_retrieval)
         self.writer = BayesianWrite(dim)
         self.scratchpad = Scratchpad(dim, n_slots=n_scratch_slots)

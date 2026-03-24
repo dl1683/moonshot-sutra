@@ -2,7 +2,7 @@
 
 8-16 shared memory slots for discourse-level state (topic, entities, context).
 Tokens read from scratchpad each recurrent step; Stage 5 writes back.
-Chrome-validated: +10.2% BPT improvement at dim=128.
+Experimentally validated: +10.2% BPT improvement at dim=128.
 
 Usage: integrate into SutraV05 forward pass:
     scratch = Scratchpad(dim=768, n_slots=8)
