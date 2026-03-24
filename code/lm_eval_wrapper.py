@@ -122,19 +122,23 @@ class SutraLMEval(LM):
             # Forward pass — one call for entire batch
             with torch.inference_mode():
                 logits, _ = self.model(padded)
-            log_probs = torch.nn.functional.log_softmax(logits.float(), dim=-1)
+            # Avoid allocating full B×T×V log_probs tensor (saves ~800MB at B=4)
+            # Instead: target_logit - logsumexp(logits) per position
+            logits_f = logits.float()
+            lse = torch.logsumexp(logits_f, dim=-1)  # (B, T)
 
             # Score each item in batch
             for j, (all_ids, ctx_len) in enumerate(batch_encoded):
-                lp = log_probs[j]
                 total_ll = 0.0
                 is_greedy = True
                 for i in range(ctx_len, len(all_ids)):
-                    if i > 0 and i - 1 < lp.size(0):
-                        total_ll += lp[i - 1, all_ids[i]].item()
-                        if lp[i - 1].argmax().item() != all_ids[i]:
+                    if i > 0 and i - 1 < logits_f.size(1):
+                        target_lp = logits_f[j, i - 1, all_ids[i]].item() - lse[j, i - 1].item()
+                        total_ll += target_lp
+                        if logits_f[j, i - 1].argmax().item() != all_ids[i]:
                             is_greedy = False
                 results.append((total_ll, is_greedy))
+            del logits, logits_f, lse
 
         return results
 
@@ -155,8 +159,13 @@ class SutraLMEval(LM):
             input_ids = torch.tensor([ids], device=self._device)
             with torch.inference_mode():
                 logits, _ = self.model(input_ids)
-            log_probs = torch.nn.functional.log_softmax(logits[0].float(), dim=-1)
-            total_ll = sum(log_probs[i, ids[i + 1]].item() for i in range(len(ids) - 1))
+            logits_f = logits[0].float()
+            lse = torch.logsumexp(logits_f, dim=-1)
+            total_ll = sum(
+                (logits_f[i, ids[i + 1]].item() - lse[i].item())
+                for i in range(len(ids) - 1)
+            )
+            del logits, logits_f, lse
             results.append((total_ll,))
         return results
 
