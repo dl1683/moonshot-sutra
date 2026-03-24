@@ -964,7 +964,7 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=
             L_XTKD = torch.tensor(0.0, device=DEVICE)
             L_CKA_Q2 = torch.tensor(0.0, device=DEVICE)
 
-            if "mu_hist" in aux and aux["mu_hist"] is not None:
+            if "mu_hist" in aux and aux["mu_hist"] is not None and (q1_slot is not None or q2_slot is not None):
                 student_hidden = aux["mu_hist"][:, :Tc, -1, :]  # (B, T, D)
                 s_repr_live = student_hidden.float().mean(dim=1)  # (B, D) with gradients
                 texts = decode_tokens_to_texts(x)
