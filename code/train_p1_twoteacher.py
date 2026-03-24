@@ -877,7 +877,7 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=
     # Optimizer (preserve moments from parent)
     opt = torch.optim.AdamW(model.parameters(), lr=CONTINUATION_LR, weight_decay=0.01, betas=(0.9, 0.95))
 
-    if resumed and "optimizer" in resumed_ckpt:
+    if resumed and resumed_ckpt is not None and "optimizer" in resumed_ckpt:
         opt.load_state_dict(resumed_ckpt["optimizer"])
         print(f"  Restored optimizer state from {resumed_ckpt['_path']}")
     elif not resumed:
