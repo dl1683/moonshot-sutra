@@ -1,0 +1,70 @@
+[
+  {
+    "version": "v060a",
+    "step": 20000,
+    "per_depth_bpt": {"1": 18.752, "4": 18.678, "8": 18.133, "10": 16.837, "12": 6.877},
+    "best_depth": 12,
+    "checkpoint": "results/checkpoints/best_step20000.pt"
+  },
+  {
+    "version": "v060b",
+    "step": 3000,
+    "per_depth_bpt": {"1": 9.4375, "4": 7.5447, "8": 7.3689, "10": 7.3709, "12": 7.3798},
+    "best_depth": 8,
+    "checkpoint": "results/checkpoints_v060b/step_3000.pt"
+  },
+  {
+    "version": "v060b",
+    "step": 9000,
+    "per_depth_bpt": {"1": 9.0728, "4": 7.5293, "8": 7.3483, "10": 7.3565, "12": 7.3716},
+    "best_depth": 8,
+    "checkpoint": "results/checkpoints_v060b/step_9000.pt"
+  },
+  {
+    "version": "v060b",
+    "step": 15000,
+    "per_depth_bpt": {"1": 8.732, "4": 7.197, "8": 7.015, "10": 7.011, "12": 7.014},
+    "best_depth": 10,
+    "checkpoint": "results/checkpoints_v060b/step_15000.pt"
+  },
+  {
+    "version": "p1a",
+    "step": 1000,
+    "per_depth_bpt": {"1": 17.2789, "4": 16.2233, "8": 7.1181, "10": 6.9802, "12": 7.0393},
+    "best_depth": 10,
+    "phase": "single-teacher CKA",
+    "checkpoint": "results/checkpoints_p1/step_1000.pt"
+  },
+  {
+    "version": "p1a",
+    "step": 2000,
+    "per_depth_bpt": {"1": 16.5591, "4": 15.814, "8": 12.1923, "10": 6.8979, "12": 6.9312},
+    "best_depth": 10,
+    "phase": "single-teacher CKA",
+    "checkpoint": "results/checkpoints_p1/step_2000.pt"
+  },
+  {
+    "version": "p1a",
+    "step": 3000,
+    "per_depth_bpt": {"1": 16.323, "4": 15.813, "8": 12.902, "10": 6.788, "12": 6.827},
+    "best_depth": 10,
+    "phase": "single-teacher CKA (BEST D10)",
+    "checkpoint": "results/checkpoints_p1/step_3000.pt"
+  },
+  {
+    "version": "p1a",
+    "step": 4000,
+    "per_depth_bpt": {"1": 16.183, "4": 15.625, "8": 13.288, "10": 6.835, "12": 6.852},
+    "best_depth": 10,
+    "phase": "two-queue XTKD+CKA (degraded from 3K)",
+    "checkpoint": "results/checkpoints_p1/step_4000.pt"
+  },
+  {
+    "version": "p1a",
+    "step": 5000,
+    "per_depth_bpt": {"1": 15.954, "4": 15.448, "8": 13.042, "10": 6.746, "12": 6.760},
+    "best_depth": 10,
+    "phase": "CKA-only tail (NEW BEST D10 + D12)",
+    "checkpoint": "results/checkpoints_p1/step_5000.pt"
+  }
+]

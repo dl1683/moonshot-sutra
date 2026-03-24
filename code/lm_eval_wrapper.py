@@ -37,7 +37,7 @@ class SutraLMEval(LM):
         self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Load model based on version (each version has its own default max_steps)
-        if version in ("v060a", "v060b"):
+        if version in ("v060a", "v060b", "v061"):
             from launch_v060a import create_v060a
             self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=12,
                                        window=4, k_retrieval=8)
@@ -46,7 +46,7 @@ class SutraLMEval(LM):
             self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=8,
                                       window=4, k_retrieval=8)
         else:
-            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v060c', or 'v054'.")
+            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v061', or 'v054'.")
 
         if checkpoint:
             ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
@@ -84,17 +84,17 @@ class SutraLMEval(LM):
         return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
 
     def _loglikelihood_tokens(self, requests, disable_tqdm=False):
+        import time as _time
         results = []
+        n_total = len(requests)
+        t0 = _time.time()
 
-        # Batch requests by similar length for efficient GPU utilization
-        indexed = [(i, req) for i, req in enumerate(requests)]
-
-        for batch_start in range(0, len(indexed), self._batch_size):
-            batch = indexed[batch_start:batch_start + self._batch_size]
+        for batch_start in range(0, n_total, self._batch_size):
+            batch = requests[batch_start:batch_start + self._batch_size]
 
             # Encode all in batch
             batch_encoded = []
-            for _, (context, continuation) in batch:
+            for context, continuation in batch:
                 ctx_ids = self.tokenizer.encode(context)
                 cont_ids = self.tokenizer.encode(continuation)
                 all_ids = (ctx_ids + cont_ids)[-512:]
@@ -124,6 +124,14 @@ class SutraLMEval(LM):
                         if lp[i - 1].argmax().item() != all_ids[i]:
                             is_greedy = False
                 results.append((total_ll, is_greedy))
+
+            # Progress logging every 200 requests
+            done = batch_start + len(batch)
+            if done % 200 < self._batch_size or done == n_total:
+                elapsed = _time.time() - t0
+                rps = done / elapsed if elapsed > 0 else 0
+                eta = (n_total - done) / rps if rps > 0 else 0
+                print(f"  loglikelihood: {done}/{n_total} ({rps:.0f} req/s, ETA {eta:.0f}s)", flush=True)
 
         return results
 
@@ -175,14 +183,18 @@ class SutraLMEval(LM):
 
 
 if __name__ == "__main__":
+    import json, time
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v060a/rolling_latest.pt"))
     parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v060c", "v054", "v061"])
+    parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v054", "v061"])
     parser.add_argument("--output", default=None, help="Output JSON path (default: results/sutra_lm_eval_results.json)")
     args = parser.parse_args()
+
+    out_path = Path(args.output) if args.output else REPO / "results" / "sutra_lm_eval_results.json"
 
     print(f"Running lm-eval on Sutra {args.version}")
     print(f"Checkpoint: {args.checkpoint}")
@@ -193,24 +205,43 @@ if __name__ == "__main__":
                          device=args.device, version=args.version)
 
     task_list = args.tasks.split(",")
-    results = lm_eval.simple_evaluate(
-        model=model,
-        tasks=task_list,
-        batch_size=args.batch_size,
-        bootstrap_iters=0,  # Skip 100K bootstrap resampling — was causing OOM/hang
-        log_samples=False,   # Don't hold all samples in memory
-    )
 
-    print("\n" + "=" * 60)
-    print("RESULTS")
-    print("=" * 60)
-    for task_name, task_result in results["results"].items():
-        print(f"\n{task_name}:")
-        for metric, value in task_result.items():
-            if isinstance(value, (int, float)):
-                print(f"  {metric}: {value:.4f}" if isinstance(value, float) else f"  {metric}: {value}")
+    # Run each task individually to avoid post-processing hang
+    all_results = {}
+    if out_path.exists():
+        try:
+            all_results = json.load(open(out_path))
+            print(f"Resuming: {list(all_results.keys())} already done")
+        except Exception:
+            pass
 
-    import json
-    out_path = Path(args.output) if args.output else REPO / "results" / "sutra_lm_eval_results.json"
-    json.dump(results["results"], open(out_path, "w"), indent=2, default=str)
+    t0 = time.time()
+    for task_name in task_list:
+        if task_name in all_results:
+            print(f"\n  {task_name}: SKIPPED (already done)")
+            continue
+        print(f"\nRunning {task_name}...", flush=True)
+        try:
+            result = lm_eval.simple_evaluate(
+                model=model,
+                tasks=[task_name],
+                batch_size=args.batch_size,
+                bootstrap_iters=0,
+                log_samples=False,
+            )
+            for k, v in result["results"].items():
+                all_results[k] = v
+                print(f"  {k}: {v}", flush=True)
+            json.dump(all_results, open(out_path, "w"), indent=2, default=str)
+            print(f"  Saved after {task_name}", flush=True)
+        except Exception as e:
+            print(f"  ERROR on {task_name}: {e}", flush=True)
+
+    print(f"\n{'='*60}")
+    print(f"RESULTS ({time.time()-t0:.0f}s)")
+    print(f"{'='*60}")
+    for task_name, task_result in all_results.items():
+        if isinstance(task_result, dict):
+            acc = task_result.get("acc,none", task_result.get("acc_norm,none", "?"))
+            print(f"  {task_name:20s} {acc}")
     print(f"\nSaved: {out_path}")
