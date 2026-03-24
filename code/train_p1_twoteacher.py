@@ -770,7 +770,7 @@ def decode_tokens_to_texts(token_ids):
 
 # ---- Main ----
 
-def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=None, shard_dir_override=None, init_weights=None):
+def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=None, shard_dir_override=None, init_weights=None, widen_ff=0):
     variant = "P1b (MiniPLM weighted)" if weight_file else "P1a (uniform)"
     n_q1 = len(q1_queue) if q1_queue else 0
     n_q2 = len(q2_queue) if q2_queue else 0
@@ -800,7 +800,8 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=
 
     # Create student model
     model = create_v060a(vocab_size=VOCAB_SIZE, dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
-                         window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
+                         window=WINDOW, k_retrieval=K_RETRIEVAL,
+                         widen_ff=widen_ff).to(DEVICE)
 
     # --- Resume or load from parent ---
     start_step = 0
@@ -839,7 +840,11 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=
             continue
 
     if resumed_ckpt is not None:
-        model.load_state_dict(resumed_ckpt["model"])
+        missing, unexpected = model.load_state_dict(resumed_ckpt["model"], strict=False)
+        if missing:
+            print(f"  NOTE: {len(missing)} missing keys (new params use init values)")
+        if unexpected:
+            print(f"  WARNING: {len(unexpected)} unexpected keys in checkpoint")
         start_step = resumed_ckpt["step"]
         best_bpt = resumed_ckpt.get("best_bpt", float("inf"))
         metrics_history = resumed_ckpt.get("metrics", [])
@@ -1178,8 +1183,13 @@ def deterministic_eval(checkpoint_path, cache_path=None, device="cpu"):
     # Detect vocab from embedding weight shape
     emb_key = next((k for k in state if "emb" in k and "weight" in k), None)
     det_vocab = state[emb_key].shape[0] if emb_key else VOCAB_SIZE
+    # Auto-detect widen_ff from checkpoint keys
+    det_widen = 0
+    widen_key = next((k for k in state if "widen_branches" in k and "weight" in k), None)
+    if widen_key:
+        det_widen = state[widen_key].shape[0]  # output dim of first linear = widen_ff
     model = create_v060a(vocab_size=det_vocab, dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
-                          window=WINDOW, k_retrieval=K_RETRIEVAL)
+                          window=WINDOW, k_retrieval=K_RETRIEVAL, widen_ff=det_widen)
     model.load_state_dict(state, strict=False)
     model.to(device).eval()
     step = ckpt.get("step", "?")
@@ -1236,6 +1246,8 @@ if __name__ == "__main__":
                         help="Override shard directory (e.g. data/shards_16k for F3)")
     parser.add_argument("--init-weights", type=str, default=None,
                         help="Load model weights from this checkpoint (fresh optimizer, for F3 transplant)")
+    parser.add_argument("--widen-ff", type=int, default=0,
+                        help="F5: add zero-gated additive branch of this width to each stage (0=disabled)")
     args = parser.parse_args()
 
     if args.build_cache:
@@ -1304,4 +1316,5 @@ if __name__ == "__main__":
 
     main(weight_file=args.weight_file, run_name=args.run_name,
          q1_queue=q1, q2_queue=q2, stop_at=args.stop_at,
-         shard_dir_override=shard_dir, init_weights=args.init_weights)
+         shard_dir_override=shard_dir, init_weights=args.init_weights,
+         widen_ff=args.widen_ff)

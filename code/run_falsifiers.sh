@@ -98,8 +98,22 @@ python code/dense_baseline.py \
 # NOTE: This requires a code modification to the model architecture.
 # Implementation needed before running.
 
-echo "=== F5: Widen-only canary (NEEDS IMPLEMENTATION) ==="
-echo "TODO: Implement zero-gated FFN widening in launch_v060a.py"
+mkdir -p results/checkpoints_f5_widen
+
+echo "=== F5: Widen-only canary (500 steps) ==="
+# Uses --init-weights for fresh optimizer (can't resume with mismatched param count)
+# --widen-ff=768 adds zero-gated branch: sigmoid(-10)≈0 → exact parent behavior at start
+# --max-steps 500 gives proper LR schedule for short run
+python code/train_p1_twoteacher.py \
+    --run-name f5_widen \
+    --teacher-free \
+    --widen-ff 768 \
+    --init-weights "results/checkpoints_p1/step_${PARENT_STEP}.pt" \
+    --max-steps 500
+
+echo "=== F5 Det-Eval ==="
+python code/train_p1_twoteacher.py \
+    --det-eval results/checkpoints_f5_widen/rolling_latest.pt
 
 echo ""
 echo "=== ALL FALSIFIERS COMPLETE ==="
