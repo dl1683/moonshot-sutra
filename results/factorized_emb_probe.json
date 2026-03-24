@@ -1,0 +1,57 @@
+[
+  {
+    "label": "full_16k",
+    "emb_dim": 768,
+    "emb_params": 12288000,
+    "total_params": 42013867,
+    "per_depth_bpt": {
+      "D1": 10.1025,
+      "D4": 9.7985,
+      "D8": 8.1275,
+      "D10": 4.8272,
+      "D12": 4.8554
+    },
+    "best_depth": "D10",
+    "best_bpt": 4.8272
+  },
+  {
+    "label": "E=256",
+    "emb_dim": 256,
+    "emb_params": 4292608,
+    "total_params": 34018475,
+    "param_savings": 7995392,
+    "svd": {
+      "rel_reconstruction_error": 0.7345876693725586,
+      "variance_explained": 0.4603777229785919
+    },
+    "per_depth_bpt": {
+      "D1": 10.2707,
+      "D4": 10.1071,
+      "D8": 9.1055,
+      "D10": 7.7434,
+      "D12": 7.796
+    },
+    "best_depth": "D10",
+    "best_bpt": 7.7434
+  },
+  {
+    "label": "E=128",
+    "emb_dim": 128,
+    "emb_params": 2146304,
+    "total_params": 31872171,
+    "param_savings": 10141696,
+    "svd": {
+      "rel_reconstruction_error": 0.8511099219322205,
+      "variance_explained": 0.2757055461406708
+    },
+    "per_depth_bpt": {
+      "D1": 10.258,
+      "D4": 10.1571,
+      "D8": 8.9219,
+      "D10": 8.001,
+      "D12": 8.0423
+    },
+    "best_depth": "D10",
+    "best_bpt": 8.001
+  }
+]
