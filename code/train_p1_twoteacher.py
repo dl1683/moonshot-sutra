@@ -58,7 +58,7 @@ GRAD_CLIP_NORM = 0.5
 
 # Distillation coefficients (two-queue Ekalavya Protocol)
 ALPHA_Q1_CKA = 0.3       # CKA weight for Q1 (CKA+XTKD) teachers
-ALPHA_Q1_XTKD = 0.3      # XTKD weight for Q1 teachers (byte-level logit KD)
+ALPHA_Q1_XTKD = 0.0      # DISABLED at step 4000 per R17: 64.3% boundary misalignment injecting noise
 ALPHA_Q2_CKA = 0.2       # CKA weight for Q2 (CKA-only) teachers
 KD_TEMP = 2.0            # Temperature for XTKD byte-level distillation
 CKA_EVERY_N = 8          # Compute CKA every N micro-batches (halved from 4 — reduces XTKD 50%, same CKA gradient per step)
@@ -237,7 +237,7 @@ class TeacherSlot:
         # bf16 only for tiny models (est <0.3GB ≈ <150M actual params).
         free_vram = self._free_vram_gb()
         est_size = self._estimate_model_gb(name, trust)
-        vram_margin = 5.0  # keep 5GB free for teacher activations + transient tensors during forward
+        vram_margin = 8.0  # keep 8GB free — two-teacher CKA peaks higher than single-teacher
 
         load_device = "cpu"
         quant_mode = "none"
@@ -770,7 +770,7 @@ def decode_tokens_to_texts(token_ids):
 
 # ---- Main ----
 
-def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
+def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None, stop_at=None, shard_dir_override=None, init_weights=None):
     variant = "P1b (MiniPLM weighted)" if weight_file else "P1a (uniform)"
     n_q1 = len(q1_queue) if q1_queue else 0
     n_q2 = len(q2_queue) if q2_queue else 0
@@ -788,7 +788,10 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     print(f"{'='*60}")
 
     # Load dataset (with optional MiniPLM weights for P1b)
-    dataset = ShardedDataset(weight_file=weight_file)
+    ds_kwargs = {"weight_file": weight_file}
+    if shard_dir_override:
+        ds_kwargs["shard_dir"] = shard_dir_override
+    dataset = ShardedDataset(**ds_kwargs)
 
     ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -796,7 +799,7 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     metrics_file = REPO / "results" / f"{run_name}_metrics.json"
 
     # Create student model
-    model = create_v060a(dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
+    model = create_v060a(vocab_size=VOCAB_SIZE, dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
                          window=WINDOW, k_retrieval=K_RETRIEVAL).to(DEVICE)
 
     # --- Resume or load from parent ---
@@ -806,14 +809,24 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     depth_counts = [0] * (MAX_STEPS + 1)
     resumed = False
 
+    # --init-weights: load model weights only (fresh optimizer, step=0)
+    if init_weights is not None:
+        iw_path = Path(init_weights)
+        iw_ckpt = torch.load(iw_path, weights_only=False, map_location=DEVICE)
+        iw_state = iw_ckpt["model"] if "model" in iw_ckpt else iw_ckpt
+        model.load_state_dict(iw_state, strict=False)
+        print(f"INIT-WEIGHTS: Loaded model from {iw_path.name} (fresh optimizer, step=0)")
+        resumed = True  # skip parent loading
+
     # Check for P1 resume
     resume_candidates = []
     rolling = ckpt_dir / "rolling_latest.pt"
-    if rolling.exists():
+    if not resumed and rolling.exists():
         resume_candidates.append(rolling)
-    for p in sorted(ckpt_dir.glob("step_*.pt"),
-                    key=lambda p: int(p.stem.split("_")[1]), reverse=True):
-        resume_candidates.append(p)
+    if not resumed:
+        for p in sorted(ckpt_dir.glob("step_*.pt"),
+                        key=lambda p: int(p.stem.split("_")[1]), reverse=True):
+            resume_candidates.append(p)
 
     resumed_ckpt = None
     for cand in resume_candidates:
@@ -881,11 +894,14 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     q2_slot = TeacherSlot(q2_queue or [], DEVICE, slot_name="Q2") if q2_queue else None
 
     # Pre-build student byte groups for XTKD (GPT-2 tokenizer, constant)
+    # Skip entirely if XTKD alpha is zero — saves VRAM from teacher logit computation
     s_byte_groups = None
     gpt2_tok = get_gpt2_tokenizer()
-    if q1_slot is not None:
+    if q1_slot is not None and ALPHA_Q1_XTKD > 0:
         print("Precomputing student byte groups for XTKD...", flush=True)
         s_byte_groups = _build_byte_groups(gpt2_tok, DEVICE, cache_key="student_gpt2")
+    elif ALPHA_Q1_XTKD == 0:
+        print("XTKD DISABLED (alpha=0) — skipping byte group computation", flush=True)
 
     # Restore queue state from checkpoint if resuming
     if resumed and resumed_ckpt is not None:
@@ -921,7 +937,8 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     # Cache for teacher byte groups (rebuilt on teacher swap)
     _t_byte_groups_cache = {}  # {teacher_name: byte_groups}
 
-    while step < MAX_TRAIN_STEPS:
+    train_limit = stop_at if stop_at is not None else MAX_TRAIN_STEPS
+    while step < train_limit:
         x, y = dataset.sample_batch(BATCH_SIZE, SEQ_LEN, device=DEVICE, split="train")
 
         # LR schedule
@@ -1092,6 +1109,10 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
                 save_rolling(model, opt, dataset, step, best_bpt, metrics_history,
                              depth_counts, ckpt_dir, q1_slot=q1_slot, q2_slot=q2_slot)
 
+            # Periodic VRAM defragmentation (prevents OOM from fragmentation)
+            if step % 500 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     # Final eval
     if step > 0 and step % EVAL_EVERY != 0:
         best_bpt, metrics_history = run_eval(
@@ -1110,6 +1131,82 @@ def main(weight_file=None, run_name="p1", q1_queue=None, q2_queue=None):
     print(f"\nRun full eval: python code/lm_eval_wrapper.py --checkpoint results/checkpoints_p1/step_{step}.pt --tasks arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
 
 
+def build_eval_cache(n_batches=40, batch_size=4, seq_len=SEQ_LEN):
+    """Build deterministic eval cache from fixed test windows. CPU only."""
+    from data_loader import ShardedDataset
+    ds = ShardedDataset()
+    test_tokens = ds.get_test_tokens()
+    print(f"Test tokens: {test_tokens.numel():,}")
+
+    # Create non-overlapping windows from test set
+    stride = seq_len + 1  # +1 for target
+    n_available = (test_tokens.numel() - 1) // stride
+    n_windows = min(n_batches * batch_size, n_available)
+    print(f"Creating {n_windows} fixed windows (stride={stride})")
+
+    xs, ys = [], []
+    for i in range(n_windows):
+        start = i * stride
+        xs.append(test_tokens[start:start + seq_len])
+        ys.append(test_tokens[start + 1:start + seq_len + 1])
+
+    cache = {
+        "x": torch.stack(xs),  # (N, seq_len)
+        "y": torch.stack(ys),  # (N, seq_len)
+        "n_windows": n_windows,
+        "seq_len": seq_len,
+    }
+    cache_path = REPO / "results" / "eval_cache.pt"
+    torch.save(cache, cache_path)
+    print(f"Saved: {cache_path} ({n_windows} windows, {cache['x'].shape})")
+    return cache_path
+
+
+def deterministic_eval(checkpoint_path, cache_path=None, device="cpu"):
+    """Evaluate a checkpoint on fixed cached batches. Returns BPT per depth."""
+    if cache_path is None:
+        cache_path = REPO / "results" / "eval_cache.pt"
+    cache = torch.load(cache_path, weights_only=True, map_location="cpu")
+    xs, ys = cache["x"], cache["y"]
+    n = xs.size(0)
+    print(f"Cache: {n} windows, seq_len={xs.size(1)}")
+
+    # Load model (auto-detect vocab size from checkpoint)
+    from launch_v060a import create_v060a
+    ckpt = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
+    state = ckpt["model"] if "model" in ckpt else ckpt
+    # Detect vocab from embedding weight shape
+    emb_key = next((k for k in state if "emb" in k and "weight" in k), None)
+    det_vocab = state[emb_key].shape[0] if emb_key else VOCAB_SIZE
+    model = create_v060a(vocab_size=det_vocab, dim=DIM, ff_dim=FF_DIM, max_steps=MAX_STEPS,
+                          window=WINDOW, k_retrieval=K_RETRIEVAL)
+    model.load_state_dict(state, strict=False)
+    model.to(device).eval()
+    step = ckpt.get("step", "?")
+    print(f"Loaded: {checkpoint_path} (step={step})")
+
+    results = {}
+    batch_size = 4
+    for d in [1, 4, 8, 10, 12]:
+        total_loss = 0.0
+        n_tokens = 0
+        for i in range(0, n, batch_size):
+            xb = xs[i:i + batch_size].to(device)
+            yb = ys[i:i + batch_size].to(device)
+            with torch.no_grad():
+                logits, _ = model(xb, n_steps=d)
+                Tc = min(logits.size(1), yb.size(1))
+                loss = F.cross_entropy(logits[:, :Tc].reshape(-1, det_vocab),
+                                       yb[:, :Tc].reshape(-1), reduction='sum')
+            total_loss += loss.item()
+            n_tokens += xb.size(0) * Tc
+        bpt = (total_loss / n_tokens) / math.log(2)
+        results[d] = round(bpt, 4)
+        print(f"  D={d:2d}: BPT={bpt:.4f}")
+
+    return {"step": step, "per_depth_bpt": results, "checkpoint": str(checkpoint_path)}
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Sutra Ekalavya Protocol: Two-Queue Multi-Teacher KD")
@@ -1121,7 +1218,52 @@ if __name__ == "__main__":
                         help="JSON file for Q1 teachers (CKA+XTKD, light intelligent models)")
     parser.add_argument("--q2-queue", type=str, default=None,
                         help="JSON file for Q2 teachers (CKA-only, heavy diverse models)")
+    parser.add_argument("--build-cache", action="store_true",
+                        help="Build deterministic eval cache and exit")
+    parser.add_argument("--det-eval", type=str, default=None,
+                        help="Run deterministic eval on checkpoint(s), comma-separated paths")
+    parser.add_argument("--teacher-free", action="store_true",
+                        help="Disable all KD losses (CKA+XTKD=0) and skip teacher loading for F2 control")
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="Override MAX_TRAIN_STEPS (changes LR schedule too)")
+    parser.add_argument("--stop-at", type=int, default=None,
+                        help="Stop training at this step (preserves LR schedule, for F2 A/B tests)")
+    parser.add_argument("--vocab-size", type=int, default=None,
+                        help="Override vocab size (16000 for 16K tokenizer, default 50257)")
+    parser.add_argument("--shard-dir", type=str, default=None,
+                        help="Override shard directory (e.g. data/shards_16k for F3)")
+    parser.add_argument("--init-weights", type=str, default=None,
+                        help="Load model weights from this checkpoint (fresh optimizer, for F3 transplant)")
     args = parser.parse_args()
+
+    if args.build_cache:
+        build_eval_cache()
+        sys.exit(0)
+
+    if args.det_eval:
+        cache_path = REPO / "results" / "eval_cache.pt"
+        if not cache_path.exists():
+            print("Building eval cache first...")
+            build_eval_cache()
+        all_results = []
+        for cp in args.det_eval.split(","):
+            cp = cp.strip()
+            r = deterministic_eval(cp, cache_path)
+            all_results.append(r)
+        # Summary table
+        print(f"\n{'='*60}")
+        print(f"DETERMINISTIC BPT COMPARISON")
+        print(f"{'='*60}")
+        print(f"{'Checkpoint':<45} {'D1':>8} {'D4':>8} {'D8':>8} {'D10':>8} {'D12':>8}")
+        for r in all_results:
+            d = r["per_depth_bpt"]
+            label = Path(r["checkpoint"]).parent.name + f"/step_{r['step']}"
+            print(f"{label:<45} {d.get(1,'—'):>8} {d.get(4,'—'):>8} {d.get(8,'—'):>8} {d.get(10,'—'):>8} {d.get(12,'—'):>8}")
+        # Save results
+        out = REPO / "results" / "deterministic_eval_comparison.json"
+        json.dump(all_results, open(out, "w"), indent=2, default=str)
+        print(f"\nSaved: {out}")
+        sys.exit(0)
 
     def _load_queue(path_str, label):
         if path_str is None:
@@ -1134,8 +1276,27 @@ if __name__ == "__main__":
         print(f"WARNING: {label} file not found: {p}")
         return None
 
-    q1 = _load_queue(args.q1_queue, "Q1 (CKA+XTKD)")
-    q2 = _load_queue(args.q2_queue, "Q2 (CKA-only)")
+    # Apply --teacher-free: zero all KD, skip teacher queues
+    if args.teacher_free:
+        ALPHA_Q1_CKA = 0.0   # noqa: F841 — overrides module global read by main()
+        ALPHA_Q1_XTKD = 0.0
+        ALPHA_Q2_CKA = 0.0
+        print("TEACHER-FREE MODE: All KD losses disabled, no teachers loaded")
+        q1, q2 = None, None
+    else:
+        q1 = _load_queue(args.q1_queue, "Q1 (CKA+XTKD)")
+        q2 = _load_queue(args.q2_queue, "Q2 (CKA-only)")
+
+    if args.max_steps is not None:
+        MAX_TRAIN_STEPS = args.max_steps
+        print(f"MAX_TRAIN_STEPS overridden to {MAX_TRAIN_STEPS}")
+
+    if args.vocab_size is not None:
+        VOCAB_SIZE = args.vocab_size
+        print(f"VOCAB_SIZE overridden to {VOCAB_SIZE}")
+
+    shard_dir = args.shard_dir
 
     main(weight_file=args.weight_file, run_name=args.run_name,
-         q1_queue=q1, q2_queue=q2)
+         q1_queue=q1, q2_queue=q2, stop_at=args.stop_at,
+         shard_dir_override=shard_dir, init_weights=args.init_weights)
