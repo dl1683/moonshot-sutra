@@ -35,12 +35,36 @@ class SutraLMEval(LM):
         self._device = torch.device(device if torch.cuda.is_available() else "cpu")
         self._batch_size = batch_size
         self._fp16 = fp16
+        self._version = version
+        self._returns_tuple = True  # Sutra returns (logits, aux); dense returns just logits
 
-        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
-        self.tokenizer.pad_token = self.tokenizer.eos_token
+        # Dense model uses 16K tokenizer; Sutra uses GPT-2
+        if version == "dense":
+            from transformers import PreTrainedTokenizerFast
+            tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+            self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tok_path))
+            self.tokenizer.pad_token = self.tokenizer.convert_ids_to_tokens(0)
+            self.tokenizer.pad_token_id = 0
+            self._returns_tuple = False
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Load model based on version (each version has its own default max_steps)
-        if version in ("v060a", "v060b", "v061"):
+        # Load model based on version
+        if version == "dense":
+            from dense_baseline import DenseTransformer
+            ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
+            cfg = ckpt.get("config", {})
+            self.model = DenseTransformer(
+                vocab_size=cfg.get("vocab_size", 16000),
+                dim=cfg.get("dim", 512),
+                n_layers=cfg.get("n_layers", 11),
+                n_heads=cfg.get("n_heads", 8),
+                ff_dim=cfg.get("ff_dim", 1536),
+                exit_layers=cfg.get("exit_layers", None),
+            )
+            self.model.load_state_dict(ckpt["model"])
+        elif version in ("v060a", "v060b", "v061"):
             from launch_v060a import create_v060a
             self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=12,
                                        window=4, k_retrieval=8)
@@ -49,9 +73,9 @@ class SutraLMEval(LM):
             self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=8,
                                       window=4, k_retrieval=8)
         else:
-            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v061', or 'v054'.")
+            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v061', 'v054', or 'dense'.")
 
-        if checkpoint:
+        if checkpoint and version != "dense":  # dense already loaded above
             ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
             state = ckpt["model"] if "model" in ckpt else ckpt
             self.model.load_state_dict(state, strict=False)
@@ -61,7 +85,8 @@ class SutraLMEval(LM):
 
     @property
     def eot_token_id(self):
-        return self.tokenizer.eos_token_id
+        eos = self.tokenizer.eos_token_id
+        return eos if eos is not None else self.tokenizer.pad_token_id or 0
 
     @property
     def max_length(self):
@@ -117,14 +142,16 @@ class SutraLMEval(LM):
 
             # Pad to max length in batch
             max_len = max(len(ids) for ids, _ in batch_encoded)
-            padded = torch.full((len(batch_encoded), max_len), self.tokenizer.eos_token_id,
+            pad_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id or 0
+            padded = torch.full((len(batch_encoded), max_len), pad_id,
                                 dtype=torch.long, device=self._device)
             for j, (ids, _) in enumerate(batch_encoded):
                 padded[j, :len(ids)] = torch.tensor(ids, device=self._device)
 
             # Forward pass — one call for entire batch
             with torch.inference_mode():
-                logits, _ = self.model(padded)
+                out = self.model(padded)
+                logits = out[0] if self._returns_tuple else out
             # Avoid allocating full B×T×V log_probs tensor (saves ~800MB at B=4)
             # Instead: target_logit - logsumexp(logits) per position
             logits_f = logits.float()
@@ -161,7 +188,8 @@ class SutraLMEval(LM):
             ids = self.tokenizer.encode(string)[-512:]
             input_ids = torch.tensor([ids], device=self._device)
             with torch.inference_mode():
-                logits, _ = self.model(input_ids)
+                out = self.model(input_ids)
+                logits = out[0] if self._returns_tuple else out
             logits_f = logits[0].float()
             lse = torch.logsumexp(logits_f, dim=-1)
             total_ll = sum(
@@ -185,7 +213,8 @@ class SutraLMEval(LM):
 
             for _ in range(self.max_gen_toks):
                 with torch.inference_mode():
-                    logits, _ = self.model(input_ids[:, -512:])
+                    out = self.model(input_ids[:, -512:])
+                    logits = out[0] if self._returns_tuple else out
                 next_id = logits[0, -1].argmax().item()
                 input_ids = torch.cat([input_ids, torch.tensor([[next_id]], device=self._device)], dim=1)
                 decoded = self.tokenizer.decode(input_ids[0, len(ids):].tolist())
@@ -206,7 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Batch size (default 4; 12 recurrent passes need ~100MB/sample)")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v054", "v061"])
+    parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v054", "v061", "dense"])
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--fp16", action="store_true", help="Run inference in FP16 (halves VRAM)")
     parser.add_argument("--output", default=None, help="Output JSON path (default: results/sutra_lm_eval_results.json)")

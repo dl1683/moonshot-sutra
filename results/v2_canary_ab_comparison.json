@@ -1,0 +1,31 @@
+{
+  "experiment": "ekalavya_v2_canary_ab",
+  "date": "2026-03-25",
+  "description": "1K-step A/B test: Ekalavya v2 (ALM+Procrustes KD) vs teacher-free control from step_5000.pt",
+  "canary_run": "v2_canary",
+  "control_run": "v2_control",
+  "checkpoint": "results/checkpoints_p1/step_5000.pt",
+  "steps": 1000,
+  "results": {
+    "step_0": {"canary": {"bpt": 6.745, "d10": 6.7168, "d12": 6.731}, "control": {"bpt": 6.745, "d10": 6.7168, "d12": 6.731}},
+    "step_250": {"canary": {"bpt": 6.7177, "d10": 6.8905, "d12": 6.9136}, "control": {"bpt": 6.7177, "d10": 6.8905, "d12": 6.9136}},
+    "step_500": {"canary": {"bpt": 6.6876, "d10": 6.7694, "d12": 6.7894}, "control": {"bpt": 6.6869, "d10": 6.771, "d12": 6.7887}},
+    "step_750": {"canary": {"bpt": 6.6587, "d10": 6.6839, "d12": 6.7136}, "control": {"bpt": 6.5847, "d10": 6.7867, "d12": 6.8102}},
+    "step_1000": {"canary": {"bpt": 6.58, "d10": 6.5632, "d12": 6.581}, "control": {"bpt": 6.6184, "d10": 6.5925, "d12": 6.6044}}
+  },
+  "falsification_gates": {
+    "d10_at_500": {"required": -0.03, "actual": -0.002, "passed": false},
+    "d12_at_500": {"required": -0.02, "actual": 0.0, "passed": false},
+    "d10_at_1000": {"required": -0.05, "actual": -0.029, "passed": false},
+    "d12_at_1000": {"required": -0.04, "actual": -0.023, "passed": false}
+  },
+  "verdict": "FAIL_BELOW_THRESHOLD",
+  "notes": [
+    "KD consistently helps but below aggressive thresholds (58% of required)",
+    "Peak advantage at step 750: D10=-0.103, D12=-0.097 (control lagged then caught up)",
+    "ALM active from step 252, Procrustes from step 502",
+    "LFM2-1.2B hard teacher showed lowest ALM loss (0.18 vs 0.47 Qwen)",
+    "Proc loss very small (0.001) throughout - may need higher alpha or more steps",
+    "Per spec: should move KD to P2c branch or offline synthetic-data routes"
+  ]
+}

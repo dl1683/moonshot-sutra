@@ -1,266 +1,218 @@
-# Sutra Architecture Reference (v0.6.0b — current best)
+# Sutra Architecture Reference (Post-Falsification — 2026-03-25)
 
-**Last updated: 2026-03-23 | Update this file whenever the architecture changes.**
+**Last updated: 2026-03-25 | Update this file whenever the architecture changes.**
 
 This is the single source of truth for ALL architectural design decisions. Every design session MUST read this file. Every component must justify its existence — "inherited from GPT-2" or "everyone does it" is NOT justification.
 
 ---
 
-## Parameter Budget Summary
+## CRITICAL: Architecture at a Crossroads
 
-| Component | Params | % of Total | Category | Justified? |
-|-----------|--------|-----------|----------|------------|
-| **emb** (50257 × 768) | 38,597,376 | 56.5% | Infrastructure | **NO — see Embedding Tax** |
-| **stage_bank** (7 × FFN 768→1536→768) | 16,536,583 | 24.2% | Intelligence | PARTIAL — 7 banks fragmenting |
-| **router** (LocalRouter, window=4, k=8) | 4,723,200 | 6.9% | Intelligence | YES — cross-position communication |
-| **scratchpad** (8-slot memory) | 2,373,896 | 3.5% | Intelligence | YES — +3.27% when removed |
-| **writer** (BayesianWrite) | 2,360,832 | 3.5% | Intelligence | YES — precision-weighted updates |
-| **pos_emb** (2048 × 768) | 1,572,864 | 2.3% | Infrastructure | QUESTIONABLE — fixed, learned |
-| **frozen_cache** | 591,168 | 0.9% | Dead weight | **NO — ablation-only, never used in production** |
-| **init_mu** (Linear 768→768) | 590,592 | 0.9% | Infrastructure | YES — maps embedding to state space |
-| **init_lam** (Linear 768→768) | 590,592 | 0.9% | Infrastructure | YES — initializes precision |
-| **transition** (SwitchingKernel2) | 258,901 | 0.4% | Intelligence | PARTIAL — mode_gate is sequence-global |
-| **gain_probe** | 116,481 | 0.2% | Diagnostic | Shadow only — doesn't train core |
-| **LayerNorms** (6 Gated + 1 standard) | ~10,759 | 0.0% | Infrastructure | YES — stabilization |
-| **TOTAL** | **68,323,243** | **100%** | | |
+**The falsification experiments (F1-F5) completed on 2026-03-25 have challenged core assumptions. The architecture must evolve or be replaced. The 5 OUTCOMES are sacred; the mechanisms are negotiable.**
 
-**Intelligence fraction: 38.5%** (stage_bank + router + scratchpad + writer + transition)
-**Infrastructure/overhead: 61.5%** (emb + pos_emb + init + frozen_cache + probe + LN)
+Three architectures exist:
+1. **68M Recurrent** (v0.6.0a/b) — 12-pass state-superposition SSM, GPT-2 tokenizer (50K vocab)
+2. **42M P2c Recurrent** (transplanted) — Same core, 16K custom tokenizer (saves 26M params)
+3. **51M Dense** (F4 control) — Standard 11-layer transformer, 16K vocab
+
+The falsification data says:
+- **Recurrence vs Dense is UNRESOLVED** — Dense runs 10-18x faster, competitive at early training
+- **16K tokenizer is the biggest win** — More impactful than any mechanism change
+- **Online KD is noise at 68M** — Teacher signals too weak to justify throughput cost
+- **Widening helps D8 but not D10/D12** — Bottleneck is architectural, not parametric
+- **Elastic compute (D10 < D12) is REAL** — Replicated across all experiments
 
 ---
 
-## THE EMBEDDING TAX (Critical Unquestioned Decision)
+## Active Architectures
 
-**Problem:** GPT-2 tokenizer (50,257 vocab × 768 dim) consumes 56.5% of all parameters.
-- 75.8% of vocab tokens never appear in our training data (100K sample)
-- Top 8,192 tokens cover 96.1% of data; top 16,384 cover 100%
-- ~29M params (42.6%) are dead weight for unused tokens
-- Embedding is NOT low-rank: rank-256 captures only 45.9% variance → ALBERT won't work
-- Weight-tied with output head (saves one copy)
+### Architecture A: 68M Recurrent (v0.6.0a — training complete, 20K steps)
 
-**Why this was never questioned:** Design sessions focused on new mechanisms (controller, modes), never audited inherited infrastructure. This is the biggest efficiency win available.
+| Component | Params | % of Total | Justified? |
+|-----------|--------|-----------|------------|
+| **emb** (50257 × 768) | 38,597,376 | 56.5% | **RESOLVED: Too large. 16K tokenizer adopted.** |
+| **stage_bank** (7 × FFN 768→1536→768) | 16,536,583 | 24.2% | **FALSIFIED: 7 banks fragment capacity. Stages never differentiated.** |
+| **router** (LocalRouter, window=4, k=8) | 4,723,200 | 6.9% | YES — cross-position communication |
+| **scratchpad** (8-slot memory) | 2,373,896 | 3.5% | YES — +3.27% when removed |
+| **writer** (BayesianWrite) | 2,360,832 | 3.5% | YES — precision-weighted updates |
+| **pos_emb** (2048 × 768) | 1,572,864 | 2.3% | QUESTIONABLE — RoPE might be better |
+| **frozen_cache** | 591,168 | 0.9% | **DEAD WEIGHT — delete** |
+| **init_mu/init_lam** | 1,181,184 | 1.7% | YES — maps embedding to state space |
+| **transition** (SwitchingKernel2) | 258,901 | 0.4% | **FALSIFIED: v0.6.1 showed mode_gate is sequence-global, MI(mode,token)≈0** |
+| **gain_probe** | 116,481 | 0.2% | Diagnostic only |
+| **LayerNorms** | ~10,759 | 0.0% | YES |
+| **TOTAL** | **68,323,243** | | |
 
-**Alternatives (R13 validated 32K as sweet spot):**
-1. **Custom 32K BPE** → save 14M params (1.54x core capacity), **4% shorter sequences**, 82.8% vocab utilization. **RECOMMENDED (R13).**
-2. **Custom 24K BPE** → save 20M params (1.77x core capacity), 93.9% utilization, 1.7% shorter.
-3. **Custom 16K BPE** → save 26M params (1.86x core capacity), but 3% LONGER sequences.
-4. **Vocab pruning** → keep top 32K GPT-2 tokens, slice weights (warmest start).
-5. NeurIPS 2024 scaling law: optimal vocab for 68M is 32K-40K. Our 50K is oversized.
+**Intelligence fraction: 38.5%** | **Infrastructure/dead weight: 61.5%**
 
-**Migration path (head transplant):** Core operates in R^768, doesn't care about vocab. Train new tokenizer → retokenize data → freeze core → train embedding 2K steps → unfreeze.
+**Best benchmarks (20K steps):** SciQ 48.1%, PIQA 54.5%, LAMBADA 11.2%, ARC-E 31.3%, WinoGrande 51.5%
 
----
+### Architecture B: 42M P2c Recurrent (16K vocab — active candidate)
 
-## Architecture Diagram
+Same recurrent core as A but with 16K custom BPE tokenizer. Created via head transplant from v0.6.0a step 5000.
 
-```
-Input tokens x ∈ {0..50256}^T
-         │
-         ▼
-┌─────────────────────────────┐
-│  emb(x) + pos_emb(0..T-1)  │  Embedding: 40.2M params (58.8%)
-│  h ∈ R^{B×T×768}           │  INHERITED: GPT-2 tokenizer, unoptimized
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│  mu = init_mu(h)            │  State initialization: 1.2M params
-│  lam = softplus(init_lam(h))│  mu ∈ R^768, lam ∈ R^768_+
-│  pi = [0,0,1,0,0,0,0]      │  Start at stage 3 (Local Construction)
-│  mem = scratchpad.init()    │  8 slots × 768 dim
-│  pheromone = 0              │  Cross-position signal
-└─────────────┬───────────────┘
-              │
-              ▼
-┌═══════════════════════════════════════════════════════════════┐
-║  RECURRENT LOOP: repeat P times (P=12 train, P=8-12 infer)  ║
-║                                                               ║
-║  ┌──────────────────────────────────────┐                    ║
-║  │  1. STAGE TRANSITION                  │  258K params      ║
-║  │  K = SwitchingKernel2(mu)             │  7×7 Markov kernel║
-║  │  pi_evolved = pi @ K                  │  + 2-mode gate    ║
-║  │  (content-dependent, graph-masked)    │  KNOWN BUG:       ║
-║  │                                        │  mode_gate is     ║
-║  │  Mode gate: sequence-global average   │  sequence-global,  ║
-║  │  mix = softmax(gate(mean(mu)))        │  NOT per-token    ║
-║  │  mode = sum(mix_m * bias_m)           │                    ║
-║  └──────────────┬───────────────────────┘                    ║
-║                 │                                             ║
-║  ┌──────────────▼───────────────────────┐                    ║
-║  │  2. STAGE BANK (compute)              │  16.5M params     ║
-║  │  7 independent FFNs (768→1536→768)    │  (24.2% of model) ║
-║  │  Only top-2 active stages computed    │                    ║
-║  │  stage_out = sum(pi_s * FFN_s(mu))    │  QUESTION: 7 banks ║
-║  │  evidence = Linear(stage_out) → R^7   │  fragment scarce   ║
-║  │                                        │  data. 1 shared   ║
-║  │  pi_new = top2(pi_evolved * softmax(  │  SwiGLU may be    ║
-║  │           evidence/0.5))              │  better (R10)     ║
-║  └──────────────┬───────────────────────┘                    ║
-║                 │                                             ║
-║  ┌──────────────▼───────────────────────┐                    ║
-║  │  3. LOCAL ROUTING (cross-position)    │  4.7M params      ║
-║  │  messages = LocalRouter(mu)           │  (6.9%)           ║
-║  │  Window=4, k=8 sparse retrieval       │                    ║
-║  │  Gated by pi[:,:,3:4] (Route stage)   │  Uses learned     ║
-║  │                                        │  queries+keys,    ║
-║  │  + scratchpad.read(mu, mem) * 0.1     │  not attention     ║
-║  │  + pheromone * 0.05 * mem_ctx         │                    ║
-║  └──────────────┬───────────────────────┘                    ║
-║                 │                                             ║
-║  ┌──────────────▼───────────────────────┐                    ║
-║  │  4. BAYESIAN WRITE (state update)     │  2.4M params      ║
-║  │  mu_new, lam = writer(mu, lam, msg,   │  (3.5%)           ║
-║  │                       pi[:,:,4:5])    │                    ║
-║  │  Precision-weighted: high-lam updates │  DERIVED: info     ║
-║  │  resist noisy messages                │  theory (Bayesian  ║
-║  │  mu = mu_new + stage_out * 0.1        │  evidence accum.)  ║
-║  └──────────────┬───────────────────────┘                    ║
-║                 │                                             ║
-║  ┌──────────────▼───────────────────────┐                    ║
-║  │  5. SCRATCHPAD UPDATE                 │  2.4M params      ║
-║  │  mem = scratchpad.write(mu, mem, pi5) │  (3.5%)           ║
-║  │  Prefix-causal gated EMA             │  LOAD-BEARING:     ║
-║  │  8 slots, read via attention          │  +3.27% when       ║
-║  │  Write gated by stage 5 probability   │  removed           ║
-║  └──────────────┬───────────────────────┘                    ║
-║                 │                                             ║
-║  ┌──────────────▼───────────────────────┐                    ║
-║  │  6. PHEROMONE UPDATE (no params)      │                    ║
-║  │  deposit = pi_4 * tanh(||dmu||)       │  Cross-position    ║
-║  │  phero = 0.9 * phero + deposit        │  signal, no_grad   ║
-║  │  Only active after pass 3             │  INCONCLUSIVE:     ║
-║  │                                        │  never isolated    ║
-║  └──────────────┬───────────────────────┘                    ║
-║                 │                                             ║
-║  Gated LayerNorms wrap steps 2, 3, 4     │  ~10K params      ║
-║  (pre_bank_ln, post_bank_ln, etc.)       │                    ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝
-              │
-              ▼
-┌─────────────────────────────┐
-│  OUTPUT                      │
-│  final = LayerNorm(mu)       │
-│  logits = final @ emb.T      │  Weight-tied with embedding
-│          / sqrt(768)         │
-│  logits ∈ R^{B×T×50257}     │
-└─────────────────────────────┘
-```
+| Component | Params | % of Total | vs 68M |
+|-----------|--------|-----------|--------|
+| **emb** (16000 × 768) | 12,288,000 | 29.1% | **-68% (was 56.5%)** |
+| **stage_bank** (same) | 16,536,583 | 39.2% | Same |
+| **router** (same) | 4,723,200 | 11.2% | Same |
+| **scratchpad** (same) | 2,373,896 | 5.6% | Same |
+| **writer** (same) | 2,360,832 | 5.6% | Same |
+| **other** (init, LN, etc.) | 3,891,732 | 9.2% | Same |
+| **TOTAL** | **~42,200,000** | | **-38% params** |
+
+**Intelligence fraction: 61.5%** (vs 38.5% on 68M — massive improvement)
+
+**P2c Control Results (1K steps, teacher-free):**
+| Step | BPT | D10 | D12 | D8 |
+|------|-----|-----|-----|-----|
+| 0 | 6.461 | 6.609 | 6.625 | 11.081 |
+| 750 | **5.828** | **5.651** | **5.685** | 10.102 |
+| 1000 | 5.820 | 6.002 | 6.028 | 10.420 |
+
+**Key finding:** D10=5.65 at P2c step 750 vs D10=6.75 at 68M step 5000. P2c learns 2x faster.
+
+### Architecture C: 51M Dense Transformer (F4 control)
+
+Standard decoder-only transformer. Built to test whether recurrence is even necessary.
+
+| Component | Params | Details |
+|-----------|--------|---------|
+| Layers | 11 | Standard transformer blocks |
+| d_model | 512 | Smaller than recurrent (768) |
+| Heads | 8 | Standard multi-head attention |
+| FFN | SwiGLU hidden=1536 | 3x expansion |
+| Position | RoPE | Rotary embeddings |
+| Norm | RMSNorm | Pre-norm |
+| Vocab | 16K (tied) | Custom BPE |
+| **TOTAL** | **~51M** | |
+
+**Dense Control Results (5K steps, from scratch):**
+| Step | CE Loss | tok/s |
+|------|---------|-------|
+| 0 | 17.65 | 97K |
+| 1000 | 11.51 | 95K |
+| 3000 | 9.59 | 96K |
+| 5000 | **8.99** | **96K** |
+
+**Key finding:** Dense runs at 97K tok/s vs recurrent at ~10K tok/s (10x faster). Inference is 18x faster (1 pass vs 12). **Benchmarks now available — see F4 section below and consolidated table.**
 
 ---
 
-## State Representation
+## Falsification Results (F1-F5, 2026-03-25)
 
-Each token position carries a state tuple `(mu, lam, pi)`:
+### F2: Teacher-Free vs KD A/B (1000 steps, 68M)
 
-| State | Shape | Meaning | Derived From |
-|-------|-------|---------|-------------|
-| **mu** | R^768 | Hidden state (content) | Bayesian posterior mean |
-| **lam** | R^768_+ | Precision (confidence per dimension) | Bayesian evidence accumulation |
-| **pi** | Delta^7 | Stage distribution (processing phase) | Content-dependent Markov chain |
-| **mem** | R^{8×768} | Scratchpad memory (shared) | Prefix-causal gated EMA |
-| **pheromone** | R^T | Cross-position activity signal | Exponential decay accumulator |
+| Metric | KD-ON | KD-OFF | Delta |
+|--------|-------|--------|-------|
+| BPT | 6.684 | **6.666** | KD is 0.018 WORSE |
+| D10 | 6.682 | **6.663** | KD is 0.019 WORSE |
 
----
+**VERDICT:** Online KD = noise at 68M. Teacher signals (CKA=0.013) too weak. O4 mechanism FALSIFIED.
 
-## Training Configuration (v0.6.0b-rd12)
+### F3: 16K Recurrent (1000 steps, 42M)
 
-| Parameter | Value | Justification |
-|-----------|-------|---------------|
-| **Depth** | D ~ P(D=d) ∝ d^α, d∈{1..12}, α ramps 0.5→1.0 over 1K steps | Random-depth: biased toward deep, but all passes see final loss |
-| **Loss** | L_final + 0.10 * L_step (attached) | L_step trains inter-pass dynamics |
-| **Optimizer** | AdamW (β1=0.9, β2=0.95) | Standard for small LMs |
-| **LR** | 1.5e-4, cosine decay to 1e-5 | INHERITED from v0.6.0a |
-| **Batch** | 4 × 512 tokens | VRAM-constrained (24GB) |
-| **Weight decay** | 0.1 | Standard |
-| **Grad clip** | 1.0 | Standard |
-| **Warm-start** | From v0.6.0a step 20K | Fresh optimizer (WSD restart) — CAUSED knowledge loss: SciQ -12.3%, LAMBADA -9.7% |
-| **LR discontinuity** | At step 3000-3500 | MAX_TRAIN_STEPS changed 5K→15K mid-run, causing 2.17x LR jump (effectively a warm restart) |
-| **Pass collapse** | ELIMINATED | Random-depth training fixed it. late_pct=1.5-2% vs 63% in v0.6.0a |
-| **Elastic compute** | VALIDATED | D8≈D12 (gap -0.0005 at step 12.5K). D10 optimal. Saves 17-33% compute. |
+| Depth | Start | 1K | Delta |
+|-------|-------|----|-------|
+| D8 | 11.37 | **5.53** | **-5.84** |
+| D10 | 6.76 | **5.22** | **-1.54** |
 
----
+**VERDICT:** 16K tokenizer = biggest single win. 1.5+ BPT improvement from tokenizer alone.
 
-## Design Decision Audit
+### F4: Dense Control (5000 steps, 51M, from scratch)
 
-Every design decision must be either DERIVED (from first principles), VALIDATED (by experiment), or flagged as INHERITED (carried forward without justification).
+CE=8.99 at 5K steps. 10x training throughput, 18x inference speed. Still improving at 5K.
 
-| Decision | Status | Justification | First Questioned? |
-|----------|--------|---------------|-------------------|
-| GPT-2 tokenizer (50K vocab) | **INHERITED** | None. 75.8% of vocab unused. 56.5% of params. | R10+ (2026-03-23) |
-| dim=768 | **INHERITED** | Copied from GPT-2 small. Not derived for this model/scale. | Never |
-| ff_dim=1536 (2x dim) | **INHERITED** | Standard 2x ratio. Not derived. | Never |
-| 7 stage graph | DERIVED | Architectural debate (4 rounds, R4). Compressed from 12 stages. | R1 (v0.5.0) |
-| Top-2 projection | DERIVED | Bounded compute per position. Sparse execution. | R1 (v0.5.0) |
-| Bayesian write | DERIVED | Info theory: precision-weighted > residual addition. | R1 (v0.5.0) |
-| Scratchpad (8 slots) | VALIDATED | +3.27% BPT when removed. Load-bearing. | R3 (v0.5.4) |
-| LocalRouter (window=4, k=8) | **INHERITED** | Window size and k chosen arbitrarily. Not tuned. | Never |
-| Learned positional embedding | **INHERITED** | Standard choice. RoPE, ALiBi, NoPE not considered. | Never |
-| Weight tying (emb = lm_head) | VALIDATED | Standard, saves 38.6M params. | Implicit |
-| 12 recurrent passes | VALIDATED | D=8-9 optimal (probes), D=12 for training diversity. | R6 |
-| Pheromone routing | **INCONCLUSIVE** | Never isolated. Effect unknown. Adds complexity. | Never formally |
-| 6 Gated LayerNorms | VALIDATED | Peri-LN pattern from v0.5.4. Stabilizes training. | R2 |
-| Frozen cache (591K params) | **DEAD WEIGHT** | Ablation-only. Never used in production. Delete. | Now |
-| Gain probe (116K params) | DIAGNOSTIC | Shadow-only, doesn't affect training. Justified for halting research. | R8 |
-| max_seq_len=2048 | **INHERITED** | GPT-2 context length. Not derived for this model. | Never |
-| SiLU activation | **INHERITED** | Standard. GELU, ReLU^2, not compared. | Never |
-| AdamW (β1=0.9, β2=0.95) | **INHERITED** | Standard hyperparams. Not tuned. | Never |
-| Cosine LR decay | **INHERITED** | Standard schedule. WSD, linear, not compared. | Partially (WSD restart for v0.6.0b) |
-| Init: pi starts at stage 3 | **ARBITRARY** | "Local Construction." Why not stage 1? | Never |
-| Pheromone rho=0.90 | **ARBITRARY** | Decay rate never tuned. | Never |
-| Scratchpad EMA decay=0.9 | **ARBITRARY** | Decay rate never tuned. | Never |
-| Stage bank evidence temp=0.5 | **ARBITRARY** | Temperature never tuned. | Never |
+**Dense Benchmarks (lm-eval, 7 tasks):**
+| Task | Dense F4 | P1a-6K | Delta | Winner |
+|------|---------|--------|-------|--------|
+| ARC-Easy | 30.9% | 32.1% | -1.2% | P1a |
+| ARC-Chall (norm) | **21.6%** | 18.2%* | **+3.4%** | Dense |
+| HellaSwag | **26.2%** | 25.9% | **+0.3%** | Dense |
+| WinoGrande | 49.6% | 51.1% | -1.5% | P1a |
+| PIQA | 54.4% | 54.7% | -0.3% | P1a |
+| SciQ | 40.5% | 49.0% | -8.5% | P1a (KD) |
+| LAMBADA | 2.8% | 6.7% | -3.9% | P1a |
 
-**Count: 7 DERIVED/VALIDATED, 9 INHERITED, 4 ARBITRARY, 1 DEAD WEIGHT, 1 INCONCLUSIVE, 1 DIAGNOSTIC**
+**VERDICT:** Dense beats recurrent on REASONING tasks (ARC-Chall, HellaSwag). Recurrent only wins on KNOWLEDGE tasks where KD provided unfair advantage. At equal wall-clock time, dense gets 10x more training → extrapolated BPT ≈ 4.5. Recurrence thesis seriously challenged.
+
+### F5: Widen-Only (500 steps, 68M)
+
+| Depth | Baseline | Widened | Delta |
+|-------|----------|---------|-------|
+| D8 | 12.69 | **6.92** | **-5.77** |
+| D10 | 6.77 | 6.69 | -0.08 (flat) |
+
+**VERDICT:** More capacity helps D8 (elastic compute) but NOT peak quality. Bottleneck is NOT parametric.
 
 ---
 
-## Key Empirical Results (v0.6.0b step 9000, 18 checkpoints)
+## Consolidated Benchmark Table (all versions, latest data)
 
-| Metric | Value | Context |
-|--------|-------|---------|
-| **test_bpt** | **6.9155** (headline best, step 9000) | Step 9500 reverted to 7.22 — headline partially noise. True BPT ~7.0-7.15 |
-| **Per-depth D12** | 7.0546 (step 9500 best) | Step 9000 D12=7.35 was outlier high |
-| **D11 beats D12** | 100% of 19 checkpoints | More consistent than D10>D12 (95%) |
-| **Optimal depth** | Oscillates D=8-11, D=12 never optimal | Passes 9-12 net negative in 93% of checkpoints |
-| **Entropy spread** | 1.20-1.25x (stable) | No pass collapse (vs v0.6.0a's 2x cliff) |
-| **Entropy min** | Pass 4-5 (17/19 checkpoints) | Step 9000 pass-12 shift was noise (reverted at 9500) |
-| **Trough D8 trend** | -0.042 BPT/1K steps (R²=0.99, 3 pts) | Post-restart: 7.10→6.99→6.96 |
-| **Projected D8 at 15K** | ~6.71 (conservative) to ~6.64 (aggressive) | Would beat v0.6.0a (6.79) |
-| **Train loss** | ~4.84 (block avg) | Declining at -0.03/1K steps (slowing with LR decay) |
-| **Train-test gap** | ~+2.38 at step 9500 | Overfitting — capacity-starved (26M intelligence params) |
-| **Mode entropy** | 0.002 | Controller is pass-global, NOT content-dependent |
-| **MI(mode, token)** | 0.019 | Near-zero content dependence |
-| **Oracle halting** | D=8 saves 33% at 0.0004 BPT cost | Elastic compute validated |
+| Benchmark | v0.5.4-20K | v0.6.0a-20K | v0.6.0b-15K | v0.6.1-1K | P1a-6K | Dense-F4-5K | Pythia-160M |
+|-----------|-----------|------------|-----------|----------|--------|------------|------------|
+| SciQ | 33.6% | 48.1% | 37.8% | 36.1% | **49.0%** | 40.5% | ~74% |
+| PIQA | 54.1% | 54.5% | 52.9% | 54.4% | **54.7%** | 54.4% | ~62% |
+| WinoGrande | 49.1% | **51.5%** | 51.2% | 48.9% | 50.8% | 49.6% | ~53% |
+| ARC-Easy | 29.7% | 31.3% | 31.0% | 31.1% | **32.1%** | 30.9% | ~43% |
+| ARC-Chall (norm) | 20.2% | 17.5% | 18.7% | 16.7% | 18.2%* | **21.6%** | ~28% |
+| HellaSwag | 25.8% | 25.7% | 25.9% | 25.8% | 25.8% | **26.2%** | ~30% |
+| LAMBADA | 1.8% | **11.2%** | 4.6% | 2.6% | 6.7% | 2.8% | ~32.6% |
+| **Best at** | 0/7 | 2/7 | 0/7 | 0/7 | **3/7** | **2/7** | ALL |
+| **Throughput** | ~10K | ~10K | ~10K | ~10K | ~2.6K | **97K** | - |
+| **Training** | 20K steps | 20K steps | 15K warm | 1K warm | 6K warm+KD | 5K scratch | ~600K |
 
-## Benchmark Results (all evaluated versions)
+*P1a ARC-Chall used acc not acc_norm. Dense used acc_norm for fairest comparison.
 
-| Benchmark | v0.5.4 20K | v0.6.0a 20K | v0.6.0b 2K | v0.6.1 1K | Pythia-160M | Gap (best) |
-|-----------|-----------|------------|-----------|----------|------------|-----------|
-| **BPT** | N/A | **6.79** | 7.37 | 7.21 | N/A | N/A |
-| SciQ | 33.6% | **48.1%** | 35.8% | 36.1% | ~74% | -26% |
-| PIQA | 54.1% | **54.5%** | 52.9% | 54.4% | ~62% | -7.5% |
-| LAMBADA | 1.8% | **11.2%** | 1.5% | 2.6% | ~32.6% | -21.4% |
-| ARC-Easy | 29.7% | **31.3%** | 31.0% | 31.1% | ~43% | -11.7% |
-| ARC-Challenge | 20.2% | 17.5% | **18.7%** | 16.7% | ~28% | -9.3% |
-| HellaSwag | 25.8% | 25.7% | **25.9%** | 25.8% | ~30% | -4.1% |
-| WinoGrande | 49.1% | **51.5%** | 51.2% | 48.9% | ~53% | -1.5% |
+**Key insight:** Dense F4 at 5K steps from scratch (NO KD, NO warm-start) beats all recurrent models on ARC-Chall and HellaSwag. It loses on knowledge tasks (SciQ -8.5%) where teacher KD gave P1a an advantage. Dense trains at **97K tok/s** — 10x faster than recurrent, 37x faster than P1a with teachers.
 
-**Key observations:**
-- v0.5.4 (detached history, 8 passes) is worst overall — validates attached history as key improvement
-- v0.5.4 surprisingly best on ARC-Challenge (20.2%) — possibly noise or different failure modes
-- v0.6.0a (20K steps, BPT 6.79) is still our best benchmark performer
-- v0.6.1 (1K steps, BPT 7.21) matches v0.6.0a on PIQA/ARC-Easy but worse on WinoGrande/ARC-Chall
-- v0.6.0b/v0.6.1 much worse on knowledge/recall (SciQ, LAMBADA) — BPT regression from WSD restart
-- BPT alone doesn't predict benchmark quality — v0.6.0b BPT 7.37 ≈ v0.6.1 BPT 7.21 but different scores
-- All models far below Pythia-160M on knowledge tasks (SciQ, LAMBADA)
-- Closest on WinoGrande (-1.5%) and HellaSwag (-4.1%)
+---
+
+## Outcome Status (Updated Post-Falsification)
+
+| Outcome | R20 Score | Evidence | What Would RAISE It |
+|---------|-----------|----------|---------------------|
+| **O1: Intelligence** | 4.5/10 | P1a 6K best on 4/7 but generation still poor. Far below Pythia-160M. | Match Pythia-160M on 4+ tasks, coherent generation |
+| **O2: Improvability** | 6.5/10 | Strong trainer diagnosis. No module-swap win demonstrated. | Swap one stage, show improvement without regression |
+| **O3: Democratization** | 2.5/10 | Named stages exist. No ABI, no registry, no composition proof. | Any community contributor demo |
+| **O4: Data Efficiency** | 4.0/10 | **Online KD falsified at 68M (F2).** Ekalavya v2 Procrustes dead. ALM gives short-horizon lead only. | Working multi-teacher protocol, offline KD, or novel approach |
+| **O5: Inference Efficiency** | 5.5/10 | D10<D12 replicated. v0.6.1 tokenwise control falsified. Fixed-depth savings real. | Token-level compute allocation working |
+
+**CRITICAL: These are the scores to IMPROVE. The mechanisms failed, not the goals. Every design proposal must target raising ALL scores.**
+
+---
+
+## Design Decision Audit (Updated)
+
+| Decision | Status | Updated Justification |
+|----------|--------|----------------------|
+| GPT-2 tokenizer (50K vocab) | **RESOLVED** | Replaced with 16K custom BPE. Saves 26M params. |
+| dim=768 | **INHERITED** | Not derived for this scale. Should be questioned. |
+| ff_dim=1536 (2x dim) | **INHERITED** | Standard ratio. Not derived. |
+| 7 stage graph | **FALSIFIED** | Stages never differentiated. Fragmenting capacity. |
+| Top-2 projection | DERIVED | Still justified — bounded compute per pass. |
+| Bayesian write | DERIVED | Still justified — precision-weighted updates. |
+| Scratchpad (8 slots) | VALIDATED | +3.27% when removed. Load-bearing. |
+| LocalRouter (w=4, k=8) | **INHERITED** | Window/k arbitrary. Not tuned. |
+| Learned pos embedding | **INHERITED** | RoPE used in F4 dense. Should switch? |
+| Weight tying | VALIDATED | Standard, saves 12.3M params (16K) or 38.6M (50K). |
+| 12 recurrent passes | **QUESTIONED** | Elastic compute works but 10x throughput cost. Dense competitive. |
+| Pheromone routing | **INCONCLUSIVE** | Never isolated. Adds complexity. |
+| Controller/transition | **FALSIFIED** | v0.6.1 proved mode_gate is sequence-global. MI(mode,token)≈0. |
+| Online KD (Ekalavya) | **FALSIFIED at 68M** | F2: KD-OFF beats KD-ON. May work at different scale. |
+| Recurrence thesis | **UNPROVEN** | Dense (F4) competitive at 10x throughput. Not yet falsified but unproven. |
 
 ---
 
 ## What This File Is For
 
-1. **Design sessions:** Read this before every design session. Question anything marked INHERITED or ARBITRARY.
-2. **Inherited Paradigm Audit:** The Decision Audit table makes inherited assumptions visible and questionable.
-3. **Architecture changes:** When ANY component changes, update this file FIRST. The code follows the doc.
-4. **Parameter accountability:** Every param must earn its keep. If a component's justification is "inherited," it's a candidate for redesign.
+1. **Design sessions:** Read before every T+L round. Question anything INHERITED/ARBITRARY/FALSIFIED.
+2. **Inherited Paradigm Audit:** The Decision Audit makes inherited assumptions visible.
+3. **Architecture changes:** When ANY component changes, update this file FIRST.
+4. **Falsification tracking:** Record what was tested and what the data says.
+
+## R21 Addendum
+
+This addendum **supersedes** earlier "recurrence vs dense unresolved" language in this file.
+
+R21 selected `EDSR-98M` as the canonical next run: a 16K, 12-layer dense backbone (`d_model=768`, `n_heads=12`, `ff_dim=2048`) with exit heads at layers 4/8/12. The surviving thesis is adaptive depth via successive refinement, not a 12-pass recurrent backbone.

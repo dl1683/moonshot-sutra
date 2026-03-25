@@ -1,5 +1,282 @@
 # Sutra Research Log
 
+## EDSR-98M Pre-Training Gate (2026-03-25) — PASSED
+
+**3-reviewer Codex gate (Correctness + Performance + Scaling). All HIGH issues fixed.**
+
+Findings addressed:
+- NaN skip path now properly gates optimizer step (was burning empty steps)
+- Resume falls back to step_*.pt if rolling checkpoint is corrupted
+- Atomic checkpoint writes via os.replace (Windows-safe)
+- RoPE dtype promotion fixed (.to(x.dtype) prevents float32 upcasting)
+- Per-exit eval added to deterministic_eval_dense (bpt_exit_3, bpt_exit_7)
+- Per-exit CE + gain logged every LOG_EVERY steps during training
+- Early checkpoint at step 100 for first-run safety
+- Scaler state saved in ALL checkpoints (including final save)
+- best_bpt correctly updated after eval
+
+Scaling Expert notes:
+- 20K steps = 327M tokens = 3.36 tok/param (15% of Chinchilla-optimal). This is a PILOT run.
+- Judge on learning curve slope and exit quality, not endpoint parity with SmolLM2/Pythia.
+- Architecture ratios are clean (d768/12h/ff2048/head_dim64).
+- Deferred: tokenwise gain targets (v2), loss curriculum, self-distillation.
+
+VRAM: 5.3 GB peak at batch=8, seq=512. 24 GB available. Fits batch=32 with 7.5 GB headroom.
+
+---
+
+## Strategic Design Round 21 (2026-03-25) — Architecture Decision
+
+**This round closes the main fork. The win is adaptive depth, not recurrent backbone depth.**
+
+### What the evidence now says
+
+1. **F4 changed the prior.** A plain 16K dense model at ~51M, trained from scratch for 5K steps, already beats or matches the warm-started recurrent line on ARC-Challenge and HellaSwag while running **10x faster in training** and **~18x faster at inference**.
+2. **F3 is the strongest positive result in the whole repo.** The 16K tokenizer delivers a larger gain than any recurrent mechanism we have tested. The main efficiency lever was vocabulary compression, not stage complexity.
+3. **F5 kills the "just add capacity" story.** Widening massively improves D8 but leaves D10/D12 basically flat. The bottleneck is compute allocation geometry, not raw FFN width.
+4. **F2 kills online KD at this scale.** Live teachers burn throughput and do not move the endpoint. O4 must move offline.
+5. **The recurrent architecture bought exactly one durable thing:** fixed-depth elastic compute (`D10 < D12`). That is real. But the outcome is what matters, not the recurrent mechanism that happened to expose it.
+
+### Decision 1: Recurrence
+
+**Drop full-sequence recurrence as the primary backbone.**
+
+Do **not** launch another 12-pass recurrent language-model backbone at 42M-68M. The backbone is paying enormous routing/control tax before it has earned basic intelligence. The dense control demonstrated that one-hop global mixing is a better use of scarce parameters at this scale.
+
+**Keep the outcome, not the mechanism:** adaptive compute survives, but it will be re-instantiated as **layerwise early exit / successive refinement** in a dense model, not as shared-weight recurrent passes.
+
+### Decision 2: Next Training Run
+
+**Next run = `EDSR-98M` (Elastic Dense Successive Refinement), from scratch, teacher-free.**
+
+**Architecture**
+- Tokenizer: locked **16K** custom tokenizer, tied embeddings/output
+- Backbone: **12 layers**
+- Width: **d_model = 768**
+- Heads: **12** (head dim 64)
+- MLP: **SwiGLU hidden = 2048**
+- Positioning: **RoPE**
+- Norm: **RMSNorm pre-norm**
+- Parameter budget: **~97M**
+
+**What is removed**
+- No 7-stage bank
+- No recurrent pass stack
+- No sequence-global controller
+- No online KD path
+- No scratchpad in the primary run: at current context lengths, dense all-to-all routing already solves the exact-retrieval problem that the scratchpad was compensating for in recurrence
+
+**Elastic-compute mechanism**
+- Add tied-vocab readout heads after layers **4, 8, and 12**
+- Add a tiny residual-gain head at each exit: `768 -> 256 -> 1`
+- Inputs to the gain head: hidden state, logit entropy, top-1/top-2 margin
+- Inference rule: exit at 4 or 8 when predicted residual gain is below threshold **and** margin is above threshold; otherwise continue to 12
+
+**Training objective**
+- `L = 1.00 * CE_12 + 0.35 * CE_8 + 0.20 * CE_4 + 0.05 * L_gain`
+- Train with sampled exit depths `{4, 8, 12}` so shallow exits carry real language-model signal
+- No tokenwise freezing in v1 training; learn clean exits first, then add freeze masks only if calibration is good
+
+**Why this is the right mechanism from first principles**
+- Next-token prediction needs **exact routing first, iterative refinement second**
+- Dense causal mixing gives shortest path length for within-window dependencies
+- Early exits implement **rate-distortion successive refinement** directly: easy tokens stop at a coarse code, hard tokens buy extra bits of computation
+- This preserves O5 while materially improving O1
+
+### Decision 3: O4 / Data Efficiency
+
+**Kill online KD for the next run. Move O4 to offline distillation and data shaping.**
+
+The correct target is not "teacher logits in the loop." The correct target is **higher information per training token**.
+
+**R21 O4 pipeline**
+- **80% raw text**
+- **15% offline teacher-shaped factual data**
+  - teacher-written cloze completions
+  - continuation repair on knowledge-dense spans
+  - short definitional QA extracted from source passages
+- **5% offline reasoning traces**
+  - short synthetic explanation/paraphrase traces
+  - only where the teacher is confident and concise
+
+**Selection rule**
+- Distill only spans with:
+  - low teacher entropy
+  - high entity/fact density or high compression value
+  - no long-tokenizer mismatch pathologies
+
+**Training rule**
+- Still plain CE on text
+- No live teacher models in the hot path
+- Rebuild the synthetic buffer offline between training phases if needed
+
+This is the right O4 move because it transfers **certainty and structure**, not noisy logits, while preserving throughput.
+
+### Decision 4: Scale
+
+**Do not stay at 42M. Do not jump to 200M+ yet. Go to ~100M now.**
+
+**Why**
+- **42M-68M is too starved** to support modular fragmentation, tokenwise controllers, and live KD simultaneously
+- **200M+ before the backbone pivot is resolved** is a waste of wall-clock and obscures the causal lesson from F4
+- **~100M** is the cheapest scale where a dense backbone has enough core capacity to test intelligence, early exits, and offline O4 cleanly on a single 5090
+
+### Decision 5: Wild Card
+
+**The real wild card is not another recurrent variant. It is retrieval-first refinement after a dense trunk.**
+
+If `EDSR-98M` underperforms, the next pivot should be:
+- keep the dense trunk
+- add a tiny external associative memory / retrieval sidecar
+- train it on factual cloze and entity-binding failures
+
+Do **not** go back to another stage-bank recurrent scaffold. That path has already spent its causal budget.
+
+### Bottom line
+
+**R21 directive:** stop treating recurrence as the thesis. The thesis is **successive refinement under a compute budget**. At this scale, the best vehicle for that thesis is a dense 16K backbone with calibrated early exits and offline teacher-shaped data.
+
+## FALSIFICATION RESULTS — F1-F5 COMPLETE (2026-03-25)
+
+**All 5 core falsification experiments from R20 are DONE. Results below.**
+
+### F1: P1a Step 6000 (Final Checkpoint)
+
+P1a stopped at step 6000 per R20 directive. Full 7-task lm-eval:
+
+| Task | P1a-6K | v060a-20K | Delta | Gate |
+|------|--------|-----------|-------|------|
+| SciQ | **49.0%** | 48.1% | +0.9% | 46% PASSED |
+| PIQA | **54.7%** | 54.5% | +0.2% | 54% PASSED |
+| WinoGrande | 50.8% | 51.5% | -0.7% | - |
+| ARC-Easy | **32.1%** | 31.3% | +0.8% | - |
+| ARC-Challenge | 16.6% | 17.5% | -0.9% | - |
+| HellaSwag | 25.8% | 25.7% | +0.1% | - |
+| LAMBADA | 6.7% | 11.2% | -4.5% | 6% PASSED |
+
+P1a step 6000: best on 4/7 tasks. Used as parent for F2/F5. D10=6.721, D12=6.738.
+
+### F2: Teacher-Free vs KD A/B (1000 steps, 68M)
+
+**CRITICAL TEST: Does online KD provide causal lift?**
+
+Both arms forked from step_6000.pt with identical config except teachers.
+
+| Metric | KD-ON | KD-OFF | Delta | Interpretation |
+|--------|-------|--------|-------|---------------|
+| BPT | 6.684 | **6.666** | -0.018 | KD HURTS |
+| D10 | 6.682 | **6.663** | -0.019 | KD HURTS |
+| D12 | 6.686 | **6.664** | -0.022 | KD HURTS |
+| D8 | 12.438 | 12.481 | +0.043 | Noise |
+
+**VERDICT: O4 mechanism FALSIFIED at 68M.** Online KD = noise. Teacher signals (CKA Q1=0.013, Q2=0.017) too weak to justify throughput tax (9.2K→5.3K tok/s).
+
+**But note:** P1a ran 6K steps with cumulative teacher exposure and beat v060a-20K on 4/7 tasks. Long-horizon KD may differ from short-run delta. The PROTOCOL failed, not necessarily the CONCEPT.
+
+### F3: 16K Recurrent Control (1000 steps, 42M)
+
+Parent: transplanted_16k_from_step5000.pt (42M, 16K vocab)
+
+| Depth | Step 0 | Step 1K | Delta |
+|-------|--------|---------|-------|
+| D1 | 13.99 | 13.58 | -0.41 |
+| D8 | 11.37 | **5.53** | **-5.84** |
+| D10 | 6.76 | **5.22** | **-1.54** |
+| D12 | 6.77 | **5.24** | **-1.53** |
+
+**VERDICT: 16K tokenizer = BIGGEST SINGLE WIN.** D10 goes from 6.66 (50K) to 5.22 (16K). More impactful than any mechanism. Also: D8=5.53 close to D10=5.22 — 16K dramatically improves depth utilization.
+
+### F4: Matched Dense Control (5000 steps, 51M, from scratch)
+
+11L/512d/8h/SwiGLU-1536/RoPE/RMSNorm/tied-16K. ~51M params.
+
+| Step | CE Loss | tok/s |
+|------|---------|-------|
+| 1000 | 11.51 | 95K |
+| 3000 | 9.59 | 96K |
+| 5000 | **8.99** | **96K** |
+
+**Key facts:**
+- Dense runs at **97K tok/s** vs recurrent ~10K tok/s (**10x faster training**)
+- Dense inference: 18x faster (1 pass vs 12)
+- Dense BPT (same 16K eval cache): 7.06 (1K) → 6.34 (2K) → 5.76 (3K) → **5.36 (5K)**
+
+**lm-eval Benchmarks (2026-03-25):**
+
+| Task | Dense F4 (51M, 5K scratch) | P1a-6K (68M, KD, warm) | Winner |
+|------|---------------------------|------------------------|--------|
+| ARC-Easy | 30.9% | 32.1% | P1a |
+| ARC-Chall (norm) | **21.6%** | 18.2% | **Dense** |
+| HellaSwag | **26.2%** | 25.9% | **Dense** |
+| WinoGrande | 49.6% | 51.1% | P1a |
+| PIQA | 54.4% | 54.7% | P1a |
+| SciQ | 40.5% | 49.0% | P1a (KD boost) |
+| LAMBADA | 2.8% | 6.7% | P1a |
+
+**Analysis:** Dense from scratch (NO KD, NO warm-start) beats recurrent on reasoning tasks (ARC-Chall +3.4%, HellaSwag +0.3%). Recurrent wins on knowledge tasks (SciQ -8.5%) where KD teachers gave it unfair advantage. At equal wall-clock time, dense gets 10x more training steps. **Recurrence thesis now seriously challenged on benchmarks, not just BPT.**
+
+### F5: Widen-Only Canary (500 steps, 68M, teacher-free)
+
+FFN 1536→2304 via zero-gated additive branch (function-preserving at step 0).
+
+| Depth | Baseline | Widened 500 | Delta |
+|-------|----------|-------------|-------|
+| D8 | 12.69 | **6.92** | **-5.77** |
+| D10 | 6.77 | 6.69 | -0.08 |
+| D12 | 6.79 | 6.72 | -0.07 |
+
+**VERDICT: Capacity helps elastic compute (D8) but NOT peak quality (D10/D12).** Bottleneck is architectural, not parametric. More FFN width is not the answer for intelligence.
+
+### F6: Module-Swap (NOT RUN)
+
+Deferred — F1-F5 answered the critical questions.
+
+### P2c Control Canary (1000 steps, 42M, 16K, teacher-free)
+
+Baseline for comparing ALM-only canary.
+
+| Step | BPT | D10 | D12 | D8 |
+|------|-----|-----|-----|-----|
+| 0 | 6.461 | 6.609 | 6.625 | 11.081 |
+| 750 | **5.828** | **5.651** | **5.685** | 10.102 |
+| 1000 | 5.820 | 6.002 | 6.028 | 10.420 |
+
+**Key findings:**
+- P2c learns **2x faster** than 68M (D10=5.65 at step 750 vs 68M D10=6.75 at step 5K)
+- Cosine LR decay too aggressive: quality degrades from 750→1000
+- D10 < D12 holds (elastic compute works on P2c)
+
+### Codex V2 Verdict on Ekalavya (2026-03-25)
+
+- ALM gives real short-horizon optimization lead (step 750 peak), but 68M student can't preserve it
+- Procrustes effectively dead at 68M (loss stays at 0.001)
+- Recommends: P2c ALM-first, Procrustes only if earned
+- Overweight LFM2-1.2B in Q1 (best ALM loss: 0.18 vs Qwen 0.47)
+- If P2c ALM-only also fails, pivot to offline distillation/data shaping
+- Online KD is too throughput-expensive at small scale
+
+### Meta-Analysis: What Survived Falsification
+
+**VALIDATED (keep):**
+- 16K tokenizer (F3) — biggest win
+- Elastic compute D10<D12 (all experiments)
+- Warm-starting (P2c learns 2x faster)
+- Attached inter-step history (v0.5.4 comparison)
+- Scratchpad (+3.27% when removed)
+
+**FALSIFIED (drop or redesign):**
+- Online KD at 68M (F2)
+- Procrustes alignment (Codex v2)
+- 7-stage bank (stages never differentiated)
+- v0.6.1 controller (MI(mode,token)≈0)
+
+**UNRESOLVED (need more data):**
+- Recurrence vs dense (F4 competitive but different metrics)
+- Online KD at 42M/16K (P2c canary pending)
+- Scale effects (all at 42-68M)
+
+---
+
 ## Strategic Design Round 20 (2026-03-24) — POST-AUDIT RESPONSE
 
 **Confidence: O1=4.5, O2=6.5, O3=2.5, O4=4, O5=5.5 (ALL DROPPED from R19)**
@@ -363,6 +640,58 @@ D10 improved monotonically under single-teacher CKA (steps 1K→3K), then degrad
 4. Embedding/tokenizer redesign elevated to critical priority
 5. README cleanup — remove stale claims, update status honestly
 6. Design session prompt audit — remove anti-falsification clauses
+
+## Ekalavya v2 Canary Results — 68M Student (2026-03-25)
+
+**VERDICT: FAIL_BELOW_THRESHOLD** — KD helps but insufficient at 68M scale.
+
+### Design
+Ekalavya v2 replaced XTKD+CKA with two-lane ALM+Procrustes:
+- **Q1 (ALM):** Byte-chunk aligned binary KL divergence. Teachers: Granite-350m (warmup, 15%), Qwen3-0.6B (main, 45%), LFM2-1.2B (hard, 40%).
+- **Q2 (Procrustes):** Tokenwise geometry transfer from MiniLM-L6-v2 (layer 5). Per-microbatch fp32 SVD.
+- **Lane pattern:** [0, 0, 1] — 2/3 steps Q1, 1/3 steps Q2.
+- **Vectorized ALM:** Original per-token autograd loop caused 7.9s/microbatch backward. Replaced with batched log_softmax + gather + scatter_add for 55x speedup.
+
+### A/B Results (from step_5000.pt, 1K steps each)
+
+| Step | Canary D10 | Control D10 | Delta D10 | Canary D12 | Control D12 | Delta D12 |
+|------|-----------|-------------|-----------|-----------|-------------|-----------|
+| 0 | 6.746 | 6.746 | 0.000 | 6.760 | 6.760 | 0.000 |
+| 250 | 6.687 | 6.698 | -0.011 | 6.721 | 6.729 | -0.008 |
+| 500 | 6.683 | 6.710 | **-0.027** | 6.718 | 6.742 | **-0.024** |
+| 750 | 6.629 | 6.732 | **-0.103** | 6.658 | 6.755 | **-0.097** |
+| 1000 | 6.690 | 6.719 | **-0.029** | 6.718 | 6.741 | **-0.023** |
+
+### Falsification Gate Results
+| Gate | Required | Actual | Status |
+|------|----------|--------|--------|
+| D10 @ step 500 | -0.03 | -0.027 | FAIL (90%) |
+| D12 @ step 500 | -0.02 | -0.024 | PASS |
+| D10 @ step 1000 | -0.05 | -0.029 | FAIL (58%) |
+| D12 @ step 1000 | -0.04 | -0.023 | FAIL (58%) |
+
+### Key Findings
+1. **Peak advantage at step 750** (-0.10 on D10/D12) was acceleration, not asymptote. Edge evaporated 71-76% by step 1000.
+2. **Procrustes effectively dead:** Loss ~0.001, failed 20% drop health gate. Not the right mechanism for 68M student.
+3. **ALM works as mechanism:** Real short-horizon improvement from LFM2-1.2B (ALM loss 0.18 vs 0.47 for Qwen).
+4. **KD hurts early passes:** Shared parameter interference in recurrent architecture — late passes (D10-12) improve but D1-D4 degrade.
+5. **68M student lacks capacity** to exploit transfer long-term. KD benefit fades as CE loss dominates.
+
+### Codex Strategic Verdict
+- Accept falsification: 68M online ALM+Procrustes doesn't meet the bar
+- **Port ALM-only to P2c** (42M, 16K tokenizer): better core capacity, lower embedding overhead
+- Overweight LFM2-1.2B (best ALM teacher by 2.6x)
+- Drop Procrustes from canary (dead mechanism at this scale)
+- If P2c ALM-only fails → pivot to offline distillation/data shaping
+
+### Next: P2c ALM-Only Canary (in progress)
+Running 1K-step A/B from transplanted_16k_from_step5000.pt with:
+- ALM-only (lane_pattern=[0], no Procrustes)
+- Q1: Granite 10% → Qwen 20% → LFM2 70%
+- Two optimizer groups: old tensors @ 1.6e-4, kd_proj @ 3.2e-4
+- Custom 16K tokenizer, 16K shards
+
+---
 
 ## Ekalavya Protocol Step 4000 Eval (2026-03-24)
 

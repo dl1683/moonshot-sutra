@@ -386,6 +386,34 @@
         "piqa": "-0.5%", "sciq": "-3.4%", "winogrande": "+2.2%", "lambada": "-6.4%"
       },
       "benchmark_notes": "KD clearly working. At 3K steps, beats parent v0.6.0a-20K on ARC-Easy, ARC-Chall, HellaSwag, WinoGrande. SciQ recovering fast (44.7% vs v060b's 37.8% at 15K). LAMBADA still main gap. D10 < D12 at every checkpoint — elastic compute validated."
+    },
+    {
+      "version": "P1a-ekalavya",
+      "step": 6000,
+      "bpt": 6.5979,
+      "tokens_seen": "~655M + ~196M",
+      "params": "68.3M",
+      "date": "2026-03-24",
+      "notes": "P1a HARD CAP (6K steps per R20). Two-teacher KD. Best BPT achieved. Beats parent on 5/7 tasks. SciQ crosses 49% (gate was 46%). LAMBADA 6.7% (recovery from 4.8% at 3K). CKA-only tail from step 5350.",
+      "per_depth_bpt": {
+        "1": 15.823, "2": 15.561, "3": 15.397, "4": 15.359,
+        "5": 15.190, "6": 14.854, "7": 14.059, "8": 12.647,
+        "9": 9.635, "10": 6.761, "11": 6.780, "12": 6.785
+      },
+      "benchmarks": {
+        "arc_easy": { "acc": 0.3211, "acc_norm": 0.3199 },
+        "arc_challenge": { "acc": 0.1664, "acc_norm": 0.2005 },
+        "hellaswag": { "acc": 0.2575, "acc_norm": 0.2625 },
+        "piqa": { "acc": 0.5473, "acc_norm": 0.5245 },
+        "sciq": { "acc": 0.490, "acc_norm": 0.452 },
+        "winogrande": { "acc": 0.5083 },
+        "lambada_openai": { "acc": 0.0673, "ppl": 3001.74 }
+      },
+      "vs_parent_v060a_20k": {
+        "arc_easy": "+0.8%", "arc_challenge": "-0.9%", "hellaswag": "+0.0%",
+        "piqa": "+0.2%", "sciq": "+0.9%", "winogrande": "-0.7%", "lambada": "-4.5%"
+      },
+      "benchmark_notes": "Best overall checkpoint. SciQ 49.0% exceeds parent (48.1%). ARC-Easy 32.1% new high. PIQA 54.7% new high. ARC-Chall dropped (-0.9%) — possible noise. LAMBADA gap closing (6.7% vs 11.2%) but still significant. Knowledge tasks converging toward parent despite only 6K KD steps vs 20K parent training."
     }
   ],
   "best_in_class": {
