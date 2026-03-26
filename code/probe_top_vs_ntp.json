@@ -1,0 +1,23 @@
+{
+    "name": "top_vs_ntp",
+    "description": "T+L R1 Probe 2: Compare TOP auxiliary loss vs plain NTP on matched 42M models. TOP activates after warmup. Measures BPT and generation quality.",
+    "variants": [
+        {"tag": "ntp_only", "norm_type": "rmsnorm", "use_top": false},
+        {"tag": "ntp_plus_top", "norm_type": "rmsnorm", "use_top": true, "top_weight": 0.05}
+    ],
+    "dim": 512,
+    "n_layers": 10,
+    "n_heads": 8,
+    "ff_dim": 1536,
+    "steps": 5000,
+    "eval_every": 500,
+    "batch_size": 16,
+    "grad_accum": 2,
+    "seq_len": 512,
+    "lr": 3e-4,
+    "min_lr": 1e-5,
+    "warmup": 200,
+    "use_top": false,
+    "top_K": 4,
+    "exit_layers": null
+}

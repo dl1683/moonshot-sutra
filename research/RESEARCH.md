@@ -675,6 +675,33 @@ Three interventions that prevent outlier formation during training:
 4. How does NVFP4's block-of-16 structure interact with our architecture's internal dimensions? (Dims should be multiples of 16)
 5. Is there a hybrid: ternary weights for FFN (largest layers) + INT8 for attention (more precision-sensitive)?
 
+#### 4.8 Muon Optimizer — Compute Efficiency and Outlier Prevention
+
+**Papers:** arXiv:2502.16982 ("Muon is Scalable for LLM Training"), Keller Jordan blog
+
+**What it is:** Muon approximately orthogonalizes the moving average of gradients (momentum) using Newton-Schulz iteration, then uses the result to update parameters. Maintains rotation invariance — no "privileged bases" form.
+
+**Key findings:**
+- **2x compute efficiency vs AdamW** in scaling law experiments. Achieves comparable performance at ~52% of AdamW's training FLOPs
+- Steps until convergence: ~2/3 of AdamW
+- Optimizer memory: somewhat less than AdamW
+- Scaling validated: 3B/16B MoE model "Moonlight" trained with Muon on 5.7T tokens
+- Two critical techniques for scaling: (1) add weight decay, (2) adjust per-parameter update scale
+- Turbo-Muon (2025): spectral preconditioning reduces NS steps from 5→4, ~20% computational overhead reduction
+
+**Quantization connection (from OSP paper):**
+- Eliminates "privileged bases" that cause activation outliers
+- Adam's per-parameter LR creates channel-wise imbalances → outliers → quantization failure
+- Muon + Single-Scale RMSNorm + learnable embedding projection = near-Gaussian activations (kurtosis 0.04 vs 1818.56 for Adam)
+- 35% relative improvement in 4-bit PTQ quality from training changes alone
+
+**Relevance to Sutra:**
+- 2x training efficiency would double our effective compute budget
+- Outlier-free activations serve O5 (quantization-native deployment)
+- Weight decay + per-param scaling needed at our scale (159M)
+- Compatible with DyT (both attack outliers from different angles)
+- **STRONG CANDIDATE**: Muon + DyT could eliminate need for post-hoc quantization tricks entirely
+
 ---
 
 ## Prior Experiments (Summary — No Checkpoints Retained)
@@ -688,4 +715,937 @@ We ran several experiments at 98M scale with a 12-layer dense decoder (d=768, 16
 - **The model was severely undertrained** — at step 5000 (~82M tokens) it was at only 4% of Chinchilla-optimal (~2B tokens for 98M params).
 
 **These observations inform but do not constrain future architecture decisions.** The next T+L session should treat the architecture as an open question.
-5. **T+L Round 4** — after step 10000 benchmarks and A/B results
+
+---
+
+## 5. Multi-Teacher Distillation Survey (Outcome 4: Data Efficiency)
+
+**Purpose:** Comprehensive survey of pretrained models that could serve as teachers for a multi-source learning pipeline. Student will be 100M-500M params, trained from scratch on RTX 5090 (24GB VRAM). Goal: extract maximum knowledge from existing pretrained models to compensate for our limited training data (~22.9B tokens vs competitors' 300B-2T tokens).
+
+**Key constraint:** Student (~200M, FP16) needs ~400MB-1GB VRAM for weights + optimizer states (~3-4GB total during training with Adam). With gradient activations and batch data, student training consumes ~8-12GB. That leaves **12-16GB for teacher model(s)** during online distillation, or zero GPU overhead for offline distillation.
+
+---
+
+### 5.1 Distillation Approaches Overview
+
+#### Online vs. Offline Distillation
+
+| Approach | How it works | VRAM cost | Disk cost | Flexibility |
+|----------|-------------|-----------|-----------|-------------|
+| **Online** | Teacher loaded on GPU, forward pass each batch | Teacher VRAM + student VRAM | None | Teacher must fit alongside student |
+| **Offline** | Pre-compute teacher outputs, store to disk, load during training | Zero GPU overhead | Potentially massive | Any teacher, any number of teachers |
+| **MiniPLM-style** | Teacher selects/reweights training data offline, no runtime cost | Zero | Minimal (reweighted corpus) | Cross-family, no architecture constraints |
+
+**Recommended hybrid strategy:**
+1. **Offline logit distillation** for large/expensive teachers — pre-compute once, reuse forever
+2. **Online feature matching** for small teachers that fit on GPU alongside student
+3. **MiniPLM-style data reweighting** as a free baseline that works with any teacher
+
+#### What to Extract from Teachers
+
+| Signal | Description | Storage per token | Quality |
+|--------|-------------|-------------------|---------|
+| **Full logits** | Complete probability distribution over vocab | vocab_size * 2 bytes (FP16) = 32KB for 16K vocab | Richest signal, captures full teacher uncertainty |
+| **Top-K logits** | Only K highest-probability tokens + indices | K * 4 bytes (FP16 value + uint16 index) | ~95% of value for K=128, massive storage savings |
+| **Hidden states** | Intermediate layer representations | hidden_dim * 2 bytes per layer | Rich for feature matching, architecture-dependent |
+| **Attention maps** | Attention weight matrices | seq_len * seq_len * n_heads * 2 bytes | Only from transformer teachers, expensive |
+| **CKA features** | Gram matrix of hidden states | batch_size^2 * 4 bytes per layer | Architecture-agnostic, allows cross-architecture distillation |
+
+---
+
+### 5.2 Category 1: Small Language Models (Sub-1B, Can Coexist on GPU)
+
+These models can run in FP16 alongside the student with VRAM to spare. Best candidates for online distillation.
+
+| Model | Params | Arch | Hidden Dim | Layers | Heads | Training Data | VRAM (FP16) | Strengths |
+|-------|--------|------|------------|--------|-------|---------------|-------------|-----------|
+| **Pythia-70M** | 70M | Transformer (GPT-NeoX) | 512 | 6 | 8 | 300B tokens (The Pile) | ~140MB | Interpretability baseline, 154 checkpoints available |
+| **Pythia-160M** | 160M | Transformer (GPT-NeoX) | 768 | 12 | 12 | 300B tokens (The Pile) | ~320MB | Good quality/size ratio, same data order as all Pythia |
+| **Pythia-410M** | 410M | Transformer (GPT-NeoX) | 1024 | 24 | 16 | 300B tokens (The Pile) | ~820MB | Strong for size, deep (24L), RoPE |
+| **SmolLM2-135M** | 135M | Transformer (Llama-like) | ~576 | ~12 | GQA | 2T tokens (FineWeb-Edu + DCLM + Stack) | ~270MB | Trained on 15x more data than Pythia, GPT-2 tokenizer |
+| **SmolLM2-360M** | 360M | Transformer (Llama-like) | ~960 | ~24 | GQA | 4T tokens | ~720MB | 4T token training, strong benchmarks for size |
+| **GPT-2 Small** | 124M | Transformer (original) | 768 | 12 | 12 | ~40B tokens (WebText) | ~250MB | Oldest but well-understood, canonical architecture |
+| **GPT-2 Medium** | 355M | Transformer (original) | 1024 | 24 | 16 | ~40B tokens (WebText) | ~710MB | Good hidden dim match for ~200M student |
+| **Mamba-130M** | 130M | Pure SSM (Mamba-1) | ~768 | ~24 | N/A (SSM) | 300B tokens (The Pile) | ~260MB | Completely different architecture = diverse representations |
+| **Mamba-370M** | 370M | Pure SSM (Mamba-1) | ~1024 | ~48 | N/A (SSM) | 300B tokens (The Pile) | ~740MB | Good SSM teacher, linear-time inference |
+| **Mamba-790M** | 790M | Pure SSM (Mamba-1) | ~1536 | ~48 | N/A (SSM) | 300B tokens (The Pile) | ~1.6GB | Strongest pure SSM sub-1B |
+| **Mamba2-130M** | 130M | Pure SSM (Mamba-2) | ~768 | ~24 | N/A (SSM) | 300B tokens | ~260MB | Mamba2 = better architecture than Mamba1 |
+| **Mamba2-370M** | 370M | Pure SSM (Mamba-2) | ~1024 | ~48 | N/A (SSM) | 300B tokens | ~740MB | Improved SSM, multi-head structure, d_state=128 |
+| **Falcon-H1-0.5B** | 500M | Hybrid (Transformer+Mamba) | ~1024 | ~24 | GQA+SSM | Large (undisclosed) | ~1GB | Hybrid = both attention AND SSM representations |
+| **Granite-4.0-Micro** | ~350M | Dense Hybrid (GQA+Mamba2) | ~1024 | ~24 | GQA | 15T tokens | ~700MB | IBM, trained on 15T tokens, Apache 2.0 |
+| **Granite-4.0-H-Micro** | ~350M | Dense Hybrid (Mamba2 variant) | ~1024 | ~24 | GQA+SSM | 15T tokens | ~700MB | Mamba2 hybrid variant of Micro |
+| **Qwen3-0.6B** | 600M | Transformer (GQA) | ~1024 | 28 | 16Q/8KV | 36T+ tokens | ~1.2GB | Best sub-1B transformer, 100+ languages, tied embeddings |
+
+**Analysis — Sub-1B concurrent fit on 24GB:**
+
+With ~12-16GB free alongside student training, we could fit:
+- **5-8 models from the 100-400M range simultaneously** (e.g., Pythia-160M + SmolLM2-135M + Mamba-130M + Mamba2-130M + GPT-2 Small = ~1.25GB total)
+- **3-4 models from the 400-800M range** (e.g., Pythia-410M + SmolLM2-360M + Mamba-370M + Falcon-H1-0.5B = ~3.3GB)
+- **Maximum diversity online combo:** Pythia-410M (transformer) + Mamba-790M (SSM) + Falcon-H1-0.5B (hybrid) + Granite-4.0-Micro (hybrid, 15T data) = ~4.1GB, leaving ~8-12GB for student
+
+**Most complementary sub-1B set (recommended):**
+1. **Qwen3-0.6B** — best quality, transformer attention patterns, 36T tokens of training
+2. **Mamba-790M** — completely different architecture (SSM), different inductive biases
+3. **Granite-4.0-Micro** — hybrid arch, 15T tokens, Apache license
+4. **SmolLM2-135M** — tiny but trained on 2T tokens, good cheap reference
+
+Total: ~3.8GB. Fits easily alongside student.
+
+---
+
+### 5.3 Category 2: Medium Language Models (1B-4B, Quantized for Concurrent Use)
+
+These require quantization to coexist with student, or should be used offline.
+
+| Model | Params | Arch | Hidden Dim | Layers | Training Data | VRAM (FP16) | VRAM (Q8) | VRAM (Q4) | Strengths |
+|-------|--------|------|------------|--------|---------------|-------------|-----------|-----------|-----------|
+| **Pythia-1B** | 1B | Transformer | 2048 | 16 | 300B (Pile) | ~2GB | ~1GB | ~0.6GB | Research-grade, deduped variant available |
+| **Pythia-1.4B** | 1.4B | Transformer | 2048 | 24 | 300B (Pile) | ~2.8GB | ~1.5GB | ~0.8GB | Deep, good representations |
+| **SmolLM2-1.7B** | 1.7B | Transformer (Llama) | ~2048 | ~24 | 11T tokens | ~3.4GB | ~1.7GB | ~1GB | 11T tokens = massive data advantage |
+| **Qwen3-1.7B** | 1.7B | Transformer (GQA) | 2048 | 28 | 36T+ tokens | ~3.4GB | ~2GB | ~1GB | Strong reasoning, multilingual, GQA |
+| **Gemma-3-1B** | 1B | Transformer (interleaved attn) | ~2048 | 26 | ~6T tokens | ~2GB | ~1GB | ~0.6GB | Interleaved global/local attention (1:5 ratio), 32K context |
+| **Granite-4.0-Tiny** | ~1B | Hybrid (Mamba2+Transformer) | ~2048 | ~24 | 15T tokens | ~2GB | ~1GB | ~0.6GB | Hybrid, 15T tokens, Apache 2.0 |
+| **Granite-4.0-H-1B** | ~1.5B | Hybrid (Mamba2 heavy) | ~2048 | ~24 | 15T tokens | ~3GB | ~1.5GB | ~0.9GB | 70-80% less memory than transformer equivalent |
+| **Falcon-H1-1.5B** | 1.5B | Hybrid (Transformer+Mamba) | ~2048 | ~24 | Large | ~3GB | ~1.5GB | ~0.9GB | "Rivals many 7B-10B models" per TII |
+| **LFM2.5-1.2B** | 1.2B | Novel Hybrid (Conv+GQA) | ~2048 | 16 (10 conv + 6 GQA) | 10T tokens | ~2.4GB | ~1.2GB | ~0.7GB | 2x faster CPU inference than Qwen3, 10T data |
+| **Mamba-1.4B** | 1.4B | Pure SSM | ~2048 | ~48 | 300B (Pile) | ~2.8GB | ~1.5GB | ~0.8GB | Largest pure Mamba-1 at reasonable size |
+| **Mamba2-1.3B** | 1.3B | Pure SSM (Mamba-2) | ~2048 | ~48 | 300B | ~2.6GB | ~1.3GB | ~0.8GB | Mamba-2 improved architecture |
+
+**Quantization for concurrent use:**
+- At Q4, most 1-1.7B models fit in ~0.6-1GB VRAM
+- We could run **3-4 quantized medium teachers + student** simultaneously
+- **But:** Q4 quantization degrades teacher signal quality. Better to run fewer teachers in higher precision or use offline approach.
+
+**Best medium teacher set (Q8, concurrent):**
+1. **Qwen3-1.7B** (Q8, ~2GB) — strongest reasoning, 36T tokens
+2. **Falcon-H1-1.5B** (Q8, ~1.5GB) — hybrid architecture diversity
+3. **LFM2.5-1.2B** (Q8, ~1.2GB) — novel conv+attention hybrid, 10T data
+
+Total: ~4.7GB at Q8. Fits alongside student.
+
+**Offline-only candidates (too large for concurrent but worth pre-computing):**
+
+| Model | Params | VRAM (FP16) | Why offline | What to extract |
+|-------|--------|-------------|------------|-----------------|
+| **Phi-4-mini** | 3.8B | ~7.6GB | Too large for concurrent | Top-K logits, strong reasoning signal |
+| **Qwen3-4B** | 4B | ~8GB | Too large for concurrent | Top-K logits, multilingual knowledge |
+| **Gemma-3-4B** | 4B | ~8GB | 128K context model | Top-K logits, interleaved attention patterns |
+| **Pythia-2.8B** | 2.8B | ~5.6GB | Marginal fit, better offline | Hidden states at all 32 layers for scaling analysis |
+| **Mamba-2.8B** | 2.8B | ~5.6GB | Marginal fit, better offline | SSM state representations |
+
+---
+
+### 5.4 Category 3: Encoder Models (Bidirectional, Rich Representations)
+
+Encoder models provide fundamentally different representations than decoder LMs — bidirectional context means they "see" the whole input, making their hidden states richer for semantic understanding. They are typically small and cheap.
+
+| Model | Params | Arch | Hidden Dim | Layers | Embedding Dim | VRAM (FP16) | Strengths |
+|-------|--------|------|------------|--------|---------------|-------------|-----------|
+| **BERT-base** | 110M | Encoder (Transformer) | 768 | 12 | 768 | ~220MB | Canonical, bidirectional, well-studied |
+| **BERT-large** | 340M | Encoder (Transformer) | 1024 | 24 | 1024 | ~680MB | Deeper representations |
+| **RoBERTa-base** | 125M | Encoder (Transformer) | 768 | 12 | 768 | ~250MB | Better training recipe than BERT (160GB data, no NSP) |
+| **RoBERTa-large** | 355M | Encoder (Transformer) | 1024 | 24 | 1024 | ~710MB | Strong baseline for NLU tasks |
+| **DistilBERT** | 66M | Encoder (Transformer) | 768 | 6 | 768 | ~130MB | Distilled from BERT, 97% of performance at 60% size |
+| **all-MiniLM-L6-v2** | 22M | Encoder (Transformer) | 384 | 6 | 384 | ~44MB | Tiny but effective sentence embeddings, distilled from MiniLM |
+| **DeBERTa-v3-base** | 184M | Encoder (disentangled attn) | 768 | 12 | 768 | ~370MB | Disentangled attention, often beats BERT/RoBERTa |
+
+**How to use encoder teachers for decoder student distillation:**
+- **NOT for logit distillation** (different output structure — MLM vs. autoregressive)
+- **FOR hidden state / representation matching:**
+  - Extract encoder hidden states for each text chunk
+  - Use CKA or projection-based alignment to match student's internal representations
+  - Forces student to learn bidirectional semantic understanding despite being autoregressive
+- **FOR data annotation:**
+  - Use encoder to score/classify training data quality
+  - Pre-compute NLI, sentiment, topic labels as auxiliary supervision signals
+
+**Key insight:** Encoder representations are complementary to decoder LM logits. A decoder teacher tells the student "what comes next"; an encoder teacher tells the student "what this text means." Both are valuable.
+
+---
+
+### 5.5 Category 4: Embedding Models (Semantic Representations)
+
+Embedding models produce dense vector representations optimized for semantic similarity. They compress text understanding into fixed-size vectors — useful as representation targets.
+
+| Model | Params | Arch | Output Dim | VRAM (FP16) | MTEB Score | Strengths |
+|-------|--------|------|------------|-------------|------------|-----------|
+| **EmbeddingGemma-308M** | 308M | Encoder (bidirectional Gemma3) | 768 (MRL: 128-768) | ~400MB | SOTA <500M | Google, bi-directional from decoder, 100+ langs |
+| **bge-small-en-v1.5** | 33M | Encoder (BERT) | 384 | ~70MB | ~62 | Tiny, fast, good baseline |
+| **bge-base-en-v1.5** | 109M | Encoder (BERT) | 768 | ~220MB | ~64 | Balanced quality/speed |
+| **bge-large-en-v1.5** | 335M | Encoder (BERT) | 1024 | ~700MB | ~65 | Best BGE English |
+| **e5-small-v2** | 33M | Encoder (BERT) | 384 | ~70MB | ~62 | Fastest, 16ms latency |
+| **e5-base-v2** | 109M | Encoder (BERT) | 768 | ~220MB | ~63 | Balanced |
+| **e5-large-v2** | 335M | Encoder (BERT) | 1024 | ~700MB | ~64 | Best E5 English |
+| **nomic-embed-text-v1.5** | 137M | Encoder (long-context BERT) | 768 (MRL: 64-768) | ~300MB | ~65 | 8192-token context, Matryoshka dims |
+| **bge-m3** | 568M | Encoder (BERT) | 1024 | ~700MB | ~67 | Trilingual, dense+sparse hybrid retrieval |
+| **Qwen3-Embedding-0.6B** | 600M | Decoder-as-encoder (Qwen3) | 32-1024 (MRL) | ~700MB | 65.5 | Best <1B on MTEB, 100+ langs, instruction-aware |
+| **GTE-Qwen2-1.5B** | 1.5B | Decoder-as-encoder | 4096 | ~1.5GB (Q8) | 67.2 | Long context, high dim |
+| **nomic-embed-code** | ~137M | Encoder | ~768 | ~300MB | N/A | SOTA code retrieval |
+
+**How to use embedding model teachers:**
+- **Contrastive distillation:** Train student's hidden states to produce embeddings that match the teacher's similarity structure (not the exact vectors, but which pairs are close/far)
+- **Semantic anchoring:** Use embedding similarities as soft labels for training data clustering
+- **Representation regularization:** Add a loss term that encourages student hidden states at certain layers to align with pre-computed embeddings
+
+**Most useful embedding teachers:**
+1. **EmbeddingGemma-308M** — SOTA at sub-500M, bidirectional Gemma3 backbone, MRL
+2. **Qwen3-Embedding-0.6B** — decoder-based (same paradigm as student), instruction-aware
+3. **nomic-embed-text-v1.5** — long context (8K), Matryoshka, lightweight
+
+---
+
+### 5.6 Category 5: Code Models
+
+Code understanding requires different representations than natural language — syntax trees, control flow, variable scoping. Code teachers provide these.
+
+| Model | Params | Arch | Hidden Dim | VRAM (FP16) | Training | Strengths |
+|-------|--------|------|------------|-------------|----------|-----------|
+| **CodeBERT** | 125M | Encoder (RoBERTa) | 768 | ~250MB | CodeSearchNet (6 PLs) | Bidirectional code+NL, code search, clone detection |
+| **StarCoder2-3B** | 3B | Decoder (GQA) | ~2560 | ~6GB | 3.3T code tokens (Stack v2) | 80+ PLs, FIM objective, 16K context, GQA |
+| **Codestral-Mamba-7B** | 7B | Pure SSM (Mamba) | ~4096 | ~5GB (Q4) | Code-focused (Mistral) | SSM architecture for code, fast inference |
+| **nomic-embed-code** | ~137M | Encoder | ~768 | ~300MB | Code-focused | SOTA code retrieval embeddings |
+
+**For code understanding in Sutra's multi-source pipeline:**
+- **CodeBERT (online, 250MB)** — cheap, bidirectional, good for code semantics
+- **StarCoder2-3B (offline only)** — too large for concurrent, but excellent logits for code tokens in training data
+- **nomic-embed-code (online, 300MB)** — code embedding alignment
+
+---
+
+### 5.7 Offline Distillation: Storage Requirements Analysis
+
+For 22.9B training tokens with a 16K vocabulary:
+
+#### Full Logit Storage (NOT recommended)
+
+```
+22.9B tokens * 16,384 vocab * 2 bytes (FP16) = ~751 TB
+```
+Completely impractical.
+
+#### Top-K Logit Storage (RECOMMENDED)
+
+Per token, store K (value, index) pairs:
+- K=32: 32 * (2 bytes value + 2 bytes index) = 128 bytes/token
+- K=64: 64 * 4 = 256 bytes/token
+- K=128: 128 * 4 = 512 bytes/token
+
+| K | Bytes/token | Storage for 22.9B tokens | Quality retention |
+|---|-------------|--------------------------|-------------------|
+| 32 | 128 | **2.93 TB** | ~90% of full logit signal |
+| 64 | 256 | **5.86 TB** | ~95% of full logit signal |
+| 128 | 512 | **11.72 TB** | ~98% of full logit signal |
+
+**Practical recommendation:** K=64, which requires ~5.9TB per teacher. For 2-3 offline teachers, that is 12-18TB. This is feasible with external storage but expensive.
+
+#### MiniPLM-Style (CHEAPEST — Store Nothing)
+
+MiniPLM does not store logits at all. Instead:
+1. Run teacher once over entire corpus
+2. Compute per-document "difficulty scores" (divergence between teacher and a small reference model)
+3. Reweight/resample the training corpus to emphasize documents where teacher knowledge is most valuable
+4. Student trains on the reweighted corpus with standard NTP loss
+
+**Storage cost:** Only the reweighted sample indices — negligible (a few MB).
+**Quality:** 2.2x pre-training acceleration, 2.4x data efficiency (MiniPLM paper results on Qwen 200M-1.2B students with Qwen-1.8B teacher).
+**Limitation:** Only captures data selection signal, not the rich probability distributions.
+
+#### Hidden State Storage
+
+Per token per layer: hidden_dim * 2 bytes (FP16).
+For a 768-dim model with 12 layers, storing ALL layer hidden states:
+```
+22.9B tokens * 12 layers * 768 dims * 2 bytes = ~421 TB
+```
+Impractical. But storing only the FINAL hidden state of a single teacher:
+```
+22.9B tokens * 768 dims * 2 bytes = ~35.1 TB
+```
+Still too large. **Hidden state distillation must be online, not offline.**
+
+#### Recommended Offline Strategy
+
+1. **MiniPLM data reweighting** from Qwen3-1.7B or Phi-4-mini — free, improves data efficiency
+2. **Top-64 logits** from 1-2 high-quality teachers (Qwen3-1.7B + Mamba-2.8B) stored to disk — ~12TB total
+3. **Online feature matching** with 2-3 small teachers loaded on GPU — zero disk cost
+
+---
+
+### 5.8 Distillation Frameworks and Methods
+
+#### Existing Frameworks
+
+| Framework | Paper | Method | Cross-Arch? | Scale Tested | Key Idea |
+|-----------|-------|--------|-------------|--------------|----------|
+| **MiniPLM** | ICLR 2025 | Offline data reweighting via difference sampling | Yes | 200M-1.2B student, 1.8B teacher (Qwen) | Adjust corpus difficulty using teacher-reference LM divergence |
+| **MOHAWK** | NeurIPS 2024 | 3-phase progressive distillation | Yes (Transformer→SSM) | Phi-1.5→Mamba-2 | Phase 1: match mixing matrices. Phase 2: match hidden states per block. Phase 3: match end-to-end predictions |
+| **Pre-training Distillation DSE** | ACL 2025 | Design space exploration | Same arch | 200M-1.8B | Top-p-k logit truncation, temperature tuning, offline vs online comparison |
+| **DistilBERT** | 2019 | Triple loss (CE + distill + cosine) | No (BERT→smaller BERT) | 66M student, 110M teacher | Standard KD with hidden state cosine alignment |
+| **TinyBERT** | 2020 | Multi-layer feature distillation | No (BERT→smaller BERT) | Various | Attention + hidden state + embedding + prediction matching |
+
+#### Key Techniques for Multi-Teacher
+
+**Logit-level aggregation (simplest):**
+```
+L_distill = sum_t [ w_t * KL(student_logits || teacher_t_logits) ]
+```
+Where w_t are per-teacher weights (uniform, learned, or based on teacher confidence).
+
+**Feature-level matching via CKA (architecture-agnostic):**
+- Compute Gram matrix G_s = H_s @ H_s^T for student hidden states H_s
+- Compute Gram matrix G_t = H_t @ H_t^T for teacher hidden states H_t
+- CKA(G_s, G_t) measures representational similarity without requiring same dimensionality
+- Loss = 1 - CKA(G_s, G_t) summed over selected layer pairs
+- **Works across architectures** (transformer student, SSM teacher, encoder teacher, etc.)
+
+**Progressive Knowledge Distillation (PKD):**
+- Architecture-agnostic: modular approach that doesn't require matching layer counts
+- Distill in stages: first match early representations, then intermediate, then final
+- Allows different teachers for different stages
+
+**Knowledge purification (for >3 teachers):**
+- Research shows performance DECLINES as teacher count increases beyond a threshold
+- Solution: consolidate teacher knowledge into a single "purified" signal before distilling
+- Practical: average top-K logits from multiple teachers, or use attention-weighted combination
+
+#### Cross-Architecture Distillation (Critical for Sutra)
+
+Since Sutra's architecture is not yet finalized, the distillation method must be **architecture-agnostic**:
+
+1. **CKA-based feature matching** — works regardless of student architecture (transformer, SSM, hybrid, novel)
+2. **Logit-level KD** — works as long as student has a language modeling head over the same vocabulary
+3. **MOHAWK-style progressive** — if student has identifiable "blocks," can match block-level representations
+4. **MiniPLM data reweighting** — completely architecture-independent
+
+**Warning from literature:** Flex-KD (2025) found that matching only final-layer representations often outperforms multi-layer matching. Start simple.
+
+---
+
+### 5.9 Maximum Concurrent Teachers on 24GB GPU
+
+**Scenario: ~200M student training in FP16+Adam**
+
+| Component | VRAM |
+|-----------|------|
+| Student weights (200M, FP16) | ~400MB |
+| Adam optimizer states (2x weights, FP32) | ~1.6GB |
+| Gradients (FP16) | ~400MB |
+| Activations (batch=32, seq=512) | ~2-4GB |
+| **Total student training** | **~5-7GB** |
+| **Remaining for teachers** | **~17-19GB** |
+
+**Feasible concurrent teacher configurations:**
+
+| Config | Teachers | Total Teacher VRAM | Remaining Buffer | Diversity Score |
+|--------|----------|--------------------|------------------|-----------------|
+| **A (Maximum diversity)** | Qwen3-0.6B + Mamba-790M + Granite-Micro + EmbeddingGemma-308M + CodeBERT | ~3.8GB | ~14GB | HIGH — 5 architectures |
+| **B (Strongest signal)** | Qwen3-1.7B (Q8) + Falcon-H1-1.5B (Q8) + Mamba-1.4B (Q8) | ~5GB | ~13GB | MEDIUM — 3 architectures, larger teachers |
+| **C (Quality + diversity)** | Qwen3-0.6B + Mamba-790M + Granite-Micro + Qwen3-Embedding-0.6B | ~3.6GB | ~15GB | HIGH — decoder + SSM + hybrid + embedding |
+| **D (Aggressive, all medium)** | Qwen3-1.7B (Q8) + SmolLM2-1.7B (Q8) + LFM2.5-1.2B (Q8) + Mamba-1.4B (Q8) | ~6.4GB | ~12GB | HIGH — 4 architectures, all well-trained |
+
+**Recommended: Config C or D**, depending on whether online hidden-state matching (C, needs forward pass through each teacher per batch) or offline logit pre-computation + online embedding alignment (D, heavier teachers but less per-batch cost) is preferred.
+
+---
+
+### 5.10 Recommended Multi-Teacher Pipeline
+
+#### Phase 0: Data Reweighting (Free, Do This First)
+- Run **Qwen3-1.7B** (or Phi-4-mini) over entire 22.9B-token corpus
+- Compute per-document divergence scores (MiniPLM method)
+- Reweight training data to emphasize high-information documents
+- **Cost:** One-time GPU inference pass (~hours). **Benefit:** 2x+ data efficiency.
+
+#### Phase 1: Offline Logit Pre-computation (Before Training)
+- **Teacher 1: Qwen3-1.7B** — general knowledge, reasoning, multilingual
+- **Teacher 2: Mamba-2.8B** — SSM perspective, different inductive bias
+- Store top-64 logits per token per teacher
+- Storage: ~12TB for both teachers across 22.9B tokens
+- **Alternative if storage is limited:** Pre-compute only for the first epoch (subset), refresh for subsequent epochs
+
+#### Phase 2: Online Multi-Teacher Training
+Load on GPU alongside student:
+- **Qwen3-0.6B** (1.2GB) — live logit + hidden state teacher
+- **Mamba-790M** (1.6GB) — live SSM representation teacher
+- **EmbeddingGemma-308M** (400MB) — semantic embedding anchor
+- **CodeBERT** (250MB) — code token representation teacher
+
+**Training loss:**
+```
+L = L_NTP + alpha * L_offline_KD + beta * L_online_KD + gamma * L_CKA + delta * L_embed
+```
+Where:
+- L_NTP = standard next-token prediction on reweighted data
+- L_offline_KD = KL divergence against stored Qwen3-1.7B/Mamba-2.8B logits
+- L_online_KD = KL divergence against live Qwen3-0.6B/Mamba-790M logits
+- L_CKA = CKA representation matching against teacher hidden states
+- L_embed = contrastive alignment with EmbeddingGemma representations
+
+#### Phase 3: Validation
+Compare against:
+- Student trained with standard NTP only (same data, same compute)
+- Student trained with single-teacher KD
+- Published baselines (SmolLM2, Pythia, etc.)
+
+---
+
+### 5.11 Key Findings and Open Questions
+
+**Key findings:**
+1. **MiniPLM data reweighting is free and proven** — 2.2x acceleration, 2.4x data efficiency. No reason not to use it.
+2. **Offline top-K logit distillation is the standard approach** — K=64 balances quality vs. storage. ~6TB per teacher for our corpus.
+3. **CKA enables cross-architecture distillation** — critical since Sutra's architecture is still TBD.
+4. **More teachers is NOT always better** — performance can decline beyond 3-4 teachers due to conflicting gradients. Knowledge purification or dynamic weighting needed.
+5. **Encoder teachers (BERT, RoBERTa) provide complementary signal** — bidirectional understanding that decoder-only teachers cannot provide.
+6. **Embedding teachers provide semantic structure** — useful as regularization, not primary distillation signal.
+7. **Architecture diversity > teacher size** — a transformer + SSM + hybrid ensemble teaches more than 3 transformers of the same family.
+8. **Sub-1B teachers have been trained on 300B-36T tokens** — even "small" teachers have seen 13-1500x more data than our student will, making them valuable knowledge sources.
+9. **Flex-KD finding (2025): final-layer-only matching often beats multi-layer** — start simple, add complexity only if justified.
+10. **Our custom 16K tokenizer creates a vocabulary mismatch** — logit-level distillation requires either (a) teacher fine-tuned on our tokenizer, (b) token-level alignment mapping, or (c) representation-level distillation only. This is a critical implementation detail.
+
+**Open questions for T+L:**
+1. **Vocabulary mismatch problem:** Our 16K custom tokenizer vs. teachers' tokenizers (GPT-2 50K, Qwen 152K, etc.). How to align logits across different vocabularies? Options: (a) use a shared tokenizer, (b) learn a vocabulary projection, (c) skip logit KD and use only representation matching, (d) retokenize teacher outputs with our tokenizer.
+2. **Optimal teacher weighting:** Static (hand-tuned alpha per teacher) vs. dynamic (learned per-batch or per-token teacher attention)?
+3. **When to start KD during training:** From step 0, or delay until student has basic competence (step 1K+)?
+4. **Interaction with MTP/TOP:** If using multi-token prediction as auxiliary loss, does KD provide redundant signal or complementary signal?
+5. **Memory-optimal online strategy:** Forward pass through 4 teachers per batch is expensive — should we cycle teachers (different teacher each batch) instead of running all simultaneously?
+6. **Is offline logit storage (12TB) worth it** vs. just using more/larger online teachers?
+
+---
+
+## 6. March 2026 Research Survey: Architecture Design Inputs
+
+**Date:** 2026-03-26. Comprehensive web research across 5 areas to feed the next Tesla+Leibniz architecture design session.
+
+---
+
+### 6.1 Small Model Architectures (100M-4B) — State of the Art
+
+#### 6.1.1 MobileLLM (Meta, ICML 2024) — arXiv:2402.14905
+
+**The reference for sub-billion architecture design.**
+
+Key findings for optimal sub-billion architecture:
+- **Deep and thin beats wide and shallow.** Optimal depth ~30 layers for sub-billion scale.
+- **Embedding sharing** reduces params ~10% with only 0.2-0.6% accuracy drop.
+- **Grouped Query Attention** with head_dim=64, num_heads ~4x kv_heads.
+- **Block-wise weight sharing** provides free depth increase with no param increase and marginal latency overhead.
+- Results: +2.7%/+4.3% accuracy over prior SOTA at 125M/350M. Published ICML 2024.
+
+**Sutra relevance:** Validates deep+thin + weight sharing as the right structural prior for small models. Our recurrent depth approach aligns with this.
+
+#### 6.1.2 Optimal Architecture Study (HuggingFace, Dec 2025)
+
+19 model configs across 12 architecture families trained on 1B tokens at ~70M params.
+
+**Critical discovery — two-tier performance pattern:**
+- Models cluster into HIGH tier (~38.5% avg) and LOW tier (~32% avg) with a 6pt gap and almost nothing between.
+- **Hidden dimension threshold:** models need hidden_size >= 512 OR specific compensating depths (32 or 64+ layers).
+- **32 layers is the "Goldilocks depth"** — best single config: 32L/384d/77M params = 38.50% avg.
+- **Architecture family barely matters at 70M scale** — all 12 architectures within ~2% of each other.
+- Best config: 32 layers, hidden=384, 8 attn heads, 4 KV heads, FF=1024, RoPE, RMSNorm.
+- Diffusion models trade -1.33% accuracy for +3.8x throughput.
+- WSD (Warmup-Stable-Decay) scheduler gives 10x training efficiency (100M tokens vs 1B).
+
+**Sutra relevance:** At our target scale (70M-4B), architecture choice matters less than depth and hidden dim threshold. Weight sharing + recurrence is the way to get depth without proportional param cost.
+
+#### 6.1.3 SmolLM2 (HuggingFace, Feb 2025) — arXiv:2502.02737
+
+**The current SOTA small model family.**
+
+- 135M/360M/1.7B parameter variants.
+- Trained on 2T/4T/11T tokens respectively — massive data investment.
+- Multi-stage training with manual refinement of dataset mixing rates between stages.
+- New datasets: FineMath, Stack-Edu, SmolTalk for math/code/instruction.
+- 1.7B outperforms Qwen2.5-1.5B and Llama3.2-1B.
+- Benchmarks: HellaSwag 68.7%, ARC-Avg 60.5%, PIQA 77.6% (1.7B model).
+
+**Sutra relevance:** Demonstrates data-centric approach. Our data budget (~23B tokens) is 100-500x smaller. Must compensate with architecture + multi-teacher KD.
+
+#### 6.1.4 Qwen3 Family (Alibaba, May 2025) — arXiv:2505.09388
+
+**Dense models: 0.6B, 1.7B, 4B, 8B, 14B, 32B.**
+
+- Qwen3-1.7B/4B/8B/14B/32B-Base matches Qwen2.5-3B/7B/14B/32B/72B-Base respectively — each matches the next-size-up prior gen.
+- 4-stage training: long CoT cold start -> reasoning RL -> thinking mode fusion -> general RL.
+- Fine-tuned Qwen3-4B matches or exceeds GPT-OSS-120B (30x larger teacher) on 7/8 benchmarks.
+- Architecture uses Gated DeltaNet in Qwen3-Next variant (linear attention replacement).
+
+**Sutra relevance:** Primary competition at 4B. Their 4-stage training pipeline is sophisticated. Their Gated DeltaNet exploration signals the field is moving beyond pure attention.
+
+#### 6.1.5 Phi-4-mini (Microsoft, Mar 2025) — arXiv:2503.01743
+
+**Dense decoder-only, 3.8B params, 128K context.**
+
+- 200K vocabulary, GQA, shared embedding.
+- Trained on 5T tokens — heavy synthetic "textbook-quality" data.
+- HellaSwag 83.5%, ARC-C 83.7%.
+- Strategic synthetic data investment rather than raw web crawl.
+
+**Sutra relevance:** Shows synthetic data from teachers can compensate for raw data volume. Aligns with our multi-teacher KD strategy.
+
+#### 6.1.6 Gemma 3 (Google, Mar 2025) — arXiv:2503.19786
+
+**1B/4B/12B/27B variants. Multimodal.**
+
+- 5:1 ratio of local to global attention layers (local context capped at 1024 tokens).
+- Trained WITH distillation from larger models.
+- Gemma3-4B-IT competitive with Gemma2-27B-IT.
+- 1B variant: 2,585 tokens/sec during prefill.
+- QAT models released for consumer GPU deployment.
+
+**Sutra relevance:** Their local/global attention ratio and distillation-from-larger-models approach are directly relevant.
+
+#### 6.1.7 BitNet b1.58 2B4T (Microsoft, Apr 2025) — arXiv:2504.12285
+
+**First natively-trained 1-bit LLM at 2B scale, 4T tokens.**
+
+- Weights quantized to {-1, 0, +1} (1.58 bits), activations INT8.
+- Quantization-Aware Training from scratch — not post-hoc quantization.
+- MMLU 52.1%, ARC-C 68.5%, HellaSwag 84.3%, GSM8K 58.38%, WinoGrande 71.90%.
+- Outperforms Qwen2.5-1.5B INT4 on most benchmarks.
+- ARM CPU speedup 1.37-5.07x, energy reduction 55-70%.
+- x86 CPU speedup 2.37-6.17x, energy reduction 72-82%.
+- Can run 100B model on single CPU at human reading speed (5-7 tok/s).
+- BitNet a4.8 variant: 4-bit activations, only 55% of params active, 3-bit KV cache.
+
+**Sutra relevance:** CRITICAL for Outcome 5 (inference efficiency). Proves you can train natively at extreme quantization and maintain quality. Our architecture should be designed for 1.58-bit or INT4 from day one.
+
+---
+
+### 6.2 Hybrid Architectures (SSM + Attention)
+
+#### 6.2.1 Hymba (NVIDIA, Nov 2024, ICLR 2025) — arXiv:2411.13676
+
+**Hybrid-head architecture specifically designed for small language models.**
+
+- Integrates attention heads for high-resolution recall + SSM heads for efficient context summarization WITHIN the same layer.
+- Learnable "meta tokens" prepended to sequences — act as learned cache initialization, similar to metamemory.
+- 1.5B model outperforms all open-source models of similar size.
+- >50% of attention computation can be replaced by cheaper SSM computation without sacrificing performance.
+- KV cache highly correlated across heads/layers — can be shared (GQA + cross-layer KV sharing).
+- 10x less cache memory than pure transformers on A100.
+
+**Sutra relevance:** HIGHLY relevant. Shows SSM+attention hybrid at the HEAD level (not just layer interleaving) is superior. Meta tokens concept aligns with scratchpad/memory ideas.
+
+#### 6.2.2 Mamba-3 (ICLR 2026) — arXiv:2603.15569
+
+**Latest SSM architecture. Three core improvements:**
+
+1. **Trapezoidal discretization** replaces Euler's method — better continuous signal approximation.
+2. **Complex-valued state updates** — mathematically equivalent to data-dependent RoPE, captures the expressive power of complex dynamics while retaining real-valued recurrence speed.
+3. **MIMO formulation** — multi-input multi-output enables richer state tracking + better hardware parallelism during decoding.
+
+Results at 1.5B:
+- Mamba-3 (SISO): +0.6 pts over Gated DeltaNet (previously best non-transformer).
+- Mamba-3 (MIMO): +1.2 pts additional = total +1.8 pts over GDN, +2.2 pts over Transformers.
+- 57.6% average downstream accuracy.
+- Achieves comparable perplexity to Mamba-2 with HALF the state size.
+
+**Sutra relevance:** The trapezoidal discretization and complex dynamics are derivable from first principles (SSM theory). MIMO is a genuine capability advance. Should be evaluated for our state-update stage.
+
+#### 6.2.3 RWKV-7 "Goose" (Mar 2025) — arXiv:2503.14456
+
+**Linear-time recurrent model with expressive dynamic state evolution.**
+
+- Generalized delta rule with vector-valued gating and in-context learning rates.
+- Four model sizes: 0.19B, 0.4B, 1.5B, 2.9B.
+- 2.9B achieves 3B SoTA on multilingual, matches English SoTA — trained on dramatically fewer tokens than competitors.
+- 1.5B: MMLU 43.3% (up from RWKV-6's 25.1%).
+- 2.9B: 71.5% avg English accuracy with 5.6T tokens — matches Qwen2.5-3B (71.4%) trained on 18T tokens (3.2x data efficiency).
+- Can perform state tracking and recognize all regular languages (exceeds Transformers under standard complexity conjectures).
+- Constant memory usage, constant inference time per token.
+
+**Sutra relevance:** CRITICAL. Demonstrates massive data efficiency through better architecture. 3.2x data efficiency over Qwen at same scale. The dynamic state evolution with in-context learning rates is a mechanism worth deriving from first principles.
+
+#### 6.2.4 Gated DeltaNet (ICLR 2025/2026)
+
+**Linear attention variant combining Mamba2 gating + delta rule.**
+
+- Alpha (decay gate) controls memory decay/reset.
+- Beta (update gate) controls how strongly new inputs modify state.
+- Adopted by Qwen3-Next as its linear attention layer.
+- Consistently surpasses Mamba2 and DeltaNet on language modeling, common-sense reasoning, in-context retrieval, length extrapolation.
+- Hybrid GDN + sliding window attention achieves improved training efficiency + superior task performance.
+
+**Sutra relevance:** The field is converging on gated linear attention as the non-attention workhorse. GDN is the current best. Mamba-3 surpasses it.
+
+#### 6.2.5 Hybrid Architecture Patterns (Field Consensus 2025-2026)
+
+**Empirical finding across Jamba, Granite 4, Zamba, Bamba, Hymba:**
+- Only 7-8% of layers need to be full attention (1 in 8 or 1 in 9 ratio).
+- This small fraction closes the gap to pure transformers and often EXCEEDS pure transformer performance.
+- IBM Granite 4: 9 Mamba blocks per 1 Transformer block.
+- Zamba hypothesis: "one attention layer is all you need."
+- Jamba: 1 transformer layer out of every 8 total.
+
+**Sutra relevance:** If we use a hybrid, the attention fraction should be ~10%, not 50%. Most computation should be linear-time (SSM/convolution/recurrence).
+
+---
+
+### 6.3 Adaptive Compute / Elastic Depth
+
+#### 6.3.1 Mixture of Recursions (MoR) — NeurIPS 2025, arXiv:2507.10524
+
+**First framework unifying parameter sharing + token-level adaptive depth + memory-efficient KV caching.**
+
+- Lightweight routers assign token-specific recursion depths end-to-end.
+- Tested at 135M, 360M, 730M, 1.7B with 3 recursions (1/3 unique params).
+- At equal training compute, MoR with 2 recursions outperforms vanilla transformers: perplexity 2.75 vs 2.78, accuracy 43.1% vs 42.3%, with 50% fewer params.
+- Underperforms vanilla only at 135M (capacity bottleneck) — gap closes at scale.
+- Up to 2.18x inference throughput via continuous depth-wise batching + early exit.
+- KV cache reduction ~50%.
+- Matched baseline accuracy with 25% fewer FLOPs, 19% faster training, 25% less peak memory.
+
+**Sutra relevance:** DIRECTLY relevant to our elastic compute vision. MoR proves token-level adaptive depth works. The capacity bottleneck at 135M is concerning for our small-scale experiments — may need 360M+ to see benefits.
+
+#### 6.3.2 LoopFormer (Feb 2026) — arXiv:2602.11451
+
+**Elastic-depth looped transformer with shortcut-consistency training.**
+
+- Trained on variable-length trajectories for budget-conditioned reasoning.
+- Shortcut-consistency scheme aligns trajectories of different lengths: shorter loops remain informative, longer loops refine.
+- Narrows perplexity gap to non-looped baseline at higher budgets.
+- Outperforms other looped variants, especially at higher compute budgets.
+- Representation dynamics show sustained evolution through mid-depths (vs. early-exit baselines which remain flat).
+- Authors: University of Toronto / Vector Institute.
+
+**Sutra relevance:** The shortcut-consistency training is a key technique — ensures the model produces useful output at ANY depth, not just maximum depth. This is exactly what Sutra needs for elastic compute.
+
+#### 6.3.3 AdaPonderLM (Mar 2026) — arXiv:2603.01914
+
+**Self-supervised recurrent LM with learned token-wise early exiting.**
+
+- Iteration-specific MLP gates with monotonic halting mask.
+- KV reuse mechanism for halted tokens — train-test consistency.
+- Tested on Pythia 70M-410M (pretraining) and up to 2.8B (continued pretraining).
+- Reduces inference compute ~10% while maintaining comparable perplexity and accuracy.
+- Learned gates allocate more computation to high-NLL (hard) tokens.
+- Under iso-FLOPs, learned halting consistently outperforms fixed pruning.
+
+**Sutra relevance:** Validates self-supervised halting (no manual labels needed). The monotonic halting mask is a clean mechanism. 10% compute reduction is modest — MoR achieves more — but AdaPonderLM's gate design is simpler.
+
+#### 6.3.4 TIDE (Mar 2026) — arXiv:2603.21365
+
+**Post-training per-token early exit. Works on ANY pretrained model.**
+
+- Tiny learned routers at periodic checkpoint layers.
+- No model retraining required.
+- Calibration on 2,000 WikiText samples takes <3 minutes, produces ~4MB router checkpoint.
+- DeepSeek R1 8B: 98-99% of tokens exit early during autoregressive decoding, 7.2% prefill latency reduction, 6.6% throughput improvement.
+- Qwen3 8B: 8.1% throughput improvement at batch 8.
+
+**Sutra relevance:** Can be applied to any model we build as a free post-training optimization. But modest gains compared to training-time approaches.
+
+#### 6.3.5 PonderLM / PonderLM-2 (May-Sep 2025) — arXiv:2505.20674, 2509.23184
+
+**Pretraining models to "ponder" in continuous latent space.**
+
+PonderLM: Instead of generating a real token, model yields a weighted sum of all token embeddings according to predicted distribution, fed back as input for another forward pass. Self-supervised, no human annotations. Demonstrated on GPT-2, Pythia, LLaMA.
+
+PonderLM-2 (CRITICAL RESULT):
+- Generates an intermediate latent thought (last hidden state) before predicting the next token.
+- **PonderLM-2-Pythia-1.4B significantly surpasses vanilla Pythia-2.8B** on both LM and downstream tasks.
+- PonderLM-2-Pythia-1.26B matches Pythia-2.8B with 55% fewer parameters.
+- PonderLM-2-Pythia-1.4B reaches Pythia-2.8B's final performance with 62% less training data.
+- At identical inference cost, a model with 1 extra latent thought per token outperforms a standard model with DOUBLE the parameters.
+
+**Sutra relevance:** EXTREMELY relevant. Proves latent pondering provides massive parameter efficiency (2x effective capacity). This is exactly the kind of "Intelligence = Geometry" result we're looking for. A 1.4B model beating a 2.8B model through better computation structure, not more params.
+
+#### 6.3.6 Huginn-3.5B (Feb 2025) — arXiv:2502.05171
+
+**Depth-recurrent language model with scalable latent computation.**
+
+- Physical architecture: 2 Prelude + 4 Recurrent + 2 Coda blocks (only 8 unique blocks).
+- At 132 unrolls, 8-layer physical model behaves like 132-layer virtual model.
+- Performance on math/logic improves consistently with more recurrent steps (4 to 32+).
+- Can match computation equivalent to 50B parameters at sufficient unrolling.
+- Latent reasoning: model "thinks" internally through recurrent refinement before emitting prediction.
+- Caveat: improvements from recurrence are modest vs explicit Chain-of-Thought; lags behind best CoT-augmented models on GSM8K.
+
+**Sutra relevance:** Validates recurrent depth with weight sharing at 3.5B scale. The Prelude/Recurrent/Coda pattern maps to our stage decomposition. Caveat about CoT gap is important — latent reasoning may have limits.
+
+#### 6.3.7 Relaxed Recursive Transformers (Google DeepMind, ICLR 2025) — arXiv:2410.20672
+
+**Converting existing LLMs into smaller recursive transformers with layer-wise LoRA.**
+
+- Each looped layer gets multiple LoRA modules (one per iteration).
+- Recursive Gemma 1B outperforms TinyLlama 1.1B and Pythia 1B — even recovers most performance of original Gemma 2B (no sharing).
+- Achieves 25-55% parameter cost reduction for comparable performance.
+- Continuous Depth-wise Batching: new inference paradigm for recursive transformers + early exit, potential 2-3x throughput gains.
+
+**Sutra relevance:** LoRA per recursion iteration is an elegant way to add per-loop specialization without abandoning weight sharing. The cost is minimal (low-rank deltas). This could replace or complement our stage-specific parameters.
+
+#### 6.3.8 Inner Thinking Transformer (ITT) — ACL 2025, arXiv:2502.13842
+
+**Each transformer layer = one thinking step. Dynamic deepening at token level.**
+
+- Adaptive Token Routing selects and weights important tokens for inner thinking.
+- Thinking Step Encoding + Residual Thinking Connection.
+- ITT layer iterates thinking multiple times, accumulating results.
+- Tested at 162M (ITT-4) and 230M/460M configurations.
+
+**Sutra relevance:** Similar concept to our recurrent passes but with explicit per-token routing. The accumulation-based approach (rather than replacement) is worth considering.
+
+#### 6.3.9 Latent Thinking Tokens (Multi-paper trend, 2025-2026)
+
+**Pause tokens (arXiv:2310.02226):** Training+inference with learnable delay tokens. 1B model: +18% SQuAD, +8% CommonSenseQA.
+
+**Coconut / Continuous Thought (arXiv:2412.06769):** Feed last hidden state back as next input instead of decoded token. Enables breadth-first search in latent space. Outperforms CoT on logical reasoning requiring search.
+
+**Token Assorted (arXiv:2502.03275):** Mix latent and text tokens.
+
+**Adaptive Latent CoT (arXiv:2602.08220):** Variable-length latent CoT trajectories before each token. Longer for hard tokens, shorter for easy. Emerges from one-stage pretraining.
+
+**Latent Lookahead (Mar 2026, arXiv:2603.20219):** Multi-step lookahead in latent space before committing to next token. Substantially outperforms AR and non-AR baselines on planning tasks (maze, Sudoku, ProsQA).
+
+**Sutra relevance:** The field is rapidly converging on latent computation as a key efficiency mechanism. Multiple independent lines of evidence show that thinking in continuous space before committing to discrete tokens provides substantial gains. This validates our recurrent pass design.
+
+---
+
+### 6.4 Multi-Source / Multi-Teacher Learning (Updated)
+
+#### 6.4.1 Knowledge Purification (Feb 2026) — arXiv:2602.01064
+
+**Addresses the critical problem: conflicting rationales among multiple teachers.**
+
+- Distillation performance DECLINES as number of teachers increases — knowledge conflict is real.
+- Solution: consolidate multiple teacher rationales into a single purified rationale before distillation.
+- Five methods: aggregation, routing, RL-based selection.
+- LLM routing methods best on out-of-domain datasets.
+- Significantly enhances KD performance across student models and datasets.
+
+**Sutra relevance:** CRITICAL finding. Confirms our concern about multi-teacher conflicts. We need purification/routing, not naive averaging.
+
+#### 6.4.2 SAMerging (Dec 2025) — arXiv:2512.21288
+
+**Model merging as multi-teacher KD on scarce unlabeled data.**
+
+- Sharpness-Aware Minimization (SAM) to find flat minima.
+- +4.5% on TA-8, +11.7% on TALL-20 over AdaMerging.
+- Works with as few as 16 examples per task.
+- 10x fewer calibration data than prior methods.
+
+**Sutra relevance:** SAM for flat minima in multi-teacher settings is a transferable technique.
+
+#### 6.4.3 Pre-training Distillation Design Space (ACL 2025) — arXiv:2410.16215
+
+**Systematic exploration: logits processing, loss selection, scaling law, offline vs online.**
+
+- Teacher: GLM-4-9B, Student: 1.9B.
+- Key finding: **larger students benefit MORE from pre-training distillation.**
+- Counter-intuitive: **larger teacher does NOT guarantee better results.**
+- Validates distillation during pretraining (not just fine-tuning).
+
+**Sutra relevance:** Validates pre-training distillation. The "larger student benefits more" finding suggests we should push our model toward 1B+ to maximize KD gains. Teacher selection matters more than teacher size.
+
+#### 6.4.4 Complementary Knowledge Transfer (arXiv:2310.17653)
+
+**Arbitrary pretrained model pairs have complementary knowledge — even across families.**
+
+- Confidence-based, hyperparameter-free data partitioning: models autonomously adopt teacher/student roles.
+- Works even when model families or performances differ.
+- Motivated by continual learning lens.
+
+**Sutra relevance:** We can extract useful signal even from small, weak teachers. Architecture diversity matters more than teacher quality.
+
+#### 6.4.5 Universal Sparse Autoencoders (ICML 2025) — arXiv:2502.03714
+
+**Single SAE that ingests activations from ANY model and decodes them for ANY other model.**
+
+- Jointly learns universal concept space across multiple models.
+- Discovers semantically coherent universal concepts (colors, textures, parts, objects).
+- Enables coordinated activation maximization across models.
+- Cross-model, cross-task, cross-dataset.
+
+**Sutra relevance:** A potential mechanism for cross-architecture distillation. Instead of aligning teacher-student representations directly, map both to a universal concept space.
+
+#### 6.4.6 Model Stitching / Feature Transfer (2025-2026) — arXiv:2506.06609
+
+**Affine mappings between residual streams effectively transfer features between models.**
+
+- Small and large models learn highly similar representation spaces.
+- Simple linear transformations sufficient for cross-model feature transfer.
+- Validates that representation-level distillation (not just logit-level) is viable.
+
+**Sutra relevance:** If representations are similar across models, our CKA-based distillation approach is well-motivated.
+
+#### 6.4.7 MiniPLM (ICLR 2025) — arXiv:2410.17215
+
+(Covered in Section 5 but updated numbers:)
+- **2.2x pre-training acceleration.**
+- Offline Difference Sampling: adjusts training data distribution based on teacher-reference discrepancy.
+- Supports KD across model families (flexibility via corpus-level operation).
+- Teacher: Qwen 1.8B -> Students: 200M, 500M, 1.2B.
+- Benefit extends to larger training scales (scaling curve extrapolation).
+
+---
+
+### 6.5 Data Efficiency
+
+#### 6.5.1 Synthetic Continued Pretraining (ICLR 2025 Oral)
+
+**EntiGraph: entity-centric augmentation converting small corpus into large synthetic corpus.**
+
+- Breaks text into entities, uses LM to describe inter-entity relations.
+- Iteratively "fills in" the knowledge graph underlying the corpus.
+- Accuracy scaling is log-linear in synthetic token count.
+- Significantly outperforms continued pretraining on source documents or paraphrases.
+
+**Sutra relevance:** Can amplify our 23B token corpus by generating synthetic entity-relation descriptions. Potentially 5-10x data amplification.
+
+#### 6.5.2 DoReMi (NeurIPS 2023) + Online Data Mixing (2024-2025)
+
+**Domain Reweighting with Minimax Optimization.**
+
+- Small 280M proxy model sets domain weights for 8B model training.
+- +6.5% average few-shot accuracy over default Pile domain weights.
+- Reaches baseline accuracy with 2.6x fewer training steps.
+- Online Data Mixing (ODM) further improves: 4.8% lower perplexity vs Pile Weights.
+
+**Sutra relevance:** Domain reweighting is free and proven. Should be standard practice for our training. Even our small proxy model can set weights for larger runs.
+
+#### 6.5.3 MTP Curriculum (ACL 2025) — arXiv:2505.22757
+
+**Curriculum from NTP to MTP for small models.**
+
+- Gradually increases prediction complexity during pretraining.
+- Enables smaller LMs to better leverage MTP objective.
+- Improves downstream NTP performance and generation quality.
+- Addresses Meta's finding that MTP hurts small models — the curriculum may solve this.
+
+**Sutra relevance:** If we use MTP, curriculum approach may overcome the small-model capacity bottleneck.
+
+#### 6.5.4 Data Quality > Quantity (Field Consensus)
+
+- Phi-3/4: GPT-4 judges content quality, keeps only score >= 7 from 10T tokens -> 1.5T filtered.
+- SmolLM2: manual refinement of mixing rates between training stages.
+- Pangu Pro MoE: 3-phase (general 9.6T -> reasoning 3T synthetic CoT -> annealing 0.4T curriculum).
+- A 13-year-old human learns from <100M tokens; LLMs use 15T. The efficiency gap is enormous.
+
+**Sutra relevance:** Our 23B tokens, if high-quality and well-mixed, could be sufficient with the right architecture + KD.
+
+---
+
+### 6.6 Recurrent Depth / Weight Sharing (Updated)
+
+#### 6.6.1 TokenFormer (ICLR 2025 Spotlight) — arXiv:2410.23168
+
+**Treats model parameters as tokens — fully attention-based scaling.**
+
+- Replaces ALL linear projections with token-parameter attention (input tokens = queries, params = keys/values).
+- Progressive scaling: 124M -> 354M -> 757M -> 1.4B using only 30B additional tokens (1/10th compute of from-scratch).
+- 1.4B: perplexity 11.77 vs Transformer's 11.63, but at 1/3rd training cost.
+
+**Sutra relevance:** Progressive scaling is an exciting idea — train small, scale up cheaply. But the mechanism (attention over params) may be too expensive at small scale.
+
+#### 6.6.2 Field Consensus on Recursive Transformers (2025-2026)
+
+- Weight sharing via recurrence reaches comparable/higher performance at 25-55% parameter cost.
+- Universal Transformer pattern validated across multiple papers.
+- Spiral-like refinement within loops, larger state changes between blocks.
+- Huginn: 8 physical layers -> 132 virtual layers at 3.5B scale.
+- MoR: router-based token-level depth selection.
+- LoopFormer: budget-conditioned with shortcut consistency.
+- Relaxed Recursive: LoRA per iteration for specialization.
+
+**Sutra relevance:** Strong consensus that recurrent depth + weight sharing is the right approach for parameter-efficient models. Our design should use this as the backbone.
+
+---
+
+### 6.7 Edge Deployment / Quantization-Native
+
+#### 6.7.1 Quartet: Native FP4 Training (NeurIPS 2025) — arXiv:2505.14669
+
+**End-to-end FP4 training that is near-lossless in the large-data regime.**
+
+- All major computations (linear layers) in FP4.
+- New low-precision scaling law quantifying performance trade-offs across bit-widths.
+- Almost 2x speedup over FP8 on NVIDIA Blackwell RTX 5090.
+- Attains lowest loss across token-to-parameter ratios.
+- Improves upon LUQ-INT4 by 10% relative loss.
+- Requires ~15% fewer params and 5x less data to reach same loss.
+
+**Sutra relevance:** DIRECTLY relevant — we HAVE an RTX 5090. FP4 native training could halve our training time. Architecture must be compatible with FP4 from the start.
+
+#### 6.7.2 BitNet Design Principles (2024-2025)
+
+Key takeaways for quantization-native architecture:
+- Train natively at target precision — not post-hoc quantization.
+- Ternary weights {-1, 0, +1} eliminate FP multiply entirely.
+- Activations can be quantized more aggressively (INT4/FP4) with proper training.
+- RMS normalization before quantization is critical.
+- Embedding and output head can also be quantized with minimal loss.
+
+---
+
+### 6.8 Speculative Decoding (Inference Speed)
+
+#### 6.8.1 EAGLE-3 (2025-2026)
+
+- Fuses hidden states from multiple intermediate layers (not just final).
+- 2-6x speedup depending on model size.
+- No separate draft model needed — uses target model's own representations.
+
+#### 6.8.2 LayerSkip (Meta, ACL 2024, integrated 2025)
+
+- Self-speculative decoding via early exit.
+- Up to 2.16x speedup on summarization.
+- Training recipe: layer dropout (low for early, high for later layers) + early exit loss.
+- Integrated into HF transformers (Nov 2024), PyTorch torchtune (Dec 2024), HF trl (Mar 2025).
+
+#### 6.8.3 Field Consensus (2025-2026)
+
+- Speculative decoding is now production standard (vLLM, SGLang, TensorRT-LLM).
+- Self-speculative (early exit) is preferred for small models (no separate draft model).
+- Mirror-SD (2026): up to 5.8x speedup via branch-complete rollouts from early-exit signals.
+
+**Sutra relevance:** Our elastic compute design (variable recurrent depth) is a NATURAL fit for self-speculative decoding. Early exits at fewer passes = draft tokens, full passes = verification. This should be designed in from the start, not bolted on.
+
+---
+
+### 6.9 Updated Competitive Landscape (March 2026)
+
+| Model | Params | Tokens | Key Results | Data Eff. |
+|-------|--------|--------|-------------|-----------|
+| SmolLM2-135M | 135M | 2T | HS 42.1%, PIQA 68.4% | Low |
+| SmolLM2-1.7B | 1.7B | 11T | HS 68.7%, ARC 60.5% | Low |
+| MobileLLM-350M | 350M | ~1T | +4.3% over prior SOTA | Medium |
+| BitNet 2B4T | 2B | 4T | HS 84.3%, MMLU 52.1% | Medium |
+| Qwen3-0.6B | 0.6B | ~8T | Matches Qwen2.5-1.5B | Medium |
+| Qwen3-4B | 4B | ~18T | Matches Qwen2.5-7B | Medium |
+| Phi-4-mini | 3.8B | 5T | HS 83.5%, ARC 83.7% | Med-High |
+| Gemma-3-1B | 1B | 2T | Distilled from larger | Med-High |
+| RWKV-7 2.9B | 2.9B | 5.6T | 71.5% avg (matches Qwen2.5-3B@18T) | **HIGH** |
+| Huginn-3.5B | 3.5B | ? | Scales to 50B-equiv compute | High |
+| PonderLM-2 1.4B | 1.4B | 300B | Beats Pythia-2.8B | **VERY HIGH** |
+
+**Key insight: The data efficiency leaders are all architectural innovations (RWKV-7, PonderLM-2, Huginn) not just data curation approaches (SmolLM2, Phi-4).** This validates the Sutra thesis: better architecture = better data efficiency.
+
+---
+
+### 6.10 Synthesis: Implications for Sutra Architecture Design
+
+**Architecture decisions supported by March 2026 evidence:**
+
+1. **Recurrent depth with weight sharing is validated.** MoR, LoopFormer, Huginn, Relaxed Recursive, PonderLM-2 all prove this works. PonderLM-2's 2x effective capacity from latent pondering is the strongest result.
+
+2. **Hybrid SSM+Attention with ~10% attention fraction.** Hymba, Jamba, Granite, Zamba, Bamba all converge on this. Mamba-3 is the latest SSM; Gated DeltaNet is the latest linear attention.
+
+3. **Token-level adaptive depth is ready.** MoR provides the clearest framework. LoopFormer's shortcut-consistency training is key for quality at all depths.
+
+4. **Multi-teacher KD needs purification.** Knowledge Purification paper confirms naive multi-teacher hurts. Need routing/selection mechanism.
+
+5. **Quantization-native from day one.** BitNet and Quartet prove native low-bit training works. Design for FP4/INT4 from the start. Quartet gives 2x speedup on our RTX 5090.
+
+6. **Data efficiency through latent computation.** PonderLM-2 (2x params effective), RWKV-7 (3.2x data efficiency), curriculum MTP all show architecture can substitute for data.
+
+7. **Speculative decoding is free with elastic depth.** Self-speculative decoding from early exits is production-ready and integrates naturally with variable-depth recurrence.
+
+8. **32+ layers optimal even at 70-100M scale.** Deep-and-thin with weight sharing is the right structural prior.
+
+**Open questions for T+L session:**
+1. Mamba-3 vs RWKV-7 vs Gated DeltaNet for the non-attention component?
+2. PonderLM-2 style latent pondering vs MoR router-based adaptive depth?
+3. Hymba-style hybrid heads (SSM+attention within layers) vs layer-interleaving?
+4. How to integrate multi-teacher KD with curriculum MTP?
+5. Quartet FP4 training on RTX 5090 — implementation readiness?

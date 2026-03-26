@@ -86,6 +86,31 @@ class RMSNorm(nn.Module):
         return (x.float() * rms).to(x.dtype) * self.weight
 
 
+class DyT(nn.Module):
+    """Dynamic Tanh normalization (arXiv:2503.10622).
+
+    Drop-in replacement for RMSNorm/LayerNorm. Element-wise, no reduction ops.
+    Better quantization behavior: tanh bounds activations, preventing outliers.
+
+    DyT(x) = gamma * tanh(alpha * x) + beta
+    """
+    def __init__(self, dim, init_alpha=0.5):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.full((dim,), init_alpha))
+        self.gamma = nn.Parameter(torch.ones(dim))
+        self.beta = nn.Parameter(torch.zeros(dim))
+
+    def forward(self, x):
+        return self.gamma * torch.tanh(self.alpha * x.float()).to(x.dtype) + self.beta
+
+
+def make_norm(dim, norm_type="rmsnorm"):
+    """Factory for normalization layers."""
+    if norm_type == "dyt":
+        return DyT(dim)
+    return RMSNorm(dim)
+
+
 class SwiGLU(nn.Module):
     def __init__(self, dim, ff_dim):
         super().__init__()
@@ -120,11 +145,11 @@ class CausalAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, n_heads, ff_dim):
+    def __init__(self, dim, n_heads, ff_dim, norm_type="rmsnorm"):
         super().__init__()
-        self.attn_norm = RMSNorm(dim)
+        self.attn_norm = make_norm(dim, norm_type)
         self.attn = CausalAttention(dim, n_heads)
-        self.ffn_norm = RMSNorm(dim)
+        self.ffn_norm = make_norm(dim, norm_type)
         self.ffn = SwiGLU(dim, ff_dim)
 
     def forward(self, x, cos, sin):
@@ -323,7 +348,7 @@ class DenseTransformer(nn.Module):
     def __init__(self, vocab_size=VOCAB_SIZE, dim=DIM, n_layers=N_LAYERS,
                  n_heads=N_HEADS, ff_dim=FF_DIM, max_seq_len=MAX_SEQ_LEN,
                  exit_layers=None, use_mtp=False, memory_layers=None,
-                 mem_buckets=1_000_000, mem_dim=48):
+                 mem_buckets=1_000_000, mem_dim=48, norm_type="rmsnorm"):
         """
         Args:
             exit_layers: list of 0-indexed layer numbers for early exits.
@@ -335,25 +360,28 @@ class DenseTransformer(nn.Module):
                 If None, no memory fusion.
             mem_buckets: number of hash buckets per n-gram table.
             mem_dim: embedding dimension per n-gram table entry.
+            norm_type: "rmsnorm" or "dyt" (Dynamic Tanh).
         """
         super().__init__()
         self.dim = dim
         self.n_layers = n_layers
+        self.norm_type = norm_type
         self.exit_layers = sorted(exit_layers) if exit_layers else []
         self.use_mtp = use_mtp
         self.memory_layers = sorted(memory_layers) if memory_layers else []
         self.emb = nn.Embedding(vocab_size, dim)
         self.layers = nn.ModuleList([
-            TransformerBlock(dim, n_heads, ff_dim) for _ in range(n_layers)
+            TransformerBlock(dim, n_heads, ff_dim, norm_type=norm_type)
+            for _ in range(n_layers)
         ])
-        self.norm = RMSNorm(dim)
+        self.norm = make_norm(dim, norm_type)
 
         # Early-exit norms and gain heads (one per exit, NOT for final layer)
         self.exit_norms = nn.ModuleDict()
         self.gain_heads = nn.ModuleDict()
         for i in self.exit_layers:
             if i < n_layers - 1:  # final layer uses self.norm
-                self.exit_norms[str(i)] = RMSNorm(dim)
+                self.exit_norms[str(i)] = make_norm(dim, norm_type)
                 self.gain_heads[str(i)] = GainHead(dim)
 
         # MTP module (training-only, discarded at inference)
@@ -524,6 +552,97 @@ def compute_edsr_loss(out, tgt, exit_weights=EXIT_WEIGHTS, gain_weight=GAIN_WEIG
             total = total + gain_weight * gain_loss / n_gain
 
     return total, metrics
+
+
+def measure_activation_kurtosis(model, dataset, device, n_batches=4, seq_len=512):
+    """Measure activation kurtosis across model layers.
+
+    High kurtosis = outlier-heavy activations = bad for quantization.
+    DyT should have much lower kurtosis than RMSNorm.
+    """
+    model.eval()
+    kurtosis_per_layer = {}
+    max_acts = {}
+
+    with torch.no_grad():
+        all_acts = {}
+        for _ in range(n_batches):
+            x, _ = dataset.sample_batch(4, seq_len, device=device, split='test')
+            inp = x[:, :-1]
+            h = model.emb(inp) * math.sqrt(model.dim)
+            cos, sin = model.rope_cos, model.rope_sin
+            for i, layer in enumerate(model.layers):
+                h = layer(h, cos, sin)
+                # Sample activations
+                flat = h.float().reshape(-1)
+                if i not in all_acts:
+                    all_acts[i] = []
+                # Take a subsample to avoid OOM
+                idx = torch.randperm(flat.numel(), device=flat.device)[:10000]
+                all_acts[i].append(flat[idx].cpu())
+
+        for i, acts_list in all_acts.items():
+            acts = torch.cat(acts_list)
+            mean = acts.mean()
+            std = acts.std() + 1e-8
+            kurt = ((acts - mean) / std).pow(4).mean().item() - 3.0  # excess kurtosis
+            kurtosis_per_layer[f"layer_{i}"] = round(kurt, 2)
+            max_acts[f"layer_{i}"] = round(acts.abs().max().item(), 2)
+
+    model.train()
+    return {"kurtosis": kurtosis_per_layer, "max_activation": max_acts}
+
+
+def compute_top_loss(logits, target_tokens, K=4):
+    """Token Order Prediction (TOP) auxiliary loss (arXiv:2508.19228).
+
+    Instead of predicting exact future tokens, predict their ORDER by proximity.
+    Uses ListNet-style KL divergence as a learning-to-rank loss.
+
+    Args:
+        logits: (B, T, V) model output logits (from final layer)
+        target_tokens: (B, T) target token IDs (shifted by 1 from input)
+        K: horizon - how many future tokens to consider
+    Returns:
+        scalar TOP loss
+    """
+    B, T, V = logits.shape
+    if T <= K:
+        return torch.tensor(0.0, device=logits.device)
+
+    # Build ranking target: for each position t, score each vocab token v
+    # by how often and how soon it appears in the next K positions
+    # s_t(v) = sum_{j=1..K} 1[y_{t+j} = v] * (K - j + 1)
+    device = logits.device
+
+    # Only compute for positions where we have K future tokens
+    valid_T = T - K
+    if valid_T <= 0:
+        return torch.tensor(0.0, device=device)
+
+    # Gather future tokens: (B, valid_T, K)
+    future_idx = torch.arange(K, device=device).unsqueeze(0).unsqueeze(0)  # (1, 1, K)
+    pos_idx = torch.arange(valid_T, device=device).unsqueeze(0).unsqueeze(-1)  # (1, valid_T, 1)
+    gather_idx = (pos_idx + future_idx + 1).expand(B, -1, -1)  # +1 because targets are already shifted
+    # Clamp to avoid out-of-bounds
+    gather_idx = gather_idx.clamp(max=T - 1)
+    future_tokens = target_tokens.unsqueeze(1).expand(-1, valid_T, -1).gather(2, gather_idx)  # (B, valid_T, K)
+
+    # Compute proximity weights: K, K-1, ..., 1
+    weights = torch.arange(K, 0, -1, device=device, dtype=logits.dtype)  # (K,)
+
+    # Build sparse target scores using scatter_add
+    target_scores = torch.zeros(B, valid_T, V, device=device, dtype=logits.dtype)
+    weights_expanded = weights.unsqueeze(0).unsqueeze(0).expand(B, valid_T, -1)
+    target_scores.scatter_add_(2, future_tokens.long(), weights_expanded)
+
+    # Convert to probability distributions
+    p_target = F.softmax(target_scores, dim=-1)  # (B, valid_T, V)
+    q_student = F.log_softmax(logits[:, :valid_T].float(), dim=-1)  # (B, valid_T, V)
+
+    # KL divergence: sum over vocab, mean over positions and batch
+    loss = F.kl_div(q_student, p_target, reduction='batchmean')
+    return loss
 
 
 def compute_mtp_loss(model, hidden, input_tokens, target_tokens):
@@ -2196,6 +2315,233 @@ def probe_memory(parent_ckpt, steps=1000, run_name="probe_memory",
     print(f"\nMemory probe complete. Results: results/{run_name}_metrics.json")
 
 
+def run_ab_probe(config_path):
+    """Run a clean A/B probe from a JSON config file.
+
+    Config format:
+    {
+        "name": "dyt_vs_rmsnorm",
+        "variants": [
+            {"tag": "rmsnorm", "norm_type": "rmsnorm"},
+            {"tag": "dyt", "norm_type": "dyt"}
+        ],
+        "dim": 512, "n_layers": 10, "n_heads": 8, "ff_dim": 1536,
+        "steps": 5000, "eval_every": 500, "batch_size": 16, "grad_accum": 2,
+        "lr": 3e-4, "min_lr": 1e-5, "warmup": 200,
+        "use_top": false, "top_weight": 0.05, "top_K": 4
+    }
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    probe_name = cfg["name"]
+    dim = cfg.get("dim", 512)
+    n_layers = cfg.get("n_layers", 10)
+    n_heads = cfg.get("n_heads", 8)
+    ff_dim = cfg.get("ff_dim", 1536)
+    steps = cfg.get("steps", 5000)
+    eval_every = cfg.get("eval_every", 500)
+    batch_size = cfg.get("batch_size", 16)
+    grad_accum = cfg.get("grad_accum", 2)
+    lr = cfg.get("lr", 3e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 200)
+    use_top = cfg.get("use_top", False)
+    top_weight = cfg.get("top_weight", 0.05)
+    top_K = cfg.get("top_K", 4)
+    seq_len = cfg.get("seq_len", 512)
+    exit_layers = cfg.get("exit_layers", None)
+
+    shard_dir = REPO / "data" / "shards_16k"
+    dataset = ShardedDataset(shard_dir=str(shard_dir))
+
+    # Build or find eval cache
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+        print(f"  Saved {len(windows)} windows to {cache_path}")
+
+    all_results = {}
+    for variant in cfg["variants"]:
+        tag = variant["tag"]
+        norm_type = variant.get("norm_type", "rmsnorm")
+        v_use_top = variant.get("use_top", use_top)
+        v_top_weight = variant.get("top_weight", top_weight)
+        v_exit_layers = variant.get("exit_layers", exit_layers)
+
+        run_name = f"probe_{probe_name}_{tag}"
+        print(f"\n{'='*60}")
+        print(f"PROBE: {run_name}")
+        print(f"  norm={norm_type}, top={'ON' if v_use_top else 'OFF'}")
+        if v_exit_layers:
+            print(f"  exits={v_exit_layers}")
+        print(f"  {n_layers}L/d={dim}/{n_heads}h/ff={ff_dim}")
+        print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
+        print(f"{'='*60}")
+
+        model = DenseTransformer(
+            vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+            n_heads=n_heads, ff_dim=ff_dim, exit_layers=v_exit_layers,
+            norm_type=norm_type,
+        ).to(DEVICE)
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"  Params: {n_params:,}")
+
+        opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95),
+                                weight_decay=0.1)
+        scaler = torch.amp.GradScaler("cuda")
+
+        log_file = REPO / "results" / f"{run_name}_log.txt"
+        metrics_log = []
+        running_loss = 0.0
+        running_top = 0.0
+        model.train()
+
+        for step in range(1, steps + 1):
+            current_lr = get_lr_wsd(step, warmup, steps, lr, min_lr)
+            for pg in opt.param_groups:
+                pg["lr"] = current_lr
+
+            # Micro-batch accumulation
+            opt.zero_grad()
+            for _ in range(grad_accum):
+                x, y = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+                with torch.amp.autocast("cuda", dtype=DTYPE):
+                    if exit_layers:
+                        out = model(x, return_exits=True)
+                        logits = out['logits']
+                        loss, _ = compute_edsr_loss(out, y)
+                    else:
+                        logits = model(x)
+                        V = logits.size(-1)
+                        Tc = min(logits.size(1), y.size(1))
+                        loss = F.cross_entropy(
+                            logits[:, :Tc].reshape(-1, V), y[:, :Tc].reshape(-1))
+
+                    # TOP auxiliary loss
+                    top_loss = torch.tensor(0.0, device=DEVICE)
+                    if v_use_top and step > warmup:
+                        top_loss = compute_top_loss(logits, y, K=top_K)
+                        loss = loss + v_top_weight * top_loss
+
+                    loss_scaled = loss / grad_accum
+                scaler.scale(loss_scaled).backward()
+                running_loss += loss.item() / grad_accum
+                running_top += top_loss.item() / grad_accum
+
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            scaler.step(opt)
+            scaler.update()
+
+            if step % LOG_EVERY == 0:
+                avg_loss = running_loss / LOG_EVERY
+                avg_top = running_top / LOG_EVERY
+                bpt = avg_loss / math.log(2)
+                msg = f"  Step {step:5d}: CE={avg_loss:.4f} BPT={bpt:.4f}"
+                if v_use_top:
+                    msg += f" TOP={avg_top:.4f}"
+                msg += f" LR={current_lr:.2e}"
+                print(msg, flush=True)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+                running_loss = 0.0
+                running_top = 0.0
+
+            if step % eval_every == 0 or step == steps:
+                model.eval()
+                # Deterministic eval
+                det = deterministic_eval_dense(model, cache_path)
+                # Kurtosis measurement
+                kurt = measure_activation_kurtosis(model, dataset, DEVICE)
+                entry = {
+                    "step": step, "tag": tag, "norm_type": norm_type,
+                    "bpt": det["bpt"],
+                    "avg_kurtosis": round(sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+                    "max_kurtosis": round(max(kurt["kurtosis"].values()), 2),
+                    "max_activation": round(max(kurt["max_activation"].values()), 2),
+                }
+                if exit_layers:
+                    for k, v in det.items():
+                        if k.startswith("bpt_exit"):
+                            entry[k] = v
+                metrics_log.append(entry)
+                msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
+                       f"kurtosis_avg={entry['avg_kurtosis']:.1f} "
+                       f"kurtosis_max={entry['max_kurtosis']:.1f} "
+                       f"max_act={entry['max_activation']:.1f}")
+                print(msg, flush=True)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+                model.train()
+                torch.cuda.empty_cache()
+
+        # Final generation quality check
+        model.eval()
+        from tokenizers import Tokenizer
+        tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+        if tok_path.exists():
+            tokenizer = Tokenizer.from_file(str(tok_path))
+            prompts = ["The meaning of life is", "In a distant future",
+                       "def fibonacci(n):\n"]
+            generations = []
+            for prompt_text in prompts:
+                input_ids = tokenizer.encode(prompt_text).ids
+                inp = torch.tensor([input_ids], device=DEVICE)
+                with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+                    for _ in range(64):
+                        logits = model(inp)
+                        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                        inp = torch.cat([inp, next_token], dim=1)
+                        if inp.size(1) > seq_len:
+                            break
+                gen_text = tokenizer.decode(inp[0].tolist())
+                generations.append({"prompt": prompt_text, "generation": gen_text})
+        else:
+            generations = []
+        model.train()
+
+        all_results[tag] = {
+            "params": n_params,
+            "norm_type": norm_type,
+            "use_top": v_use_top,
+            "metrics": metrics_log,
+            "generations": generations,
+        }
+
+        # Free GPU memory before next variant
+        del model, opt, scaler
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    # Save combined results
+    output = {
+        "probe": probe_name,
+        "config": cfg,
+        "results": all_results,
+    }
+    out_path = REPO / "results" / f"probe_{probe_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"\n{'='*60}")
+    print(f"PROBE COMPLETE: {probe_name}")
+    print(f"Results: {out_path}")
+
+    # Summary comparison
+    for tag, res in all_results.items():
+        final = res["metrics"][-1] if res["metrics"] else {}
+        print(f"  {tag}: BPT={final.get('bpt', '?')}, "
+              f"kurtosis_avg={final.get('avg_kurtosis', '?')}, "
+              f"max_act={final.get('max_activation', '?')}")
+    print(f"{'='*60}")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Dense Transformer (F4 baseline / EDSR-98M)")
@@ -2234,12 +2580,18 @@ if __name__ == "__main__":
                         help="Shard importance weights JSON for weighted sampling")
     parser.add_argument("--init-from", type=str, default=None,
                         help="Initialize model+optimizer from another run's checkpoint (for A/B tests)")
+    parser.add_argument("--ab-probe", type=str, default=None,
+                        help="Run A/B probe from JSON config file")
     args = parser.parse_args()
 
     if args.ff_dim is not None:
         FF_DIM = args.ff_dim
     if args.max_steps is not None:
         MAX_TRAIN_STEPS = args.max_steps
+
+    if args.ab_probe:
+        run_ab_probe(args.ab_probe)
+        sys.exit(0)
 
     if args.mtp_probe:
         probe_mtp(args.mtp_probe, steps=args.mtp_steps,
