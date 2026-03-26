@@ -322,11 +322,18 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
 - **REVISED structured disruption theory:** α=1.0 rep KD does push the student into a different basin during stable-LR training. But this basin is NOT "flatter" — it's just DIFFERENT. During WSD decay consolidation, the control finds an equally good or better local minimum. The kurtosis spike (3.7→5.6) during decay suggests rep-only's basin may actually be LESS stable under LR changes. **The advantage was trajectory, not topology.**
 
 **Arm 3 (logit_only, α=1.0): THE CRITICAL TEST.**
-- Step 500: predict BPT ≤ control (5.02 or below). Logit KD is prediction-aligned, should NOT show penalty.
-- Step 1000-2000: predict gap HOLDS or WIDENS (unlike rep KD which narrowed).
-- Step 3000: predict BPT ≤ 4.47 (>0.02 better than control's 4.50) = "promising" per Codex threshold.
-- Kurtosis: predict < 2x control (< 10.0) — logit KD operates on outputs, not activations.
-- **If step 500 BPT > control → T=2.0 or K=64 settings are problematic. Do NOT conclude logit KD fails.**
+- ~~Step 500: predict BPT ≤ control. Logit KD is prediction-aligned, should NOT show penalty.~~
+- **Step 500: BPT=5.2783. +0.257 WORSE than control (5.021). PREDICTION WRONG.**
+  - Penalty is 6.8x worse than rep-only's +0.038. This is not a subtle effect.
+  - KD loss at 1.79 — comparable magnitude to CE (3.72). α=1.0 causes massive gradient competition.
+  - Kurtosis 3.4, max_act 57.6 — healthy. Problem is NOT activation collapse. Problem is gradient allocation.
+  - **Root cause hypothesis: flat α=1.0 + T=2.0 + extreme ratio = too much KD gradient noise in early training.**
+  - **Crude heuristic diagnosis:** The implicit behavior (flat α=1.0 from step 0) is maximally harmful at initialization. The student barely knows NTP; asking it to simultaneously match a 1.7B teacher's flattened distribution is asking it to learn two things at once when it can barely do one. A rising α schedule would be a crude-but-directional fix.
+- Step 1000: CRITICAL. If gap narrows significantly (to <+0.10), recovery is happening. If stays >+0.20, logit KD may be fundamentally misaligned at this ratio.
+- Step 1500-2000: If arm 3 follows rep-only's 3-phase pattern (penalty→recovery→advantage), crossover should occur here. But the 6.8x larger initial penalty means recovery needs 6.8x more improvement.
+- Step 3000: ~~predict BPT ≤ 4.47~~ REVISED: predict BPT between 4.45-4.60 depending on recovery rate. Even partial recovery to control-level (4.50) would be informative.
+- **Kurtosis: 3.4 — CONFIRMED < 2x control (3.1×2=6.2). ✓ Logit KD is a safer signal for activations.**
+- **15K action regardless of step 3000 result:** The crude heuristic analysis identified rising α as TRIVIAL and HIGH impact. Recommend for 15K gate even if arm 3 result is disappointing — the flat α=1.0 is clearly suboptimal.
 
 **Arm 4 (rep+logit, total α=1.0: state=0.3125, sem=0.1875, logit=0.5):**
 - Rate-distortion theory predicts INTERFERENCE at extreme ratios (rep and logit compete for bits).
