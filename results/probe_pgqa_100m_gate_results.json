@@ -1,0 +1,2742 @@
+{
+  "probe": "pgqa_100m_gate",
+  "config": {
+    "name": "pgqa_100m_gate",
+    "description": "R7 mainline: P-GQA full-dim hybrid vs transformer at 100M. The last hybrid test before kill rule. Success: >=+0.05 BPT, kurtosis<=2.1, max_act<=52, no fused-RMS collapse.",
+    "dim": 512,
+    "n_heads": 8,
+    "ff_dim": 1536,
+    "steps": 5000,
+    "eval_every": 500,
+    "batch_size": 16,
+    "grad_accum": 2,
+    "seq_len": 512,
+    "lr": 0.0003,
+    "min_lr": 1e-05,
+    "warmup": 200,
+    "norm_type": "ss_rmsnorm",
+    "n_q_heads": 4,
+    "n_kv_heads": 2,
+    "head_dim": 64,
+    "conv_kernel_size": 4,
+    "variants": [
+      {
+        "tag": "transformer_24x512",
+        "block_schedule": [
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A"
+        ],
+        "exit_layers": [
+          7,
+          15,
+          23
+        ]
+      },
+      {
+        "tag": "pgqa_24x512",
+        "block_schedule": [
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q"
+        ],
+        "exit_layers": [
+          7,
+          15,
+          23
+        ]
+      },
+      {
+        "tag": "pgqa_mixed_8q16a",
+        "block_schedule": [
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "Q",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A"
+        ],
+        "exit_layers": [
+          7,
+          15,
+          23
+        ]
+      }
+    ]
+  },
+  "results": {
+    "transformer_24x512": {
+      "params": 90244659,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 8.0995,
+          "avg_kurtosis": 0.27,
+          "max_kurtosis": 0.77,
+          "max_activation": 16.44
+        },
+        {
+          "step": 1000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 7.295,
+          "avg_kurtosis": 0.13,
+          "max_kurtosis": 0.37,
+          "max_activation": 15.55
+        },
+        {
+          "step": 1500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.6586,
+          "avg_kurtosis": 0.07,
+          "max_kurtosis": 0.21,
+          "max_activation": 17.46
+        },
+        {
+          "step": 2000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.0132,
+          "avg_kurtosis": 0.12,
+          "max_kurtosis": 0.27,
+          "max_activation": 19.51
+        },
+        {
+          "step": 2500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4421,
+          "avg_kurtosis": 0.14,
+          "max_kurtosis": 0.45,
+          "max_activation": 25.06
+        },
+        {
+          "step": 3000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.3718,
+          "avg_kurtosis": 0.15,
+          "max_kurtosis": 0.56,
+          "max_activation": 26.49
+        },
+        {
+          "step": 3500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.2053,
+          "avg_kurtosis": 0.26,
+          "max_kurtosis": 1.02,
+          "max_activation": 31.74
+        },
+        {
+          "step": 4000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.1793,
+          "avg_kurtosis": 0.32,
+          "max_kurtosis": 1.13,
+          "max_activation": 34.96
+        },
+        {
+          "step": 4500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.9239,
+          "avg_kurtosis": 0.42,
+          "max_kurtosis": 1.66,
+          "max_activation": 41.5
+        },
+        {
+          "step": 5000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.7568,
+          "avg_kurtosis": 0.34,
+          "max_kurtosis": 1.5,
+          "max_activation": 41.66
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is the same as the word \"bad\" (the word \"bad\").\n\nThe word \"bad\" is used to refer to the word \"bad\" (the word \"bad\").\n\nThe word \"bad\" is used to refer to the word \"bad\" ("
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is a new and new world.\n\nThe world is a new world, and it is a new world. The world is a new world, and it is a new world.\n\nThe world is a new world, and it is a new world.\n\nThe world is a new world"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "pgqa_24x512": {
+      "params": 93439539,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 7.9126,
+          "avg_kurtosis": 0.37,
+          "max_kurtosis": 0.51,
+          "max_activation": 14.04,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.13728909194469452,
+              "branch_c_rms": 0.2910776734352112,
+              "fused_rms": 0.1773105263710022,
+              "branch_cosine_sim": 0.24864734709262848
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.12406329065561295,
+              "branch_c_rms": 0.1934259533882141,
+              "fused_rms": 0.12098067998886108,
+              "branch_cosine_sim": 0.10858424007892609
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.11518792062997818,
+              "branch_c_rms": 0.15175595879554749,
+              "fused_rms": 0.09722381085157394,
+              "branch_cosine_sim": 0.05665836110711098
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.13427676260471344,
+              "branch_c_rms": 0.13721056282520294,
+              "fused_rms": 0.09635798633098602,
+              "branch_cosine_sim": 0.015784448012709618
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.2169787585735321,
+              "branch_c_rms": 0.12737470865249634,
+              "fused_rms": 0.12802483141422272,
+              "branch_cosine_sim": 0.050285033881664276
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.22832679748535156,
+              "branch_c_rms": 0.12500768899917603,
+              "fused_rms": 0.13362795114517212,
+              "branch_cosine_sim": 0.07740814983844757
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.3795927166938782,
+              "branch_c_rms": 0.12937743961811066,
+              "fused_rms": 0.20733344554901123,
+              "branch_cosine_sim": 0.13890521228313446
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.41231977939605713,
+              "branch_c_rms": 0.15898650884628296,
+              "fused_rms": 0.2349841594696045,
+              "branch_cosine_sim": 0.23052725195884705
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.24137139320373535,
+              "branch_c_rms": 0.09575244039297104,
+              "fused_rms": 0.1366572380065918,
+              "branch_cosine_sim": 0.18380612134933472
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.11901407688856125,
+              "branch_c_rms": 0.08780662715435028,
+              "fused_rms": 0.07981784641742706,
+              "branch_cosine_sim": 0.16912315785884857
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.1291147768497467,
+              "branch_c_rms": 0.07732206583023071,
+              "fused_rms": 0.07943595200777054,
+              "branch_cosine_sim": 0.11859089136123657
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.15120238065719604,
+              "branch_c_rms": 0.07582470029592514,
+              "fused_rms": 0.08676683157682419,
+              "branch_cosine_sim": 0.0693049505352974
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.12920868396759033,
+              "branch_c_rms": 0.0737956091761589,
+              "fused_rms": 0.0761125236749649,
+              "branch_cosine_sim": 0.059095706790685654
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.12578828632831573,
+              "branch_c_rms": 0.07518548518419266,
+              "fused_rms": 0.07452421635389328,
+              "branch_cosine_sim": 0.0394875667989254
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.15918488800525665,
+              "branch_c_rms": 0.07633952796459198,
+              "fused_rms": 0.0894460454583168,
+              "branch_cosine_sim": 0.03807476535439491
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.16829460859298706,
+              "branch_c_rms": 0.07949070632457733,
+              "fused_rms": 0.09376261383295059,
+              "branch_cosine_sim": 0.023661693558096886
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.13424552977085114,
+              "branch_c_rms": 0.07048900425434113,
+              "fused_rms": 0.07640780508518219,
+              "branch_cosine_sim": 0.023330876603722572
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.09461557865142822,
+              "branch_c_rms": 0.07430649548768997,
+              "fused_rms": 0.061596885323524475,
+              "branch_cosine_sim": 0.04971171170473099
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.10647349059581757,
+              "branch_c_rms": 0.07184472680091858,
+              "fused_rms": 0.06583158671855927,
+              "branch_cosine_sim": 0.05537421256303787
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.14714288711547852,
+              "branch_c_rms": 0.06781663000583649,
+              "fused_rms": 0.08206318318843842,
+              "branch_cosine_sim": 0.04514230042695999
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.307854026556015,
+              "branch_c_rms": 0.07693326473236084,
+              "fused_rms": 0.16138450801372528,
+              "branch_cosine_sim": 0.07200496643781662
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.1514737904071808,
+              "branch_c_rms": 0.07952957600355148,
+              "fused_rms": 0.09124108403921127,
+              "branch_cosine_sim": 0.1659034639596939
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.20708446204662323,
+              "branch_c_rms": 0.07934682816267014,
+              "fused_rms": 0.12105880677700043,
+              "branch_cosine_sim": 0.2743300795555115
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.14964959025382996,
+              "branch_c_rms": 0.08616939187049866,
+              "fused_rms": 0.09837637841701508,
+              "branch_cosine_sim": 0.3375605344772339
+            }
+          ]
+        },
+        {
+          "step": 1000,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.6456,
+          "avg_kurtosis": 0.14,
+          "max_kurtosis": 0.21,
+          "max_activation": 12.67,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1103195995092392,
+              "branch_c_rms": 0.3802272379398346,
+              "fused_rms": 0.21230632066726685,
+              "branch_cosine_sim": 0.2707280218601227
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.15822835266590118,
+              "branch_c_rms": 0.30857065320014954,
+              "fused_rms": 0.17690780758857727,
+              "branch_cosine_sim": 0.04906048998236656
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.13628961145877838,
+              "branch_c_rms": 0.3244785666465759,
+              "fused_rms": 0.177438884973526,
+              "branch_cosine_sim": 0.029268424957990646
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.34300023317337036,
+              "branch_c_rms": 0.20929928123950958,
+              "fused_rms": 0.20324589312076569,
+              "branch_cosine_sim": 0.031248554587364197
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.28302210569381714,
+              "branch_c_rms": 0.17280125617980957,
+              "fused_rms": 0.17050687968730927,
+              "branch_cosine_sim": 0.06010875478386879
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.2569516897201538,
+              "branch_c_rms": 0.15939362347126007,
+              "fused_rms": 0.15647093951702118,
+              "branch_cosine_sim": 0.08332030475139618
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.4022505283355713,
+              "branch_c_rms": 0.15781672298908234,
+              "fused_rms": 0.22915531694889069,
+              "branch_cosine_sim": 0.18940463662147522
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.48383423686027527,
+              "branch_c_rms": 0.19121955335140228,
+              "fused_rms": 0.279374361038208,
+              "branch_cosine_sim": 0.2584035098552704
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.27485206723213196,
+              "branch_c_rms": 0.14497005939483643,
+              "fused_rms": 0.1672956645488739,
+              "branch_cosine_sim": 0.26330801844596863
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.13315795361995697,
+              "branch_c_rms": 0.09473823010921478,
+              "fused_rms": 0.08695200830698013,
+              "branch_cosine_sim": 0.15464530885219574
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.1280306726694107,
+              "branch_c_rms": 0.08187714964151382,
+              "fused_rms": 0.07848647236824036,
+              "branch_cosine_sim": 0.08165474981069565
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.15246784687042236,
+              "branch_c_rms": 0.07619135826826096,
+              "fused_rms": 0.08634310215711594,
+              "branch_cosine_sim": 0.03524854779243469
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.261444091796875,
+              "branch_c_rms": 0.07782529294490814,
+              "fused_rms": 0.138268381357193,
+              "branch_cosine_sim": 0.06549423187971115
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.10882469266653061,
+              "branch_c_rms": 0.07532838732004166,
+              "fused_rms": 0.06720583885908127,
+              "branch_cosine_sim": 0.04139496386051178
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.15971621870994568,
+              "branch_c_rms": 0.07235512137413025,
+              "fused_rms": 0.08884178102016449,
+              "branch_cosine_sim": 0.045653004199266434
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.20306919515132904,
+              "branch_c_rms": 0.07332288473844528,
+              "fused_rms": 0.10850374400615692,
+              "branch_cosine_sim": 0.021354807540774345
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.1576257199048996,
+              "branch_c_rms": 0.06925409287214279,
+              "fused_rms": 0.0879422053694725,
+              "branch_cosine_sim": 0.05568941310048103
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.09939878433942795,
+              "branch_c_rms": 0.06860525161027908,
+              "fused_rms": 0.06163947656750679,
+              "branch_cosine_sim": 0.046955790370702744
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.15899306535720825,
+              "branch_c_rms": 0.06848704069852829,
+              "fused_rms": 0.08963315933942795,
+              "branch_cosine_sim": 0.09053654968738556
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.1485179215669632,
+              "branch_c_rms": 0.06614791601896286,
+              "fused_rms": 0.08236555010080338,
+              "branch_cosine_sim": 0.04930020868778229
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.3545762598514557,
+              "branch_c_rms": 0.07164984196424484,
+              "fused_rms": 0.18175727128982544,
+              "branch_cosine_sim": 0.05734478309750557
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.25979527831077576,
+              "branch_c_rms": 0.07658392190933228,
+              "fused_rms": 0.1394185572862625,
+              "branch_cosine_sim": 0.14194758236408234
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.16867977380752563,
+              "branch_c_rms": 0.084589883685112,
+              "fused_rms": 0.1058739423751831,
+              "branch_cosine_sim": 0.29763156175613403
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.1628461480140686,
+              "branch_c_rms": 0.10028627514839172,
+              "fused_rms": 0.10909321159124374,
+              "branch_cosine_sim": 0.3450978398323059
+            }
+          ]
+        },
+        {
+          "step": 1500,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.9704,
+          "avg_kurtosis": 0.22,
+          "max_kurtosis": 0.39,
+          "max_activation": 15.83,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1568678915500641,
+              "branch_c_rms": 0.482282817363739,
+              "fused_rms": 0.27156442403793335,
+              "branch_cosine_sim": 0.25534456968307495
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.16699540615081787,
+              "branch_c_rms": 0.36932143568992615,
+              "fused_rms": 0.20543387532234192,
+              "branch_cosine_sim": 0.03248116746544838
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.19580873847007751,
+              "branch_c_rms": 0.4577643573284149,
+              "fused_rms": 0.2504771053791046,
+              "branch_cosine_sim": 0.015435312874615192
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.5635634660720825,
+              "branch_c_rms": 0.24503064155578613,
+              "fused_rms": 0.3088366985321045,
+              "branch_cosine_sim": 0.014676758088171482
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.3905651867389679,
+              "branch_c_rms": 0.208926260471344,
+              "fused_rms": 0.22509299218654633,
+              "branch_cosine_sim": 0.03943081572651863
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.2980591356754303,
+              "branch_c_rms": 0.18584170937538147,
+              "fused_rms": 0.18104319274425507,
+              "branch_cosine_sim": 0.06787499040365219
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.44003617763519287,
+              "branch_c_rms": 0.1794096678495407,
+              "fused_rms": 0.24495398998260498,
+              "branch_cosine_sim": 0.1109459400177002
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.5064947605133057,
+              "branch_c_rms": 0.20711135864257812,
+              "fused_rms": 0.28870025277137756,
+              "branch_cosine_sim": 0.19813765585422516
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.31986019015312195,
+              "branch_c_rms": 0.1735355257987976,
+              "fused_rms": 0.19397921860218048,
+              "branch_cosine_sim": 0.20833520591259003
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.1735757738351822,
+              "branch_c_rms": 0.10937421768903732,
+              "fused_rms": 0.10717187821865082,
+              "branch_cosine_sim": 0.11565518379211426
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.19606027007102966,
+              "branch_c_rms": 0.09165500849485397,
+              "fused_rms": 0.10979665070772171,
+              "branch_cosine_sim": 0.04538789764046669
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.18434922397136688,
+              "branch_c_rms": 0.08346682041883469,
+              "fused_rms": 0.1033201515674591,
+              "branch_cosine_sim": 0.04765255004167557
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.3002931773662567,
+              "branch_c_rms": 0.08211645483970642,
+              "fused_rms": 0.15693283081054688,
+              "branch_cosine_sim": 0.04597640037536621
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.15951775014400482,
+              "branch_c_rms": 0.07898327708244324,
+              "fused_rms": 0.08915894478559494,
+              "branch_cosine_sim": 0.007177494000643492
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.1786043643951416,
+              "branch_c_rms": 0.07566281408071518,
+              "fused_rms": 0.09692614525556564,
+              "branch_cosine_sim": -0.0003978437453042716
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.21306927502155304,
+              "branch_c_rms": 0.0780860036611557,
+              "fused_rms": 0.11332248151302338,
+              "branch_cosine_sim": -0.006703721825033426
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.19497476518154144,
+              "branch_c_rms": 0.07585050910711288,
+              "fused_rms": 0.10632766783237457,
+              "branch_cosine_sim": 0.044090524315834045
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.14232705533504486,
+              "branch_c_rms": 0.07643766701221466,
+              "fused_rms": 0.08158191293478012,
+              "branch_cosine_sim": 0.026534033939242363
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.24777856469154358,
+              "branch_c_rms": 0.07160508632659912,
+              "fused_rms": 0.13188745081424713,
+              "branch_cosine_sim": 0.06665336340665817
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.19734124839305878,
+              "branch_c_rms": 0.07085416465997696,
+              "fused_rms": 0.10592956095933914,
+              "branch_cosine_sim": 0.04009561985731125
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.4520021975040436,
+              "branch_c_rms": 0.07459352910518646,
+              "fused_rms": 0.23017820715904236,
+              "branch_cosine_sim": 0.05112316086888313
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.23454786837100983,
+              "branch_c_rms": 0.07883109152317047,
+              "fused_rms": 0.12799246609210968,
+              "branch_cosine_sim": 0.1270335167646408
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.16620665788650513,
+              "branch_c_rms": 0.08734802901744843,
+              "fused_rms": 0.10199569910764694,
+              "branch_cosine_sim": 0.2264571487903595
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.12921449542045593,
+              "branch_c_rms": 0.10355553776025772,
+              "fused_rms": 0.09161030501127243,
+              "branch_cosine_sim": 0.24456417560577393
+            }
+          ]
+        },
+        {
+          "step": 2000,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4209,
+          "avg_kurtosis": 0.11,
+          "max_kurtosis": 0.27,
+          "max_activation": 17.2,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.15455006062984467,
+              "branch_c_rms": 0.49836665391921997,
+              "fused_rms": 0.28154730796813965,
+              "branch_cosine_sim": 0.28447818756103516
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.1652853786945343,
+              "branch_c_rms": 0.38987675309181213,
+              "fused_rms": 0.21334023773670197,
+              "branch_cosine_sim": 0.024245446547865868
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.1776837706565857,
+              "branch_c_rms": 0.5382034182548523,
+              "fused_rms": 0.28430625796318054,
+              "branch_cosine_sim": 0.01050525438040495
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.6313605308532715,
+              "branch_c_rms": 0.28343456983566284,
+              "fused_rms": 0.3479214608669281,
+              "branch_cosine_sim": 0.01235494390130043
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.40744248032569885,
+              "branch_c_rms": 0.243681401014328,
+              "fused_rms": 0.24190235137939453,
+              "branch_cosine_sim": 0.04015980288386345
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.2786839008331299,
+              "branch_c_rms": 0.20984070003032684,
+              "fused_rms": 0.17894867062568665,
+              "branch_cosine_sim": 0.05324554443359375
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.43059009313583374,
+              "branch_c_rms": 0.18808875977993011,
+              "fused_rms": 0.245585635304451,
+              "branch_cosine_sim": 0.12786529958248138
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.5486229062080383,
+              "branch_c_rms": 0.22479432821273804,
+              "fused_rms": 0.31425532698631287,
+              "branch_cosine_sim": 0.2090369015932083
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.34414586424827576,
+              "branch_c_rms": 0.24473997950553894,
+              "fused_rms": 0.23127686977386475,
+              "branch_cosine_sim": 0.25541648268699646
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.1939302682876587,
+              "branch_c_rms": 0.12242558598518372,
+              "fused_rms": 0.12039867788553238,
+              "branch_cosine_sim": 0.1306922435760498
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.16958723962306976,
+              "branch_c_rms": 0.09782546758651733,
+              "fused_rms": 0.10054261237382889,
+              "branch_cosine_sim": 0.06964384764432907
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.19624009728431702,
+              "branch_c_rms": 0.08752316981554031,
+              "fused_rms": 0.10855446755886078,
+              "branch_cosine_sim": 0.025587836280465126
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.3428197205066681,
+              "branch_c_rms": 0.08582200855016708,
+              "fused_rms": 0.17716945707798004,
+              "branch_cosine_sim": 0.005934928543865681
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.18816907703876495,
+              "branch_c_rms": 0.08309099078178406,
+              "fused_rms": 0.10340333729982376,
+              "branch_cosine_sim": 0.014984317123889923
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.16735506057739258,
+              "branch_c_rms": 0.0771651491522789,
+              "fused_rms": 0.09243911504745483,
+              "branch_cosine_sim": 0.010020905174314976
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.2201583832502365,
+              "branch_c_rms": 0.07923183590173721,
+              "fused_rms": 0.11721424013376236,
+              "branch_cosine_sim": 0.01168089173734188
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.24489444494247437,
+              "branch_c_rms": 0.07485442608594894,
+              "fused_rms": 0.12936288118362427,
+              "branch_cosine_sim": 0.04975855350494385
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.14036229252815247,
+              "branch_c_rms": 0.07625310122966766,
+              "fused_rms": 0.08026807010173798,
+              "branch_cosine_sim": 0.013258405961096287
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.24734759330749512,
+              "branch_c_rms": 0.07577355206012726,
+              "fused_rms": 0.13250604271888733,
+              "branch_cosine_sim": 0.07813909649848938
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.15027998387813568,
+              "branch_c_rms": 0.07275678962469101,
+              "fused_rms": 0.08453238755464554,
+              "branch_cosine_sim": 0.038410086184740067
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.27548491954803467,
+              "branch_c_rms": 0.0765250101685524,
+              "fused_rms": 0.1439579278230667,
+              "branch_cosine_sim": 0.034908559173345566
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.17624619603157043,
+              "branch_c_rms": 0.08189290016889572,
+              "fused_rms": 0.10031761229038239,
+              "branch_cosine_sim": 0.08969376981258392
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.16144686937332153,
+              "branch_c_rms": 0.09599397331476212,
+              "fused_rms": 0.10361148416996002,
+              "branch_cosine_sim": 0.2598702609539032
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.1418420672416687,
+              "branch_c_rms": 0.10987569391727448,
+              "fused_rms": 0.09640221297740936,
+              "branch_cosine_sim": 0.18765392899513245
+            }
+          ]
+        },
+        {
+          "step": 2500,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.1287,
+          "avg_kurtosis": 0.15,
+          "max_kurtosis": 0.33,
+          "max_activation": 19.46,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1537291258573532,
+              "branch_c_rms": 0.5873916745185852,
+              "fused_rms": 0.32564103603363037,
+              "branch_cosine_sim": 0.3036312460899353
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.1827417016029358,
+              "branch_c_rms": 0.38038942217826843,
+              "fused_rms": 0.21317605674266815,
+              "branch_cosine_sim": 0.02823484316468239
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.18484996259212494,
+              "branch_c_rms": 0.5304380655288696,
+              "fused_rms": 0.28159093856811523,
+              "branch_cosine_sim": 0.009572429582476616
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.6410582661628723,
+              "branch_c_rms": 0.29068681597709656,
+              "fused_rms": 0.35329893231391907,
+              "branch_cosine_sim": 0.009965186938643456
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.40434545278549194,
+              "branch_c_rms": 0.26884695887565613,
+              "fused_rms": 0.24548782408237457,
+              "branch_cosine_sim": 0.02644118294119835
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.363093763589859,
+              "branch_c_rms": 0.23014603555202484,
+              "fused_rms": 0.22149352729320526,
+              "branch_cosine_sim": 0.07979414612054825
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.4455787241458893,
+              "branch_c_rms": 0.2151239663362503,
+              "fused_rms": 0.25834527611732483,
+              "branch_cosine_sim": 0.1219225600361824
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.5917447209358215,
+              "branch_c_rms": 0.27943500876426697,
+              "fused_rms": 0.35269099473953247,
+              "branch_cosine_sim": 0.23948587477207184
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.38511922955513,
+              "branch_c_rms": 0.31988760828971863,
+              "fused_rms": 0.2736334502696991,
+              "branch_cosine_sim": 0.23084944486618042
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.23368093371391296,
+              "branch_c_rms": 0.14279477298259735,
+              "fused_rms": 0.143032044172287,
+              "branch_cosine_sim": 0.10277450084686279
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.18127162754535675,
+              "branch_c_rms": 0.10659416764974594,
+              "fused_rms": 0.1065247505903244,
+              "branch_cosine_sim": 0.03060278855264187
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.2243267297744751,
+              "branch_c_rms": 0.09061787277460098,
+              "fused_rms": 0.12256120145320892,
+              "branch_cosine_sim": 0.03940826654434204
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.3754187524318695,
+              "branch_c_rms": 0.0875120535492897,
+              "fused_rms": 0.19374626874923706,
+              "branch_cosine_sim": 0.027522029355168343
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.23946954309940338,
+              "branch_c_rms": 0.08635720610618591,
+              "fused_rms": 0.12784041464328766,
+              "branch_cosine_sim": 0.01752488687634468
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.19015008211135864,
+              "branch_c_rms": 0.07819561660289764,
+              "fused_rms": 0.10305916517972946,
+              "branch_cosine_sim": 0.005958978086709976
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.2894454598426819,
+              "branch_c_rms": 0.07992886006832123,
+              "fused_rms": 0.15021829307079315,
+              "branch_cosine_sim": 0.007679106667637825
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.25867924094200134,
+              "branch_c_rms": 0.07751374691724777,
+              "fused_rms": 0.1374349743127823,
+              "branch_cosine_sim": 0.07120832800865173
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.2704792320728302,
+              "branch_c_rms": 0.08083655685186386,
+              "fused_rms": 0.14151720702648163,
+              "branch_cosine_sim": 0.012479854747653008
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.3522685468196869,
+              "branch_c_rms": 0.07866016030311584,
+              "fused_rms": 0.18553733825683594,
+              "branch_cosine_sim": 0.13249284029006958
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.19298020005226135,
+              "branch_c_rms": 0.07458678632974625,
+              "fused_rms": 0.10431131720542908,
+              "branch_cosine_sim": 0.03376109525561333
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.30650565028190613,
+              "branch_c_rms": 0.08125841617584229,
+              "fused_rms": 0.160500630736351,
+              "branch_cosine_sim": 0.0662684440612793
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.21593427658081055,
+              "branch_c_rms": 0.08693192154169083,
+              "fused_rms": 0.12102699279785156,
+              "branch_cosine_sim": 0.12121737003326416
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.20205794274806976,
+              "branch_c_rms": 0.10030540078878403,
+              "fused_rms": 0.122579425573349,
+              "branch_cosine_sim": 0.2358115166425705
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.119365394115448,
+              "branch_c_rms": 0.12072260677814484,
+              "fused_rms": 0.09153840690851212,
+              "branch_cosine_sim": 0.1683172732591629
+            }
+          ]
+        },
+        {
+          "step": 3000,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.1949,
+          "avg_kurtosis": 0.2,
+          "max_kurtosis": 0.54,
+          "max_activation": 21.35,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.17856034636497498,
+              "branch_c_rms": 0.5797284841537476,
+              "fused_rms": 0.32356318831443787,
+              "branch_cosine_sim": 0.2546460032463074
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.17656747996807098,
+              "branch_c_rms": 0.4258992373943329,
+              "fused_rms": 0.23250244557857513,
+              "branch_cosine_sim": 0.027754485607147217
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.20807455480098724,
+              "branch_c_rms": 0.6457176208496094,
+              "fused_rms": 0.339462548494339,
+              "branch_cosine_sim": 0.003917566034942865
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.7185401320457458,
+              "branch_c_rms": 0.3426673710346222,
+              "fused_rms": 0.39936551451683044,
+              "branch_cosine_sim": 0.0061045074835419655
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.4960484802722931,
+              "branch_c_rms": 0.2998865842819214,
+              "fused_rms": 0.29355233907699585,
+              "branch_cosine_sim": 0.026302753016352654
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.3376527428627014,
+              "branch_c_rms": 0.25137045979499817,
+              "fused_rms": 0.21708425879478455,
+              "branch_cosine_sim": 0.06626599282026291
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.4691450595855713,
+              "branch_c_rms": 0.22204530239105225,
+              "fused_rms": 0.2703050971031189,
+              "branch_cosine_sim": 0.1200869008898735
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.6074536442756653,
+              "branch_c_rms": 0.2730950117111206,
+              "fused_rms": 0.357334703207016,
+              "branch_cosine_sim": 0.23685342073440552
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.40475109219551086,
+              "branch_c_rms": 0.35650572180747986,
+              "fused_rms": 0.30192145705223083,
+              "branch_cosine_sim": 0.30320537090301514
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.2378198802471161,
+              "branch_c_rms": 0.14795289933681488,
+              "fused_rms": 0.14808520674705505,
+              "branch_cosine_sim": 0.1408916860818863
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.24397802352905273,
+              "branch_c_rms": 0.10549437999725342,
+              "fused_rms": 0.13463664054870605,
+              "branch_cosine_sim": 0.041616760194301605
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.2339393049478531,
+              "branch_c_rms": 0.09167008846998215,
+              "fused_rms": 0.1262875348329544,
+              "branch_cosine_sim": 0.009913703426718712
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.3291473686695099,
+              "branch_c_rms": 0.08876164257526398,
+              "fused_rms": 0.17096813023090363,
+              "branch_cosine_sim": 0.013366438448429108
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.25380516052246094,
+              "branch_c_rms": 0.08790042996406555,
+              "fused_rms": 0.13463515043258667,
+              "branch_cosine_sim": 0.007340321782976389
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.18895438313484192,
+              "branch_c_rms": 0.0789218470454216,
+              "fused_rms": 0.1024172455072403,
+              "branch_cosine_sim": 0.0008318706532008946
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.23129530251026154,
+              "branch_c_rms": 0.07941006124019623,
+              "fused_rms": 0.12235400825738907,
+              "branch_cosine_sim": 0.01009900402277708
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.2389048933982849,
+              "branch_c_rms": 0.07691871374845505,
+              "fused_rms": 0.12658579647541046,
+              "branch_cosine_sim": 0.033075179904699326
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.38240596652030945,
+              "branch_c_rms": 0.08147895336151123,
+              "fused_rms": 0.1956661194562912,
+              "branch_cosine_sim": 0.008186394348740578
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.2897627055644989,
+              "branch_c_rms": 0.07660667598247528,
+              "fused_rms": 0.15264064073562622,
+              "branch_cosine_sim": 0.06702183932065964
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.2414819598197937,
+              "branch_c_rms": 0.07097180932760239,
+              "fused_rms": 0.12627708911895752,
+              "branch_cosine_sim": 0.025524834170937538
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.2295762449502945,
+              "branch_c_rms": 0.07662434875965118,
+              "fused_rms": 0.12242938578128815,
+              "branch_cosine_sim": 0.04590300843119621
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.3261459171772003,
+              "branch_c_rms": 0.08301715552806854,
+              "fused_rms": 0.17203809320926666,
+              "branch_cosine_sim": 0.10691864788532257
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.23272159695625305,
+              "branch_c_rms": 0.10393106937408447,
+              "fused_rms": 0.13954555988311768,
+              "branch_cosine_sim": 0.2621419429779053
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.20452818274497986,
+              "branch_c_rms": 0.12632063031196594,
+              "fused_rms": 0.1344304084777832,
+              "branch_cosine_sim": 0.27774477005004883
+            }
+          ]
+        },
+        {
+          "step": 3500,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.0411,
+          "avg_kurtosis": 0.27,
+          "max_kurtosis": 0.85,
+          "max_activation": 25.89,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.17091789841651917,
+              "branch_c_rms": 0.6170579195022583,
+              "fused_rms": 0.339945912361145,
+              "branch_cosine_sim": 0.2528281509876251
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.17778262495994568,
+              "branch_c_rms": 0.40048617124557495,
+              "fused_rms": 0.22090300917625427,
+              "branch_cosine_sim": 0.02511678822338581
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.20400287210941315,
+              "branch_c_rms": 0.6050549745559692,
+              "fused_rms": 0.3202514946460724,
+              "branch_cosine_sim": 0.011109483428299427
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.7406607866287231,
+              "branch_c_rms": 0.3401339054107666,
+              "fused_rms": 0.4094931483268738,
+              "branch_cosine_sim": 0.010088156908750534
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.49083343148231506,
+              "branch_c_rms": 0.30647364258766174,
+              "fused_rms": 0.2932162582874298,
+              "branch_cosine_sim": 0.028531165793538094
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.39907875657081604,
+              "branch_c_rms": 0.24901540577411652,
+              "fused_rms": 0.2435925155878067,
+              "branch_cosine_sim": 0.084345243871212
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.48500773310661316,
+              "branch_c_rms": 0.22644706070423126,
+              "fused_rms": 0.2792092561721802,
+              "branch_cosine_sim": 0.12295246124267578
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.6898232102394104,
+              "branch_c_rms": 0.2892301082611084,
+              "fused_rms": 0.39713093638420105,
+              "branch_cosine_sim": 0.2052299976348877
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.3756500482559204,
+              "branch_c_rms": 0.4298601746559143,
+              "fused_rms": 0.31255877017974854,
+              "branch_cosine_sim": 0.21751396358013153
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.2900526225566864,
+              "branch_c_rms": 0.1630581170320511,
+              "fused_rms": 0.17524594068527222,
+              "branch_cosine_sim": 0.13312281668186188
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.2541450560092926,
+              "branch_c_rms": 0.11164548248052597,
+              "fused_rms": 0.14092090725898743,
+              "branch_cosine_sim": 0.04489129036664963
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.2527164816856384,
+              "branch_c_rms": 0.09461870789527893,
+              "fused_rms": 0.1365400105714798,
+              "branch_cosine_sim": 0.038118209689855576
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.3942146599292755,
+              "branch_c_rms": 0.09332714229822159,
+              "fused_rms": 0.2031029313802719,
+              "branch_cosine_sim": 0.014833412133157253
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.3257253170013428,
+              "branch_c_rms": 0.09526032209396362,
+              "fused_rms": 0.1703662872314453,
+              "branch_cosine_sim": 0.015537988394498825
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.23515892028808594,
+              "branch_c_rms": 0.08171723783016205,
+              "fused_rms": 0.1244063600897789,
+              "branch_cosine_sim": -0.0005979494890198112
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.2801753878593445,
+              "branch_c_rms": 0.08333182334899902,
+              "fused_rms": 0.14629270136356354,
+              "branch_cosine_sim": 0.0081587303429842
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.3035806119441986,
+              "branch_c_rms": 0.08017915487289429,
+              "fused_rms": 0.15863658487796783,
+              "branch_cosine_sim": 0.044412657618522644
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.338221937417984,
+              "branch_c_rms": 0.08607987314462662,
+              "fused_rms": 0.17498350143432617,
+              "branch_cosine_sim": 0.012892468832433224
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.4235985279083252,
+              "branch_c_rms": 0.08305498957633972,
+              "fused_rms": 0.22020184993743896,
+              "branch_cosine_sim": 0.10351982712745667
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.1824968457221985,
+              "branch_c_rms": 0.0758824348449707,
+              "fused_rms": 0.09942218661308289,
+              "branch_cosine_sim": 0.02490360289812088
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.3771504759788513,
+              "branch_c_rms": 0.08546227961778641,
+              "fused_rms": 0.19535201787948608,
+              "branch_cosine_sim": 0.06044171378016472
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.3010275959968567,
+              "branch_c_rms": 0.09547659754753113,
+              "fused_rms": 0.1628374606370926,
+              "branch_cosine_sim": 0.12357169389724731
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.22823770344257355,
+              "branch_c_rms": 0.11915617436170578,
+              "fused_rms": 0.1433669626712799,
+              "branch_cosine_sim": 0.303392231464386
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.12455902248620987,
+              "branch_c_rms": 0.15879474580287933,
+              "fused_rms": 0.11153461039066315,
+              "branch_cosine_sim": 0.2414703518152237
+            }
+          ]
+        },
+        {
+          "step": 4000,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.0354,
+          "avg_kurtosis": 0.33,
+          "max_kurtosis": 1.07,
+          "max_activation": 29.75,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1781853586435318,
+              "branch_c_rms": 0.6571431159973145,
+              "fused_rms": 0.3617548644542694,
+              "branch_cosine_sim": 0.2673603892326355
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.1974991410970688,
+              "branch_c_rms": 0.3921786844730377,
+              "fused_rms": 0.2224447876214981,
+              "branch_cosine_sim": 0.03764861449599266
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.2007102519273758,
+              "branch_c_rms": 0.6019879579544067,
+              "fused_rms": 0.31811752915382385,
+              "branch_cosine_sim": 0.009660637937486172
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.7232367396354675,
+              "branch_c_rms": 0.3510300815105438,
+              "fused_rms": 0.4039021134376526,
+              "branch_cosine_sim": 0.010892494581639767
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.49544599652290344,
+              "branch_c_rms": 0.3110398054122925,
+              "fused_rms": 0.29560407996177673,
+              "branch_cosine_sim": 0.019678186625242233
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.3617524206638336,
+              "branch_c_rms": 0.25812050700187683,
+              "fused_rms": 0.2295527160167694,
+              "branch_cosine_sim": 0.06747258454561234
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.49907976388931274,
+              "branch_c_rms": 0.2386348992586136,
+              "fused_rms": 0.2864924967288971,
+              "branch_cosine_sim": 0.10360891371965408
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.7524057626724243,
+              "branch_c_rms": 0.3102187514305115,
+              "fused_rms": 0.4295939803123474,
+              "branch_cosine_sim": 0.19460637867450714
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.39970606565475464,
+              "branch_c_rms": 0.49370384216308594,
+              "fused_rms": 0.34510526061058044,
+              "branch_cosine_sim": 0.2133466750383377
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.29404133558273315,
+              "branch_c_rms": 0.17992357909679413,
+              "fused_rms": 0.18143095076084137,
+              "branch_cosine_sim": 0.1324441134929657
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.25326764583587646,
+              "branch_c_rms": 0.11726371943950653,
+              "fused_rms": 0.14188262820243835,
+              "branch_cosine_sim": 0.05123812332749367
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.264771044254303,
+              "branch_c_rms": 0.1007130965590477,
+              "fused_rms": 0.14324934780597687,
+              "branch_cosine_sim": 0.032321881502866745
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.4072244465351105,
+              "branch_c_rms": 0.09682916104793549,
+              "fused_rms": 0.20988665521144867,
+              "branch_cosine_sim": 0.016043107956647873
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.30517885088920593,
+              "branch_c_rms": 0.10018951445817947,
+              "fused_rms": 0.16104647517204285,
+              "branch_cosine_sim": 0.009927499108016491
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.22134028375148773,
+              "branch_c_rms": 0.08602604269981384,
+              "fused_rms": 0.11837300658226013,
+              "branch_cosine_sim": -0.00660914508625865
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.27653172612190247,
+              "branch_c_rms": 0.08523673564195633,
+              "fused_rms": 0.14489617943763733,
+              "branch_cosine_sim": 0.007872042246162891
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.3050485849380493,
+              "branch_c_rms": 0.08450116962194443,
+              "fused_rms": 0.15948361158370972,
+              "branch_cosine_sim": 0.030907463282346725
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.3132552206516266,
+              "branch_c_rms": 0.08807597309350967,
+              "fused_rms": 0.16297407448291779,
+              "branch_cosine_sim": 0.006291598081588745
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.39939484000205994,
+              "branch_c_rms": 0.08646067976951599,
+              "fused_rms": 0.20808959007263184,
+              "branch_cosine_sim": 0.08199811726808548
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.19749589264392853,
+              "branch_c_rms": 0.07931903749704361,
+              "fused_rms": 0.1072637289762497,
+              "branch_cosine_sim": 0.02681954763829708
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.38237130641937256,
+              "branch_c_rms": 0.08558153361082077,
+              "fused_rms": 0.19744102656841278,
+              "branch_cosine_sim": 0.04427344352006912
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.3399091958999634,
+              "branch_c_rms": 0.09781880676746368,
+              "fused_rms": 0.1810631901025772,
+              "branch_cosine_sim": 0.11246352642774582
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.2395174354314804,
+              "branch_c_rms": 0.12560436129570007,
+              "fused_rms": 0.1489580124616623,
+              "branch_cosine_sim": 0.27592381834983826
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.20427198708057404,
+              "branch_c_rms": 0.16769035160541534,
+              "fused_rms": 0.14128880202770233,
+              "branch_cosine_sim": 0.19220566749572754
+            }
+          ]
+        },
+        {
+          "step": 4500,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.9227,
+          "avg_kurtosis": 0.42,
+          "max_kurtosis": 1.43,
+          "max_activation": 38.37,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1545642912387848,
+              "branch_c_rms": 0.6643412113189697,
+              "fused_rms": 0.3624438941478729,
+              "branch_cosine_sim": 0.28449907898902893
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.1984824538230896,
+              "branch_c_rms": 0.3616217076778412,
+              "fused_rms": 0.20839834213256836,
+              "branch_cosine_sim": 0.029595768079161644
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.17846108973026276,
+              "branch_c_rms": 0.5519300103187561,
+              "fused_rms": 0.29107022285461426,
+              "branch_cosine_sim": 0.014305973425507545
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.5738089680671692,
+              "branch_c_rms": 0.3306204676628113,
+              "fused_rms": 0.3315906524658203,
+              "branch_cosine_sim": 0.0021661161445081234
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.4202653169631958,
+              "branch_c_rms": 0.29705575108528137,
+              "fused_rms": 0.2590695023536682,
+              "branch_cosine_sim": 0.01250037644058466
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.3994078040122986,
+              "branch_c_rms": 0.25065430998802185,
+              "fused_rms": 0.239824116230011,
+              "branch_cosine_sim": 0.03782070800662041
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.5070839524269104,
+              "branch_c_rms": 0.25569528341293335,
+              "fused_rms": 0.2951240837574005,
+              "branch_cosine_sim": 0.09979066997766495
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.6990489363670349,
+              "branch_c_rms": 0.3563993275165558,
+              "fused_rms": 0.4219919443130493,
+              "branch_cosine_sim": 0.21951420605182648
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.4606133997440338,
+              "branch_c_rms": 0.5446119904518127,
+              "fused_rms": 0.3918052911758423,
+              "branch_cosine_sim": 0.2312248796224594
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.3297892212867737,
+              "branch_c_rms": 0.19432494044303894,
+              "fused_rms": 0.1996602565050125,
+              "branch_cosine_sim": 0.10973309725522995
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.2774645984172821,
+              "branch_c_rms": 0.12574107944965363,
+              "fused_rms": 0.15411469340324402,
+              "branch_cosine_sim": 0.040658172219991684
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.28679391741752625,
+              "branch_c_rms": 0.10600490868091583,
+              "fused_rms": 0.15532299876213074,
+              "branch_cosine_sim": 0.0466393418610096
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.46597978472709656,
+              "branch_c_rms": 0.10358311235904694,
+              "fused_rms": 0.23971839249134064,
+              "branch_cosine_sim": 0.019500188529491425
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.34509071707725525,
+              "branch_c_rms": 0.10776625573635101,
+              "fused_rms": 0.18127979338169098,
+              "branch_cosine_sim": 0.012311411090195179
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.24175812304019928,
+              "branch_c_rms": 0.09188859909772873,
+              "fused_rms": 0.12934847176074982,
+              "branch_cosine_sim": -0.0011925088474527001
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.36961689591407776,
+              "branch_c_rms": 0.0943637564778328,
+              "fused_rms": 0.19080615043640137,
+              "branch_cosine_sim": 0.003500263672322035
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.42673569917678833,
+              "branch_c_rms": 0.09376595914363861,
+              "fused_rms": 0.22011353075504303,
+              "branch_cosine_sim": 0.041659243404865265
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.34102874994277954,
+              "branch_c_rms": 0.0973130613565445,
+              "fused_rms": 0.17750820517539978,
+              "branch_cosine_sim": 0.004125962499529123
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.4621284008026123,
+              "branch_c_rms": 0.09855958819389343,
+              "fused_rms": 0.24111594259738922,
+              "branch_cosine_sim": 0.0992409810423851
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.21124278008937836,
+              "branch_c_rms": 0.08804009109735489,
+              "fused_rms": 0.11537273973226547,
+              "branch_cosine_sim": 0.031598009169101715
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.37356799840927124,
+              "branch_c_rms": 0.09625118970870972,
+              "fused_rms": 0.19474449753761292,
+              "branch_cosine_sim": 0.054675474762916565
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.27665838599205017,
+              "branch_c_rms": 0.11041063070297241,
+              "fused_rms": 0.15406863391399384,
+              "branch_cosine_sim": 0.12047332525253296
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.24370022118091583,
+              "branch_c_rms": 0.14858517050743103,
+              "fused_rms": 0.15700359642505646,
+              "branch_cosine_sim": 0.25522977113723755
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.16244211792945862,
+              "branch_c_rms": 0.19952906668186188,
+              "fused_rms": 0.1388821303844452,
+              "branch_cosine_sim": 0.19337685406208038
+            }
+          ]
+        },
+        {
+          "step": 5000,
+          "tag": "pgqa_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.729,
+          "avg_kurtosis": 0.33,
+          "max_kurtosis": 1.18,
+          "max_activation": 28.87,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1679285168647766,
+              "branch_c_rms": 0.6427546143531799,
+              "fused_rms": 0.3513895571231842,
+              "branch_cosine_sim": 0.2520412802696228
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.19025442004203796,
+              "branch_c_rms": 0.3853926956653595,
+              "fused_rms": 0.21724943816661835,
+              "branch_cosine_sim": 0.03343312814831734
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.17402364313602448,
+              "branch_c_rms": 0.5987350344657898,
+              "fused_rms": 0.3127962350845337,
+              "branch_cosine_sim": 0.013180999085307121
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.6853622794151306,
+              "branch_c_rms": 0.3503749966621399,
+              "fused_rms": 0.3858831524848938,
+              "branch_cosine_sim": 0.00532308267429471
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.4477793276309967,
+              "branch_c_rms": 0.2978918254375458,
+              "fused_rms": 0.27195248007774353,
+              "branch_cosine_sim": 0.021970955654978752
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.36769846081733704,
+              "branch_c_rms": 0.24222439527511597,
+              "fused_rms": 0.22558477520942688,
+              "branch_cosine_sim": 0.05145544186234474
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.5146194696426392,
+              "branch_c_rms": 0.2260102778673172,
+              "fused_rms": 0.29253485798835754,
+              "branch_cosine_sim": 0.11412030458450317
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.7399201393127441,
+              "branch_c_rms": 0.3024304509162903,
+              "fused_rms": 0.42353713512420654,
+              "branch_cosine_sim": 0.20850367844104767
+            },
+            {
+              "layer": 8,
+              "branch_a_rms": 0.3940141201019287,
+              "branch_c_rms": 0.5671898126602173,
+              "fused_rms": 0.37456175684928894,
+              "branch_cosine_sim": 0.19736215472221375
+            },
+            {
+              "layer": 9,
+              "branch_a_rms": 0.2969723343849182,
+              "branch_c_rms": 0.18369060754776,
+              "fused_rms": 0.18457463383674622,
+              "branch_cosine_sim": 0.13645531237125397
+            },
+            {
+              "layer": 10,
+              "branch_a_rms": 0.2137138843536377,
+              "branch_c_rms": 0.11537807434797287,
+              "fused_rms": 0.12353042513132095,
+              "branch_cosine_sim": 0.046612225472927094
+            },
+            {
+              "layer": 11,
+              "branch_a_rms": 0.24938681721687317,
+              "branch_c_rms": 0.09938063472509384,
+              "fused_rms": 0.13606110215187073,
+              "branch_cosine_sim": 0.034561119973659515
+            },
+            {
+              "layer": 12,
+              "branch_a_rms": 0.41760218143463135,
+              "branch_c_rms": 0.09577766060829163,
+              "fused_rms": 0.21511779725551605,
+              "branch_cosine_sim": 0.016471320763230324
+            },
+            {
+              "layer": 13,
+              "branch_a_rms": 0.25784817337989807,
+              "branch_c_rms": 0.10035640001296997,
+              "fused_rms": 0.13847190141677856,
+              "branch_cosine_sim": 0.004633614327758551
+            },
+            {
+              "layer": 14,
+              "branch_a_rms": 0.26753923296928406,
+              "branch_c_rms": 0.08690379559993744,
+              "fused_rms": 0.14051522314548492,
+              "branch_cosine_sim": -0.0038449964486062527
+            },
+            {
+              "layer": 15,
+              "branch_a_rms": 0.268782377243042,
+              "branch_c_rms": 0.08700963854789734,
+              "fused_rms": 0.14141155779361725,
+              "branch_cosine_sim": 0.0027091947849839926
+            },
+            {
+              "layer": 16,
+              "branch_a_rms": 0.37202879786491394,
+              "branch_c_rms": 0.08735322952270508,
+              "fused_rms": 0.19199804961681366,
+              "branch_cosine_sim": 0.015415561385452747
+            },
+            {
+              "layer": 17,
+              "branch_a_rms": 0.2907447814941406,
+              "branch_c_rms": 0.09106741100549698,
+              "fused_rms": 0.1524762362241745,
+              "branch_cosine_sim": 0.0010436326265335083
+            },
+            {
+              "layer": 18,
+              "branch_a_rms": 0.3561573624610901,
+              "branch_c_rms": 0.09150363504886627,
+              "fused_rms": 0.1876554936170578,
+              "branch_cosine_sim": 0.07402148842811584
+            },
+            {
+              "layer": 19,
+              "branch_a_rms": 0.23068207502365112,
+              "branch_c_rms": 0.08055122196674347,
+              "fused_rms": 0.12321703881025314,
+              "branch_cosine_sim": 0.03583339974284172
+            },
+            {
+              "layer": 20,
+              "branch_a_rms": 0.4195380210876465,
+              "branch_c_rms": 0.08788996189832687,
+              "fused_rms": 0.21574793756008148,
+              "branch_cosine_sim": 0.04680200666189194
+            },
+            {
+              "layer": 21,
+              "branch_a_rms": 0.2503111958503723,
+              "branch_c_rms": 0.10107824206352234,
+              "fused_rms": 0.14058077335357666,
+              "branch_cosine_sim": 0.131207674741745
+            },
+            {
+              "layer": 22,
+              "branch_a_rms": 0.24020764231681824,
+              "branch_c_rms": 0.13865119218826294,
+              "fused_rms": 0.15548115968704224,
+              "branch_cosine_sim": 0.31755638122558594
+            },
+            {
+              "layer": 23,
+              "branch_a_rms": 0.1894671767950058,
+              "branch_c_rms": 0.18812520802021027,
+              "fused_rms": 0.14747586846351624,
+              "branch_cosine_sim": 0.2579346299171448
+            }
+          ]
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is that the body is the body. The body is the body that is the body. The body is the body that is the body. The body is the body that is the body. The body is the body that is the body. The body is the body that is the body. The body is the body that is"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is still in the world.\n\nThe world is the world\u2019s most important and most important part of the world. The world is the world\u2019s most important and most important part of the world. The world is the world\u2019s most important and most important part of the world.\n\n"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "pgqa_mixed_8q16a": {
+      "params": 91309619,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 7.4374,
+          "avg_kurtosis": 0.36,
+          "max_kurtosis": 0.93,
+          "max_activation": 14.21,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.09433931112289429,
+              "branch_c_rms": 0.27951374650001526,
+              "fused_rms": 0.15344159305095673,
+              "branch_cosine_sim": 0.13852232694625854
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.08281005173921585,
+              "branch_c_rms": 0.194699227809906,
+              "fused_rms": 0.10792124271392822,
+              "branch_cosine_sim": 0.06578698754310608
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.1401907205581665,
+              "branch_c_rms": 0.1654372662305832,
+              "fused_rms": 0.11112355440855026,
+              "branch_cosine_sim": 0.057435404509305954
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.09206105023622513,
+              "branch_c_rms": 0.1710083931684494,
+              "fused_rms": 0.09877781569957733,
+              "branch_cosine_sim": 0.04688981547951698
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.12822121381759644,
+              "branch_c_rms": 0.16182029247283936,
+              "fused_rms": 0.10493142902851105,
+              "branch_cosine_sim": 0.04397616535425186
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.10872941464185715,
+              "branch_c_rms": 0.16356025636196136,
+              "fused_rms": 0.10132941603660583,
+              "branch_cosine_sim": 0.07698538154363632
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.35490304231643677,
+              "branch_c_rms": 0.1637548953294754,
+              "fused_rms": 0.2091500163078308,
+              "branch_cosine_sim": 0.192325621843338
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.29682305455207825,
+              "branch_c_rms": 0.22034107148647308,
+              "fused_rms": 0.21272999048233032,
+              "branch_cosine_sim": 0.3295316696166992
+            }
+          ]
+        },
+        {
+          "step": 1000,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.7639,
+          "avg_kurtosis": 0.13,
+          "max_kurtosis": 0.23,
+          "max_activation": 13.74,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1062261238694191,
+              "branch_c_rms": 0.3966439366340637,
+              "fused_rms": 0.21533888578414917,
+              "branch_cosine_sim": 0.18964359164237976
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.11123861372470856,
+              "branch_c_rms": 0.2853110432624817,
+              "fused_rms": 0.15584012866020203,
+              "branch_cosine_sim": 0.048182569444179535
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.18453997373580933,
+              "branch_c_rms": 0.26428908109664917,
+              "fused_rms": 0.1627255231142044,
+              "branch_cosine_sim": 0.021112874150276184
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.16796720027923584,
+              "branch_c_rms": 0.3087591826915741,
+              "fused_rms": 0.17733484506607056,
+              "branch_cosine_sim": 0.01953764073550701
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.4396890103816986,
+              "branch_c_rms": 0.21359238028526306,
+              "fused_rms": 0.2474379539489746,
+              "branch_cosine_sim": 0.028311943635344505
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.2771810293197632,
+              "branch_c_rms": 0.2003682553768158,
+              "fused_rms": 0.1765931397676468,
+              "branch_cosine_sim": 0.07149459421634674
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.43712592124938965,
+              "branch_c_rms": 0.19054898619651794,
+              "fused_rms": 0.25047948956489563,
+              "branch_cosine_sim": 0.15145404636859894
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.3680969178676605,
+              "branch_c_rms": 0.2323014736175537,
+              "fused_rms": 0.24418967962265015,
+              "branch_cosine_sim": 0.29679855704307556
+            }
+          ]
+        },
+        {
+          "step": 1500,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.0503,
+          "avg_kurtosis": 0.07,
+          "max_kurtosis": 0.18,
+          "max_activation": 15.19,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.13725514709949493,
+              "branch_c_rms": 0.4922759234905243,
+              "fused_rms": 0.2685222923755646,
+              "branch_cosine_sim": 0.18918798863887787
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.152957022190094,
+              "branch_c_rms": 0.3074389696121216,
+              "fused_rms": 0.17422685027122498,
+              "branch_cosine_sim": 0.03673240914940834
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.17455390095710754,
+              "branch_c_rms": 0.30645856261253357,
+              "fused_rms": 0.17722240090370178,
+              "branch_cosine_sim": 0.012759503908455372
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.1922115534543991,
+              "branch_c_rms": 0.4087987542152405,
+              "fused_rms": 0.2266889214515686,
+              "branch_cosine_sim": 0.009748329408466816
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.48175907135009766,
+              "branch_c_rms": 0.242054745554924,
+              "fused_rms": 0.27023056149482727,
+              "branch_cosine_sim": 0.00583442160859704
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.36238840222358704,
+              "branch_c_rms": 0.23975731432437897,
+              "fused_rms": 0.22242389619350433,
+              "branch_cosine_sim": 0.05589607357978821
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.4744606018066406,
+              "branch_c_rms": 0.21219399571418762,
+              "fused_rms": 0.2700432240962982,
+              "branch_cosine_sim": 0.1108567863702774
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.3769133687019348,
+              "branch_c_rms": 0.277829647064209,
+              "fused_rms": 0.2601463794708252,
+              "branch_cosine_sim": 0.25221994519233704
+            }
+          ]
+        },
+        {
+          "step": 2000,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4741,
+          "avg_kurtosis": 0.1,
+          "max_kurtosis": 0.23,
+          "max_activation": 17.84,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.18713237345218658,
+              "branch_c_rms": 0.5342380404472351,
+              "fused_rms": 0.2925630211830139,
+              "branch_cosine_sim": 0.1307821124792099
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.19951128959655762,
+              "branch_c_rms": 0.3556286692619324,
+              "fused_rms": 0.20642037689685822,
+              "branch_cosine_sim": 0.026356449350714684
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.20875690877437592,
+              "branch_c_rms": 0.3723967969417572,
+              "fused_rms": 0.21495012938976288,
+              "branch_cosine_sim": 0.017869817093014717
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.22202597558498383,
+              "branch_c_rms": 0.579730212688446,
+              "fused_rms": 0.3096344470977783,
+              "branch_cosine_sim": -0.007292937487363815
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.7189939022064209,
+              "branch_c_rms": 0.30086788535118103,
+              "fused_rms": 0.39089787006378174,
+              "branch_cosine_sim": 0.004876220133155584
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.5249863266944885,
+              "branch_c_rms": 0.29132941365242004,
+              "fused_rms": 0.3044556677341461,
+              "branch_cosine_sim": 0.03372419998049736
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.5300251245498657,
+              "branch_c_rms": 0.23221355676651,
+              "fused_rms": 0.29698610305786133,
+              "branch_cosine_sim": 0.08486399799585342
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.44811099767684937,
+              "branch_c_rms": 0.28742843866348267,
+              "fused_rms": 0.29131752252578735,
+              "branch_cosine_sim": 0.2224005162715912
+            }
+          ]
+        },
+        {
+          "step": 2500,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.2677,
+          "avg_kurtosis": 0.1,
+          "max_kurtosis": 0.22,
+          "max_activation": 18.23,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1311187595129013,
+              "branch_c_rms": 0.5783048272132874,
+              "fused_rms": 0.3044681251049042,
+              "branch_cosine_sim": 0.15468309819698334
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.16393309831619263,
+              "branch_c_rms": 0.3313179910182953,
+              "fused_rms": 0.18693067133426666,
+              "branch_cosine_sim": 0.03129420801997185
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.1858784705400467,
+              "branch_c_rms": 0.3450377285480499,
+              "fused_rms": 0.19655731320381165,
+              "branch_cosine_sim": 0.008384929038584232
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.21745166182518005,
+              "branch_c_rms": 0.5315188765525818,
+              "fused_rms": 0.28622713685035706,
+              "branch_cosine_sim": -0.010184909217059612
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.6735816597938538,
+              "branch_c_rms": 0.30806636810302734,
+              "fused_rms": 0.37143459916114807,
+              "branch_cosine_sim": 0.0057357982732355595
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.4992416799068451,
+              "branch_c_rms": 0.3219126760959625,
+              "fused_rms": 0.2997019588947296,
+              "branch_cosine_sim": 0.020657403394579887
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.546563982963562,
+              "branch_c_rms": 0.2705662250518799,
+              "fused_rms": 0.31489670276641846,
+              "branch_cosine_sim": 0.089727982878685
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.5651615262031555,
+              "branch_c_rms": 0.3467261493206024,
+              "fused_rms": 0.36022472381591797,
+              "branch_cosine_sim": 0.21072721481323242
+            }
+          ]
+        },
+        {
+          "step": 3000,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.2266,
+          "avg_kurtosis": 0.17,
+          "max_kurtosis": 0.37,
+          "max_activation": 23.8,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.13883426785469055,
+              "branch_c_rms": 0.6261265277862549,
+              "fused_rms": 0.3337080776691437,
+              "branch_cosine_sim": 0.21431638300418854
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.17618490755558014,
+              "branch_c_rms": 0.3211878836154938,
+              "fused_rms": 0.18582752346992493,
+              "branch_cosine_sim": 0.03577371686697006
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.18614308536052704,
+              "branch_c_rms": 0.32514306902885437,
+              "fused_rms": 0.18785083293914795,
+              "branch_cosine_sim": 0.0065915705636143684
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.23566292226314545,
+              "branch_c_rms": 0.5200710296630859,
+              "fused_rms": 0.28470227122306824,
+              "branch_cosine_sim": -0.009782294742763042
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.5835860371589661,
+              "branch_c_rms": 0.3110674023628235,
+              "fused_rms": 0.33175644278526306,
+              "branch_cosine_sim": 0.00774460518732667
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.5017669200897217,
+              "branch_c_rms": 0.3376918435096741,
+              "fused_rms": 0.30627161264419556,
+              "branch_cosine_sim": 0.02830393612384796
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.5178453922271729,
+              "branch_c_rms": 0.27743643522262573,
+              "fused_rms": 0.3039127588272095,
+              "branch_cosine_sim": 0.09201006591320038
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.6538075804710388,
+              "branch_c_rms": 0.3766012191772461,
+              "fused_rms": 0.4133652448654175,
+              "branch_cosine_sim": 0.24019645154476166
+            }
+          ]
+        },
+        {
+          "step": 3500,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.1353,
+          "avg_kurtosis": 0.21,
+          "max_kurtosis": 0.64,
+          "max_activation": 28.55,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1622687727212906,
+              "branch_c_rms": 0.6596343517303467,
+              "fused_rms": 0.35451507568359375,
+              "branch_cosine_sim": 0.202118381857872
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.18868598341941833,
+              "branch_c_rms": 0.3363634943962097,
+              "fused_rms": 0.1956474930047989,
+              "branch_cosine_sim": 0.03196687996387482
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.2029866874217987,
+              "branch_c_rms": 0.34345918893814087,
+              "fused_rms": 0.2004891186952591,
+              "branch_cosine_sim": 0.013146600686013699
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.23676177859306335,
+              "branch_c_rms": 0.5835534930229187,
+              "fused_rms": 0.31295159459114075,
+              "branch_cosine_sim": -0.021052047610282898
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.699217677116394,
+              "branch_c_rms": 0.34233906865119934,
+              "fused_rms": 0.39027559757232666,
+              "branch_cosine_sim": 0.004078134894371033
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.5750104188919067,
+              "branch_c_rms": 0.35936838388442993,
+              "fused_rms": 0.3428451716899872,
+              "branch_cosine_sim": 0.026119844987988472
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.562847375869751,
+              "branch_c_rms": 0.2790296971797943,
+              "fused_rms": 0.32560664415359497,
+              "branch_cosine_sim": 0.09724768251180649
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.7231148481369019,
+              "branch_c_rms": 0.394883930683136,
+              "fused_rms": 0.4511266052722931,
+              "branch_cosine_sim": 0.23486679792404175
+            }
+          ]
+        },
+        {
+          "step": 4000,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.0605,
+          "avg_kurtosis": 0.34,
+          "max_kurtosis": 1.34,
+          "max_activation": 36.32,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.13595722615718842,
+              "branch_c_rms": 0.6626285314559937,
+              "fused_rms": 0.34983566403388977,
+              "branch_cosine_sim": 0.1862909346818924
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.18069730699062347,
+              "branch_c_rms": 0.32700783014297485,
+              "fused_rms": 0.1890638917684555,
+              "branch_cosine_sim": 0.031576406210660934
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.18539968132972717,
+              "branch_c_rms": 0.3192742168903351,
+              "fused_rms": 0.1851416677236557,
+              "branch_cosine_sim": 0.007709121331572533
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.22047170996665955,
+              "branch_c_rms": 0.527373194694519,
+              "fused_rms": 0.2848687171936035,
+              "branch_cosine_sim": -0.01407648716121912
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.5164586901664734,
+              "branch_c_rms": 0.33726948499679565,
+              "fused_rms": 0.30921122431755066,
+              "branch_cosine_sim": 0.005352116655558348
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.47834277153015137,
+              "branch_c_rms": 0.36085954308509827,
+              "fused_rms": 0.30197951197624207,
+              "branch_cosine_sim": 0.017169542610645294
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.5711872577667236,
+              "branch_c_rms": 0.3048403561115265,
+              "fused_rms": 0.33489903807640076,
+              "branch_cosine_sim": 0.08762578666210175
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.7131971716880798,
+              "branch_c_rms": 0.44677308201789856,
+              "fused_rms": 0.46130073070526123,
+              "branch_cosine_sim": 0.23309355974197388
+            }
+          ]
+        },
+        {
+          "step": 4500,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.9109,
+          "avg_kurtosis": 0.41,
+          "max_kurtosis": 1.89,
+          "max_activation": 46.33,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.1393386870622635,
+              "branch_c_rms": 0.6997970938682556,
+              "fused_rms": 0.3701021373271942,
+              "branch_cosine_sim": 0.22182372212409973
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.17612461745738983,
+              "branch_c_rms": 0.3119502663612366,
+              "fused_rms": 0.18149183690547943,
+              "branch_cosine_sim": 0.029095595702528954
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.19160860776901245,
+              "branch_c_rms": 0.3042448163032532,
+              "fused_rms": 0.18012763559818268,
+              "branch_cosine_sim": 0.006432564463466406
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.25164490938186646,
+              "branch_c_rms": 0.5167968273162842,
+              "fused_rms": 0.2866712212562561,
+              "branch_cosine_sim": -0.009737019427120686
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.5475067496299744,
+              "branch_c_rms": 0.326299786567688,
+              "fused_rms": 0.31958410143852234,
+              "branch_cosine_sim": 0.004731528460979462
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.5081603527069092,
+              "branch_c_rms": 0.34627172350883484,
+              "fused_rms": 0.31005561351776123,
+              "branch_cosine_sim": 0.017865773290395737
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.6011996269226074,
+              "branch_c_rms": 0.29429200291633606,
+              "fused_rms": 0.3448701500892639,
+              "branch_cosine_sim": 0.08286985754966736
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.8117296099662781,
+              "branch_c_rms": 0.43264901638031006,
+              "fused_rms": 0.5013568997383118,
+              "branch_cosine_sim": 0.23141108453273773
+            }
+          ]
+        },
+        {
+          "step": 5000,
+          "tag": "pgqa_mixed_8q16a",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.7438,
+          "avg_kurtosis": 0.28,
+          "max_kurtosis": 0.99,
+          "max_activation": 35.68,
+          "branch_telemetry": [
+            {
+              "layer": 0,
+              "branch_a_rms": 0.19094324111938477,
+              "branch_c_rms": 0.6871403455734253,
+              "fused_rms": 0.3655721843242645,
+              "branch_cosine_sim": 0.149180606007576
+            },
+            {
+              "layer": 1,
+              "branch_a_rms": 0.21136000752449036,
+              "branch_c_rms": 0.3511020243167877,
+              "fused_rms": 0.20754288136959076,
+              "branch_cosine_sim": 0.03184165060520172
+            },
+            {
+              "layer": 2,
+              "branch_a_rms": 0.197391077876091,
+              "branch_c_rms": 0.35041114687919617,
+              "fused_rms": 0.20350396633148193,
+              "branch_cosine_sim": 0.032406508922576904
+            },
+            {
+              "layer": 3,
+              "branch_a_rms": 0.2564401626586914,
+              "branch_c_rms": 0.6164114475250244,
+              "fused_rms": 0.33228471875190735,
+              "branch_cosine_sim": -0.015135255642235279
+            },
+            {
+              "layer": 4,
+              "branch_a_rms": 0.7731398344039917,
+              "branch_c_rms": 0.3626682162284851,
+              "fused_rms": 0.4285221993923187,
+              "branch_cosine_sim": 0.008855110965669155
+            },
+            {
+              "layer": 5,
+              "branch_a_rms": 0.5649844408035278,
+              "branch_c_rms": 0.36647510528564453,
+              "fused_rms": 0.34039533138275146,
+              "branch_cosine_sim": 0.02402496710419655
+            },
+            {
+              "layer": 6,
+              "branch_a_rms": 0.6041746139526367,
+              "branch_c_rms": 0.27444496750831604,
+              "fused_rms": 0.3433240056037903,
+              "branch_cosine_sim": 0.09615587443113327
+            },
+            {
+              "layer": 7,
+              "branch_a_rms": 0.8233137726783752,
+              "branch_c_rms": 0.36989718675613403,
+              "fused_rms": 0.48532795906066895,
+              "branch_cosine_sim": 0.214029923081398
+            }
+          ]
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is the most important part of life.\nThe first part of life is the first part of life. It is the second part of life that is the third part of life. It is the third part of life that is the third part of life. It is the third part of life that is the third part of life"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of a world of"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    }
+  }
+}
