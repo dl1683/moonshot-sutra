@@ -1649,3 +1649,38 @@ Key takeaways for quantization-native architecture:
 3. Hymba-style hybrid heads (SSM+attention within layers) vs layer-interleaving?
 4. How to integrate multi-teacher KD with curriculum MTP?
 5. Quartet FP4 training on RTX 5090 — implementation readiness?
+
+---
+
+### 6.10.1 Round 2 Evidence Addendum (2026-03-26)
+
+This addendum records the specific evidence that drove the Round 2 architecture update in `research/ARCHITECTURE.md`.
+
+- **Local probe: DyT vs RMSNorm (`42M`, `5000` steps).**
+  - RMSNorm finished at `5.08` BPT versus `5.83` for DyT.
+  - DyT showed higher activation kurtosis and worse generation.
+  - Main mechanistic lesson: DyT is not enough as a **drop-in** because it does not normalize the residual stream.
+
+- **Local probe: TOP vs NTP is still running.**
+  - Only the NTP-only arm has a partial trajectory so far.
+  - This is enough to keep TOP as a live candidate, not enough to make it default.
+
+- **Muon optimizer evidence is now load-bearing.**
+  - Muon offers roughly `2x` compute efficiency versus AdamW and materially better outlier behavior.
+  - The strongest external pairing for our purposes is `Muon + Single-Scale RMSNorm`.
+
+- **MiniPLM is now a concrete implementation path, not just a literature note.**
+  - The existing shard-weight path in `code/data_loader.py` is sufficient to support offline difference sampling once teacher-reference scoring is added.
+
+- **SmolLM2 sharpened the O4 priority.**
+  - Quality filtering should happen before fancy KD.
+  - High-quality `23B` tokens are more valuable than an unfiltered `23B` token pool.
+
+- **Multi-teacher evidence tightened the supervision design.**
+  - Adaptive weighting matters.
+  - Architecture diversity matters more than picking several similar "best" teachers.
+  - This supports adaptive family rotation rather than naive static averaging.
+
+- **TOP remains the preferred future-token auxiliary over classic MTP.**
+  - External evidence at `340M+` is strong.
+  - Local promotion still waits on the running probe.

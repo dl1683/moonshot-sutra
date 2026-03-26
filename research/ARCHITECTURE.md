@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 1 architecture proposal (2026-03-26)**
+**Status: Round 2 architecture refinement (2026-03-26). Round 1 remains below as historical record; the Round 2 addendum at the end supersedes conflicting details.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -990,3 +990,598 @@ and match teacher semantic geometry using geodesic distance:
 `L_hyp = d_L(z_hyp, z_teacher)`
 
 This is an auxiliary semantic head, not part of next-token decoding.
+
+#### 8.4.9 TOP-style future-order head
+
+Use `K = 4`.
+
+`q_t = P_top h_t^{12}`
+
+For actual future tokens `x_{t+1}, ..., x_{t+4}`:
+
+`r_{t,j} = q_t^T E[x_{t+j}] / sqrt(d)`
+
+Target ranking distribution:
+
+`y_j = exp(-j / tau) / sum_k exp(-k / tau)`, with `tau = 1`
+
+Loss:
+
+`L_top = - sum_t sum_{j=1}^4 y_j log softmax(r_t)_j`
+
+This uses the true future tokens already in the batch and adds planning pressure without adding full MTP blocks.
+
+### 8.5 Training Objective
+
+Base LM objective:
+
+`L_ntp = CE(p_12, x_{t+1})`
+
+Exit losses:
+
+`L_exit = 0.25 * CE(p_4, x_{t+1}) + 0.50 * CE(p_8, x_{t+1})`
+
+Internal self-distillation:
+
+`L_sd = 0.10 * KL(stopgrad(p_12 / T) || p_4 / T) + 0.10 * KL(stopgrad(p_12 / T) || p_8 / T)`
+
+with `T = 2`.
+
+Teacher loss:
+
+`L_teacher = sum_f lambda_f * m_f(batch) * L_f`
+
+where `m_f(batch)` is the rotation mask selecting which teacher families are active on the current batch.
+
+Future-order loss:
+
+`L_aux = lambda_top * L_top`
+
+Total:
+
+`L_total = L_ntp + L_exit + L_sd + L_teacher + L_aux + lambda_hyp * L_hyp`
+
+Recommended Round 1 initial weights:
+
+- `lambda_top = 0.05` after delayed activation
+- `lambda_hyp = 0.02`
+- teacher port weights:
+  - decoder `0.05`
+  - SSM `0.05`
+  - hybrid `0.04`
+  - semantic `0.03`
+  - code `0.05` on code batches only
+
+### 8.6 Training Curriculum
+
+This curriculum is part of the architecture. It exists to protect the trunk from the same cold-start interference that likely hurt earlier probes.
+
+1. **Stage 0: offline data shaping**
+   - Run MiniPLM-style difficulty scoring.
+   - Build weighted sampler before long training.
+
+2. **Stage 1: scout trunk only**
+   - Train `HEMD-S`.
+   - Active losses: `L_ntp + L_exit + L_sd`
+   - Context `512`
+   - No teacher ports, no TOP, no memory
+
+3. **Stage 2: teacher ports on scout**
+   - Turn on teacher rotation after the scout has basic competence.
+   - Keep context `512`
+
+4. **Stage 3: delayed TOP and memory**
+   - Activate `L_top`
+   - Run memory-gated variant if Probe 3 is positive
+   - Increase context to `1024` if throughput is still acceptable
+
+5. **Stage 4: widen to main**
+   - Net2Wider-style width expansion from scout to main
+   - Resume training on weighted data with active ports
+
+6. **Stage 5: late quantization-aware fine-tuning**
+   - INT8 activations, NVFP4 or INT4 weights
+   - recalibrate exits after quantization
+
+### 8.7 Optimizer, Schedule, Initialization, and Precision
+
+**Backbone optimizer:** AdamW
+
+- LR `3e-4`
+- betas `(0.9, 0.95)`
+- weight decay `0.1`
+- gradient clip `1.0`
+
+**Schedule:** WSD
+
+- warmup: first `2%` of total steps, or `500` steps minimum
+- stable plateau until `80%` of total steps
+- linear decay to `1e-5` in the final `20%`
+
+**Auxiliary modules:** higher LR than backbone
+
+- exits, teacher ports, TOP head: `6e-4`
+- memory dense projection and gate: `6e-4`
+- memory tables: SparseAdam at `6e-4`
+
+**Initialization:**
+
+- embeddings and main linear layers: normal with std `0.02`
+- residual output projections: scale by `1 / sqrt(2L)` where `L = 12`
+- memory projection: zero-init
+- memory gate bias: `-2.0`
+- teacher ports: small normal
+- hyperbolic port: small normal
+
+**Precision:**
+
+- train in BF16
+- keep optimizer states in FP32
+- activation checkpointing on for long runs
+- late QAT only after the backbone is already competent
+
+### 8.8 Parameter Breakdown and VRAM Estimate
+
+For `HEMD-M` (`d=1024`, `ff=2560`), approximate GPU-resident parameter counts are:
+
+| Component | Params |
+|----------|--------|
+| Token embedding / tied unembedding | `16.38M` |
+| 9 H-blocks | `109.12M` |
+| 3 A-blocks | `31.46M` |
+| Exit heads and norms | `0.53M` |
+| Teacher ports | `6.29M` |
+| TOP head | `1.05M` |
+| Memory gate and projection | `1.11M` |
+| **Total GPU params** | **`165.94M`** |
+| CPU memory tables | **`67.11M`** |
+
+Approximate BF16 / AdamW memory footprint for `HEMD-M`:
+
+| Item | Estimate |
+|------|----------|
+| BF16 weights | `~0.31 GB` |
+| BF16 gradients | `~0.31 GB` |
+| FP32 Adam states | `~1.24 GB` |
+| Activations at seq `512`, microbatch `8`, checkpointing on | `~3-5 GB` |
+| Activations at seq `1024`, microbatch `4`, checkpointing on | `~5-8 GB` |
+| CPU memory tables in BF16 | `~0.125 GB` |
+
+Practical interpretation:
+
+- The student should fit comfortably on the 24GB GPU.
+- There is still room for rotated online teachers.
+- This is consistent with the broader VRAM analysis in `research/RESEARCH.md`.
+
+### 8.9 Module Contracts for Outcomes 2 and 3
+
+These interfaces are not optional. They are the mechanism for improvability and democratization.
+
+1. **Local mixer interface**
+   - input: `B x T x d`
+   - output: `B x T x d`
+   - swappable family: gated convolution, Hyena variant, or future alternative
+
+2. **Global mixer interface**
+   - input: `B x T x d`
+   - output: `B x T x d`
+   - swappable family: GQA, sparse attention, or later state-space attention hybrid
+
+3. **Memory port**
+   - input: tokens and hidden states
+   - output: residual delta
+   - independently trainable and replaceable
+
+4. **Teacher port**
+   - input: pooled state
+   - output: teacher-aligned latent
+   - adding a new teacher should mean adding one new port, not rewriting the trunk
+
+5. **Exit head**
+   - input: hidden state at a fixed depth
+   - output: logits and calibration metrics
+   - independently calibratable
+
+### 8.10 Current Design Decision Audit
+
+| Decision | Status | Confidence | Evidence |
+|----------|--------|------------|----------|
+| 16K custom tokenizer | VALIDATED | `8/10` | Project reports it as the biggest single efficiency win |
+| Warm-start widening path | VALIDATED AS PROCESS, PROPOSED AS ARCHITECTURE | `7/10` | Project reports warm-starting consistently beats scratch at equal wall-clock |
+| Fixed exits before learned halting | VALIDATED FOR FIRST PASS | `8/10` | Elastic compute replicated across all prior experiments; calibrated fixed exits showed promise |
+| Hybrid local/global trunk | PROPOSED | `6/10` | Strong literature signal, no project-local proof yet |
+| Representation-first multi-source learning | PROPOSED | `7/10` | Architecture-agnostic and avoids tokenizer mismatch; still untested here |
+| External n-gram memory | QUESTIONED BUT RETAINED AS MODULE | `5/10` | Strong external signal, prior local attempt weak |
+| TOP auxiliary | PROPOSED | `6/10` | Better small-model literature story than classic MTP; untested here |
+| AdamW plus WSD | VALIDATED FOR TRAINABILITY | `8/10` | Direct repo evidence |
+| Single-Scale RMSNorm | PROPOSED | `5/10` | Quantization rationale strong, local proof absent |
+| Late QAT to NVFP4 / INT4 | PROPOSED | `7/10` | Hardware and research fit, no local run yet |
+| Hyperbolic semantic side-port | PROPOSED | `5/10` | Geometry thesis aligned, low-risk insertion point |
+
+### 8.11 Training Priorities
+
+Immediate priorities for the next session:
+
+1. Implement `HEMD-S` first, not `HEMD-M`.
+2. Run Probes 1, 2, 5, and 6 before any long production pre-train.
+3. Only add memory and TOP if Probes 3 and 4 are non-negative.
+4. Widen to `HEMD-M` only after the scout proves the trunk and exit recipe.
+5. Do not start a learned halting run before fixed exits plus calibration are already strong.
+
+---
+
+## Final Round 1 Position
+
+Round 1 should not end with "need more data and no design." There is enough evidence to choose a direction.
+
+The direction is:
+
+- **base architecture:** hybrid causal decoder
+- **compute control:** fixed exits plus self-distillation
+- **data efficiency core:** offline data reweighting plus representation-first multi-teacher ports
+- **memory:** external n-gram table as delayed additive module
+- **scaling path:** `~101M` scout to `~166M` main via warm-start widening
+
+This is the first Sutra architecture that is explicitly optimized for all five outcomes at once, while still respecting the strongest local evidence from the repo.
+
+---
+
+## 9. Round 2 Evidence Integration
+
+Round 2 does **not** overturn HEMD. The hybrid elastic family still looks like the best current system-level bet. What changed is the default training stack and the order of proof. The new evidence is strong enough to demote DyT-as-default, promote Muon plus Single-Scale RMSNorm, and make data shaping more concrete and mandatory.
+
+### 9.1 Executive Delta From Round 1
+
+1. The mainline optimizer stack is no longer pure AdamW. The default is now **Muon for dense matrix weights, AdamW for non-matrix/scalar parameters, and SparseAdam for CPU memory tables**.
+2. **Single-Scale RMSNorm** is no longer merely proposed. It is the **default normalization** for the first production scout.
+3. **DyT is removed from the mainline recipe.** It survives only as a modified salvage probe with residual scaling or residual gating.
+4. Stage 0 is split into **0A quality filtering** and **0B MiniPLM difference sampling**. Data shaping is now mandatory before any long scout run.
+5. Teacher supervision is no longer static rotation. It becomes **adaptive family rotation with diversity floors**.
+6. **TOP stays in the architecture but remains conditional.** The literature signal is strong enough to keep the head; the local probe is not finished, so it is not yet a mandatory loss.
+7. External n-gram memory remains additive, but it drops behind optimizer/norm validation and the O4 data pipeline in execution priority.
+
+### 9.2 Evidence-By-Evidence Analysis
+
+#### Evidence 1. DyT vs RMSNorm local probe (`42M`, `5000` steps)
+
+**Observed result:**
+
+- RMSNorm finished at **`5.08` BPT** versus **`5.83` BPT** for DyT.
+- DyT had worse average and max kurtosis and worse generation quality.
+- The convergence gap narrowed, but it did **not** close by step `5000`.
+- The most useful interpretation is mechanistic: **DyT squashes internal activations, but it does not normalize the residual stream.** The residual path `x + block(DyT(x))` can still accumulate scale.
+
+**Architectural consequence:**
+
+- Round 1's "keep Single-Scale RMSNorm unless DyT proves itself" is now resolved. **DyT as a drop-in replacement is falsified for the mainline at this scale.**
+- The first production scout should use **Single-Scale RMSNorm everywhere the Round 1 design used `Norm(.)`**: local blocks, attention blocks, exits, and teacher-port inputs.
+- DyT moves to a **research branch only**. The next DyT probe must test one of:
+  - `DyT + residual scaling`, e.g. `h^{l+1} = h^l + block(DyT(h^l)) / sqrt(L)`
+  - `DyT + learned residual gate`
+  - `DyT` only in internal sublayers while keeping residual-stream normalization
+
+**Expected effect:**
+
+- Preserve RMS-like scale control for Outcome 1.
+- Remove per-channel gamma amplification as an outlier source for Outcome 5.
+- Stop spending mainline budget on a currently losing normalization variant.
+
+#### Evidence 2. TOP vs NTP probe is still in progress
+
+**Observed result:**
+
+- We have a partial trajectory for the NTP-only arm, but **no completed comparison yet**.
+- This means Round 2 has **no local causal evidence** that TOP helps or hurts the scout at `42M`.
+
+**Architectural consequence:**
+
+- Do **not** promote TOP from "conditional additive module" to "mandatory Stage 1 loss" yet.
+- Keep the TOP head in the architecture because Evidence 7 is strong and the overhead is tiny.
+- Keep the delayed-activation rule from Round 1, but make the graduation criterion explicit:
+  - TOP becomes default only if the `NTP+TOP` arm is **non-negative on final BPT** and **non-negative on generation quality / hard eval** at equal compute.
+  - If the local result is mixed, TOP stays as an optional research branch rather than contaminating the mainline scout.
+
+**Expected effect:**
+
+- Preserve the upside of TOP without letting incomplete evidence steer the whole scout recipe.
+
+#### Evidence 3. Muon optimizer research
+
+**Observed result:**
+
+- Muon reaches AdamW-level quality at roughly **`52%` of the FLOPs** and around **`2/3` of the steps**.
+- The outlier story matters as much as the speed story: Muon prevents "privileged bases" from forming.
+- The strongest quantization-relevant result is the combination **Muon + Single-Scale RMSNorm**, which reportedly yields near-Gaussian activations and dramatically lower kurtosis than Adam-based training.
+
+**Architectural consequence:**
+
+- Round 1's default `AdamW + WSD` is superseded. The Round 2 mainline stack is:
+  - **Muon** for dense matrix parameters with `ndim >= 2` in the trunk, exits, teacher ports, and TOP head
+  - **AdamW** for non-matrix or scalar/vector parameters: norm scales, biases, scalar gates, and any parameter where Muon is not naturally defined
+  - **SparseAdam** for CPU-resident n-gram memory tables
+- Keep the **WSD-style schedule** for the first local validation run. The point of the Round 2 change is optimizer geometry, not schedule churn.
+
+**Expected effect:**
+
+- Better scout convergence at fixed wall-clock for Outcome 1.
+- Lower activation kurtosis and easier PTQ/QAT for Outcome 5.
+- A cleaner first production run because optimizer choice now serves both intelligence and deployment.
+
+#### Evidence 4. MiniPLM difference sampling
+
+**Observed result:**
+
+- MiniPLM gives a concrete offline KD recipe with **zero runtime training cost**.
+- It is **cross-family**, so it fits Sutra's multi-source requirement better than architecture-specific KD.
+- The repo already has the right insertion point: `code/data_loader.py` exposes `score_shards_teacher()` and `ShardedDataset(weight_file=...)`, and `_split_candidates()` already multiplies candidate sampling weights by `importance_weight`.
+
+**Architectural consequence:**
+
+- Round 1's B1 was directionally right but underspecified. Round 2 makes it concrete:
+  1. Extend `score_shards_teacher()` so it accepts both a **teacher** and a **reference** model and operates over **`data/shards_16k`**.
+  2. For each shard, sample `N` random decoded windows first. A good first pass is `8` windows of `256` tokens each.
+  3. Score each raw-text window under the teacher and the reference model using their own tokenizers.
+  4. Compute per-window difficulty gap:
+
+     `delta(window) = NLL_ref(window) - NLL_teacher(window)`
+
+  5. Average to shard level:
+
+     `delta_shard = mean_window delta(window)`
+
+  6. Convert to sampling weight:
+
+     `w_shard = clip(exp((delta_shard - median(delta)) / tau), 0.5, 2.0)`
+
+  7. Save the JSON weight file and pass it into `ShardedDataset(weight_file=...)`.
+- The current prompt-based quality scoring in `score_shards_teacher()` is still useful, but **that is a quality filter scaffold, not actual MiniPLM difference sampling**.
+
+**Expected effect:**
+
+- A zero-runtime-cost Outcome 4 baseline.
+- Better use of the `22.9B` token budget before we spend effort on heavier teacher losses.
+
+#### Evidence 5. SmolLM2 quality-filtering result
+
+**Observed result:**
+
+- SmolLM2's training story says **quality filtering matters more than raw volume growth**.
+- This directly attacks Sutra's biggest structural disadvantage: we do **not** have frontier-scale raw token volume.
+
+**Architectural consequence:**
+
+- Stage 0A is now mandatory: **quality filter before difference sampling**.
+- The conservative first-pass policy should be:
+  - use the existing `quality / informativeness / difficulty` scaffold as a bootstrap filter
+  - compute a coarse shard or source score from sampled decoded windows
+  - **drop only the bottom `10%`** after manual spot-checking
+  - **downweight the next `20%`** to `0.5x`
+  - keep the upper `70%` eligible for MiniPLM reweighting
+- In other words: **filter first, reweight second**. Do not waste the MiniPLM budget on obviously low-value text.
+
+**Expected effect:**
+
+- More useful gradients per token for Outcome 4.
+- Cleaner teacher signals during later adaptive rotation.
+
+#### Evidence 6. Multi-teacher KD survey
+
+**Observed result:**
+
+- Static averaging is the wrong baseline.
+- **Adaptive weighting** matters.
+- **Teacher diversity matters more than teacher quality**.
+- Multi-round aggregation matters more than "turn everything on at once."
+
+**Architectural consequence:**
+
+- Round 1's teacher-port idea survives, but Round 1's simple rotation needs refinement.
+- The Round 2 teacher schedule is:
+  1. **Teacher families are structural, not just model IDs**: `decoder`, `ssm`, `hybrid`, `semantic`, with `code` conditional on code batches.
+  2. **Warmup phase:** uniform rotation while the teacher-enabled stage first comes online.
+  3. **Adaptive phase:** every `1000` steps, evaluate each family on the same held-out hard slice and estimate utility from the held-out next-token delta.
+  4. Convert utilities to rotation probabilities:
+
+     `p_f propto softmax(u_f / tau)` with a floor `p_min = 0.15`
+
+  5. On generic text batches, activate **exactly one structural family per batch**.
+  6. Run the semantic port on a lower-frequency cadence, e.g. every fourth generic batch.
+  7. On code batches, always include the code teacher plus one structural family.
+  8. If a teacher family is negative for three consecutive evaluation intervals, freeze it and inspect rather than averaging it into the trunk.
+- The teacher set itself should remain deliberately diverse: at least one transformer-family teacher, one SSM-family teacher, one hybrid-family teacher, and one semantic encoder.
+
+**Expected effect:**
+
+- Less gradient conflict for Outcome 4.
+- A more real Outcome 3 infrastructure story because adding a new teacher family becomes a bounded extension point.
+
+#### Evidence 7. TOP paper
+
+**Observed result:**
+
+- TOP has strong external evidence at `340M`, `1.8B`, and `7B`.
+- It is specifically attractive because it avoids the small-model failure mode of classic MTP.
+- The overhead is tiny: one extra unembedding-style head.
+
+**Architectural consequence:**
+
+- TOP stays ahead of sequential MTP in the roadmap.
+- Sequential MTP is now a fallback research branch, not a peer baseline.
+- TOP activation stays **delayed** and **low-weight** until the local probe finishes.
+
+**Expected effect:**
+
+- If the local probe clears the gate, TOP becomes the lowest-risk path to inject planning pressure into small models.
+
+### 9.3 Superseding Design Decisions
+
+This section supersedes the relevant parts of Round 1 Sections `8.6`, `8.7`, and `8.10`.
+
+| Decision | Round 1 Status | Round 2 Status | Round 2 Rule |
+|----------|----------------|----------------|--------------|
+| `AdamW + WSD` default | Mainline default | **SUPERSEDED** | Use split `Muon + AdamW + SparseAdam`; keep WSD-style schedule until local evidence says otherwise |
+| Single-Scale RMSNorm | Proposed | **PROMOTED TO MAINLINE** | Default norm for the first production scout |
+| DyT as a mainline contender | Open contender | **DEMOTED** | Do not use as a drop-in norm in the mainline; only test with residual scaling/gating |
+| MiniPLM reweighting | Mandatory but underspecified | **PROMOTED AND SPECIFIED** | Run actual teacher-reference difference sampling through the existing shard-weight path |
+| Data quality filtering | Implied by literature, not explicit | **NEW MAINLINE REQUIREMENT** | Filter or downweight low-quality shards before MiniPLM |
+| Teacher rotation | Static rotation curriculum | **REFINED** | Adaptive family rotation with diversity floors and held-out utility updates |
+| TOP auxiliary | Proposed | **CONDITIONAL** | Keep the head; promote only if the running local probe is non-negative |
+| External n-gram memory | Retained additive module | **RETAINED BUT DEPRIORITIZED** | Do not spend early scout budget here until the revised optimizer/norm/O4 stack is positive |
+
+### 9.4 Round 2 Mainline Training Curriculum
+
+This is the new first-production scout recipe. It supersedes the Round 1 execution order.
+
+1. **Stage 0A: quality filtering**
+   - Score `data/shards_16k`.
+   - Drop the bottom decile after spot-checking.
+   - Downweight the next-lowest band.
+
+2. **Stage 0B: MiniPLM difference sampling**
+   - Run teacher-reference scoring on the filtered pool.
+   - Produce shard weights consumed by `ShardedDataset(weight_file=...)`.
+
+3. **Stage 1: scout trunk with exits only**
+   - Train `HEMD-S` with **Muon + AdamW + SparseAdam** and **Single-Scale RMSNorm**.
+   - Active losses: `L_ntp + L_exit + L_sd`
+   - No teachers, no TOP, no memory
+
+4. **Stage 2: adaptive teacher rotation**
+   - Turn on the teacher ports only after the scout has basic NTP competence.
+   - Use diverse-family adaptive rotation, not naive averaging.
+
+5. **Stage 3: conditional TOP**
+   - Activate TOP only if the running local probe is non-negative.
+   - Keep delayed activation and low weight.
+
+6. **Stage 4: delayed memory**
+   - Run the memory branch only after Stages `0A-3` are non-negative.
+   - If memory still does not open its gate or help BPT, cut it quickly.
+
+7. **Stage 5: widen to `HEMD-M`**
+   - Widen only after the revised scout proves trunk quality and stable exits.
+
+8. **Stage 6: quantization validation / late QAT**
+   - Evaluate PTQ first on the revised outlier-safe stack.
+   - Run late QAT only if PTQ leaves meaningful quality on the table.
+
+### 9.5 Updated Per-Outcome Confidence
+
+**Round 2 note:** These scores are still far from the `>=9/10` target. The point of Round 2 is not to pretend victory; it is to raise confidence only where new evidence is genuinely load-bearing.
+
+| Outcome | Round 1 | Round 2 | Change | Evidence Driving Change | Why This Changed |
+|---------|---------|---------|--------|-------------------------|------------------|
+| Genuine Intelligence | `3/10` | `4/10` | `+1` | **1, 3** | Evidence 1 removes a locally failing norm path from the mainline. Evidence 3 gives a stronger training stack with better convergence and outlier behavior. This raises confidence that the scout can become smart, but it is still not direct benchmark evidence. |
+| Improvability | `6/10` | `6/10` | `0` | none | Round 2 refines the interfaces, but we still have no local evidence that module-local repairs compose cleanly. |
+| Democratized Development | `4/10` | `5/10` | `+1` | **4, 6** | Evidence 4 makes cross-family offline supervision concrete through an existing hook, and Evidence 6 shows that diverse teacher families are the right unit of extension. That makes the infrastructure story more real. |
+| Data Efficiency | `1/10` | `3/10` | `+2` | **4, 5** | Evidence 4 gives a directly implementable MiniPLM path, and Evidence 5 says quality filtering is a first-order lever. The architecture now has a concrete O4 stack instead of a placeholder. |
+| Inference Efficiency | `5/10` | `6/10` | `+1` | **1, 3** | Evidence 1 supports a norm choice with better residual-scale control than DyT, and Evidence 3 makes the quantization path stronger by preventing outliers during training. This helps O5, but exits and token-level stopping are still not newly validated. |
+
+### 9.6 Updated Probe Priorities
+
+The Round 1 probe list remains useful, but the order changes materially.
+
+1. **Highest priority: revised optimizer/norm probe**
+   - Compare:
+     - `AdamW + RMSNorm`
+     - `AdamW + Single-Scale RMSNorm`
+     - `Muon + Single-Scale RMSNorm`
+   - Measure `BPT`, activation kurtosis, max activation, generation quality, and `INT4 / NVFP4` PTQ degradation.
+   - This is now the gating probe for both Outcome 1 and Outcome 5.
+
+2. **Highest priority alongside it: data-shaping probe**
+   - Split old Probe 5 into:
+     - `quality filter only`
+     - `MiniPLM only`
+     - `quality filter + MiniPLM`
+   - The combined variant is the real Round 2 mainline candidate.
+
+3. **Finish the running TOP vs NTP probe**
+   - Do not rerun sequential MTP unless TOP is clearly negative.
+   - The local TOP result is now a gate, not a curiosity.
+
+4. **Adaptive teacher-rotation probe**
+   - Compare:
+     - diverse static rotation
+     - diverse adaptive rotation
+     - naive parallel teacher losses
+   - This is the key Round 2 probe for Outcome 4 and Outcome 3.
+
+5. **Delayed memory activation probe**
+   - Keep it, but move it later.
+   - Memory should not consume early scout budget before the revised O4 pipeline is validated.
+
+6. **Warm-start widening probe**
+   - Still important, but only after the revised scout recipe proves stable.
+
+### 9.7 New Probes Suggested By Round 2
+
+#### Probe 9. DyT Salvage Probe
+
+Compare:
+
+- `Single-Scale RMSNorm`
+- `DyT` drop-in
+- `DyT + residual scaling`
+- `DyT + learned residual gate`
+
+**Purpose:** Determine whether DyT itself is dead for Sutra, or only the naive drop-in formulation is dead.
+
+#### Probe 10. Quality-Filter Ablation
+
+Compare:
+
+- raw corpus
+- quality filter only
+- MiniPLM only
+- quality filter plus MiniPLM
+
+**Purpose:** Measure whether SmolLM2-style filtering is actually a first-order lever on our `22.9B` token pool.
+
+#### Probe 11. Teacher Diversity / Adaptive Rotation Probe
+
+Compare:
+
+- one strongest decoder teacher only
+- multiple teachers with static rotation
+- multiple teachers with adaptive diverse-family rotation
+
+**Purpose:** Test the claim from Evidence 6 that diversity plus adaptive weighting beats naive quality ranking.
+
+#### Probe 12. Quantized Exit Fidelity Probe
+
+Take the revised scout and measure:
+
+- full-depth PTQ quality
+- exit calibration after PTQ
+- shallow-exit ordering after PTQ
+- throughput on target quantization formats
+
+**Purpose:** Close the biggest remaining O5 gap with local evidence instead of literature extrapolation.
+
+### 9.8 Remaining Gaps To Reach `>=9/10`
+
+Round 2 improves the architecture, but it does **not** yet close the real uncertainties.
+
+- **Outcome 1 gap:** no integrated revised scout beats the dense control yet.
+  - **What closes it:** the revised optimizer/norm probe plus a full `HEMD-S` scout run against the dense baseline and the trunk-choice probe.
+
+- **Outcome 2 gap:** no proof that module-local changes improve behavior without collateral damage.
+  - **What closes it:** after the scout exists, run module-isolation experiments: teacher-port-only improvement, memory-port-only improvement, and mixer-family replacement.
+
+- **Outcome 3 gap:** the extension story is architectural, not operational.
+  - **What closes it:** a contributor-style proof where one new teacher family or one new memory module is added without retraining the whole trunk.
+
+- **Outcome 4 gap:** the new O4 stack is concrete, but it is still literature-backed rather than locally validated.
+  - **What closes it:** Probe 10, Probe 11, and a scout run showing that `quality filter + MiniPLM + adaptive diverse teachers` beats unweighted NTP at equal compute.
+
+- **Outcome 5 gap:** no revised-stack exit/quantization result exists yet, and TOP is still unfinished.
+  - **What closes it:** finish the TOP probe, run Probe 12, and show calibrated exits remain ordered after quantization.
+
+The main Round 2 conclusion is therefore:
+
+- keep the HEMD family
+- change the mainline training stack
+- make data shaping concrete and mandatory
+- stop treating DyT as a default
+- spend the next scout budget on `Muon + Single-Scale RMSNorm + quality filter + MiniPLM` before touching more exotic modules

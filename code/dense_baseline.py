@@ -86,6 +86,27 @@ class RMSNorm(nn.Module):
         return (x.float() * rms).to(x.dtype) * self.weight
 
 
+class SingleScaleRMSNorm(nn.Module):
+    """Single-Scale RMSNorm: one learned scalar per block, not per channel.
+
+    Norm(x) = g * x / sqrt(mean(x^2) + eps)
+    where g is one scalar, not a dim-sized vector.
+
+    Benefits over standard RMSNorm:
+    - Fewer outlier-amplifying per-channel scales
+    - Better quantization behavior (no per-channel gain differences)
+    - Still controls residual stream magnitude
+    """
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(1))  # single scalar
+        self.eps = eps
+
+    def forward(self, x):
+        rms = x.float().pow(2).mean(-1, keepdim=True).add(self.eps).rsqrt()
+        return (x.float() * rms).to(x.dtype) * self.weight
+
+
 class DyT(nn.Module):
     """Dynamic Tanh normalization (arXiv:2503.10622).
 
@@ -108,6 +129,8 @@ def make_norm(dim, norm_type="rmsnorm"):
     """Factory for normalization layers."""
     if norm_type == "dyt":
         return DyT(dim)
+    elif norm_type == "ss_rmsnorm":
+        return SingleScaleRMSNorm(dim)
     return RMSNorm(dim)
 
 
@@ -156,6 +179,56 @@ class TransformerBlock(nn.Module):
         x = x + self.attn(self.attn_norm(x), cos, sin)
         x = x + self.ffn(self.ffn_norm(x))
         return x
+
+
+class GatedConvBlock(nn.Module):
+    """Hyena-inspired gated causal convolution block.
+
+    Drop-in replacement for TransformerBlock (same I/O shape: B,T,D -> B,T,D).
+    Uses depthwise causal conv1d with sigmoid gating instead of attention.
+    Much cheaper than attention at long sequences, O(T*K) vs O(T^2).
+
+    Architecture:
+        u = Norm(x)
+        a, b = split(W_in(u))   # a = value path, b = gate path
+        f = CausalConv1D(a)     # depthwise causal convolution
+        m = W_out(f * sigmoid(b))  # gated output
+        r = x + m               # residual
+        h = r + SwiGLU(Norm(r)) # FFN + residual
+    """
+    def __init__(self, dim, ff_dim, kernel_size=64, norm_type="rmsnorm"):
+        super().__init__()
+        self.mix_norm = make_norm(dim, norm_type)
+        # Project to 2*dim: value path + gate path
+        self.in_proj = nn.Linear(dim, 2 * dim, bias=False)
+        # Depthwise causal conv on value path
+        self.conv = nn.Conv1d(
+            dim, dim, kernel_size=kernel_size,
+            padding=kernel_size - 1,  # left-pad for causal
+            groups=dim, bias=False
+        )
+        self.out_proj = nn.Linear(dim, dim, bias=False)
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+
+    def forward(self, x, cos=None, sin=None):
+        """Forward pass. cos/sin accepted but ignored (API compat with TransformerBlock)."""
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+        ab = self.in_proj(u)  # (B, T, 2*D)
+        a, b = ab.chunk(2, dim=-1)  # each (B, T, D)
+
+        # Causal depthwise conv: (B, D, T) -> conv -> truncate to causal
+        a_conv = self.conv(a.transpose(1, 2))[:, :, :T]  # truncate padding
+        a_conv = a_conv.transpose(1, 2)  # back to (B, T, D)
+
+        # Gated output
+        m = self.out_proj(a_conv * torch.sigmoid(b))
+        r = x + m
+
+        # FFN
+        r = r + self.ffn(self.ffn_norm(r))
+        return r
 
 
 class GainHead(nn.Module):
@@ -348,7 +421,8 @@ class DenseTransformer(nn.Module):
     def __init__(self, vocab_size=VOCAB_SIZE, dim=DIM, n_layers=N_LAYERS,
                  n_heads=N_HEADS, ff_dim=FF_DIM, max_seq_len=MAX_SEQ_LEN,
                  exit_layers=None, use_mtp=False, memory_layers=None,
-                 mem_buckets=1_000_000, mem_dim=48, norm_type="rmsnorm"):
+                 mem_buckets=1_000_000, mem_dim=48, norm_type="rmsnorm",
+                 block_schedule=None, conv_kernel_size=64):
         """
         Args:
             exit_layers: list of 0-indexed layer numbers for early exits.
@@ -361,6 +435,10 @@ class DenseTransformer(nn.Module):
             mem_buckets: number of hash buckets per n-gram table.
             mem_dim: embedding dimension per n-gram table entry.
             norm_type: "rmsnorm" or "dyt" (Dynamic Tanh).
+            block_schedule: list of block types per layer, e.g. ["H","H","A","H",...].
+                "A" = attention (TransformerBlock), "H" = gated conv (GatedConvBlock).
+                If None, all layers are attention blocks (pure transformer).
+            conv_kernel_size: kernel size for GatedConvBlock (default 64).
         """
         super().__init__()
         self.dim = dim
@@ -370,10 +448,22 @@ class DenseTransformer(nn.Module):
         self.use_mtp = use_mtp
         self.memory_layers = sorted(memory_layers) if memory_layers else []
         self.emb = nn.Embedding(vocab_size, dim)
-        self.layers = nn.ModuleList([
-            TransformerBlock(dim, n_heads, ff_dim, norm_type=norm_type)
-            for _ in range(n_layers)
-        ])
+
+        # Build layer stack from block_schedule
+        if block_schedule is None:
+            block_schedule = ["A"] * n_layers  # default: all attention
+        assert len(block_schedule) == n_layers, \
+            f"block_schedule length {len(block_schedule)} != n_layers {n_layers}"
+        self.block_schedule = block_schedule
+
+        layers = []
+        for btype in block_schedule:
+            if btype == "H":
+                layers.append(GatedConvBlock(dim, ff_dim, kernel_size=conv_kernel_size,
+                                             norm_type=norm_type))
+            else:
+                layers.append(TransformerBlock(dim, n_heads, ff_dim, norm_type=norm_type))
+        self.layers = nn.ModuleList(layers)
         self.norm = make_norm(dim, norm_type)
 
         # Early-exit norms and gain heads (one per exit, NOT for final layer)
@@ -2374,6 +2464,8 @@ def run_ab_probe(config_path):
         v_use_top = variant.get("use_top", use_top)
         v_top_weight = variant.get("top_weight", top_weight)
         v_exit_layers = variant.get("exit_layers", exit_layers)
+        v_block_schedule = variant.get("block_schedule", cfg.get("block_schedule", None))
+        v_conv_kernel = variant.get("conv_kernel_size", cfg.get("conv_kernel_size", 64))
 
         run_name = f"probe_{probe_name}_{tag}"
         print(f"\n{'='*60}")
@@ -2381,6 +2473,10 @@ def run_ab_probe(config_path):
         print(f"  norm={norm_type}, top={'ON' if v_use_top else 'OFF'}")
         if v_exit_layers:
             print(f"  exits={v_exit_layers}")
+        if v_block_schedule:
+            n_attn = sum(1 for b in v_block_schedule if b == "A")
+            n_conv = sum(1 for b in v_block_schedule if b == "H")
+            print(f"  blocks={n_attn}A+{n_conv}H (kernel={v_conv_kernel})")
         print(f"  {n_layers}L/d={dim}/{n_heads}h/ff={ff_dim}")
         print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
         print(f"{'='*60}")
@@ -2388,13 +2484,38 @@ def run_ab_probe(config_path):
         model = DenseTransformer(
             vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
             n_heads=n_heads, ff_dim=ff_dim, exit_layers=v_exit_layers,
-            norm_type=norm_type,
+            norm_type=norm_type, block_schedule=v_block_schedule,
+            conv_kernel_size=v_conv_kernel,
         ).to(DEVICE)
         n_params = sum(p.numel() for p in model.parameters())
         print(f"  Params: {n_params:,}")
 
-        opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95),
-                                weight_decay=0.1)
+        v_optimizer = variant.get("optimizer", cfg.get("optimizer", "adamw"))
+        muon_lr = variant.get("muon_lr", cfg.get("muon_lr", 0.02))
+        use_muon = v_optimizer == "muon"
+
+        if use_muon:
+            # Split: 2D hidden weights -> Muon, everything else -> AdamW
+            muon_params = []
+            adam_params = []
+            for name, p in model.named_parameters():
+                if p.ndim == 2 and "emb" not in name:
+                    muon_params.append(p)
+                else:
+                    adam_params.append(p)
+            from torch.optim import Muon as TorchMuon
+            opt = TorchMuon(muon_params, lr=muon_lr, momentum=0.95,
+                            weight_decay=0.1)
+            opt_adam = torch.optim.AdamW(adam_params, lr=lr, betas=(0.9, 0.95),
+                                        weight_decay=0.1)
+            print(f"  Optimizer: Muon (lr={muon_lr}) + AdamW (lr={lr})")
+            print(f"    Muon params: {sum(p.numel() for p in muon_params):,}")
+            print(f"    AdamW params: {sum(p.numel() for p in adam_params):,}")
+        else:
+            opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95),
+                                    weight_decay=0.1)
+            opt_adam = None
+            print(f"  Optimizer: AdamW (lr={lr})")
         scaler = torch.amp.GradScaler("cuda")
 
         log_file = REPO / "results" / f"{run_name}_log.txt"
@@ -2406,14 +2527,22 @@ def run_ab_probe(config_path):
         for step in range(1, steps + 1):
             current_lr = get_lr_wsd(step, warmup, steps, lr, min_lr)
             for pg in opt.param_groups:
-                pg["lr"] = current_lr
+                if use_muon:
+                    pg["lr"] = muon_lr * (current_lr / lr)
+                else:
+                    pg["lr"] = current_lr
+            if opt_adam is not None:
+                for pg in opt_adam.param_groups:
+                    pg["lr"] = current_lr
 
             # Micro-batch accumulation
             opt.zero_grad()
+            if opt_adam is not None:
+                opt_adam.zero_grad()
             for _ in range(grad_accum):
                 x, y = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
                 with torch.amp.autocast("cuda", dtype=DTYPE):
-                    if exit_layers:
+                    if v_exit_layers:
                         out = model(x, return_exits=True)
                         logits = out['logits']
                         loss, _ = compute_edsr_loss(out, y)
@@ -2436,8 +2565,12 @@ def run_ab_probe(config_path):
                 running_top += top_loss.item() / grad_accum
 
             scaler.unscale_(opt)
+            if opt_adam is not None:
+                scaler.unscale_(opt_adam)
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
             scaler.step(opt)
+            if opt_adam is not None:
+                scaler.step(opt_adam)
             scaler.update()
 
             if step % LOG_EVERY == 0:
@@ -2517,6 +2650,8 @@ def run_ab_probe(config_path):
 
         # Free GPU memory before next variant
         del model, opt, scaler
+        if opt_adam is not None:
+            del opt_adam
         torch.cuda.empty_cache()
         gc.collect()
 
