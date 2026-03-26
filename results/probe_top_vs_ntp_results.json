@@ -1,0 +1,259 @@
+{
+  "probe": "top_vs_ntp",
+  "config": {
+    "name": "top_vs_ntp",
+    "description": "T+L R1 Probe 2: Compare TOP auxiliary loss vs plain NTP on matched 42M models. TOP activates after warmup. Measures BPT and generation quality.",
+    "variants": [
+      {
+        "tag": "ntp_only",
+        "norm_type": "rmsnorm",
+        "use_top": false
+      },
+      {
+        "tag": "ntp_plus_top",
+        "norm_type": "rmsnorm",
+        "use_top": true,
+        "top_weight": 0.05
+      }
+    ],
+    "dim": 512,
+    "n_layers": 10,
+    "n_heads": 8,
+    "ff_dim": 1536,
+    "steps": 5000,
+    "eval_every": 500,
+    "batch_size": 16,
+    "grad_accum": 2,
+    "seq_len": 512,
+    "lr": 0.0003,
+    "min_lr": 1e-05,
+    "warmup": 200,
+    "use_top": false,
+    "top_K": 4,
+    "exit_layers": null
+  },
+  "results": {
+    "ntp_only": {
+      "params": 42281472,
+      "norm_type": "rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 8.3032,
+          "avg_kurtosis": 0.56,
+          "max_kurtosis": 0.91,
+          "max_activation": 9.78
+        },
+        {
+          "step": 1000,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 7.0973,
+          "avg_kurtosis": 0.15,
+          "max_kurtosis": 0.35,
+          "max_activation": 9.08
+        },
+        {
+          "step": 1500,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 6.5754,
+          "avg_kurtosis": 0.14,
+          "max_kurtosis": 0.25,
+          "max_activation": 10.95
+        },
+        {
+          "step": 2000,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 6.3923,
+          "avg_kurtosis": 0.09,
+          "max_kurtosis": 0.18,
+          "max_activation": 11.97
+        },
+        {
+          "step": 2500,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 5.9082,
+          "avg_kurtosis": 0.11,
+          "max_kurtosis": 0.22,
+          "max_activation": 13.63
+        },
+        {
+          "step": 3000,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 6.0076,
+          "avg_kurtosis": 0.14,
+          "max_kurtosis": 0.38,
+          "max_activation": 13.99
+        },
+        {
+          "step": 3500,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 5.5777,
+          "avg_kurtosis": 0.25,
+          "max_kurtosis": 0.7,
+          "max_activation": 16.71
+        },
+        {
+          "step": 4000,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 5.2907,
+          "avg_kurtosis": 0.34,
+          "max_kurtosis": 0.95,
+          "max_activation": 24.45
+        },
+        {
+          "step": 4500,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 5.2051,
+          "avg_kurtosis": 0.27,
+          "max_kurtosis": 0.75,
+          "max_activation": 16.36
+        },
+        {
+          "step": 5000,
+          "tag": "ntp_only",
+          "norm_type": "rmsnorm",
+          "bpt": 5.0706,
+          "avg_kurtosis": 0.35,
+          "max_kurtosis": 1.15,
+          "max_activation": 22.03
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is not a matter of fact, but a matter of fact, it is not a matter of fact.\n\nThe word \"movement\" is a matter of fact, but it is not a matter of fact. It is a matter of fact, but it is not a matter of fact. It is a matter"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the new world is a new world.\n\nThe world is a world that is a world that is a world that is a world that is a world that is a world that is a world that is a world that is a world that is a world that is a world that is a world that is a world"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\n                                                               "
+        }
+      ]
+    },
+    "ntp_plus_top": {
+      "params": 42281472,
+      "norm_type": "rmsnorm",
+      "use_top": true,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 11.6607,
+          "avg_kurtosis": 3.98,
+          "max_kurtosis": 9.5,
+          "max_activation": 52.47
+        },
+        {
+          "step": 1000,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.954,
+          "avg_kurtosis": 7.98,
+          "max_kurtosis": 28.7,
+          "max_activation": 86.66
+        },
+        {
+          "step": 1500,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.9034,
+          "avg_kurtosis": 12.07,
+          "max_kurtosis": 40.91,
+          "max_activation": 102.99
+        },
+        {
+          "step": 2000,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.8765,
+          "avg_kurtosis": 14.77,
+          "max_kurtosis": 61.95,
+          "max_activation": 115.72
+        },
+        {
+          "step": 2500,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.5331,
+          "avg_kurtosis": 17.35,
+          "max_kurtosis": 72.3,
+          "max_activation": 105.4
+        },
+        {
+          "step": 3000,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.2958,
+          "avg_kurtosis": 17.95,
+          "max_kurtosis": 77.68,
+          "max_activation": 116.18
+        },
+        {
+          "step": 3500,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.4099,
+          "avg_kurtosis": 13.77,
+          "max_kurtosis": 71.44,
+          "max_activation": 124.34
+        },
+        {
+          "step": 4000,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 10.1598,
+          "avg_kurtosis": 20.14,
+          "max_kurtosis": 101.58,
+          "max_activation": 142.52
+        },
+        {
+          "step": 4500,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 9.8462,
+          "avg_kurtosis": 20.7,
+          "max_kurtosis": 95.77,
+          "max_activation": 125.12
+        },
+        {
+          "step": 5000,
+          "tag": "ntp_plus_top",
+          "norm_type": "rmsnorm",
+          "bpt": 9.6815,
+          "avg_kurtosis": 18.75,
+          "max_kurtosis": 99.29,
+          "max_activation": 133.83
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is the most important part of the world.\nThe most common of the world is the most common of the world. It is the most common of the world. It is the most common of the world.\nThe most common of the world is the most common of the world.\nThe most common of the world is"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world\u2019s most important and most important of the world\u2019s world is the world\u2019s most important and most important of the world\u2019s world.\nThe world\u2019s most important and most important of the world\u2019s world is the world\u2019s most important and most important of the world\u2019s"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    }
+  }
+}
