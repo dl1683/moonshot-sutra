@@ -6,6 +6,165 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## Meta-Learning KD: Category-Theoretic Disagreement Analysis (2026-03-26)
+
+**Status: IDEA — needs Codex evaluation and probe design**
+
+### Core Thesis
+Multi-teacher KD should be a SELF-IMPROVING process with accelerating returns, not diminishing returns. The manifesto says Intelligence = Geometry, not Scale — this applies to the LEARNING PROCESS itself, not just the architecture.
+
+### The Three-Layer Framework
+
+**Layer 1: Category-Theoretic Disagreement Grouping**
+
+Each teacher T_i defines a functor F_i: Data → Predictions. The key objects are:
+- **Agreement kernel** K(T_i, T_j) = {x : F_i(x) ≈ F_j(x)} — where two teachers agree
+- **Disagreement manifold** D(T_i, T_j) = Data \ K — where they differ
+- **Natural transformations** between functors capture HOW they disagree (probability mass shift, different top-1, different confidence level)
+
+Practical decomposition of teacher outputs into categories:
+1. **Consensus knowledge** — ALL teachers agree. This is "free" knowledge, easy to absorb.
+2. **Architecture-dependent** — Transformers agree, SSMs disagree (or vice versa). Reveals structural bias.
+3. **Capacity-dependent** — Large teachers agree, small teachers disagree. Knowledge gated by model capacity.
+4. **Family-dependent** — Teachers from same family agree, cross-family disagree. Corporate training bias.
+5. **Universally uncertain** — ALL teachers disagree with each other. Genuinely ambiguous data.
+
+**Hypothesis**: Category 2 (architecture-dependent) is the HIGHEST VALUE for KD, because it reveals knowledge that can only be accessed via that architecture family. Distilling this into our student gives us cross-architecture capabilities no single model has.
+
+**Layer 2: Inverted Power Law (Learning to Learn)**
+
+Standard training: diminishing returns. More data → smaller marginal improvement.
+Meta-learning KD: each training round produces:
+- A better model (standard)
+- A better understanding of WHAT the model can't learn (diagnostic)
+- A better strategy for WHAT to learn next (curriculum)
+- A better weighting for WHICH teacher to trust (routing)
+
+This creates accelerating returns: the more you learn, the more precisely you can identify what to learn next → faster convergence.
+
+**Mechanism**: After each eval checkpoint:
+1. Run disagreement analysis across all teachers
+2. Classify student failures by category (consensus vs arch-dependent vs capacity-gated)
+3. Update teacher weights: upweight teachers that provide knowledge the student currently lacks
+4. Update data curriculum: prioritize samples in high-disagreement regions
+5. Optionally update architecture: if a knowledge type is consistently unlearnable, the architecture itself may need modification
+
+**Layer 3: Knowledge State Map (Diagnostic-First Learning)**
+
+Maintain a structured map of the student's knowledge state:
+- Per-domain: syntax, factual recall, reasoning, world knowledge, etc.
+- Per-category: which of the 5 disagreement categories is the student strongest/weakest in
+- Per-teacher: which teacher provides the most value for the student's current state
+
+This map is the BETTER INTERNAL METRIC the user asked for. Instead of BPT (which doesn't predict benchmarks), we track:
+- "Student matches teacher consensus on X% of factual recall samples"
+- "Student fails on Y% of capacity-gated reasoning samples"
+- "Student can now absorb architecture-specific knowledge from SSM teachers"
+
+These predict real benchmark performance because they measure actual capabilities, not just perplexity.
+
+### Connection to Other Ideas
+- **Ekalavya Protocol**: This IS the evolved Ekalavya — not just absorbing from teachers, but learning HOW to absorb
+- **Rework internal metrics**: The knowledge state map IS the better internal metric
+- **Decisive victory path**: If we can demonstrate accelerating returns from KD (inverted power law), that's PROVABLE data efficiency with scaling evidence
+
+### Open Questions for Codex
+1. How to implement disagreement analysis cheaply? (Can't afford full inference on all teachers every checkpoint)
+2. What's the right granularity? Per-token? Per-sequence? Per-domain?
+3. Is category theory overkill? Simpler clustering (KL divergence between teacher pairs) might suffice
+4. How to validate the inverted power law claim? Need a metric that shows improving learning efficiency over time
+5. Can we use this framework to PREDICT which new teachers would be most valuable before downloading them?
+
+### Falsification Criteria
+- If disagreement analysis shows no structure (random), the category theory angle is useless
+- If teacher weighting by disagreement doesn't improve over uniform weighting, the routing is useless
+- If learning efficiency doesn't accelerate (flat or diminishing curve), the meta-learning claim is false
+
+---
+
+## First KD Probe Design (DRAFT — pending Codex R8 approval)
+
+**Goal:** Validate that KD provides measurable improvement over pure CE training at 5K steps.
+
+### Setup
+- **Student:** 24×512 transformer, ~93M params (same as probe architecture)
+- **Teacher:** Qwen3-0.6B (~600M params, 1024 dim, 28 layers, GQA)
+  - Loaded in FP16, inference only (no gradients): ~1.2GB VRAM
+  - Student training: ~8GB VRAM → combined fit easily on 24GB
+- **Baseline:** Same student, pure CE loss, same data
+- **Duration:** 5K steps (matching existing probes for comparison)
+
+### Cross-Tokenizer Challenge
+- Student tokenizer: 16K custom BPE
+- Teacher tokenizer: Qwen3 152K BPE
+- Same input text → different tokenization → different sequence lengths
+
+**Simplest approach (Level 1): Sequence-level representation matching**
+- Input: raw text string
+- Student tokenizes with 16K tokenizer → forward pass → get final hidden state, mean-pool over sequence → h_student (512-dim)
+- Teacher tokenizes with Qwen3 tokenizer → forward pass → get final hidden state, mean-pool over sequence → h_teacher (1024-dim)
+- Projection: Linear(1024, 512) learned projection maps teacher dim to student dim
+- Loss: L_kd = CosineEmbeddingLoss(projected_teacher, h_student) or MSE
+- Total: L = L_ce + alpha * L_kd (alpha=0.5 initially)
+- **Pro:** No position alignment needed. Dead simple.
+- **Con:** Loses per-token signal. Only captures sequence-level semantics.
+
+**Better approach (Level 2): Token-level alignment via character offsets**
+- For each student token, find which teacher tokens cover the same characters
+- Average teacher hidden states for aligned positions
+- Per-position loss: L_kd_pos = MSE(projected_teacher_aligned[t], h_student[t])
+- **Pro:** Per-token signal. Richer supervision.
+- **Con:** Character alignment code needed. Multiple teacher tokens per student token common.
+
+**Best approach (Level 3): Logit-level via shared vocabulary projection**
+- Build mapping: student_vocab → character sequences → teacher_vocab
+- For each student token ID, compute weighted sum of teacher logits for corresponding teacher tokens
+- KL divergence on aligned probability distributions
+- **Pro:** Richest signal. Standard KD.
+- **Con:** Alignment matrix complex. May need DSKD-style learned projection.
+
+**Recommendation:** Start with Level 1, prove KD helps at all, then upgrade to Level 2/3.
+
+### Training Loop Changes (in dense_baseline.py)
+```
+# In training loop, after computing CE loss:
+# 1. Get student hidden states
+student_out = model(inp, return_hidden=True)
+logits = student_out['logits']
+h_student = student_out['hidden'].mean(dim=1)  # (B, D_student)
+
+# 2. Get teacher hidden states (no grad)
+with torch.no_grad():
+    teacher_tokens = teacher_tokenizer(raw_text, ...)
+    teacher_out = teacher_model(teacher_tokens)
+    h_teacher = teacher_out.last_hidden_state.mean(dim=1)  # (B, D_teacher)
+
+# 3. Project and compute KD loss
+h_teacher_proj = projection(h_teacher)  # (B, D_student)
+kd_loss = F.mse_loss(h_student, h_teacher_proj.detach())
+
+# 4. Combined loss
+loss = ce_loss + alpha * kd_loss
+```
+
+### Data Pipeline Modification
+- Current: ShardedDataset returns (input_ids, target_ids) — pre-tokenized
+- Needed: Also return RAW TEXT for teacher tokenization
+- Modification: data loader stores shard as tokens but also reconstructs text for teacher
+- **OR:** Pre-tokenize shards for each teacher (stored alongside student shards)
+- **Simplest:** Decode student tokens back to text → re-encode with teacher tokenizer (lossy but fast)
+
+### Kill Rule for KD Probe
+- KD probe passes if: BPT with KD >= BPT without KD + 0.1 at 5K steps
+- Also check: generation quality (greedy decode sample), kurtosis/max_act stability
+- If pass: proceed to multi-teacher, Level 2 alignment
+- If fail: investigate why (wrong teacher? wrong loss? wrong alpha?)
+
+### lm-eval Correlation Data (2026-03-26)
+Both architectures at 5K steps produce identical near-random benchmarks (~33.5% ARC-Easy, ~17% ARC-Challenge). This confirms: training duration + KD >> architecture choice. The bottleneck is KNOWLEDGE, not architecture.
+
+---
+
 ## Pre-Round-1 Design Space Analysis (2026-03-26)
 
 ### The Core Problem

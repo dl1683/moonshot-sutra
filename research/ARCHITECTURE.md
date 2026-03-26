@@ -1,20 +1,101 @@
 # Sutra Architecture Reference
 
-**Status: Round 7 ACTIVE (2026-03-26). R7-P sidecar DONE: 24G FAIL, 6G+18A PARTIAL (BPT beats transformer by 0.071 but max_act exceeds threshold). P-GQA mainline probe RUNNING — this is the final hybrid test before kill rule. Section 13 has all results.**
+**Status: ARCHITECTURE LOCKED (2026-03-26). Pure 24-layer Transformer (Sutra-24A-90M). Hybrid campaign complete — 7 rounds, all variants tested. Now pivoting to RMFD (Routed Multi-Family Distillation) as the main training system.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
 ---
 
-## Ground Truth This Round
+## ARCHITECTURE LOCK DECISION (Round 8, 2026-03-26)
 
-- Mandatory context read this round: `research/TESLA_LEIBNIZ_CODEX_PROMPT.md`, `research/VISION.md`, `research/RESEARCH.md`, `CLAUDE.md`, `code/dense_baseline.py`.
-- Live hardware check run on **2026-03-26 00:38:58 America/New_York** via `nvidia-smi`:
-  - GPU: `0 MiB / 24463 MiB`
-  - GPU util: `0%`
-  - Only visible process: idle `ollama.exe`
-- `results/` contains no active checkpoint directories and no training logs relevant to a live run. This is operationally a clean slate.
-- `code/dense_baseline.py` is a useful implementation artifact and probe harness, but it is **not** a binding architecture commitment. It contains a dense decoder baseline plus additive probes for MTP, halting, and n-gram memory.
+**Locked backbone: Sutra-24A-90M (pure transformer)**
+
+Kill rule applied to all hybrid variants:
+
+| Variant | BPT@5000 | Delta vs Transformer | kurtosis_max | max_act | Pass? |
+|---------|----------|---------------------|-------------|---------|-------|
+| V1: Transformer (24A) | 4.757 | — | 1.5 | 41.7 | BASELINE |
+| V2: P-GQA (24Q) | 4.729 | +0.028 | 1.2 | 28.9 | FAIL (need +0.05) |
+| V3: Mixed 8Q+16A | 4.744 | +0.013 | 1.0 | 35.7 | FAIL (need +0.05) |
+| R7-P: 6G+18A | 4.686 | +0.071 | 2.0 | 58.6 | FAIL (max_act > 52) |
+
+**Verdict:** All hybrid variants showed better stability but insufficient BPT advantage. P-GQA (V2) had the best stability profile (max_act 28.9 vs 41.7) but only +0.028 BPT. Per the pre-declared kill rule, we lock the simpler architecture.
+
+**Codex R8 reasoning:** "The architecture campaign has found a real hybrid signal, but the entire spread between recent architectural variants is on the order of 0.07-0.18 BPT. That is too small to justify spending Round 8 on more backbone churn when every competitive small model we care about is distilled."
+
+**No further hybrid variants after this.** The main lever is now KD.
+
+### Locked Student Spec
+
+```text
+Student: Sutra-24A-90M
+Params: ~90.2M
+Depth: 24 layers
+Width: 512
+Heads: 8
+FFN: 1536 (SwiGLU)
+Tokenizer: custom 16K BPE
+Context: 512
+Exits: layers 7, 15, 23 (0-indexed)
+Norm: RMSNorm
+Activation: SwiGLU
+Optimizer: AdamW (lr=3e-4, betas=(0.9,0.95), wd=0.1)
+Precision: bf16 student, fp32 optimizer
+```
+
+### lm-eval Benchmarks at 5K Steps (near-random baseline)
+
+| Benchmark | Transformer (24A) | P-GQA (24Q) | Random |
+|-----------|-------------------|-------------|--------|
+| ARC-Easy acc | 33.6% | 33.5% | 25% |
+| ARC-Easy acc_norm | 32.4% | 31.8% | 25% |
+| ARC-Challenge acc | 16.6% | 17.2% | 25% |
+| ARC-Challenge acc_norm | 21.8% | 21.7% | 25% |
+
+Both architectures produce identical near-random benchmarks at 5K steps, confirming BPT convergence → benchmark convergence. Architecture is not the bottleneck. KD is.
+
+---
+
+## RMFD: Routed Multi-Family Distillation System (Round 8 Design)
+
+Full design in `results/tl_round8_output.md`. Key elements:
+
+### 4 Distillation Surfaces
+1. **Token surface:** final logits at depth 24 — for decoder-like teachers
+2. **State surface:** span-pooled hidden states at depths 8 and 16 — for SSM/hybrid/recurrent teachers
+3. **Semantic surface:** pooled final representation at depth 24 — for encoder/embedding teachers
+4. **Exit surface:** shallow logits at depths 8 and 16 — for internal self-distillation
+
+### Resident Committee (always loaded, ~5.4GB)
+- Qwen3-1.7B-Base (Q8, ~2.0GB) — anchor decoder teacher
+- LFM2.5-1.2B-Base (Q8, ~1.2GB) — hybrid architecture diversity
+- Mamba2-780M (FP16, ~1.6GB) — SSM architecture diversity
+- EmbeddingGemma-300M (FP16, ~0.6GB) — semantic geometry
+
+### Specialist Bursts (loaded for dedicated miniblocks)
+- Qwen2.5-Math-1.5B — math windows
+- RoBERTa-base — discourse/syntax
+- CodeGen-350M + CodeBERT — deferred (no dedicated code corpus)
+
+### Cross-Tokenizer: Byte-Span Bridge
+Split raw text into M=16 equal byte spans. For each model, pool hidden states over tokens that intersect each byte span. This gives a common scaffold regardless of tokenizer. Use CKA loss on projected span matrices.
+
+### Gradient Conflict Prevention
+PCGrad on three loss buckets: L_base, L_gen, L_aux. Auto-halve KD weights if gradient cosine < -0.15 for 3 consecutive evals.
+
+### 5-Phase Training Curriculum (120K total steps from 5K warm-start)
+- Phase 0: Fix checkpoint loading + exit supervision (DONE)
+- Phase 1: Steps 5K-5.5K — stabilization, no KD
+- Phase 2: Steps 5.5K-10K — single anchor (Qwen3-1.7B only)
+- Phase 3: Steps 10K-30K — routed resident committee (4 teachers)
+- Phase 4: Steps 30K-95K — + specialist bursts + hard-bank
+- Phase 5: Steps 95K-120K — consolidation (decay KD weights)
+
+### First KD Probe (3000 steps, 4 arms)
+1. Control: NTP + exits only
+2. Single-teacher: + Qwen3-1.7B token KD
+3. 3-family routed: + LFM2.5 + EmbeddingGemma
+4. + disagreement weighting (if budget permits)
 
 ---
 

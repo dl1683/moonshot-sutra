@@ -1110,6 +1110,49 @@ Compare against:
 5. **Memory-optimal online strategy:** Forward pass through 4 teachers per batch is expensive — should we cycle teachers (different teacher each batch) instead of running all simultaneously?
 6. **Is offline logit storage (12TB) worth it** vs. just using more/larger online teachers?
 
+### 5.12 Meta-Learning KD: Disagreement-Driven Self-Improving Distillation (2026-03-26)
+
+**Status: THEORETICAL FRAMEWORK — needs Codex evaluation and probe design**
+
+**Core thesis:** Multi-teacher KD should have ACCELERATING returns (inverted power law), not diminishing returns. Each training round produces not just a better model, but a better understanding of WHAT to learn next and FROM WHOM.
+
+**The Disagreement Taxonomy:**
+
+When multiple teachers produce outputs on the same input, their agreement/disagreement patterns form a structured space:
+
+1. **Consensus knowledge** — All teachers agree → high-confidence, easy to absorb, train on this first
+2. **Architecture-dependent disagreement** — Transformers agree with each other, SSMs agree with each other, but the families disagree → structural bias, HIGHEST VALUE for cross-architecture student
+3. **Capacity-dependent disagreement** — Large teachers agree, small teachers disagree → knowledge gated by capacity
+4. **Family-dependent disagreement** — Same-company models agree, cross-company disagree → training data/recipe bias
+5. **Universal uncertainty** — All teachers disagree → genuinely ambiguous, de-prioritize
+
+**The Inverted Power Law Mechanism:**
+
+Standard training: each additional token provides less marginal information (diminishing returns).
+Meta-learning KD: each training round produces:
+- Better model (standard)
+- Better diagnostic of what the model can't learn (disagreement analysis)
+- Better curriculum (which data to show next)
+- Better teacher weighting (which teacher to trust for which concept)
+
+If the diagnostic improves faster than the model, learning ACCELERATES.
+
+**Implementation sketch:**
+1. Every N steps, run disagreement analysis on a held-out sample (not full corpus)
+2. Classify student failures into the 5 categories above
+3. Update teacher attention weights per-category
+4. Update data sampling weights (upweight high-disagreement regions)
+5. Log the category distribution as an internal metric (predicts benchmark performance better than BPT)
+
+**Connection to Outcome 2 (Improvability):** The disagreement taxonomy IS the diagnostic system. When the model fails a benchmark, check which disagreement category the failure falls into → surgical fix.
+
+**Falsification criteria:**
+- If disagreement patterns are random (no structure), the taxonomy is useless
+- If weighted KD doesn't beat uniform KD, the routing is useless
+- If learning efficiency doesn't accelerate over training, the meta-learning claim is false
+
+**Open questions for Codex:** Full list in `research/SCRATCHPAD.md` under "Meta-Learning KD" section.
+
 ---
 
 ## 6. March 2026 Research Survey: Architecture Design Inputs
@@ -2068,3 +2111,103 @@ Z-score-based adaptive gradient clipping:
 - Proactively adapts to training dynamics without assumptions about gradient scale evolution
 
 **Sutra relevance:** Could help with activation/gradient spikes in conv branches. Unlike fixed clipping, adapts to the changing dynamics of training (early steps have different gradient distributions than late steps).
+
+### 6.4.16 Cross-Tokenizer Distillation: The Problem is SOLVED (2024-2026)
+
+**The biggest perceived blocker to multi-family KD — tokenizer mismatch — has been solved by at least 3 independent methods.**
+
+#### DSKD: Dual-Space Knowledge Distillation (EMNLP 2024, updated 2025)
+**Source:** arxiv.org/abs/2406.17328, github.com/songmzhang/DSKD
+
+Projects teacher/student hidden states into each other's representation spaces, then computes KL divergence in unified output spaces. For different-vocabulary models, uses Exact Token Alignment (ETA) to align tokens across differently tokenized sequences.
+- **Cross-tokenizer KD performs AS WELL AS same-tokenizer KD** — the mismatch is fully overcome
+- DSKDv2 (2025): better projector initialization, supports on-policy distillation
+- DSKD-CMA-GA (2025): generative adversarial alignment for distribution matching
+- Tested on instruction-following, math reasoning, code generation
+- **Sutra relevance:** Our 16K custom tokenizer is NO LONGER a blocker for logit-level KD from any teacher family
+
+#### ULD: Universal Logit Distillation (ICML 2024)
+**Source:** arxiv.org/abs/2402.12030
+
+Uses optimal transport (OT) to align logit distributions across different tokenizers. The transport plan maps teacher tokens to student tokens based on distribution geometry, not string matching.
+- Works across completely different tokenizer families
+- No need for token alignment preprocessing
+- **Sutra relevance:** Alternative to DSKD — simpler but potentially less precise
+
+#### MultiLevelOT: Multi-Level Optimal Transport (AAAI 2025)
+**Source:** ojs.aaai.org/index.php/AAAI/article/view/34543
+
+Extends ULD with token-level AND sequence-level alignment using Sinkhorn distance approximation of Wasserstein distance. Captures complex distribution structures that single-level OT misses.
+- Most sophisticated cross-tokenizer method
+- **Sutra relevance:** Best option if we want maximum signal transfer quality
+
+#### Approximate Likelihood Matching (2025)
+**Source:** arxiv.org/abs/2503.20083
+
+Principled method that directly matches the likelihood of text under teacher and student, bypassing token alignment entirely. First method to enable effective distillation across "fundamentally different" tokenizers.
+- **Sutra relevance:** Potentially the cleanest approach — no token alignment, no optimal transport, just likelihood matching
+
+**Key synthesis:** The tokenizer mismatch that ARCHITECTURE.md flagged as the reason to prefer representation-first KD (Section A7) is no longer a valid concern. We can now do FULL logit-level KD from any teacher family. This dramatically expands the design space for multi-source learning.
+
+### 6.4.17 Knowledge Purification: Scaling Multi-Teacher KD (Feb 2026)
+
+**Source:** arxiv.org/abs/2602.01064
+
+THE critical paper for multi-teacher KD scaling. Addresses the fundamental problem: **performance DECLINES as teacher count increases** due to conflicting rationales (hallucinations, inconsistent reasoning paths, different expertise domains).
+
+Five purification methods tested:
+1. **Similarity-based router** — routes each sample to the most aligned teacher
+2. **RL-based teacher selection** — learned policy for which teacher to use when
+3. **Rationale consolidation** — merge multiple teacher rationales into one
+4. **Confidence-weighted averaging** — weight teachers by per-sample confidence
+5. **Voting/ensemble** — majority vote among teacher outputs
+
+Results: **Similarity-based router and RL-based selection consistently achieve highest accuracy across all student models.** Both purification approaches not only improve performance but also generalize to out-of-domain tasks.
+
+**Sutra relevance:** DIRECTLY applicable. When distilling from 5+ teacher families, we MUST use knowledge purification to prevent degradation. The similarity-based router is the simplest effective method — dynamically routes each training sample to the teacher whose knowledge is most relevant. This is NOT the failed 2Q rotation system — it's dynamic per-sample routing, not static per-batch rotation.
+
+### 6.4.18 Cross-Architecture Distillation: Transformer to SSM (2025)
+
+**Source:** arxiv.org/abs/2510.19266 (CAB), goombalab.github.io/blog/2024/distillation-part1-mohawk/ (MOHAWK)
+
+Two complementary approaches for distilling knowledge across fundamentally different architectures:
+
+#### CAB (Cross-Architecture Bridge)
+Lightweight attention bridge enables token-level supervision from transformer teacher to SSM student. Unlike output-only KD, CAB aligns intermediate representations through flexible layer-wise matching.
+- More data-efficient than naive distillation
+- Works across vision and language
+- **Sutra relevance:** If our student is hybrid (conv+attention), we can align conv blocks with SSM teachers and attention blocks with transformer teachers
+
+#### MOHAWK (NeurIPS 2024)
+3-phase progressive distillation: (1) match mixing matrices, (2) match hidden states per block, (3) match end-to-end predictions. Specifically designed for Transformer→Mamba transfer.
+- Progressive phases prevent catastrophic forgetting
+- **Sutra relevance:** Already noted in RESEARCH.md. The progressive approach may work for multi-family KD too — align representations first, then logits.
+
+### 6.4.19 Dynamic Teacher Weighting in Multi-Teacher KD (2025)
+
+**Source:** Multiple papers, emergentmind.com/topics/adaptive-weighting-in-multi-teacher-knowledge-distillation
+
+Key finding: **Adaptive, instance-aware weighting nearly always outperforms static schemes.**
+
+Methods:
+- **RL-based teacher selection** — trains a small policy network to choose which teacher(s) to attend to per sample
+- **Meta-learning weighting** — learns per-sample teacher weights as a meta-objective
+- **Confidence routing** — weight each teacher by its prediction confidence on the current sample
+- **Student-guided selection** — weight teachers based on alignment with student's current predictions
+
+The DiverseDistill framework handles heterogeneous teacher committees by dynamically weighting based on the student's understanding of each teacher's expertise.
+
+**Sutra relevance:** Static rotation (the failed 2Q system) vs dynamic routing (this) — the difference is learning WHEN each teacher is most useful, not just cycling through them. Critical for our multi-family setup where different teachers excel at different content types.
+
+### 6.4.20 Hybrid Scheduling Theoretical Foundations (2026)
+
+**Source:** results/research_hybrid_scheduling.md (background research agent, March 2026)
+
+Key theoretical results for block scheduling in hybrid architectures:
+1. **SSM must come BEFORE attention** (arxiv.org/abs/2603.08859): Proven, not empirical. SSM compresses context → attention retrieves from compressed state. Attention-first = no better than pure model.
+2. **Only 2% of attention heads handle ALL retrieval** (arxiv.org/abs/2602.11374): The rest can be replaced with recurrent layers for 5-6x memory savings.
+3. **Early layers 10x more important than late** (arxiv.org/abs/2603.22473): Layer 0 does most aggressive representation transformation. Ablating early third of SSM = -55% MMLU; ablating late third = -5%.
+4. **Parallel hybrids are Pareto-optimal** for quality-efficiency (arxiv.org/abs/2510.04800): But harder to stabilize (confirmed by our R5-R7 experience).
+5. **"Never place transformers at the front"**: Three independent theoretical explanations converge.
+6. **Mamba-3 BCNorm** (ICLR 2026): RMSNorm after B,C projections stabilizes SSM training, analogous to QK-norm in transformers.
+7. **Falcon-H1 dampening multipliers**: 35 fine-grained muP groups with non-learnable dampening tensors for activation control.
