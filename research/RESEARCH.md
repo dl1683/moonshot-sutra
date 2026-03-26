@@ -2342,6 +2342,35 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Status:** All HIGH and MEDIUM fixes applied. **Re-review PASSED (2026-03-26):** Codex Correctness Engineer confirmed all 6 fixes correct, no new regressions. Tier 1 loop CLEAN.
 
+### 6.4.25 KD First Probe Final Results: Rep KD = Head-Start Only (2026-03-26)
+
+**Experiment:** 2-arm probe, 3000 steps each from step-5000 warm-start. Arm 1 = control (NTP only). Arm 2 = single Qwen3-1.7B teacher, rep KD (state CKA alpha=0.5 + semantic relational alpha=0.3).
+
+**Final BPT comparison:**
+
+| Step | Control BPT | KD BPT | Delta |
+|------|-------------|--------|-------|
+| 500 | 4.9536 | 4.8946 | -0.059 |
+| 1000 | 4.9194 | 4.8772 | -0.042 |
+| 1500 | 4.8725 | 4.8493 | -0.023 |
+| 2000 | 4.8250 | 4.7888 | -0.036 |
+| 2500 | 4.8583 | 4.7142 | -0.144 |
+| 3000 | **4.5579** | **4.5500** | **-0.008** |
+
+**Stability at step 3000:** KD arm kurtosis_max=17.6 (vs 4.8 control, 3.6x ratio). KD arm max_act=80.5 (vs 69.0 control).
+
+**Key findings:**
+
+1. **Rep KD provides transient acceleration only.** Gap peaked at -0.059 (step 500), narrowed to -0.008 (noise) by step 3000. The student learns the same features with or without rep KD — the teacher just helps find them faster.
+
+2. **WSD × KD interaction creates a transient artifact.** Step 2500 showed -0.144 gap because control REGRESSED during early LR decay (4.8250→4.8583) while KD continued improving. Both converged during full decay. Control's total decay-phase drop was -0.300 BPT; KD's was -0.164.
+
+3. **CKA + relational losses are GLOBAL STRUCTURE losses** (span-pooled, batch-level Gram matrices). These saturate when the student's representations become structurally aligned with the teacher's — which happens faster than functional convergence. CKA convergence ≠ functional convergence.
+
+4. **Kurtosis divergence is a warning.** 3.6x kurtosis ratio at 3000 steps. If this grows linearly with training length, could reach 50+ by 15K steps. Needs monitoring.
+
+**Implication for logit KD:** Logit KD provides TOKEN-LEVEL PREDICTION supervision (not global structure). Should be harder to saturate because the student must match the teacher's output distribution, not just its representation geometry. The 4-arm surface ablation (NOW RUNNING) tests whether logit KD provides persistent vs transient advantage.
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
