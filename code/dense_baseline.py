@@ -1474,10 +1474,10 @@ class TeacherAdapter:
 
         print(f"  Loading teacher: {model_name}...", flush=True)
         if self.is_encoder or self.is_embedding:
-            self.model = AutoModel.from_pretrained(model_name, torch_dtype=dtype)
+            self.model = AutoModel.from_pretrained(model_name, dtype=dtype)
         else:
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, torch_dtype=dtype, output_hidden_states=True
+                model_name, dtype=dtype, output_hidden_states=True
             )
         self.model.to(self.device).eval()
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -1507,6 +1507,8 @@ class TeacherAdapter:
         input_ids = enc["input_ids"].to(self.device)
         attention_mask = enc["attention_mask"].to(self.device)
         offsets = enc.get("offset_mapping", None)  # (B, T, 2)
+        if offsets is not None and hasattr(offsets, 'to'):
+            offsets = offsets.to(self.device)
 
         if self.is_encoder or self.is_embedding:
             out = self.model(input_ids=input_ids, attention_mask=attention_mask)
@@ -3980,10 +3982,10 @@ def train_kd(config_path):
 
             # Create learned projectors for each KD surface
             if "state" in teacher.surfaces:
-                key = t_cfg["name"].replace("/", "_").replace("-", "_") + "__state"
+                key = t_cfg["name"].replace("/", "_").replace("-", "_").replace(".", "_") + "__state"
                 projectors[key] = nn.Linear(dim, teacher.hidden_dim)
             if "semantic" in teacher.surfaces:
-                key = t_cfg["name"].replace("/", "_").replace("-", "_") + "__semantic"
+                key = t_cfg["name"].replace("/", "_").replace("-", "_").replace(".", "_") + "__semantic"
                 projectors[key] = nn.Linear(dim, teacher.hidden_dim)
         projectors = projectors.to(DEVICE)
 
@@ -4056,7 +4058,8 @@ def train_kd(config_path):
                                 t_out = teacher.forward(texts, max_length=seq_len)
 
                             safe_name = (teacher.name.replace("/", "_")
-                                         .replace("-", "_"))
+                                         .replace("-", "_")
+                                         .replace(".", "_"))
 
                             # State-level KD: CKA on byte-span-pooled hidden states
                             if ("state" in teacher.surfaces
