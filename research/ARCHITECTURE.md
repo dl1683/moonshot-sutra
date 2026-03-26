@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 7 PENDING (2026-03-26). R6 stabilization gate FAILED — both R6-F and R6-S behind transformer at step 5000. Root cause: branch projection magnitude accumulation. Critical decision point for hybrid vs pure transformer. Section 13 has all results.**
+**Status: Round 7 ACTIVE (2026-03-26). Projected branches DEAD at 100M. Two probes running: R7-P sidecar (post-fusion norm) and P-GQA mainline (full-dim hybrid, no projections). Kill rule: if both fail → ship pure transformer. Section 13 has all results.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -2134,6 +2134,39 @@ Three-way comparison at 100M scale, 5K steps:
 2. ~~BPT gain comes from complementarity, not β.~~ **CONFIRMED but irrelevant.** Removing β didn't help — confirming complementarity is real, but projection amplification destroys it.
 3. **Gutenberg/Wikipedia-heavy filtering validated** by 500-window MiniPLM (0.268 diff score, consistent ranking).
 
-### 13.9 Pending: T+L Round 7
+### 13.9 T+L Round 7 Decisions (2026-03-26)
 
-Critical decision point: 3 consecutive projected hybrid variants fail stability at 100M. The 42M P-block (full-dim, no projection) was stable. Options include abandoning projections, adding post-fusion norm, mixed schedules, or moving to pure transformer for production.
+**Codex verdict: Projected branches are empirically dead at 100M.**
+
+Key decisions:
+1. **Abandon projected branches as the 100M mainline.** Three consecutive variants (N, F, S) failed. The instability is structural — branch projections (256→512) amplify magnitude while branches diverge in direction.
+2. **Full-dim P-GQA is the last hybrid test.** GQA attention with full-dim output (512), full-dim gated conv (512), direct 0.5*(a+c) fusion. No projections at all. Param count: 93.4M — same budget as projected variants.
+3. **R7-P post-fusion norm is a sidecar only.** Run as a sidecar probe (2.5K first, extend only if ahead). Does not replace the mainline.
+4. **Kill rule: if P-GQA AND R7-P both fail → ship pure transformer.** No more hybrid iterations at 100M.
+5. **Mixed schedule (8Q+16A) is the fallback** only if P-GQA is stable but not clearly better.
+
+**Confidence scores (R7):**
+- O1 (Intelligence): **5/10** (DOWN from 6 — projected hybrid failures reduced evidence)
+- O2 (Improvability): 6/10 (unchanged)
+- O3 (Democratization): 5/10 (unchanged)
+- O4 (Data Efficiency): 4/10 (unchanged)
+- O5 (Inference Efficiency): 5/10 (unchanged)
+
+**P-GQA block equation:**
+```text
+u  = g1 * h / sqrt(mean(h^2) + eps)
+a  = GQAttn(u)                                        # q: 512->256, k/v: 512->128, out: 256->512
+c  = Wco(DWConv1D_k=4(Wcv u) * sigmoid(Wcg u))       # Wcv,Wcg: 512->512, depthwise conv, out: 512
+r  = h + 0.5 * (a + c)                                # direct mean fusion, no projection
+h' = r + SwiGLU(g2 * r / rms(r))
+```
+
+Params per block: ~3,541K (attn ~393K + conv ~788K + FFN ~2,359K). Model total: ~93.4M.
+
+**New telemetry field:** per-layer cosine similarity between branch outputs (confirms directional divergence).
+
+### 13.10 Pending: R7 Probe Results
+
+Probes running:
+- R7-P sidecar: post-fusion norm probe (q5_r7_postfusion.json) — IN PROGRESS
+- P-GQA mainline: full-dim hybrid probe (q6_pgqa.json) — READY, launches after R7-P

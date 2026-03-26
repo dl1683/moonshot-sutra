@@ -877,6 +877,9 @@ class R7PostFusionHybridBlock(nn.Module):
         # Telemetry
         if not self.training:
             with torch.no_grad():
+                a_flat = a.float().reshape(-1, D)
+                c_flat = c.float().reshape(-1, D)
+                cos_sim = F.cosine_similarity(a_flat, c_flat, dim=-1).mean().item()
                 self._telemetry = {
                     "layer": self.layer_idx,
                     "branch_a_rms": a.float().pow(2).mean().sqrt().item(),
@@ -884,6 +887,88 @@ class R7PostFusionHybridBlock(nn.Module):
                     "raw_fused_rms": raw_fused.float().pow(2).mean().sqrt().item(),
                     "fused_normed_rms": fused.float().pow(2).mean().sqrt().item(),
                     "fuse_norm_scale": self.fuse_norm.weight.item(),
+                    "branch_cosine_sim": cos_sim,
+                }
+
+        return r
+
+
+class PGQAHybridBlock(nn.Module):
+    """P-GQA: Full-dim parallel hybrid with GQA — no projections.
+
+    The only stable hybrid at 42M was the P-block (full-dim, no projection).
+    This is the 100M version using GQA to keep param count viable.
+
+    Architecture:
+        u  = g1 * h / rms(h)
+        a  = GQAttn(u)                    # full-dim output (512), GQA (4Q/2KV, head_dim=64)
+        c  = Wco(DWConv1D_k(Wcv u) * sigmoid(Wcg u))  # full-dim (512)
+        r  = h + 0.5 * (a + c)            # direct mean fusion, no projection
+        h' = r + SwiGLU(g2 * r / rms(r))
+    """
+    def __init__(self, dim, ff_dim, d_attn=None, d_conv=None,
+                 n_q_heads=4, n_kv_heads=2, head_dim=64,
+                 conv_kernel_size=4, n_layers=24, layer_idx=0,
+                 norm_type="ss_rmsnorm"):
+        super().__init__()
+        self.layer_idx = layer_idx
+        self.mix_norm = make_norm(dim, norm_type)
+
+        # Attention path — GQA with full-dim output (d_attn=dim)
+        self.attn = GQAttention(dim, dim, n_q_heads, n_kv_heads, head_dim)
+
+        # Conv path — full-dim gated depthwise conv
+        self.conv_v = nn.Linear(dim, dim, bias=False)
+        self.conv_g = nn.Linear(dim, dim, bias=False)
+        self.dwconv = nn.Conv1d(
+            dim, dim, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=dim, bias=False
+        )
+        self.conv_out = nn.Linear(dim, dim, bias=False)
+
+        # No branch projections, no branch norms, no W_out — direct addition
+
+        # FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+        nn.init.normal_(self.ffn.down.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # Telemetry
+        self._telemetry = {}
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path (full-dim output)
+        a = self.attn(u, cos, sin)
+
+        # Conv path (full-dim gated depthwise conv)
+        v = self.conv_v(u)
+        g = self.conv_g(u)
+        v_conv = self.dwconv(v.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        c = self.conv_out(v_conv * torch.sigmoid(g))
+
+        # Direct mean fusion — no projection
+        r = x + 0.5 * (a + c)
+
+        r = r + self.ffn(self.ffn_norm(r))
+
+        # Telemetry
+        if not self.training:
+            with torch.no_grad():
+                a_flat = a.float().reshape(-1, D)
+                c_flat = c.float().reshape(-1, D)
+                # Per-position cosine similarity between branches
+                cos_sim = F.cosine_similarity(a_flat, c_flat, dim=-1).mean().item()
+                fused = 0.5 * (a + c)
+                self._telemetry = {
+                    "layer": self.layer_idx,
+                    "branch_a_rms": a.float().pow(2).mean().sqrt().item(),
+                    "branch_c_rms": c.float().pow(2).mean().sqrt().item(),
+                    "fused_rms": fused.float().pow(2).mean().sqrt().item(),
+                    "branch_cosine_sim": cos_sim,
                 }
 
         return r
@@ -1095,7 +1180,8 @@ class DenseTransformer(nn.Module):
                 "N" = normalized additive hybrid (R5-G, Hymba-style branch norm),
                 "F" = R6-F fixed hybrid (no β, SS-RMSNorm branches),
                 "S" = R6-S softmax hybrid (softmax mixing, SS-RMSNorm branches),
-                "G" = R7-P post-fusion hybrid (no branch norms, post-fusion SS-RMSNorm).
+                "G" = R7-P post-fusion hybrid (no branch norms, post-fusion SS-RMSNorm),
+                "Q" = P-GQA full-dim hybrid (GQA + gated conv, no projections, direct mean fusion).
                 If None, all layers are attention blocks.
             conv_kernel_size: kernel size for conv blocks (default 64).
             d_attn: attention dim for "C" blocks (default: dim).
@@ -1162,6 +1248,12 @@ class DenseTransformer(nn.Module):
             elif btype == "G":
                 layers.append(R7PostFusionHybridBlock(
                     dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
+                    n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
+                    conv_kernel_size=conv_kernel_size, n_layers=n_layers,
+                    layer_idx=li, norm_type=norm_type))
+            elif btype == "Q":
+                layers.append(PGQAHybridBlock(
+                    dim, ff_dim,
                     n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
                     conv_kernel_size=conv_kernel_size, n_layers=n_layers,
                     layer_idx=li, norm_type=norm_type))
@@ -3206,6 +3298,7 @@ def run_ab_probe(config_path):
             n_r6f = sum(1 for b in v_block_schedule if b == "F")
             n_r6s = sum(1 for b in v_block_schedule if b == "S")
             n_r7p = sum(1 for b in v_block_schedule if b == "G")
+            n_pgqa = sum(1 for b in v_block_schedule if b == "Q")
             parts = []
             if n_attn: parts.append(f"{n_attn}A")
             if n_conv: parts.append(f"{n_conv}H")
@@ -3215,6 +3308,7 @@ def run_ab_probe(config_path):
             if n_r6f: parts.append(f"{n_r6f}F")
             if n_r6s: parts.append(f"{n_r6s}S")
             if n_r7p: parts.append(f"{n_r7p}G")
+            if n_pgqa: parts.append(f"{n_pgqa}Q")
             print(f"  blocks={'+'.join(parts)} (kernel={v_conv_kernel})")
         print(f"  {v_n_layers}L/d={v_dim}/{v_n_heads}h/ff={v_ff_dim}")
         print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
