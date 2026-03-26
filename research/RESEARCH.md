@@ -2232,3 +2232,109 @@ Key theoretical results for block scheduling in hybrid architectures:
 5. **"Never place transformers at the front"**: Three independent theoretical explanations converge.
 6. **Mamba-3 BCNorm** (ICLR 2026): RMSNorm after B,C projections stabilizes SSM training, analogous to QK-norm in transformers.
 7. **Falcon-H1 dampening multipliers**: 35 fine-grained muP groups with non-learnable dampening tensors for activation control.
+
+### 6.4.21 Codex Architecture Theorist Review: Meta-Learning KD Framework (2026-03-26)
+
+**Source:** Codex GPT-o4-mini-high, Architecture Theorist persona, reviewing SCRATCHPAD.md meta-learning framework.
+
+**Key verdicts on the meta-learning KD framework from SCRATCHPAD.md:**
+
+1. **Category-theoretic framing is overkill for implementation.** Acceptable as scratchpad language for "structure-preserving transfer," but the operational math should be disagreement geometry: pairwise divergence matrices, clustering, and conditional mutual information. Keep category language in research, not in code.
+
+2. **"Inverted power law" is not a law yet.** Rename to "transient adaptive acceleration." Can only appear when teacher diversity is real, routing quality improves over time, AND student is far from capacity ceiling. Fails under teacher redundancy, objective mismatch, bridge noise, and student unlearnability.
+
+3. **5-category decomposition is unidentifiable with 3 teachers.** Missing categories include objective/surface mismatch, bridge-induced disagreement, domain expertise, calibration-only disagreement. With one Qwen, one LFM, one EmbeddingGemma, capacity-dependent and family-dependent effects are confounded.
+
+4. **Knowledge State Map is useful ONLY if it directly drives routing and curriculum.** If it becomes a hand-built ontology of "syntax/facts/reasoning" it becomes noise. Treat as a slice-eval mastery matrix, not a universal capability theory.
+
+**Concrete MVP recommendations:**
+- Expose multi-depth teacher states (teacher at relative depths 1/3, 2/3, 1.0 matched to student exits 7/15/23)
+- Per-sample audit metrics (per-sample state loss and cosine semantic loss, not batch-aggregated)
+- Split committee by surface (Qwen/LFM routed on state surface, EmbeddingGemma fixed semantic anchor)
+- 4-bucket routing every 500 steps: Consensus, Specialist-Q, Specialist-L, Uncertain/Bridge-noisy
+- PCGrad for multi-task gradient conflict (CE vs state KD vs semantic KD)
+- Curriculum: consensus first, specialist second, uncertain last
+
+**Decision:** Do NOT implement full category theory or 5-way ontology first. Start with routed KD + 4-bucket audit + exit-depth tracking. Kill the framework if it doesn't beat static multi_3family at equal teacher FLOPs.
+
+### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
+
+**Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
+
+#### 7.1 Optimal Transport — The Geometry of Moving Distributions
+
+**Core idea:** OT provides the mathematically optimal way to transform one probability distribution into another with minimum cost. The Wasserstein distance measures "how much work" it takes to rearrange one distribution into another.
+
+**Key structures:**
+1. **Wasserstein distance W_p**: The infimum of expected transport cost over all couplings (joint distributions) of two marginals. Metrizes weak convergence. Unlike KL divergence, it's a true metric and is well-defined even between distributions with non-overlapping support.
+
+2. **Wasserstein barycenter**: The distribution minimizing weighted sum of squared Wasserstein distances to N source distributions. This is the canonical "average" of multiple distributions in Wasserstein space. Computing it is NP-hard in general dimension (Altschuler et al. 2022), but entropic regularization (Sinkhorn) provides efficient O(n²/ε²) approximation.
+
+3. **Gromov-Wasserstein (GW) distance**: Compares metric measure spaces with DIFFERENT underlying metrics. Instead of matching point-to-point (standard OT), it matches structure-to-structure — finding a coupling that preserves pairwise distances within each space. Quadratic optimization problem. Key property: invariant to isometries of each space.
+
+4. **Multi-marginal OT (MMOT)**: Generalizes OT to simultaneously transport N≥3 distributions. Unlike pairwise OT, captures joint relationships that pairwise comparisons miss. Cost function structure critically determines tractability — pairwise decomposable costs reduce to N(N-1)/2 standard OT problems.
+
+5. **Entropic regularization (Sinkhorn)**: Adds entropy penalty to OT formulation. Trades optimality for computational tractability. The Sinkhorn distance interpolates between OT (ε→0) and maximum entropy coupling (ε→∞). Each Sinkhorn iteration is a matrix-vector product — GPU-friendly.
+
+**Derived connections to KD (our analysis, not from papers):**
+- **Multi-teacher KD IS multi-marginal OT.** N teacher distributions + 1 student = N+1-marginal transport problem. The optimal joint coupling specifies exactly how much knowledge to take from each teacher for each input.
+- **Cross-architecture KD IS Gromov-Wasserstein.** Different teachers (transformer, SSM, encoder) have different internal metric structures. GW compares structures, not positions. Our byte-span CKA is a simplified GW metric — CKA compares Gram matrices (internal structure) across different representation spaces.
+- **Wasserstein barycenter as consensus signal.** For consensus windows (all teachers agree), the WB is the theoretically optimal "average" teacher signal — more principled than simple averaging or uniform weighting.
+- **Sinkhorn is implementable.** Entropy-regularized OT can run on GPU in the inner training loop with modest overhead if M (span count) is small (our M=16 → 16×16 transport matrices → negligible cost).
+
+#### 7.2 Information Geometry — The Natural Geometry of Probability Distributions
+
+**Core idea:** Statistical manifolds (spaces of probability distributions) have a unique natural Riemannian geometry induced by the Fisher information metric. This geometry determines the "right" way to measure distances, compute averages, and project between distributions.
+
+**Key structures:**
+1. **Fisher information metric**: The UNIQUE Riemannian metric on statistical manifolds that is invariant under sufficient statistics (Amari-Chentsov theorem). At each point p, it defines how "different" nearby distributions look: g_ij = E_p[∂_i log p · ∂_j log p]. It determines the natural notion of distance between probability distributions.
+
+2. **Dual connections (α-connections)**: Statistical manifolds carry two natural affine connections: the e-connection (exponential, α=1) and the m-connection (mixture, α=-1), which are dual with respect to the Fisher metric. Exponential families are e-flat; mixture families are m-flat.
+
+3. **Dually flat structure**: When a manifold is flat in both e and m connections, a generalized Pythagorean theorem holds: D_KL(p||r) = D_KL(p||q) + D_KL(q||r) when q is the projection of p onto a flat submanifold. This gives "orthogonal" decompositions of divergence into independent components.
+
+4. **I-projection and M-projection**: I-projection of p onto submanifold S: min_{q∈S} KL(q||p) — finds the closest distribution in S that is "information-preserving." M-projection: min_{q∈S} KL(p||q) — finds the closest distribution in S that is "moment-matching." These are dual operations. I-projection is forward KD (student → teacher KL). M-projection is reverse KD (teacher → student KL).
+
+5. **Natural gradient**: The gradient in Fisher-Rao metric: ∇̃f = F^{-1} ∇f where F is the Fisher information matrix. Follows the intrinsic geometry of the parameter space, not the flat Euclidean geometry. This is why natural gradient descent converges faster — it respects the curvature of the loss landscape.
+
+**Derived connections to KD (our analysis):**
+- **The student IS a submanifold.** The student model's limited capacity restricts it to a submanifold of all possible distributions. Training IS projecting the teacher distribution onto this submanifold. The dual structure (I vs M projection) explains why forward vs reverse KL give different results in distillation.
+- **Routing = selecting the information-geometric nearest teacher.** For each input, the "right" teacher is the one whose projection onto the student submanifold loses the least Fisher-Rao distance. This is more principled than comparing raw losses — it accounts for the curvature of the student's representational capacity.
+- **The Pythagorean theorem predicts when routing helps.** If teacher contributions are "orthogonal" in the information-geometric sense (their projections onto the student submanifold are independent), multi-teacher KD decomposes into independent teacher projections — diversity is perfectly additive. If they're "parallel" (redundant), the second teacher adds nothing.
+
+#### 7.3 Ensemble Theory — When and Why Combining Predictions Works
+
+**Core idea:** The fundamental theory of why committees outperform individuals, and critically, when they DON'T.
+
+**Key structures:**
+1. **Ambiguity decomposition (Krogh-Vedelsby 1995)**: For squared loss, ensemble error = average member error - diversity. Diversity ≡ average squared deviation of members from ensemble mean. This is an identity (not an approximation). Diversity is ALWAYS non-negative → ensemble always ≤ average member. But you can't optimize diversity independently of accuracy — they're coupled.
+
+2. **Generalized ambiguity (Brown et al. 2023, JMLR)**: Extended to classification with any twice-differentiable loss (logistic, exponential, cross-entropy). The decomposition has the same structure but with generalized divergence measures replacing squared error. For cross-entropy: diversity = average KL from member predictions to ensemble prediction.
+
+3. **Condorcet's jury theorem**: A committee of independent agents, each with accuracy > 50%, has committee accuracy → 100% as committee size → ∞. The KEY conditions: (a) each member is better than random, (b) members are conditionally independent given the ground truth. Violation of (b) is the primary failure mode of ensembles.
+
+4. **Oracle inequality / PAC-Bayes bounds**: The optimal convex combination of N predictors has generalization error ≤ min_i error_i + O(log(N)/n), where n is sample size. Adding more ensemble members costs only logarithmically in generalization.
+
+5. **When ensembles FAIL**: (a) Correlated errors — if members fail together, diversity is illusory. (b) Systematic bias — if all members are biased the same way, ensemble inherits the bias. (c) "Negative diversity" — if members disagree in a way that INCREASES error (e.g., one member's correct prediction is overwhelmed by others' incorrect predictions).
+
+**Derived connections to KD (our analysis):**
+- **Multi-teacher KD obeys the ambiguity decomposition.** If we treat the teachers as an ensemble providing supervision, the KD error = average teacher KD error - teacher diversity. This predicts: multi-teacher KD helps IFF teachers are diverse AND individually better-than-random on the KD task. If teachers are redundant (e.g., two fine-tuned variants of the same base model), the second teacher adds nothing.
+- **Architecture diversity IS Condorcet independence.** Transformers, SSMs, and encoders have fundamentally different inductive biases → their errors are more likely to be conditionally independent → stronger "jury" effect. This is the theoretical justification for cross-architecture distillation over same-family multi-teacher.
+- **The failure modes predict our routing buckets.** Consensus = all teachers agree (high accuracy, low diversity → easy knowledge). Specialist = one teacher disagrees (high diversity, maybe high accuracy → valuable knowledge). Uncertain = all teachers disagree with each other (may be high diversity but LOW accuracy → dangerous, use cautiously).
+- **"Negative diversity" predicts when routing MUST default to single teacher.** If teachers disagree and averaging their signals increases student error, routing to the single most confident teacher is better than combining.
+
+#### 7.4 Synthesis: Novel Mechanism Candidates for Codex Review
+
+From combining the three fundamental domains, several novel mechanisms emerge that don't exist in any published KD paper:
+
+1. **Gromov-Wasserstein routing**: Instead of comparing teacher-student losses directly, compute the GW distance between teacher and student span Gram matrices. Route to the teacher with lowest GW distance (most structurally compatible with student's current representation). This is what CKA approximates — but GW provides the theoretically optimal structural comparison.
+
+2. **Information-geometric projection routing**: For each input, compute the Fisher-Rao distance from student distribution to each teacher's projection onto the student submanifold. Route to the teacher whose projection preserves the most information. This accounts for the curvature of the student's capacity limitations.
+
+3. **Wasserstein barycenter consensus**: For consensus windows, compute the entropic Wasserstein barycenter of all teacher representations (via Sinkhorn on the M=16 span Gram matrices). This is more principled than averaging and naturally handles teachers with different representation geometries.
+
+4. **Ambiguity-aware scheduling**: Track teacher diversity (average KL from member predictions to ensemble prediction) over time. When diversity is high and individual accuracy is high → route aggressively. When diversity is high but accuracy is low → default to consensus-only. When diversity is low → single best teacher suffices.
+
+5. **Multi-marginal transport loss**: Replace the sum of pairwise KD losses with a multi-marginal OT loss that finds the joint-optimal transport from all teachers to student simultaneously. Captures cross-teacher dependencies that pairwise losses miss.
+
+**Status:** These are DERIVED mechanisms from fundamentals. NOT yet validated. Requires Codex evaluation for feasibility at our scale (90M student, M=16 spans, 3 teachers) before any implementation.

@@ -8,7 +8,9 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ## Meta-Learning KD: Category-Theoretic Disagreement Analysis (2026-03-26)
 
-**Status: IDEA — needs Codex evaluation and probe design**
+**Status: EVALUATED BY CODEX — category theory overkill, MVP refined below**
+
+**Codex Verdict (Architecture Theorist, 2026-03-26):** Category-theoretic framing acceptable as research language but NOT operational math. The 5-category decomposition is unidentifiable with 3 teachers. "Inverted power law" renamed to "transient adaptive acceleration" — not proven. Full review in RESEARCH.md §6.4.21.
 
 ### Core Thesis
 Multi-teacher KD should be a SELF-IMPROVING process with accelerating returns, not diminishing returns. The manifesto says Intelligence = Geometry, not Scale — this applies to the LEARNING PROCESS itself, not just the architecture.
@@ -79,6 +81,73 @@ These predict real benchmark performance because they measure actual capabilitie
 - If disagreement analysis shows no structure (random), the category theory angle is useless
 - If teacher weighting by disagreement doesn't improve over uniform weighting, the routing is useless
 - If learning efficiency doesn't accelerate (flat or diminishing curve), the meta-learning claim is false
+
+---
+
+## REFINED MVP: Routed KD with 4-Bucket Audit (2026-03-26)
+
+**Status: DESIGN — pending probe results before implementation**
+
+Based on Codex Architecture Theorist review. Stripped of category theory overhead, focused on operational disagreement geometry.
+
+### Per-Sample Audit Metrics
+
+**State loss per sample per teacher:**
+```
+l_state_i(x) = ||G(P_i @ S_student(x)) - G(S_teacher_i(x))||^2_F / M^2
+```
+where G(·) is row-normalized span Gram matrix over M=16 byte spans.
+
+**Semantic loss per sample per teacher:**
+```
+l_sem_i(x) = 1 - cos(P_i @ z_student(x), z_teacher_i(x))
+```
+where z = mean-pooled hidden state.
+
+Both return (B,) vectors, not scalars. This enables per-sample routing.
+
+### 4-Bucket Classification (every 500 steps, on 256-window held-out audit)
+
+Given teachers Q (Qwen) and L (LFM):
+- **Consensus**: d_QL < q30 AND mean decoder entropy < q30 → Use equal weights
+- **Specialist-Q**: d_QL > q70, student gap to Q > q70, Q has lower entropy → Route to Q only
+- **Specialist-L**: d_QL > q70, student gap to L > q70, L has lower entropy → Route to L only
+- **Uncertain**: Both decoders high entropy → Semantic-only (EmbeddingGemma)
+- (Bridge-noisy: <12/16 spans occupied → Semantic-only — detect bad tokenization)
+
+Where d_QL = pairwise divergence between Q and L span Gram matrices on each sample.
+
+### Multi-Depth Teacher States
+
+Teacher hidden states at relative depths 1/3, 2/3, 1.0 matched to student exits 7, 15, 23.
+Currently TeacherAdapter returns only last hidden state — need multi-depth extraction.
+
+### Surface Split
+
+Route Qwen vs LFM on state surface only. Keep EmbeddingGemma as fixed low-weight semantic anchor:
+```
+L = L_CE + 0.4 * (w_Q * l_Q_state + w_L * l_L_state) + 0.1 * l_E_sem
+```
+where w_Q, w_L are bucket-derived weights (not learned — discrete routing).
+
+### Kill Rule
+- Routed KD must beat static multi_3family at equal teacher FLOPs
+- Must lower specialist-bucket deficit
+- Must not worsen stability (kurtosis/max_act) by more than ~10%
+- If fails → kill routing, keep simple uniform KD + MiniPLM
+
+### Implementation Order (AFTER probe shows signal)
+1. Per-sample loss functions (modify compute_state_kd_loss, compute_semantic_kd_loss)
+2. Held-out audit set creation (256 windows from validation)
+3. 4-bucket classification function
+4. Bucket-aware loss weighting in train_kd_phased()
+5. Multi-depth teacher state extraction
+6. Probe: routed vs uniform at equal FLOPs
+
+### Questions for Fundamentals Research
+- Optimal Transport: Is the Wasserstein barycenter the right "committee average" for consensus?
+- Information Geometry: Should bucket thresholds use KL or Fisher-Rao distance?
+- Ensemble Theory: Does the ambiguity decomposition predict when routing helps vs hurts?
 
 ---
 

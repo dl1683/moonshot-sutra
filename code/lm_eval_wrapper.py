@@ -54,7 +54,8 @@ class SutraLMEval(LM):
             n_kv_heads=cfg.get("n_kv_heads", None),
             head_dim=cfg.get("head_dim", 64),
         )
-        self.model.load_state_dict(ckpt["model"])
+        state_key = "model_state_dict" if "model_state_dict" in ckpt else "model"
+        self.model.load_state_dict(ckpt[state_key])
         if fp16:
             self.model.half()
         self.model.to(self._device).eval()
@@ -235,7 +236,7 @@ if __name__ == "__main__":
             print(f"\n  {task_name}: SKIPPED (already done)")
             continue
 
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
             gc.collect()
             torch.cuda.empty_cache()
             free_mb = (torch.cuda.get_device_properties(0).total_memory
