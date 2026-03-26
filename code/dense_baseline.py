@@ -3943,8 +3943,8 @@ def train_kd(config_path):
         print(f"  Teachers: {[t['name'] for t in v_teachers_cfg] if v_teachers_cfg else 'NONE (control)'}")
         print(f"  alpha_state={v_alpha_state}, alpha_semantic={v_alpha_semantic}")
 
-        # ---- Load student from checkpoint ----
-        init_ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
+        # ---- Load student from checkpoint (CPU first to avoid VRAM spike) ----
+        init_ckpt = torch.load(init_checkpoint, weights_only=False, map_location="cpu")
         stu_cfg = init_ckpt.get("config", {})
         dim = stu_cfg.get("dim", 512)
         n_layers = stu_cfg.get("n_layers", 24)
@@ -4062,6 +4062,12 @@ def train_kd(config_path):
                         student_mask = torch.ones(inp.shape[0], inp.shape[1],
                                                   device=DEVICE, dtype=torch.long)
 
+                        # Count teachers per surface for fair loss normalization
+                        n_state_teachers = sum(1 for t in teachers
+                                               if "state" in t.surfaces)
+                        n_sem_teachers = sum(1 for t in teachers
+                                             if "semantic" in t.surfaces)
+
                         for teacher in teachers:
                             with torch.no_grad():
                                 t_out = teacher.forward(texts, max_length=seq_len)
@@ -4071,8 +4077,10 @@ def train_kd(config_path):
                                          .replace(".", "_"))
 
                             # State-level KD: CKA on byte-span-pooled hidden states
-                            if ("state" in teacher.surfaces
-                                    and t_out["hidden"] is not None):
+                            if "state" in teacher.surfaces:
+                                assert t_out["hidden"] is not None, (
+                                    f"Teacher {teacher.name} requested state surface "
+                                    f"but returned hidden=None")
                                 proj = projectors[safe_name + "__state"]
                                 s_kd = compute_state_kd_loss(
                                     student_hidden, t_out["hidden"],
@@ -4082,11 +4090,13 @@ def train_kd(config_path):
                                     teacher_mask=t_out["attention_mask"],
                                     projector=proj, n_spans=n_spans,
                                 )
-                                kd_loss = kd_loss + v_alpha_state * s_kd
+                                kd_loss = kd_loss + (v_alpha_state / max(n_state_teachers, 1)) * s_kd
 
                             # Semantic KD: relational Gram matrix loss
-                            if ("semantic" in teacher.surfaces
-                                    and t_out["hidden"] is not None):
+                            if "semantic" in teacher.surfaces:
+                                assert t_out["hidden"] is not None, (
+                                    f"Teacher {teacher.name} requested semantic surface "
+                                    f"but returned hidden=None")
                                 proj = projectors[safe_name + "__semantic"]
                                 sem_kd = compute_semantic_kd_loss(
                                     student_hidden, t_out["hidden"],
@@ -4094,7 +4104,7 @@ def train_kd(config_path):
                                     teacher_mask=t_out["attention_mask"],
                                     projector=proj,
                                 )
-                                kd_loss = kd_loss + v_alpha_semantic * sem_kd
+                                kd_loss = kd_loss + (v_alpha_semantic / max(n_sem_teachers, 1)) * sem_kd
 
                     total_loss = (base_loss + kd_loss) / grad_accum
 
@@ -4335,14 +4345,14 @@ def train_kd_phased(config_path):
             windows.append(test_tokens[start:start + wlen])
         torch.save({"windows": windows}, cache_path)
 
-    # ---- Load student model ----
+    # ---- Load student model (CPU first to avoid VRAM spike) ----
     resume_path = cfg.get("resume_from", None)
     if resume_path and Path(resume_path).exists():
-        ckpt = torch.load(resume_path, weights_only=False, map_location=DEVICE)
+        ckpt = torch.load(resume_path, weights_only=False, map_location="cpu")
         resume_step = ckpt.get("step", 0)
         print(f"  Resuming from step {resume_step}: {resume_path}")
     else:
-        ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
+        ckpt = torch.load(init_checkpoint, weights_only=False, map_location="cpu")
         resume_step = 0
 
     stu_cfg = ckpt.get("config", {})
@@ -4527,6 +4537,12 @@ def train_kd_phased(config_path):
                     student_mask = torch.ones(inp.shape[0], inp.shape[1],
                                               device=DEVICE, dtype=torch.long)
 
+                    # Count teachers per surface for fair loss normalization
+                    n_state_teachers = sum(1 for t in current_teachers
+                                           if "state" in t.surfaces)
+                    n_sem_teachers = sum(1 for t in current_teachers
+                                         if "semantic" in t.surfaces)
+
                     for teacher in current_teachers:
                         with torch.no_grad():
                             t_out = teacher.forward(texts, max_length=seq_len)
@@ -4534,8 +4550,10 @@ def train_kd_phased(config_path):
                         safe_name = (teacher.name.replace("/", "_")
                                      .replace("-", "_").replace(".", "_"))
 
-                        if ("state" in teacher.surfaces
-                                and t_out["hidden"] is not None):
+                        if "state" in teacher.surfaces:
+                            assert t_out["hidden"] is not None, (
+                                f"Teacher {teacher.name} requested state surface "
+                                f"but returned hidden=None")
                             proj = projectors[safe_name + "__state"]
                             s_kd = compute_state_kd_loss(
                                 student_hidden, t_out["hidden"],
@@ -4545,10 +4563,12 @@ def train_kd_phased(config_path):
                                 teacher_mask=t_out["attention_mask"],
                                 projector=proj, n_spans=n_spans,
                             )
-                            kd_loss = kd_loss + current_alpha_state * s_kd
+                            kd_loss = kd_loss + (current_alpha_state / max(n_state_teachers, 1)) * s_kd
 
-                        if ("semantic" in teacher.surfaces
-                                and t_out["hidden"] is not None):
+                        if "semantic" in teacher.surfaces:
+                            assert t_out["hidden"] is not None, (
+                                f"Teacher {teacher.name} requested semantic surface "
+                                f"but returned hidden=None")
                             proj = projectors[safe_name + "__semantic"]
                             sem_kd = compute_semantic_kd_loss(
                                 student_hidden, t_out["hidden"],
@@ -4556,7 +4576,7 @@ def train_kd_phased(config_path):
                                 teacher_mask=t_out["attention_mask"],
                                 projector=proj,
                             )
-                            kd_loss = kd_loss + current_alpha_semantic * sem_kd
+                            kd_loss = kd_loss + (current_alpha_semantic / max(n_sem_teachers, 1)) * sem_kd
 
                 total_loss = (base_loss + kd_loss) / grad_accum
 

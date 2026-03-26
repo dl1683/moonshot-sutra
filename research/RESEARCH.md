@@ -2257,6 +2257,22 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Decision:** Do NOT implement full category theory or 5-way ontology first. Start with routed KD + 4-bucket audit + exit-depth tracking. Kill the framework if it doesn't beat static multi_3family at equal teacher FLOPs.
 
+### 6.4.22 Codex Correctness Engineer Audit: KD Training Code (2026-03-26)
+
+**Source:** Codex GPT-o4-mini-high, Correctness Engineer persona, auditing dense_baseline.py KD infrastructure.
+
+**Bugs found and status:**
+- **HIGH: Multi-teacher unfair loss scaling** — alpha applied per-teacher, so 2-teacher arm gets 2x total KD weight. **FIXED: divide alpha by n_teachers per surface.**
+- **HIGH: Student byte offsets hardcoded to None** — student falls back to position-based pooling, misaligned with teacher byte-span pooling. **FIXED: compute via re-encoding (prior session).**
+- **HIGH: offset_mapping device mismatch** — HF tokenizer returns CPU tensor, attention_mask on GPU. **Working in practice** (probe runs successfully — HF handles gracefully for slow tokenizers). Left as-is since probe validates.
+- **MEDIUM: KD surfaces silently disappear** — hidden=None skipped without warning. **FIXED: assert added.**
+- **MEDIUM: Only final hidden state used for KD** — depth-8/16 planned but not implemented. **By design for first probe, deferred.**
+- **MEDIUM: Projector LR lost after decay** — identified by LR comparison. **FIXED: is_projector flag (prior session).**
+- **MEDIUM: Warm-start VRAM spike** — full checkpoint loaded to GPU. **FIXED: map_location="cpu".**
+- **MEDIUM: compute_token_kd_loss unsafe for vocab mismatch** — dormant code. **Deferred** until token-level KD is activated.
+
+**Assumption note:** HF tokenizer offset_mapping returns character offsets, not byte offsets. The "byte-span bridge" is technically a character-span bridge on Unicode text. Functionally equivalent for most content.
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
