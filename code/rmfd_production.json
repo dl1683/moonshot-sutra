@@ -1,0 +1,52 @@
+{
+    "name": "rmfd_v1",
+    "init_from": "results/checkpoints_probe_pgqa_100m_gate/transformer_24x512_step5000.pt",
+    "resume_from": null,
+    "total_steps": 30000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 1e-4,
+    "min_lr": 1e-5,
+    "warmup": 500,
+    "eval_every": 1000,
+    "seq_len": 512,
+    "n_spans": 16,
+    "phases": [
+        {
+            "name": "stabilization",
+            "end_step": 500,
+            "teachers": [],
+            "alpha_state": 0.0,
+            "alpha_semantic": 0.0
+        },
+        {
+            "name": "single_anchor",
+            "end_step": 5000,
+            "teachers": [
+                {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic"]}
+            ],
+            "alpha_state": 0.5,
+            "alpha_semantic": 0.3
+        },
+        {
+            "name": "committee",
+            "end_step": 25000,
+            "teachers": [
+                {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic"]},
+                {"name": "LiquidAI/LFM2.5-1.2B-Base", "surfaces": ["state"]},
+                {"name": "google/embeddinggemma-300m", "surfaces": ["semantic"]}
+            ],
+            "alpha_state": 0.5,
+            "alpha_semantic": 0.3
+        },
+        {
+            "name": "consolidation",
+            "end_step": 30000,
+            "teachers": [
+                {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic"]}
+            ],
+            "alpha_state": 0.25,
+            "alpha_semantic": 0.15
+        }
+    ]
+}
