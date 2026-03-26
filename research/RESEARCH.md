@@ -1706,3 +1706,29 @@ This addendum records the specific evidence that drove the Round 2 architecture 
   - SmolLM2-135M: HellaSwag 42.1%, ARC 43.9%, PIQA 68.4% (trained on 2T tokens).
   - SmolLM2-360M: HellaSwag 54.5%, ARC 53.0% (trained on 4T tokens).
   - Data gap: SmolLM2-135M uses 87x our tokens. Pythia-160M uses 13x.
+
+- **Muon probe COMPLETED: AdamW+SS-RMSNorm wins, Muon loses at 42M scale.**
+  - V1 (AdamW+RMSNorm): final BPT `4.99`, kurtosis_max `1.2`, max_act `22.9`.
+  - **V2 (AdamW+SS-RMSNorm): final BPT `4.91` — WINNER.** Kurtosis_max `1.1`, max_act `22.0`. Best BPT, best activation health, fewest params.
+  - V3 (Muon+SS-RMSNorm): final BPT `5.01` — LOSES. Kurtosis_max `1.8`, max_act `59.6`.
+  - SS-RMSNorm beats RMSNorm by 0.08 BPT with fewer params. Validated for quantization.
+  - Muon at lr=0.02: 1.7x faster early convergence (step 1000-1500) but periodic instability (BPT regressions at steps 2000, 3500-4000). Max activations 2.7x higher than AdamW. Final BPT 0.10 worse than V2.
+  - **Muon not dead as concept** — possible fixes: lower LR, longer training, NorMuon. But NOT validated at 42M/5000 steps.
+
+- **Falcon-H1 (TII, May-July 2025): Production intra-layer hybrid architecture.**
+  - Family of 0.5B to 34B models. Parallel attention + Mamba-2 SSM heads within EVERY block.
+  - 0.5B specs: dim=1024, 36 layers, 8 attention heads + 24 SSM heads (1:3 ratio), head_dim=64, state_dim=128.
+  - Outputs concatenated then projected. GQA with Q/KV ratio=2.
+  - "A relatively small fraction of attention is sufficient for good performance."
+  - "A well-designed 1.5B hybrid from 2025 does what a vanilla 7B from 2024 could do."
+  - Confirms Hymba's finding: intra-layer parallel hybrid > inter-layer sequential.
+
+- **NorMuon (arxiv:2510.05491): Strict improvement over Muon.**
+  - 21.74% better training efficiency than Adam, 11.31% over Muon at 1.1B.
+  - Adds neuron-wise normalization after orthogonalization.
+  - Negligible additional memory overhead.
+  - Not yet in PyTorch — would need custom implementation.
+
+- **MiniPLM confirmed at ICLR 2025. Open source: https://github.com/thu-coai/MiniPLM**
+  - Benefit MORE pronounced at 500M and 1.2B than at 200M.
+  - "Down-samples common patterns, filters noisy signals, avoids wasting compute on easy knowledge."

@@ -1,0 +1,374 @@
+{
+  "probe": "muon_vs_adamw",
+  "config": {
+    "name": "muon_vs_adamw",
+    "description": "Round 2 gating probe: Test optimizer/norm combinations. Muon+SS-RMSNorm is the new mainline candidate.",
+    "variants": [
+      {
+        "tag": "adamw_rmsnorm",
+        "optimizer": "adamw",
+        "norm_type": "rmsnorm"
+      },
+      {
+        "tag": "adamw_ss_rmsnorm",
+        "optimizer": "adamw",
+        "norm_type": "ss_rmsnorm"
+      },
+      {
+        "tag": "muon_ss_rmsnorm",
+        "optimizer": "muon",
+        "norm_type": "ss_rmsnorm",
+        "muon_lr": 0.02
+      }
+    ],
+    "dim": 512,
+    "n_layers": 10,
+    "n_heads": 8,
+    "ff_dim": 1536,
+    "steps": 5000,
+    "eval_every": 500,
+    "batch_size": 16,
+    "grad_accum": 2,
+    "seq_len": 512,
+    "lr": 0.0003,
+    "min_lr": 1e-05,
+    "warmup": 200,
+    "use_top": false,
+    "top_K": 4
+  },
+  "results": {
+    "adamw_rmsnorm": {
+      "params": 42281472,
+      "norm_type": "rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 8.3114,
+          "avg_kurtosis": 0.29,
+          "max_kurtosis": 0.55,
+          "max_activation": 9.4
+        },
+        {
+          "step": 1000,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 7.1857,
+          "avg_kurtosis": 0.07,
+          "max_kurtosis": 0.15,
+          "max_activation": 9.57
+        },
+        {
+          "step": 1500,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 6.716,
+          "avg_kurtosis": 0.11,
+          "max_kurtosis": 0.25,
+          "max_activation": 10.37
+        },
+        {
+          "step": 2000,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 6.1,
+          "avg_kurtosis": 0.07,
+          "max_kurtosis": 0.13,
+          "max_activation": 11.95
+        },
+        {
+          "step": 2500,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 5.961,
+          "avg_kurtosis": 0.07,
+          "max_kurtosis": 0.26,
+          "max_activation": 13.02
+        },
+        {
+          "step": 3000,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 5.5661,
+          "avg_kurtosis": 0.1,
+          "max_kurtosis": 0.35,
+          "max_activation": 14.35
+        },
+        {
+          "step": 3500,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 5.5497,
+          "avg_kurtosis": 0.13,
+          "max_kurtosis": 0.7,
+          "max_activation": 19.79
+        },
+        {
+          "step": 4000,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 5.3518,
+          "avg_kurtosis": 0.16,
+          "max_kurtosis": 0.83,
+          "max_activation": 19.2
+        },
+        {
+          "step": 4500,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 5.1217,
+          "avg_kurtosis": 0.17,
+          "max_kurtosis": 0.76,
+          "max_activation": 17.82
+        },
+        {
+          "step": 5000,
+          "tag": "adamw_rmsnorm",
+          "norm_type": "rmsnorm",
+          "bpt": 4.9911,
+          "avg_kurtosis": 0.24,
+          "max_kurtosis": 1.23,
+          "max_activation": 22.89
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is not only the same as the other.\nThe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe term \u201cthe"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the future of the future is the future of the future.\nThe future of the future is the future of the future.\nThe future of the future is the future of the future.\nThe future of the future is the future future.\nThe future will be the future future future future future future future future"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\n                                                               "
+        }
+      ]
+    },
+    "adamw_ss_rmsnorm": {
+      "params": 42270741,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 7.4997,
+          "avg_kurtosis": 0.4,
+          "max_kurtosis": 0.72,
+          "max_activation": 8.98
+        },
+        {
+          "step": 1000,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 7.0046,
+          "avg_kurtosis": 0.15,
+          "max_kurtosis": 0.3,
+          "max_activation": 10.98
+        },
+        {
+          "step": 1500,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.8576,
+          "avg_kurtosis": 0.11,
+          "max_kurtosis": 0.22,
+          "max_activation": 11.9
+        },
+        {
+          "step": 2000,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.3374,
+          "avg_kurtosis": 0.16,
+          "max_kurtosis": 0.32,
+          "max_activation": 12.66
+        },
+        {
+          "step": 2500,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.8048,
+          "avg_kurtosis": 0.18,
+          "max_kurtosis": 0.53,
+          "max_activation": 15.64
+        },
+        {
+          "step": 3000,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.65,
+          "avg_kurtosis": 0.23,
+          "max_kurtosis": 0.67,
+          "max_activation": 17.76
+        },
+        {
+          "step": 3500,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.427,
+          "avg_kurtosis": 0.22,
+          "max_kurtosis": 0.9,
+          "max_activation": 25.53
+        },
+        {
+          "step": 4000,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.3799,
+          "avg_kurtosis": 0.3,
+          "max_kurtosis": 1.2,
+          "max_activation": 24.38
+        },
+        {
+          "step": 4500,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.032,
+          "avg_kurtosis": 0.33,
+          "max_kurtosis": 1.48,
+          "max_activation": 25.44
+        },
+        {
+          "step": 5000,
+          "tag": "adamw_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.9096,
+          "avg_kurtosis": 0.25,
+          "max_kurtosis": 1.13,
+          "max_activation": 21.96
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is the most common form of life.\n\nThe word \"cryptom\" is used to describe the word \"cryptom\" in the word \"cryptom\" in the word \"cryptom\" in the word \"cryptom\" in the word \"cryptom"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new new"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "muon_ss_rmsnorm": {
+      "params": 42270741,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 8.3361,
+          "avg_kurtosis": 0.35,
+          "max_kurtosis": 1.02,
+          "max_activation": 104.73
+        },
+        {
+          "step": 1000,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.5392,
+          "avg_kurtosis": 0.08,
+          "max_kurtosis": 0.21,
+          "max_activation": 95.02
+        },
+        {
+          "step": 1500,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.9439,
+          "avg_kurtosis": 0.09,
+          "max_kurtosis": 0.3,
+          "max_activation": 90.09
+        },
+        {
+          "step": 2000,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.2535,
+          "avg_kurtosis": 0.09,
+          "max_kurtosis": 0.37,
+          "max_activation": 87.82
+        },
+        {
+          "step": 2500,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.6337,
+          "avg_kurtosis": 0.14,
+          "max_kurtosis": 0.36,
+          "max_activation": 84.41
+        },
+        {
+          "step": 3000,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4874,
+          "avg_kurtosis": 0.22,
+          "max_kurtosis": 0.54,
+          "max_activation": 92.29
+        },
+        {
+          "step": 3500,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.8045,
+          "avg_kurtosis": 0.36,
+          "max_kurtosis": 1.8,
+          "max_activation": 167.09
+        },
+        {
+          "step": 4000,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.8882,
+          "avg_kurtosis": 0.33,
+          "max_kurtosis": 1.44,
+          "max_activation": 133.05
+        },
+        {
+          "step": 4500,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.3457,
+          "avg_kurtosis": 0.31,
+          "max_kurtosis": 1.43,
+          "max_activation": 100.56
+        },
+        {
+          "step": 5000,
+          "tag": "muon_ss_rmsnorm",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.0143,
+          "avg_kurtosis": 0.4,
+          "max_kurtosis": 1.83,
+          "max_activation": 59.62
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is not a word.\n\nThe meaning of life is not a word.\n\nThe meaning of life is not a word.\n\nThe meaning of life is not a word.\n\nThe meaning of life is not a word.\n\nThe meaning of life is not a word.\n\nThe meaning of"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is a very small, and the world is a very small, and the world is a very small, and the world is a very small, and the world is a very small, and the world is a very small, and the world is a very small, and the world is a very small,"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\n###############################################################"
+        }
+      ]
+    }
+  }
+}
