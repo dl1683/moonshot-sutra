@@ -3300,6 +3300,27 @@ def run_ab_probe(config_path):
             "generations": generations,
         }
 
+        # Save final checkpoint for continuation (8-10K runs)
+        ckpt_save_dir = REPO / "results" / f"checkpoints_probe_{probe_name}"
+        ckpt_save_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = ckpt_save_dir / f"{tag}_step{steps}.pt"
+        torch.save({
+            "step": steps,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": opt.state_dict(),
+            "config": {
+                "dim": v_dim, "n_layers": v_n_layers, "n_heads": v_n_heads,
+                "ff_dim": v_ff_dim, "norm_type": norm_type,
+                "block_schedule": v_block_schedule,
+                "exit_layers": exit_layers,
+                "d_attn": _d_attn, "d_conv": _d_conv,
+                "n_q_heads": _n_q, "n_kv_heads": _n_kv,
+                "head_dim": head_dim, "conv_kernel_size": v_conv_kernel,
+            },
+            "metrics": metrics_log,
+        }, ckpt_path)
+        print(f"  Saved checkpoint: {ckpt_path}")
+
         # Free GPU memory before next variant
         del model, opt, scaler
         if opt_adam is not None:
