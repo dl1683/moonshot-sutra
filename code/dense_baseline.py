@@ -4261,7 +4261,7 @@ def train_kd(config_path):
                                     student_logits=out["logits"],
                                     teacher_logits=t_out["logits"],
                                     student_offsets=stu_offsets,
-                                    teacher_offsets=t_out["byte_offsets"],
+                                    teacher_offsets=t_out.get("byte_offsets", None),
                                     teacher_mask=t_out["attention_mask"],
                                     shared_s_ids=s_ids,
                                     shared_t_ids=t_ids,

@@ -2340,7 +2340,7 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Gradient flow:** Confirmed correct — student path stays in-graph, teacher under `no_grad()`.
 
-**Status:** All HIGH and MEDIUM fixes applied. Needs re-review per Tier 1 loop-until-clean rule.
+**Status:** All HIGH and MEDIUM fixes applied. **Re-review PASSED (2026-03-26):** Codex Correctness Engineer confirmed all 6 fixes correct, no new regressions. Tier 1 loop CLEAN.
 
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 

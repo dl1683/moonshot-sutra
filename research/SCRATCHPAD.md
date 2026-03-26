@@ -27,7 +27,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ### Open Meta-Questions
 
-1. **Is the KD advantage a head-start or a limit change?** Gap trajectory: -0.059 (500) → -0.042 (1000) → -0.023 (1500) → **-0.036 (2000)**. The narrowing REVERSED at step 2000 — gap widened from -0.023 to -0.036. This weakens the pure head-start hypothesis. Codex verdict (§6.4.23): "partially approved, not as conclusion — too early to call at ~106M tokens." Await steps 2500/3000 for full picture.
+1. **Is the KD advantage a head-start or a limit change?** Gap trajectory: -0.059 (500) → -0.042 (1000) → -0.023 (1500) → -0.036 (2000) → **-0.144 (2500)**. The gap EXPLODED during LR decay phase. Control REGRESSED from 4.8250 to 4.8583 at step 2500, while KD dropped to 4.7142. Control then recovers to 4.5579 at step 3000 (massive decay-phase consolidation). KD step 3000 pending — critical data point. If KD final BPT < 4.5579, head-start hypothesis is dead and KD provides genuine limit change. If KD final ≈ 4.5579, the mid-training divergence was transient WSD interaction.
 
 2. **What determines the theoretical MAXIMUM KD benefit?** Rate-distortion theory says the teacher reduces effective source entropy. But HOW MUCH depends on teacher-student mismatch, cross-tokenizer alignment quality, and alpha tuning. We haven't explored alpha at all.
 
@@ -43,6 +43,46 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 - **Signal-first rule:** Validate basic signal with a 500-step micro-probe before committing to full implementation.
 - **Meta-checkpoint rule:** Every 5K-step eval asks not just "did metrics improve?" but "is this the right metric? Is this the right approach? What would 2x the improvement?"
 - **Opportunity cost rule:** Before starting any work, ask "what ELSE could we do with this time/compute?" and pick the highest-expected-value option.
+
+---
+
+## KD Training Dynamics Analysis: WSD × KD Interaction (2026-03-26)
+
+**Status: IN PROGRESS — awaiting arm 2 step 3000 for final data**
+
+### Observed Pattern: KD amplifies LR decay consolidation
+
+| Step | Control BPT | KD BPT | Gap | LR Phase |
+|------|-------------|--------|-----|----------|
+| 500  | 4.9536 | 4.8946 | -0.059 | Stable (3e-4) |
+| 1000 | 4.9194 | 4.8772 | -0.042 | Stable |
+| 1500 | 4.8725 | 4.8493 | -0.023 | Stable |
+| 2000 | 4.8250 | 4.7888 | -0.036 | Stable |
+| 2500 | 4.8583 | 4.7142 | **-0.144** | Decay (2.52e-4) |
+| 3000 | 4.5579 | ??? | ??? | Decay (1e-5) |
+
+**Three-phase interpretation:**
+1. **Steps 500-1500 (stable LR, gap narrowing):** Initial KD head-start erodes. Control catches up on NTP alone. Consistent with head-start hypothesis.
+2. **Steps 1500-2400 (stable LR, gap stabilizing):** Gap reversal at step 2000 (-0.023 → -0.036). KD advantage stabilizes — no longer just head-start.
+3. **Steps 2400-3000 (LR decay, gap explodes):** Control REGRESSES at step 2500 (4.8250 → 4.8583). KD continues improving (4.7888 → 4.7142). KD provides better consolidation signal during LR cooldown.
+
+**Hypothesis: KD acts as an implicit regularizer during LR decay.** When LR drops, the model transitions from exploration to consolidation. Without KD, the model must consolidate from NTP signal alone — which is noisy (each batch is random). With KD, the teacher provides a smoother, more informative consolidation target. This is mathematically analogous to how KD with soft labels provides richer gradient information than hard labels (Hinton 2015).
+
+**KD loss trend supports this:**
+| Steps | Mean KD Loss | Interpretation |
+|-------|-------------|----------------|
+| 0-500 | 0.0317 | High — teacher signal novel |
+| 500-1000 | 0.0235 | Drop — student absorbing |
+| 1000-1500 | 0.0255 | Slight rise — new data regions |
+| 1500-2000 | 0.0241 | Stable |
+| 2000-2500 | 0.0197 | Still decreasing — not saturated! |
+| 2500+ | 0.0149 (step 2650) | Lowest yet — active learning during decay |
+
+**Key: KD loss is NOT saturating.** If KD were pure head-start, we'd expect KD loss to plateau (student fully caught up to teacher). Instead it's still decreasing at step 2650, suggesting the student has more to absorb.
+
+**Prediction for step 3000:** If the KD-amplified-decay hypothesis is correct, KD arm should show a BPT drop proportionally larger than control's (4.8583 → 4.5579 = -0.300). If KD arm drops from 4.7142 by a similar or larger amount, final BPT could be ~4.35-4.45. This would be a definitive win.
+
+**Implications for surface ablation:** If representation KD provides this consolidation advantage, logit KD should provide even stronger consolidation — direct distribution supervision during the critical decay phase. The surface ablation's most informative data point will be the step 2500-3000 trajectory, not the final number.
 
 ---
 
