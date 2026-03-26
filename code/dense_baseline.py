@@ -3992,7 +3992,7 @@ def train_kd(config_path):
         # ---- Optimizer: student + projectors ----
         param_groups = [
             {"params": list(model.parameters()), "lr": lr},
-            {"params": list(projectors.parameters()), "lr": lr * 3},  # projectors learn faster
+            {"params": list(projectors.parameters()), "lr": lr * 3, "is_projector": True},
         ]
         opt = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=0.1)
         scaler = torch.amp.GradScaler("cuda")
@@ -4016,9 +4016,7 @@ def train_kd(config_path):
         for step in range(1, total_steps + 1):
             current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
             for pg in opt.param_groups:
-                # Scale projector LR proportionally
-                base = pg.get("lr", lr)
-                if base > lr:  # projector group
+                if pg.get("is_projector", False):
                     pg["lr"] = current_lr * 3
                 else:
                     pg["lr"] = current_lr
@@ -4048,6 +4046,17 @@ def train_kd(config_path):
                         texts = [student_tokenizer.decode(inp[b].tolist())
                                  for b in range(inp.size(0))]
 
+                        # Compute student byte offsets via re-encoding
+                        stu_offsets = torch.zeros(
+                            inp.shape[0], inp.shape[1], 2,
+                            device=DEVICE, dtype=torch.long)
+                        for b_idx, text in enumerate(texts):
+                            enc_s = student_tokenizer.encode(text)
+                            n_tok = min(len(enc_s.offsets), inp.shape[1])
+                            for ti in range(n_tok):
+                                stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                                stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
                         # Student hidden state (final pre-norm, in computation graph)
                         student_hidden = out["hidden"]  # (B, T_s, D_s)
                         student_mask = torch.ones(inp.shape[0], inp.shape[1],
@@ -4067,7 +4076,7 @@ def train_kd(config_path):
                                 proj = projectors[safe_name + "__state"]
                                 s_kd = compute_state_kd_loss(
                                     student_hidden, t_out["hidden"],
-                                    student_offsets=None,  # position fallback
+                                    student_offsets=stu_offsets,
                                     teacher_offsets=t_out["byte_offsets"],
                                     student_mask=student_mask,
                                     teacher_mask=t_out["attention_mask"],
@@ -4236,6 +4245,470 @@ def train_kd(config_path):
     print(f"{'='*60}")
 
 
+def train_kd_phased(config_path):
+    """Phase-aware RMFD training for production runs.
+
+    Unlike train_kd (which runs multiple independent variants), this function
+    runs a SINGLE continuous training loop with phase transitions.
+    Optimizer state is preserved across phases. Teachers are hot-swapped at
+    phase boundaries.
+
+    Config JSON format:
+    {
+        "name": "rmfd_production",
+        "init_from": "path/to/checkpoint.pt",
+        "resume_from": null,  // or path to mid-training checkpoint
+        "total_steps": 30000,
+        "batch_size": 8,
+        "grad_accum": 4,
+        "lr": 1e-4,
+        "min_lr": 1e-5,
+        "warmup": 500,
+        "eval_every": 1000,
+        "seq_len": 512,
+        "n_spans": 16,
+        "phases": [
+            {
+                "name": "stabilization",
+                "end_step": 500,
+                "teachers": [],
+                "alpha_state": 0.0,
+                "alpha_semantic": 0.0
+            },
+            {
+                "name": "single_anchor",
+                "end_step": 5000,
+                "teachers": [
+                    {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic"]}
+                ],
+                "alpha_state": 0.5,
+                "alpha_semantic": 0.3
+            }
+        ]
+    }
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    init_checkpoint = cfg["init_from"]
+    total_steps = cfg.get("total_steps", 30000)
+    batch_size = cfg.get("batch_size", 8)
+    grad_accum = cfg.get("grad_accum", 4)
+    lr = cfg.get("lr", 1e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 500)
+    eval_every = cfg.get("eval_every", 1000)
+    seq_len = cfg.get("seq_len", 512)
+    n_spans = cfg.get("n_spans", 16)
+    phases = cfg["phases"]
+
+    print(f"\n{'='*60}")
+    print(f"RMFD PHASED TRAINING: {run_name}")
+    print(f"  Student init: {init_checkpoint}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  LR: {lr} -> {min_lr}, warmup={warmup}")
+    print(f"  Phases: {len(phases)}")
+    for p in phases:
+        print(f"    {p['name']}: end_step={p['end_step']}, "
+              f"teachers={[t['name'] for t in p.get('teachers', [])] or 'NONE'}")
+    print(f"{'='*60}")
+
+    # Load student tokenizer
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    from tokenizers import Tokenizer
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # Dataset
+    shard_dir = REPO / "data" / "shards_16k"
+    weight_file = cfg.get("weight_file", None)
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+
+    # Eval cache
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+
+    # ---- Load student model ----
+    resume_path = cfg.get("resume_from", None)
+    if resume_path and Path(resume_path).exists():
+        ckpt = torch.load(resume_path, weights_only=False, map_location=DEVICE)
+        resume_step = ckpt.get("step", 0)
+        print(f"  Resuming from step {resume_step}: {resume_path}")
+    else:
+        ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
+        resume_step = 0
+
+    stu_cfg = ckpt.get("config", {})
+    dim = stu_cfg.get("dim", 512)
+    n_layers = stu_cfg.get("n_layers", 24)
+    n_heads = stu_cfg.get("n_heads", 8)
+    ff_dim = stu_cfg.get("ff_dim", 1536)
+    exit_layers = stu_cfg.get("exit_layers", [7, 15, 23])
+
+    model = DenseTransformer(
+        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+        norm_type=stu_cfg.get("norm_type", "rmsnorm"),
+        block_schedule=stu_cfg.get("block_schedule", None),
+        conv_kernel_size=stu_cfg.get("conv_kernel_size", 64),
+        d_attn=stu_cfg.get("d_attn", None),
+        d_conv=stu_cfg.get("d_conv", None),
+        n_q_heads=stu_cfg.get("n_q_heads", None),
+        n_kv_heads=stu_cfg.get("n_kv_heads", None),
+        head_dim=stu_cfg.get("head_dim", 64),
+    ).to(DEVICE)
+
+    init_key = "model_state_dict" if "model_state_dict" in ckpt else "model"
+    model.load_state_dict(ckpt[init_key])
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  Student: {n_params:,} params")
+
+    # ---- Collect all teacher names across phases for projector creation ----
+    all_teacher_names = set()
+    all_teacher_surfaces = {}  # name -> set of surfaces
+    for phase in phases:
+        for t_cfg in phase.get("teachers", []):
+            all_teacher_names.add(t_cfg["name"])
+            if t_cfg["name"] not in all_teacher_surfaces:
+                all_teacher_surfaces[t_cfg["name"]] = set()
+            all_teacher_surfaces[t_cfg["name"]].update(t_cfg.get("surfaces", ["state"]))
+
+    # Pre-create projectors for ALL teachers (so optimizer is stable across phases)
+    projectors = nn.ModuleDict()
+    teacher_dims = {}  # cache hidden dims
+    for t_name in sorted(all_teacher_names):
+        # Temporarily load to get hidden dim, then unload
+        temp_teacher = TeacherAdapter(t_name, device=DEVICE, dtype=torch.float16)
+        teacher_dims[t_name] = temp_teacher.hidden_dim
+        safe = t_name.replace("/", "_").replace("-", "_").replace(".", "_")
+        if "state" in all_teacher_surfaces[t_name]:
+            projectors[safe + "__state"] = nn.Linear(dim, temp_teacher.hidden_dim)
+        if "semantic" in all_teacher_surfaces[t_name]:
+            projectors[safe + "__semantic"] = nn.Linear(dim, temp_teacher.hidden_dim)
+        del temp_teacher.model
+        del temp_teacher
+        torch.cuda.empty_cache()
+    projectors = projectors.to(DEVICE)
+
+    # Load projectors from resume checkpoint if available
+    if resume_path and "projectors" in ckpt:
+        projectors.load_state_dict(ckpt["projectors"])
+        print(f"  Loaded projector state from resume checkpoint")
+
+    # ---- Optimizer ----
+    param_groups = [
+        {"params": list(model.parameters()), "lr": lr},
+        {"params": list(projectors.parameters()), "lr": lr * 3, "is_projector": True},
+    ]
+    opt = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=0.1)
+    scaler = torch.amp.GradScaler("cuda")
+
+    # Load optimizer state from resume
+    if resume_path and "optimizer_state_dict" in ckpt:
+        opt.load_state_dict(ckpt["optimizer_state_dict"])
+        print(f"  Loaded optimizer state from resume checkpoint")
+
+    del ckpt
+    torch.cuda.empty_cache()
+
+    # ---- Phase management ----
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"kd_{run_name}_log.txt"
+    metrics_log = []
+    running_ce = 0.0
+    running_kd = 0.0
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+
+    # Current phase state
+    current_teachers = []
+    current_phase_idx = -1
+    current_alpha_state = 0.0
+    current_alpha_semantic = 0.0
+
+    def get_phase(step):
+        """Get phase index for current step."""
+        for i, phase in enumerate(phases):
+            if step < phase["end_step"]:
+                return i
+        return len(phases) - 1  # last phase
+
+    def load_teachers_for_phase(phase):
+        """Load teachers specified by phase config."""
+        teachers = []
+        for t_cfg in phase.get("teachers", []):
+            teacher = TeacherAdapter(t_cfg["name"], device=DEVICE, dtype=torch.float16)
+            teacher.surfaces = t_cfg.get("surfaces", ["state"])
+            teachers.append(teacher)
+        return teachers
+
+    def unload_teachers(teachers):
+        """Free teacher VRAM."""
+        for t in teachers:
+            del t.model
+        del teachers[:]
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    print(f"  Exit weights: {actual_exit_weights}")
+    print(f"  Starting from step {resume_step + 1}...\n")
+
+    model.train()
+    for step in range(resume_step + 1, total_steps + 1):
+        # ---- Phase transition check ----
+        phase_idx = get_phase(step)
+        if phase_idx != current_phase_idx:
+            phase = phases[phase_idx]
+            print(f"\n  >>> PHASE TRANSITION: {phase['name']} (step {step})")
+
+            # Unload old teachers
+            if current_teachers:
+                unload_teachers(current_teachers)
+
+            # Load new teachers
+            current_teachers = load_teachers_for_phase(phase)
+            current_alpha_state = phase.get("alpha_state", 0.0)
+            current_alpha_semantic = phase.get("alpha_semantic", 0.0)
+            current_phase_idx = phase_idx
+
+            print(f"      Teachers: {[t.name for t in current_teachers] or 'NONE'}")
+            print(f"      alpha_state={current_alpha_state}, "
+                  f"alpha_semantic={current_alpha_semantic}")
+
+        # ---- LR schedule ----
+        current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+        for pg in opt.param_groups:
+            if pg.get("is_projector", False):
+                pg["lr"] = current_lr * 3
+            else:
+                pg["lr"] = current_lr
+
+        opt.zero_grad()
+        step_ce = 0.0
+        step_kd = 0.0
+        bad_step = False
+        has_kd = len(current_teachers) > 0
+        use_hidden = has_kd
+
+        for _ in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                out = model(inp, return_exits=True, return_hidden=use_hidden)
+                base_loss, loss_metrics = compute_edsr_loss(
+                    out, tgt, exit_weights=actual_exit_weights)
+                ce_val = loss_metrics["ce_final"]
+
+                kd_loss = torch.tensor(0.0, device=DEVICE)
+
+                if has_kd:
+                    texts = [student_tokenizer.decode(inp[b].tolist())
+                             for b in range(inp.size(0))]
+
+                    # Compute student byte offsets
+                    stu_offsets = torch.zeros(
+                        inp.shape[0], inp.shape[1], 2,
+                        device=DEVICE, dtype=torch.long)
+                    for b_idx, text in enumerate(texts):
+                        enc_s = student_tokenizer.encode(text)
+                        n_tok = min(len(enc_s.offsets), inp.shape[1])
+                        for ti in range(n_tok):
+                            stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                            stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
+                    student_hidden = out["hidden"]
+                    student_mask = torch.ones(inp.shape[0], inp.shape[1],
+                                              device=DEVICE, dtype=torch.long)
+
+                    for teacher in current_teachers:
+                        with torch.no_grad():
+                            t_out = teacher.forward(texts, max_length=seq_len)
+
+                        safe_name = (teacher.name.replace("/", "_")
+                                     .replace("-", "_").replace(".", "_"))
+
+                        if ("state" in teacher.surfaces
+                                and t_out["hidden"] is not None):
+                            proj = projectors[safe_name + "__state"]
+                            s_kd = compute_state_kd_loss(
+                                student_hidden, t_out["hidden"],
+                                student_offsets=stu_offsets,
+                                teacher_offsets=t_out["byte_offsets"],
+                                student_mask=student_mask,
+                                teacher_mask=t_out["attention_mask"],
+                                projector=proj, n_spans=n_spans,
+                            )
+                            kd_loss = kd_loss + current_alpha_state * s_kd
+
+                        if ("semantic" in teacher.surfaces
+                                and t_out["hidden"] is not None):
+                            proj = projectors[safe_name + "__semantic"]
+                            sem_kd = compute_semantic_kd_loss(
+                                student_hidden, t_out["hidden"],
+                                student_mask=student_mask,
+                                teacher_mask=t_out["attention_mask"],
+                                projector=proj,
+                            )
+                            kd_loss = kd_loss + current_alpha_semantic * sem_kd
+
+                total_loss = (base_loss + kd_loss) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                opt.zero_grad()
+                bad_step = True
+                break
+
+            scaler.scale(total_loss).backward()
+            step_ce += ce_val / grad_accum
+            step_kd += kd_loss.item() / grad_accum
+
+        if bad_step:
+            continue
+
+        scaler.unscale_(opt)
+        all_params = list(model.parameters()) + list(projectors.parameters())
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in all_params if p.grad is not None], GRAD_CLIP)
+        scaler.step(opt)
+        scaler.update()
+
+        running_ce += step_ce
+        running_kd += step_kd
+
+        # ---- Logging ----
+        if step % LOG_EVERY == 0:
+            avg_ce = running_ce / LOG_EVERY
+            avg_kd = running_kd / LOG_EVERY
+            bpt = avg_ce / math.log(2)
+            phase_name = phases[current_phase_idx]["name"]
+            msg = (f"  Step {step:5d} [{phase_name}]: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                   f"KD={avg_kd:.4f} LR={current_lr:.2e}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            running_ce = 0.0
+            running_kd = 0.0
+
+        # ---- Eval ----
+        if step % eval_every == 0 or step == total_steps:
+            model.eval()
+            det = deterministic_eval_dense(model, cache_path)
+            kurt = measure_activation_kurtosis(model, dataset, DEVICE)
+            entry = {
+                "step": step,
+                "phase": phases[current_phase_idx]["name"],
+                "bpt": det["bpt"],
+                "avg_kurtosis": round(
+                    sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+                "max_kurtosis": round(max(kurt["kurtosis"].values()), 2),
+                "max_activation": round(max(kurt["max_activation"].values()), 2),
+                "teachers": [t.name for t in current_teachers],
+            }
+            for k, v in det.items():
+                if k.startswith("bpt_exit"):
+                    entry[k] = v
+            metrics_log.append(entry)
+            msg = (f"  EVAL step {step} [{phases[current_phase_idx]['name']}]: "
+                   f"BPT={det['bpt']:.4f} "
+                   f"kurtosis_max={entry['max_kurtosis']:.1f} "
+                   f"max_act={entry['max_activation']:.1f}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            model.train()
+            torch.cuda.empty_cache()
+
+        # ---- Rolling checkpoint (every 1000 steps) ----
+        if step % max(ROLLING_SAVE, 1000) == 0:
+            ckpt = {
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "projectors": projectors.state_dict(),
+                "config": stu_cfg,
+                "kd_config": cfg,
+                "phase": phases[current_phase_idx]["name"],
+                "metrics": metrics_log,
+            }
+            rolling = ckpt_dir / f"rolling_step{step}.pt"
+            tmp = rolling.with_suffix(".tmp")
+            torch.save(ckpt, tmp)
+            os.replace(str(tmp), str(rolling))
+            # Keep only 2 most recent rolling checkpoints
+            rolling_files = sorted(ckpt_dir.glob("rolling_step*.pt"))
+            for old in rolling_files[:-2]:
+                old.unlink()
+
+    # ---- Final checkpoint ----
+    torch.save({
+        "step": total_steps,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": opt.state_dict(),
+        "projectors": projectors.state_dict(),
+        "config": stu_cfg,
+        "kd_config": cfg,
+        "metrics": metrics_log,
+    }, ckpt_dir / f"final_step{total_steps}.pt")
+
+    # ---- Final generation check ----
+    model.eval()
+    generations = []
+    tok_path_gen = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    if tok_path_gen.exists():
+        prompts = ["The meaning of life is", "In a distant future",
+                   "def fibonacci(n):\n"]
+        for prompt_text in prompts:
+            input_ids = student_tokenizer.encode(prompt_text).ids
+            gen_inp = torch.tensor([input_ids], device=DEVICE)
+            with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+                for _ in range(64):
+                    logits = model(gen_inp)
+                    if isinstance(logits, dict):
+                        logits = logits["logits"]
+                    next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                    gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                    if gen_inp.size(1) > seq_len:
+                        break
+            gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+            generations.append({"prompt": prompt_text, "generation": gen_text})
+
+    # ---- Save results ----
+    output = {
+        "name": run_name,
+        "config": cfg,
+        "metrics": metrics_log,
+        "generations": generations,
+    }
+    out_path = REPO / "results" / f"kd_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"PHASED TRAINING COMPLETE: {run_name}")
+    print(f"Results: {out_path}")
+    if metrics_log:
+        final = metrics_log[-1]
+        print(f"  Final: BPT={final.get('bpt', '?')}, "
+              f"step={final.get('step', '?')}, "
+              f"phase={final.get('phase', '?')}")
+    print(f"{'='*60}")
+
+    # Cleanup
+    if current_teachers:
+        unload_teachers(current_teachers)
+    del model, opt, scaler, projectors
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Dense Transformer (F4 baseline / EDSR-98M)")
@@ -4278,12 +4751,18 @@ if __name__ == "__main__":
                         help="Run A/B probe from JSON config file")
     parser.add_argument("--kd-train", type=str, default=None,
                         help="Run RMFD KD training from JSON config file")
+    parser.add_argument("--kd-phased", type=str, default=None,
+                        help="Run phase-aware RMFD production training from JSON config")
     args = parser.parse_args()
 
     if args.ff_dim is not None:
         FF_DIM = args.ff_dim
     if args.max_steps is not None:
         MAX_TRAIN_STEPS = args.max_steps
+
+    if args.kd_phased:
+        train_kd_phased(args.kd_phased)
+        sys.exit(0)
 
     if args.kd_train:
         train_kd(args.kd_train)
