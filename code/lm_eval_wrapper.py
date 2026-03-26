@@ -47,6 +47,12 @@ class SutraLMEval(LM):
             n_heads=cfg.get("n_heads", 8),
             ff_dim=cfg.get("ff_dim", 1536),
             exit_layers=cfg.get("exit_layers", None),
+            norm_type=cfg.get("norm_type", "rmsnorm"),
+            block_schedule=cfg.get("block_schedule", None),
+            conv_kernel_size=cfg.get("conv_kernel_size", 64),
+            n_q_heads=cfg.get("n_q_heads", None),
+            n_kv_heads=cfg.get("n_kv_heads", None),
+            head_dim=cfg.get("head_dim", 64),
         )
         self.model.load_state_dict(ckpt["model"])
         if fp16:

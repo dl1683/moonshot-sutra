@@ -3250,13 +3250,14 @@ def run_ab_probe(config_path):
     exit_layers = cfg.get("exit_layers", None)
 
     shard_dir = REPO / "data" / "shards_16k"
-    dataset = ShardedDataset(shard_dir=str(shard_dir))
+    default_weight_file = cfg.get("weight_file", None)
 
-    # Build or find eval cache
+    # Build or find eval cache (unweighted — eval is always on raw test set)
     cache_path = REPO / "results" / "eval_cache_16k.pt"
     if not cache_path.exists():
         print("Building eval cache...")
-        test_tokens = dataset.get_test_tokens()
+        _cache_ds = ShardedDataset(shard_dir=str(shard_dir))
+        test_tokens = _cache_ds.get_test_tokens()
         windows = []
         wlen = seq_len + 1
         for start in range(0, len(test_tokens) - wlen, wlen):
@@ -3267,6 +3268,9 @@ def run_ab_probe(config_path):
     all_results = {}
     for variant in cfg["variants"]:
         tag = variant["tag"]
+        # Per-variant weight file (for O4 data probes), falls back to config-level default
+        v_weight_file = variant.get("weight_file", default_weight_file)
+        dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=v_weight_file)
         norm_type = variant.get("norm_type", cfg.get("norm_type", "rmsnorm"))
         # Per-variant overrides for architecture params
         v_n_layers = variant.get("n_layers", n_layers)
@@ -3516,10 +3520,10 @@ def run_ab_probe(config_path):
                 "dim": v_dim, "n_layers": v_n_layers, "n_heads": v_n_heads,
                 "ff_dim": v_ff_dim, "norm_type": norm_type,
                 "block_schedule": v_block_schedule,
-                "exit_layers": exit_layers,
-                "d_attn": _d_attn, "d_conv": _d_conv,
-                "n_q_heads": _n_q, "n_kv_heads": _n_kv,
-                "head_dim": head_dim, "conv_kernel_size": v_conv_kernel,
+                "exit_layers": v_exit_layers,
+                "d_attn": v_d_attn, "d_conv": v_d_conv,
+                "n_q_heads": v_n_q_heads, "n_kv_heads": v_n_kv_heads,
+                "head_dim": v_head_dim, "conv_kernel_size": v_conv_kernel,
             },
             "metrics": metrics_log,
         }, ckpt_path)

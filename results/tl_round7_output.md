@@ -1,74 +1,82 @@
 **1. Assumption Challenges**
-1. `Projected branches are still the right 100M mainline.` Obvious interpretation: the early `+0.54` BPT gain means the family is close. Alternative interpretations: the projected subfamily is dead at 100M; only full-dim/no-post-branch-projection hybrids remain viable; or only sparse hybrid placement is viable. Distinguishing evidence: one all-hybrid `P-GQA` run at 100M plus one last projected `R7-P` sidecar. Lean: projected branches are dead as the 100M mainline. Confidence: `9/10`.
-2. `Full-dim branches blow the 100M budget.` Obvious interpretation: removing `256->512` expansion makes the block too large. Alternative interpretation: GQA recovers most of that cost. Param math says a `24x512` transformer block is about `3.41M`, current projected R6 blocks are about `3.61M`, and a full-dim `P-GQA` block is about `3.54M`; total model lands around `93-94M`, which is basically the same budget class as R6-F/R6-S. Lean: full-dim is viable if GQA is kept; full-dim without GQA is not. Confidence: `9/10`.
-3. `Post-fusion normalization should be the next mainline fix.` Obvious interpretation: it directly attacks fused-RMS collapse. Alternative interpretations: it only normalizes the cancellation residue while leaving branch anti-alignment intact; it may rescue short-horizon training but not long-horizon geometry. Distinguishing evidence: one `R7-P` sidecar with raw-fused RMS, post-norm RMS, and branch cosine telemetry. Lean: yes as one last projected sidecar, no as the mainline. Confidence: `7/10`.
-4. `Weight norm or spectral norm on the projections is worth a round.` Obvious interpretation: cap projection growth, cap instability. Alternative interpretations: the core issue is directional divergence, not just operator norm; this is another patch on a falsified subfamily. Distinguishing evidence: only worth testing if `R7-P` almost works. Lean: do not spend a round on projection regularization. Confidence: `8/10`.
-5. `Mixed schedules should come before an all-hybrid full-dim rerun.` Obvious interpretation: fewer hybrid layers reduce accumulation. Alternative interpretations: if all-hybrid full-dim is stable, mixed schedules are unnecessary; if all-hybrid full-dim still fails, mixed schedules may only hide the problem. Distinguishing evidence: run mixed schedules only after one all-hybrid `P-GQA` discriminant. Lean: mixed schedule is the fallback, not the first move. Confidence: `7/10`.
-6. `100M is too small, so either ship transformer now or jump to 200M.` Obvious interpretation: three 100M failures mean the idea is dead here. Alternative interpretations: projected hybrids are dead, but full-dim hybrids are still untested at 100M; the current failure is structural, not undercapacity, so 200M is the wrong next spend. Distinguishing evidence: one 100M `P-GQA` run. Lean: do not jump to 200M with projected branches; if `P-GQA` fails, ship the transformer and freeze hybrid work at 100M. Confidence: `9/10`.
 
-**2. Research Requests**
-1. Pull primary-source evidence on sub-1B hybrids that avoid post-branch expansion entirely: full-dim hybrid heads, sparse hybrid layer placement, and whether any successful small hybrid uses post-fusion norm instead of branch norm.
-2. Pull primary-source evidence on whether post-fusion norm plus direct branch addition has been enough to stabilize anti-aligned branches below 1B, or whether successful models instead avoid this geometry by design.
-3. For O4, pull primary-source evidence on MiniPLM reference-size sensitivity and choose the first pooled-state teacher among `nomic-embed-text`, `EmbeddingGemma-300M`, and `Qwen3-Embedding-0.6B`.
+Inherited paradigm audit first:
 
-**3. Experiment / Probe Requests**
-1. Add one telemetry field before any rerun: per-layer cosine similarity between the two branch outputs. RMS growth plus fused-RMS shrink already implies divergence; cosine makes it explicit.
-2. Mainline probe: `P-GQA-100M`. `24x512`, `SS-RMSNorm`, full-dim GQA attention branch, full-dim gated-conv branch, `k=4`, direct `0.5*(a+c)` fusion, no post-branch projections, exits `8/16/24`, `5K` steps. Success: `>= +0.05` BPT vs transformer with `kurtosis<=2.1`, `max_act<=52`, and no depthwise fused-RMS collapse.
-3. Sidecar probe: `R7-P` using the existing post-fusion-norm block. Run `2.5K` first; extend to `5K` only if it is still ahead and telemetry shows fused contribution is not dying. If it fails, kill projected branches completely.
-4. Mixed-schedule fallback only if `P-GQA` is stable but not clearly better: `8P + 16A`, with hybrids in lower layers and pure attention in upper layers. Goal: keep early hybrid benefit while preventing deep accumulation.
-5. Kill rule: if `P-GQA` and `R7-P` both fail, stop hybrid work at 100M and promote the pure transformer to production.
-6. O4 in parallel: run `MiniPLM top-50% vs raw` on the stable carrier, starting with the pure transformer if backbone selection is still unresolved. This advances O4 regardless of the hybrid decision.
+- `24x512` transformer budget is approximately `90.2M`: embeddings `8.19M` (`9.1%`), attention `25.17M` (`27.9%`), FFN `56.62M` (`62.7%`), exits/norms `0.26M` (`0.3%`).
+- `24x512` projected hybrid budget is approximately `93.4M`: embeddings `8.19M` (`8.8%`), branch cores `15.75M` (`16.9%`), projection plumbing `12.58M` (`13.5%`), FFN `56.62M` (`60.6%`), exits/norms `0.26M` (`0.3%`).
+- If “actual novel intelligence work” means the local+global mechanism, only about `16.9%` of the projected hybrid budget is doing it. `60.6%` is still inherited FFN mass, and `13.5%` is plumbing needed only because the branches were squeezed to `256->512`.
+- Inherited decisions not re-derived for this scale: decoder-only NTP, BPE + dense embedding matrix, tied embeddings, uniform `24x512` stack, `3x` SwiGLU FFN, RoPE, `head_dim=64`, `4Q/2KV` GQA, real-valued Euclidean states, AdamW+WSD, fixed thirds exits. Strong local justification exists only for “small tokenizer beats GPT-2 50K” and “tied embeddings save params.”
+- Top 3 inherited assumptions to change: `3x` FFN dominance, every-layer `256->512` branch compression, and the discrete tokenizer/embedding interface that saves params but blocks teacher transfer.
+- Components consuming `>20%` of params: FFN only. That is the main redesign reservoir. Approximate code arithmetic says `24x512` full-dim hybrid is budget-viable if FFN is cut: full-dim `P` with `ff=1024` is about `90.3M`; full-dim `G` with `ff=1024` is about `99.7M`; full-dim `G` with `ff=1536` needs about `20` layers to stay near `100M`.
+
+1. Projected branches remain the right `100M` family. Obvious: three hybrids showed early gains, so keep fixing fusion. Alternatives: the gain is real but unsustainable because projection is the failure channel; hybrid helps only early layers; `100M` is too small for every-layer projected branches. Evidence: `R5-G`, `R6-F`, and `R6-S` all fail at `100M`, while the stable hybrid is the no-projection `42M` P-block. Lean: projected every-layer hybrids are effectively dead at `100M` unless `R7-P` passes. Confidence: `9/10`.
+
+2. Post-fusion normalization deserves one decisive probe. Obvious: it directly attacks fused-RMS collapse. Alternatives: it may only amplify cancellation residue; it may improve stability metrics while hurting signal. Evidence: telemetry shows branch magnitudes grow while fused RMS shrinks; `R7PostFusionHybridBlock` is already implemented in [dense_baseline.py](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/code/dense_baseline.py#L791) and the probe is already specified in [q5_r7_postfusion.json](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/code/q5_r7_postfusion.json). Lean: run it. Confidence: `7/10`.
+
+3. Full-dim branches are too expensive at `100M`. Obvious: going back to full-dim blows the budget. Alternatives: the budget only blows up because `60%+` is trapped in the inherited FFN; branch capacity can be funded by slimming FFN or using fewer hybrid layers. Evidence: the stable `42M` hybrid was full-dim; approximate parameter arithmetic from current modules shows full-dim branches fit if FFN is questioned. Lean: “full-dim is impossible” is false. Confidence: `8/10`.
+
+4. The current `3x` FFN is the right place to spend `~60%` of params. Obvious: FFN is generic capacity and small models need it. Alternatives: at this scale FFN is crowding out the very branch capacity the hybrid needs; the model may be overpaying for a generic transformer slab and underpaying for routing/mixing. Evidence: all projected variants fail while the only stable hybrid is the no-projection block; the FFN is the only component above `20%` of params. Lean: this is the biggest inherited assumption to attack next. Confidence: `9/10`.
+
+5. Weight norm or spectral norm on projections should be the next fix. Obvious: projection magnitude grows with depth, so constrain the weights. Alternatives: the dominant issue is directional cancellation, not just operator norm; this adds machinery without restoring fused contribution. Evidence: `R6-S` bounded mixing still failed, and telemetry’s strongest signal is fused shrinkage, not merely branch explosion. Lean: not first-line; only consider if `R7-P` is close but not enough. Confidence: `7/10`.
+
+6. Mixed schedules should wait until fusion is solved. Obvious: mixed schedules hide the root cause. Alternatives: after telemetry, mixed schedules are now a root-cause test, because the failure compounds with depth. Evidence: `6G18A` is already queued in the `R7` config and directly tests whether hybrid benefit is front-loaded. Lean: run mixed now, not later. Confidence: `8/10`.
+
+7. The pure transformer should become the production default immediately. Obvious: it is the only stable `100M` model and it wins final BPT (`4.6669` vs `4.7768/4.7661`). Alternatives: one last `5K` probe is cheaper than a long wrong production run; full-dim/slim-FFN hybrids still have an untested path. Evidence: all current projected hybrids fail, but `R7-P` is a direct discriminant and already implemented. Lean: if production training must start now, ship the pure transformer; for architecture research, allow exactly one more probe. Confidence: `8/10`.
+
+8. The next test should be at larger scale. Obvious: perhaps projections only work at `200M+`. Alternatives: scaling up a known loser violates the single-GPU efficiency rule; the relevant question is not “does more capacity rescue it?” but “is the mechanism sound at all?” Evidence: three projected `100M` variants already failed. Lean: do not scale projected hybrids up before a cheap `100M` discriminant wins. Confidence: `9/10`.
+
+9. O4 can wait until architecture is locked. Obvious: backbone first, data later. Alternatives: O4 is already the least developed pillar and MiniPLM is validated enough to run in parallel. Evidence: `500`-window MiniPLM reproduced the pilot: diff `0.2681 ± 0.1045`, with Gutenberg/Wikipedia clearly above WildChat/ELI5. Lean: keep O4 moving now. Confidence: `9/10`.
+
+**2. Research Requests For Claude**
+
+1. Pull exact sub-`200M` evidence on full-dim hybrid blocks that trade FFN width for branch capacity. The key question is not “are hybrids good,” but “what is the best branch/FFN budget split below `200M`?”
+2. Pull primary-source methods for heterogeneous multi-teacher alignment: decoder hidden states, encoder sentence embeddings, CLIP-text/diffusion text embeddings, and domain/STEM models mapped into one student space. Prioritize neural stitching, translation networks, CKA/CCA-based teacher selection, and family-rotation curricula.
+3. Pull methods for extracting domain priors from non-text or non-autoregressive teachers into a text-only student. The question is how to steal structure from heterogeneous models without requiring the student to become multimodal.
+
+**3. Experiment / Probe Requests For Claude**
+
+1. Run the existing `R7` gate exactly as specified in [q5_r7_postfusion.json](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/code/q5_r7_postfusion.json): transformer vs `24G` vs `6G18A`, `5K` steps. Success remains `>= +0.05` BPT, `kurtosis <= 2.1`, `max_act <= 52`.
+2. If both `R7` arms fail, run a budget-reallocation mini-gate, not another projected variant: transformer `24x512 ff1536` vs full-dim `P 24x512 ff1024` vs full-dim `G 24x512 ff1024` or `G 20x512 ff1536`. This directly tests whether the problem was projection compression rather than hybridization.
+3. Run the first real O4 decision probe: pure transformer `24x512` trained on raw data vs MiniPLM top-50% filtered/reweighted data at equal token and wall-clock budget.
+4. Multi-teacher probe A: offline complementarity map on `5K-10K` windows. Use one decoder LM teacher, two embedding teachers, and one code/math/domain teacher; compute pooled-state CKA/CCA and pick the most complementary set, not the largest set.
+5. Multi-teacher probe B: Universal Teacher Interface pilot. Cache a `128d` teacher slot per teacher family offline; train the student to predict one family per batch after step `1000`; compare single-teacher vs three-teacher rotation. Do not average teachers in the same batch.
 
 **4. Per-Outcome Confidence**
-1. Outcome 1 (Intelligence): `5/10`, down from `6/10`. New empirical evidence lowered it: `R6-F` and `R6-S` both finish behind the transformer at 5K, so the projected hybrid path lost its strongest claim.
-2. Outcome 2 (Improvability): `6/10`, unchanged. New telemetry isolated the failure to the projection path, which is good evidence for diagnosability, but there is still no demonstrated surgical fix on a saved checkpoint.
-3. Outcome 3 (Democratization): `5/10`, unchanged. No new composability evidence exists.
-4. Outcome 4 (Data Efficiency): `4/10`, unchanged. The 500-window MiniPLM result is better evidence than the pilot, but there is still no downstream training win.
-5. Outcome 5 (Inference Efficiency): `5/10`, unchanged. No new exit-ordering, PTQ, or latency evidence exists.
+
+- Outcome 1 (Intelligence): `4/10` — lowered from `6/10`. New project data since Round 6 is negative: `R6-F` and `R6-S` both lose to the transformer by step `5000` (`4.7768/4.7661` vs `4.6669`) and both miss stability badly. The positive evidence that remains is only partial: the `42M` full-dim P-block was stable and the `100M` hybrids learn much faster early, so hybrid signal is real, but not production-ready.
+- Outcome 2 (Improvability): `5/10` — lowered from `6/10`. New positive evidence exists for diagnosability, not fixability: telemetry isolated projection growth plus directional cancellation, and it falsified the Round-6 beta hypothesis. But no local block change has yet restored stability, so improvability is not proven in the stronger surgical sense.
+- Outcome 3 (Democratization): `4/10` — lowered from `5/10`. The code still exposes branches, exits, memory, and auxiliary ports, but there is still zero empirical evidence that independently improved modules compose without retraining the trunk.
+- Outcome 4 (Data Efficiency): `4/10` — unchanged. New data exists, but it is still infrastructure evidence, not end-task gain: `500`-window MiniPLM reproduced the pilot and sharpened source ranking. There is still no filtered-training win and no multi-teacher win.
+- Outcome 5 (Inference Efficiency): `5/10` — unchanged. Fixed exits remain the only live path and historical elastic-depth evidence still matters, but there is no new exit-ordering, PTQ, or latency result in this round.
 
 **5. What Would Raise Confidence**
-1. O1: a stable `P-GQA` win at 100M, or a stable mixed schedule if all-hybrid is only near parity.
-2. O2: a module-local repair that improves behavior without a full retrain.
-3. O3: a branch or teacher plug-in that composes cleanly with an existing checkpoint.
-4. O4: MiniPLM-filtered training beating raw, plus one successful representation-teacher pilot.
-5. O5: exit ordering surviving PTQ with measured latency savings.
+
+- O1: `R7-P` or a full-dim/slim-FFN hybrid beats the transformer at `100M` and stays healthy through `8K-10K`.
+- O2: a branch-local budget change or fusion change fixes the model without rewriting the trunk.
+- O3: one new module or teacher family is added and improves behavior without retraining everything.
+- O4: MiniPLM-filtered training beats raw at equal compute, and a rotated multi-teacher pilot beats single-teacher.
+- O5: fixed exits remain ordered after PTQ and produce measured latency savings.
 
 **6. What Would Lower Confidence**
-1. O1: `P-GQA` and mixed schedules both fail against the transformer.
-2. O2: the only way to fix hybrid instability is still full-model retraining.
-3. O3: branch or teacher swaps break behavior instead of composing.
-4. O4: filtered data is neutral or negative.
-5. O5: exits collapse after quantization or yield no real speedup.
 
-**7. Intuitions**
-1. The real signal is `full-dim branch interaction`, not `projected hybrid cleverness`. Trigger: the only stable positive hybrid evidence is the P-block, while every projected 100M variant fails. Conviction: `high`. Validation: `P-GQA-100M`.
-2. Upper layers probably want to be attention-only at 100M. Trigger: the hybrid advantage is early, while fused RMS shrinks with depth. Conviction: `medium`. Validation: `8P + 16A`.
-3. `R7-P` may rescue projected branches for short training horizons but not for production-length stability. Trigger: it fixes dying fused magnitude but not the anti-alignment mechanism. Conviction: `medium`. Validation: `2.5K -> 5K` sidecar.
-4. O4 will likely move the frontier more than another round of projection patches once a stable carrier exists. Trigger: MiniPLM rankings are already consistent, and the data gap versus SmolLM2 remains enormous. Conviction: `high`. Validation: filtered-vs-raw A/B.
+- O1: `R7-P` and the mixed `6G18A` arm both fail, and a full-dim/slim-FFN hybrid also fails.
+- O2: every useful fix still requires a new full-model training run with no clean local diagnosis.
+- O3: module swaps or teacher ports consistently break the base model.
+- O4: filtered data is neutral/worse and multi-teacher rotation adds noise.
+- O5: exits collapse under quantization or provide no real latency gain.
 
-**8. Design Proposal**
-1. Abandon projected branches as the 100M mainline.
-2. Keep the hybrid direction alive for exactly one discriminant: a full-dim `P-GQA` block.
-3. Treat post-fusion norm as one last projected sidecar only.
-4. Do not spend a round on projection weight normalization.
-5. Use mixed schedules only if `P-GQA` is stable but not clearly better.
-6. If `P-GQA` fails, ship the pure transformer and stop 100M hybrid iteration.
+**7. Intuitions Worth Testing**
 
-Proposed `P-GQA` block:
-```text
-u  = g1 * h / sqrt(mean(h^2) + eps)
+- Best `100M` hybrid will steal budget from FFN, not from branches. Trigger: the current projected hybrid spends `60.6%` on FFN and only `16.9%` on the novel mechanism. Conviction: high. Probe: full-dim branch gate with `ff=1024`.
+- `6G18A` has a better chance than `24G`. Trigger: every projected hybrid shows strong early gains and late depth-compounding collapse. Conviction: medium-high. Probe: run the existing mixed `R7` arm.
+- The first big O4 win will come from teacher-budget routing, not raw KD weight. Trigger: MiniPLM already says some sources are much more valuable, and purification literature says naive multi-teacher averaging hurts. Conviction: high. Probe: route teacher families by source/domain and difficulty.
+- Heterogeneous teachers should meet the student in a shared latent slot space, not in logits. Trigger: tokenizer mismatch is a hard local constraint and the project is text-only, but representation alignment is architecture-agnostic. Conviction: high. Probe: UTI pilot with pooled-state targets.
 
-a  = GQAttn(u)                                        # q: 512->256, k/v: 512->128, out: 256->512
-c  = Wco(DWConv1D_k=4(Wcv u) * sigmoid(Wcg u))       # Wcv,Wcg: 512->512, depthwise conv, out: 512
+**8. Design Proposal Or Need More Data**
 
-r  = h + 0.5 * (a + c)
+Need more data before promoting any new hybrid. The operational decision is conditional:
 
-n  = g2 * r / sqrt(mean(r^2) + eps)
-h' = r + Wdown(silu(Wgate n) * Wup n)
-```
-
-Use real-valued activations, `SwiGLU`, `SS-RMSNorm` everywhere, `AdamW` at `3e-4`, betas `(0.9, 0.95)`, weight decay `0.1`, `WSD`, warmup `200`, min LR `1e-5`, clip `1.0`, BF16 forward/backward, FP32 optimizer state, `24x512`, FFN `1536`, tied `16K` embeddings, exits `8/16/24`. Param budget is viable: attention `~0.393M` per block, conv `~0.788M`, FFN `~2.359M`, total `~3.541M` per block, or `~93-94M` model-wide with exits, roughly the same class as R6-F/R6-S. VRAM should stay in the same `~13-16GB` seq-512 regime as the current 100M runs.
-
-This is the hard Round 7 recommendation: `projected hybrids are empirically dead at 100M; hybrid as a whole is not dead until full-dim GQA is tested once.` If that one test fails, the correct move is the pure transformer, not a fourth projected patch and not a 200M escalation.
-
-Evidence anchors: [ARCHITECTURE.md:1985](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/research/ARCHITECTURE.md#L1985), [ARCHITECTURE.md:2118](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/research/ARCHITECTURE.md#L2118), [ARCHITECTURE.md:2130](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/research/ARCHITECTURE.md#L2130), [RESEARCH.md:1272](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/research/RESEARCH.md#L1272), [RESEARCH.md:1862](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/research/RESEARCH.md#L1862), [dense_baseline.py:325](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/code/dense_baseline.py#L325), [dense_baseline.py:377](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/code/dense_baseline.py#L377), [dense_baseline.py:791](C:/Users/devan/OneDrive/Desktop/Projects/AI Moonshots/moonshot-sutra/code/dense_baseline.py#L791).
+1. If a long production run must begin now, use the pure transformer `24x512` with the current `16K` tokenizer, `SS-RMSNorm`, and fixed exits. It is the only validated stable `100M` path on March 26, 2026.
+2. Before killing hybridization entirely, run exactly one decisive probe: `R7-P` all-`G` plus `6G18A`.
+3. If both `R7` arms fail, declare the projected-branch family dead at `100M`. Do not spend another cycle on weight norm, soft constraints, or larger-scale projected reruns.
+4. If hybrid research continues after that, pivot hard: full-dim branches funded by FFN cuts or by fewer hybrid layers. The boring inherited budget assumption to attack is the `3x` FFN, not the branch width.

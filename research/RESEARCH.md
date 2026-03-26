@@ -1478,6 +1478,54 @@ PonderLM-2 (CRITICAL RESULT):
 - Teacher: Qwen 1.8B -> Students: 200M, 500M, 1.2B.
 - Benefit extends to larger training scales (scaling curve extrapolation).
 
+#### 6.4.8 DSKD — Cross-Tokenizer KD (EMNLP 2024, updated Mar 2026) — arXiv:2603.22056
+
+**Dual-Space Knowledge Distillation solves vocabulary mismatch between teacher and student LLMs.**
+
+- Exact Token Alignment (ETA) algorithm aligns tokens across differently tokenized sequences.
+- Dual-space: distills in both logit space and hidden state space simultaneously.
+- CMA (Cross-Model Attention) projects student embeddings into teacher space as queries.
+- CMA-GA variant uses adversarial learning for better cross-model alignment.
+- **Reaches or surpasses same-tokenizer KD performance** — cross-tokenizer is no longer a barrier.
+- Open source: https://github.com/songmzhang/DSKD
+
+**Sutra relevance:** CRITICAL for O4. Our 16K custom tokenizer differs from all teachers (Qwen, Phi, etc.). DSKD proves we can distill from any teacher regardless of tokenizer. The dual-space approach aligns with our hidden-state distillation plans. Could replace our current MiniPLM-only pipeline with direct online KD.
+
+#### 6.4.9 Knowledge Purification — Multi-Teacher Conflict Resolution (Feb 2026) — arXiv:2602.01064
+
+**Five purification methods for resolving conflicting knowledge from multiple teacher LLMs.**
+
+- Problem: multiple teachers produce conflicting rationales due to hallucinations, inconsistent reasoning paths, and expertise differences.
+- **Best methods:** similarity-based router (+5% over naive multi-teacher) and RL-based teacher selection.
+- Consolidates multiple rationales into a single purified rationale before distillation.
+- All 5 methods improve distilled student performance vs. naive multi-teacher.
+
+**Sutra relevance:** Directly validates R7 intuition that "teacher-budget routing beats raw KD weight." When we add multi-teacher, use similarity router per source/domain, NOT naive averaging. One family per batch, routed by similarity.
+
+#### 6.4.10 ARMADA — Cross-Modal KD to Text-Only Students (Mar 2026) — arXiv:2603.10877
+
+**First architecture-agnostic framework for distilling from black-box VLM teachers to text-only LMs.**
+
+- TS Aligner module bridges teacher's multimodal abstraction space to student's text space.
+- Works with black-box teachers (API-only, no internal access needed).
+- +3.4% NLU improvement, +2.6% generative reasoning boost.
+- Validated on DeBERTa-v2-1.4B, OPT-1.3B, LLaMA-{3B, 7B, 8B}.
+- No multimodal pre-training or teacher fine-tuning required.
+
+**Sutra relevance:** Proves that text-only students CAN absorb structural knowledge from vision-language models without becoming multimodal. The TS Aligner concept maps directly to our Universal Teacher Interface idea — a shared latent space that any teacher family projects into. Could extract CLIP's semantic structure into Sutra without adding vision capability.
+
+#### 6.4.11 Falcon-H1 Budget Allocation (Jul 2025) — arXiv:2507.22448
+
+**Falcon-H1 parallel hybrid allocates SSM:Attention:MLP = 2:1:5 (8 total chunks).**
+
+- At 0.5B: 36L, dim=1024, 8 attn heads + 24 SSM heads (GQA 8Q/2KV). MLP gets 62.5%.
+- At 1.5B: 24L, dim=2048, 8 attn + 48 SSM heads. Same budget ratio.
+- Attention and SSM run IN PARALLEL, concatenated before output projection.
+- "Relatively small fraction of attention is sufficient" — most capacity goes to SSM + MLP.
+- MLP still dominates budget at 5/8 = 62.5%, similar to our 60.6%.
+
+**Sutra relevance:** Falcon-H1's 62.5% MLP allocation is nearly identical to our current 60.6% FFN. But Falcon succeeds where we fail because: (1) their branches are SSM heads (stateful, not projected) and attention heads (standard), not projected dual-branch; (2) outputs are concatenated with a shared output projection, not averaged; (3) at 0.5B+ they have enough capacity. At our 100M scale, the question remains: is 60% too much for FFN when the novel mechanism gets only 17%?
+
 ---
 
 ### 6.5 Data Efficiency

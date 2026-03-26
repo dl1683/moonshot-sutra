@@ -1,0 +1,990 @@
+{
+  "method": "miniplm_pilot_source_level",
+  "n_shards": 246,
+  "shard_scores": [
+    {
+      "shard": "adversarial_0000.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "eli5_0000.pt",
+      "importance_weight": 0.8832
+    },
+    {
+      "shard": "fineweb_s0_00.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s0_01.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s0_02.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s0_03.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s0_04.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s0_05.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s1_00.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s1_01.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s1_02.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s1_03.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s1_04.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s1_05.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s2_00.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s2_01.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s2_02.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s2_03.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s2_04.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s2_05.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s3_00.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s3_01.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s3_02.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s3_03.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s3_04.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "fineweb_s3_05.pt",
+      "importance_weight": 0.9977
+    },
+    {
+      "shard": "gutenberg_0000.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0001.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0002.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0003.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0004.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0005.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0006.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0007.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0008.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0009.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0010.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0011.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0012.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0013.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0014.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0015.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0016.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0017.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0018.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0019.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0020.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0021.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0022.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0023.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0024.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0025.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0026.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0027.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0028.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0029.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0030.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0031.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0032.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0033.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0034.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0035.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0036.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0037.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0038.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0039.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "gutenberg_0040.pt",
+      "importance_weight": 1.1671
+    },
+    {
+      "shard": "instructions_0000.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "metamathqa_0000.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "metamathqa_0001.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "minipile_00.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "minipile_01.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "minipile_02.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "minipile_03.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "minipile_04.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "openassistant_0000.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "openwebmath_0000.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0001.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0002.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0003.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0004.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0005.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0006.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0007.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0008.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0009.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0010.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0011.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0012.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0013.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0014.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0015.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0016.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0017.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0018.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0019.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0020.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0021.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0022.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0023.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0024.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0025.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0026.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0027.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0028.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0029.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0030.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0031.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0032.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0033.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0034.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0035.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0036.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0037.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0038.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0039.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0040.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0041.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0042.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0043.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0044.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0045.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0046.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0047.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0048.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0049.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0050.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0051.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0052.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0053.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0054.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0055.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0056.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0057.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0058.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0059.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "openwebmath_0060.pt",
+      "importance_weight": 0.9516
+    },
+    {
+      "shard": "poetry_0000.pt",
+      "importance_weight": 0.8748
+    },
+    {
+      "shard": "synthetic_informal_0000.pt",
+      "importance_weight": 1.0661
+    },
+    {
+      "shard": "tinystories_0000.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0001.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0002.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0003.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0004.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0005.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0006.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0007.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0008.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "tinystories_0009.pt",
+      "importance_weight": 0.7953
+    },
+    {
+      "shard": "wikipedia_0000.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0001.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0002.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0003.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0004.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0005.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0006.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0007.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0008.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0009.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0010.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0011.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0012.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0013.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0014.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0015.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0016.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0017.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0018.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0019.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0020.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0021.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0022.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0023.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0024.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0025.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0026.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0027.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0028.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0029.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0030.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0031.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0032.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0033.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0034.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0035.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0036.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0037.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0038.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0039.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0040.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0041.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0042.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0043.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0044.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0045.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0046.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0047.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0048.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0049.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0050.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0051.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0052.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0053.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0054.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0055.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0056.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0057.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0058.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0059.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0060.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0061.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0062.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0063.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0064.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0065.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0066.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0067.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0068.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0069.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0070.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0071.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0072.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0073.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0074.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0075.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0076.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0077.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0078.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0079.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wikipedia_0080.pt",
+      "importance_weight": 1.1365
+    },
+    {
+      "shard": "wildchat_0000.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0001.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0002.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0003.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0004.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0005.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0006.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0007.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0008.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0009.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "wildchat_0010.pt",
+      "importance_weight": 0.9242
+    },
+    {
+      "shard": "writingprompts_0000.pt",
+      "importance_weight": 0.9941
+    },
+    {
+      "shard": "writingprompts_0001.pt",
+      "importance_weight": 0.9941
+    },
+    {
+      "shard": "writingprompts_0002.pt",
+      "importance_weight": 0.9941
+    },
+    {
+      "shard": "writingprompts_0003.pt",
+      "importance_weight": 0.9941
+    },
+    {
+      "shard": "writingprompts_0004.pt",
+      "importance_weight": 0.9941
+    }
+  ]
+}
