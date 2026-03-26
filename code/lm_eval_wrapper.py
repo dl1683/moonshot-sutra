@@ -1,14 +1,11 @@
-"""lm-eval wrapper for Sutra models.
+"""lm-eval wrapper for Dense/EDSR models.
 
-Allows running standard benchmarks (ARC, HellaSwag, PIQA, etc.) on Sutra
+Allows running standard benchmarks (ARC, HellaSwag, PIQA, etc.)
 using EleutherAI's lm-evaluation-harness.
 
-Supports both v0.5.4 and v0.6.0a models via --version flag.
-
 Usage:
-    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v060a/rolling_latest.pt --version v060a
-    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v054/step_15000.pt --version v054
-    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_v060a/step_20000.pt --tasks arc_easy,arc_challenge
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_edsr_98m/rolling_latest.pt
+    python code/lm_eval_wrapper.py --checkpoint results/checkpoints_dense_f4/rolling_latest.pt --tasks arc_easy,arc_challenge
 """
 
 import sys, argparse, gc, torch
@@ -21,64 +18,37 @@ sys.path.insert(0, str(REPO / "code"))
 import lm_eval
 from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
-from transformers import AutoTokenizer
 
 
 @register_model("sutra")
 class SutraLMEval(LM):
-    """lm-eval compatible wrapper for Sutra."""
+    """lm-eval compatible wrapper for Dense/EDSR models."""
 
-    def __init__(self, checkpoint=None, dim=768, ff_dim=1536,
-                 batch_size=4, device="cuda", version="v060a",
+    def __init__(self, checkpoint=None, batch_size=4, device="cuda",
                  fp16=False, **kwargs):
         super().__init__()
         self._device = torch.device(device if torch.cuda.is_available() else "cpu")
         self._batch_size = batch_size
         self._fp16 = fp16
-        self._version = version
-        self._returns_tuple = True  # Sutra returns (logits, aux); dense returns just logits
 
-        # Dense model uses 16K tokenizer; Sutra uses GPT-2
-        if version == "dense":
-            from transformers import PreTrainedTokenizerFast
-            tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
-            self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tok_path))
-            self.tokenizer.pad_token = self.tokenizer.convert_ids_to_tokens(0)
-            self.tokenizer.pad_token_id = 0
-            self._returns_tuple = False
-        else:
-            self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+        from transformers import PreTrainedTokenizerFast
+        tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+        self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tok_path))
+        self.tokenizer.pad_token = self.tokenizer.convert_ids_to_tokens(0)
+        self.tokenizer.pad_token_id = 0
 
-        # Load model based on version
-        if version == "dense":
-            from dense_baseline import DenseTransformer
-            ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
-            cfg = ckpt.get("config", {})
-            self.model = DenseTransformer(
-                vocab_size=cfg.get("vocab_size", 16000),
-                dim=cfg.get("dim", 512),
-                n_layers=cfg.get("n_layers", 11),
-                n_heads=cfg.get("n_heads", 8),
-                ff_dim=cfg.get("ff_dim", 1536),
-                exit_layers=cfg.get("exit_layers", None),
-            )
-            self.model.load_state_dict(ckpt["model"])
-        elif version in ("v060a", "v060b", "v061"):
-            from launch_v060a import create_v060a
-            self.model = create_v060a(dim=dim, ff_dim=ff_dim, max_steps=12,
-                                       window=4, k_retrieval=8)
-        elif version == "v054":
-            from launch_v054 import create_v054
-            self.model = create_v054(dim=dim, ff_dim=ff_dim, max_steps=8,
-                                      window=4, k_retrieval=8)
-        else:
-            raise ValueError(f"Unknown version: {version}. Use 'v060a', 'v060b', 'v061', 'v054', or 'dense'.")
-
-        if checkpoint and version != "dense":  # dense already loaded above
-            ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
-            state = ckpt["model"] if "model" in ckpt else ckpt
-            self.model.load_state_dict(state, strict=False)
+        from dense_baseline import DenseTransformer
+        ckpt = torch.load(checkpoint, weights_only=False, map_location="cpu")
+        cfg = ckpt.get("config", {})
+        self.model = DenseTransformer(
+            vocab_size=cfg.get("vocab_size", 16000),
+            dim=cfg.get("dim", 512),
+            n_layers=cfg.get("n_layers", 11),
+            n_heads=cfg.get("n_heads", 8),
+            ff_dim=cfg.get("ff_dim", 1536),
+            exit_layers=cfg.get("exit_layers", None),
+        )
+        self.model.load_state_dict(ckpt["model"])
         if fp16:
             self.model.half()
         self.model.to(self._device).eval()
@@ -142,22 +112,18 @@ class SutraLMEval(LM):
 
             # Pad to max length in batch
             max_len = max(len(ids) for ids, _ in batch_encoded)
-            pad_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id or 0
+            pad_id = self.tokenizer.pad_token_id or 0
             padded = torch.full((len(batch_encoded), max_len), pad_id,
                                 dtype=torch.long, device=self._device)
             for j, (ids, _) in enumerate(batch_encoded):
                 padded[j, :len(ids)] = torch.tensor(ids, device=self._device)
 
-            # Forward pass — one call for entire batch
             with torch.inference_mode():
-                out = self.model(padded)
-                logits = out[0] if self._returns_tuple else out
-            # Avoid allocating full B×T×V log_probs tensor (saves ~800MB at B=4)
-            # Instead: target_logit - logsumexp(logits) per position
+                logits = self.model(padded)
+            # Avoid allocating full B*T*V log_probs tensor (saves ~800MB at B=4)
             logits_f = logits.float()
             lse = torch.logsumexp(logits_f, dim=-1)  # (B, T)
 
-            # Score each item in batch
             for j, (all_ids, ctx_len) in enumerate(batch_encoded):
                 total_ll = 0.0
                 is_greedy = True
@@ -188,8 +154,7 @@ class SutraLMEval(LM):
             ids = self.tokenizer.encode(string)[-512:]
             input_ids = torch.tensor([ids], device=self._device)
             with torch.inference_mode():
-                out = self.model(input_ids)
-                logits = out[0] if self._returns_tuple else out
+                logits = self.model(input_ids)
             logits_f = logits[0].float()
             lse = torch.logsumexp(logits_f, dim=-1)
             total_ll = sum(
@@ -213,8 +178,7 @@ class SutraLMEval(LM):
 
             for _ in range(self.max_gen_toks):
                 with torch.inference_mode():
-                    out = self.model(input_ids[:, -512:])
-                    logits = out[0] if self._returns_tuple else out
+                    logits = self.model(input_ids[:, -512:])
                 next_id = logits[0, -1].argmax().item()
                 input_ids = torch.cat([input_ids, torch.tensor([[next_id]], device=self._device)], dim=1)
                 decoded = self.tokenizer.decode(input_ids[0, len(ids):].tolist())
@@ -229,31 +193,28 @@ class SutraLMEval(LM):
 if __name__ == "__main__":
     import json, time
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", default=str(REPO / "results/checkpoints_v060a/rolling_latest.pt"))
+    parser = argparse.ArgumentParser(description="lm-eval for Dense/EDSR models")
+    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint .pt file")
     parser.add_argument("--tasks", default="arc_easy,arc_challenge,hellaswag,winogrande,piqa,sciq,lambada_openai")
-    parser.add_argument("--batch_size", type=int, default=4,
-                        help="Batch size (default 4; 12 recurrent passes need ~100MB/sample)")
+    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--version", default="v060a", choices=["v060a", "v060b", "v054", "v061", "dense"])
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--fp16", action="store_true", help="Run inference in FP16 (halves VRAM)")
-    parser.add_argument("--output", default=None, help="Output JSON path (default: results/sutra_lm_eval_results.json)")
+    parser.add_argument("--output", default=None, help="Output JSON path")
     args = parser.parse_args()
 
     out_path = Path(args.output) if args.output else REPO / "results" / "sutra_lm_eval_results.json"
 
-    print(f"Running lm-eval on Sutra {args.version}")
+    print(f"Running lm-eval")
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Tasks: {args.tasks}")
     print(f"Device: {args.device}")
 
     model = SutraLMEval(checkpoint=args.checkpoint, batch_size=args.batch_size,
-                         device=args.device, version=args.version, fp16=args.fp16)
+                         device=args.device, fp16=args.fp16)
 
     task_list = args.tasks.split(",")
 
-    # Run each task individually to avoid post-processing hang
     all_results = {}
     if out_path.exists():
         try:
@@ -268,7 +229,6 @@ if __name__ == "__main__":
             print(f"\n  {task_name}: SKIPPED (already done)")
             continue
 
-        # Clear CUDA cache between tasks to prevent fragmentation OOM
         if torch.cuda.is_available():
             gc.collect()
             torch.cuda.empty_cache()

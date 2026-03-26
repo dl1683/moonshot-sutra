@@ -42,11 +42,11 @@ These are the 5 real outcomes that define success for Sutra. They are the GOALS 
 
 **Why it's hard with limited resources:** Current frontier models achieve intelligence by throwing massive scale at the problem — trillions of tokens, billions of parameters, thousands of GPUs. We have a single GPU and a fraction of the data. To match their intelligence with our resources, the model must process information more efficiently. It needs to allocate its limited compute where it matters most — spending deep thought on hard problems and breezing past easy content. It needs to learn in a way that mirrors how thinking actually works: you don't apply the same amount of mental effort to every word you read.
 
-**Our current mechanism — State Superposition:** We chose state superposition because we believe it models how intelligence actually operates. When you read a sentence, you don't process every word identically — "the" barely registers while "therefore" triggers deep reasoning that connects multiple premises. State superposition lets different tokens be at different processing stages simultaneously: one token might be gathering context while another is already verifying its output. Each position carries a probability distribution over stages (pi), and the model learns from data which processing path each type of content needs. This is like a factory assembly line where different products are at different stations simultaneously, versus a transformer where every token marches through the same layers in lockstep.
+**Current mechanism:** To be determined by Tesla+Leibniz design sessions. See `research/ARCHITECTURE.md` for the current state. Previous architectures (recurrent state-superposition, dense with early exits) were explored but the project has reset to first principles. The T+L process will evaluate ALL options — transformers, SSMs, hybrids, gated convolutions, hyperbolic networks, sheaf-theoretic models, or something entirely novel — against the 5 outcomes.
 
-Currently implemented as 12 recurrent passes through shared parameters with stage probability vectors. The number 12, the parameter sharing, and the specific superposition mechanism are ALL negotiable. **If you can propose a mechanism that produces higher intelligence from the same parameters and data — whether it looks like superposition or not — propose it.**
+**If you can propose a mechanism that produces higher intelligence from the same parameters and data — propose it.**
 
-**How to evaluate:** Full-vocabulary benchmarks, generation quality tests, and per-pass contribution analysis (using full-vocab metrics, NOT sampled metrics — we learned the hard way that sampled metrics can give inverted signals).
+**How to evaluate:** Full-vocabulary benchmarks, generation quality tests, and competitive comparison against best-in-class models in the same parameter class.
 
 ### Outcome 2: Improvability
 
@@ -58,9 +58,7 @@ Improvability is the difference between a system that requires billions to impro
 
 This also applies to debugging. Right now when we discover a problem in Sutra (like the sampled CE metric inversion), we can trace it to a specific component (`build_negative_set()` in the loss computation) and fix it there. In a monolithic transformer, the equivalent problem would be buried somewhere in the interaction between 24 identical layers, and you'd have no idea which layer is responsible.
 
-**Our current mechanism — Modular Stage Decomposition:** We break processing into named stages with clean interfaces. Each stage has a defined role (local construction, routing, memory, verification, etc.), and each stage can be studied, measured, replaced, or specialized independently. If memory retrieval is failing, we look at the Memory stage. If routing between positions is weak, we look at the Routing stage. The stages communicate through a uniform interface: (mu, lambda, pi) in → (mu_new, lambda_new) out. This makes stages independently swappable — like software modules with defined APIs.
-
-Currently 7 stages. The number 7 emerged from design iteration, NOT from deep theory, and has no mathematical significance. Could be 5 or 10. The specific stage boundaries, inner loop structure, and naming are all negotiable. **What matters is that we CAN isolate and improve individual capabilities. If a different decomposition achieves better improvability, use it.**
+**Current mechanism:** See `research/ARCHITECTURE.md` for current state. The architecture must enable surgical identification and repair of failures — whatever form that takes. Module boundaries, stage decompositions, or other structural patterns that enable this are all valid approaches. **If a different decomposition achieves better improvability, use it.**
 
 ### Outcome 3: Democratized Development
 
@@ -102,7 +100,7 @@ Currently partially realized — interfaces exist but community tooling does not
 
 **What "teacher" means broadly:** Not just model distillation. A "teacher" is any source of structured knowledge: a pre-trained model's attention patterns, a symbolic reasoning engine's proof traces, information-theoretic bounds on optimal representations, code execution traces, human feedback signals, mathematical structure. Multi-teacher means learning from ALL of these simultaneously.
 
-**Our current mechanism — Multi-Teacher Learning:** This pillar is currently the LEAST developed. We're training from scratch because warm-starting from v0.5.4 had technical issues (architecture changes made weight transfer non-trivial). We would prefer warm-start and multi-teacher learning. This is one of the highest-priority improvements once the current architecture stabilizes. **Any approach that improves knowledge absorption per training token is welcome — distillation, structured priors, curriculum design, synthetic data from existing models, whatever works.**
+**Current mechanism:** This outcome is currently the LEAST developed. See `research/RESEARCH.md` for field research on data efficiency techniques (MiniPLM, multi-token prediction, Engram memory). Previous attempts at online KD were specific to one implementation at one scale — the concept itself deserves re-evaluation with different approaches. **Any approach that improves knowledge absorption per training token is welcome — distillation, structured priors, curriculum design, synthetic data from existing models, n-gram memory tables, multi-token prediction, whatever works.**
 
 ### Outcome 5: Inference Efficiency
 
@@ -112,154 +110,72 @@ Currently partially realized — interfaces exist but community tooling does not
 
 **What this requires:** A mechanism that (a) measures how "done" each token is, (b) decides when to stop computing, and (c) has natural pressure to stop early rather than always using maximum passes. The decision must be learned from data, not hardcoded, because "difficulty" is contextual — "bank" is easy in "river bank" but hard in a finance-law document.
 
-**Our current mechanism — Elastic Compute via BayesianWrite + Lambda:** Each position carries a precision scalar (lambda) that tracks accumulated confidence. The BayesianWrite update rule blends new information proportionally: `mu_new = (lam*mu + alpha*m) / (lam + alpha)`. As lambda increases, new information has less impact — the representation converges. Lambda acts as a natural energy budget: it creates stopping pressure without arbitrary thresholds. This is LOAD-BEARING in the sense that elastic compute NEEDS some form of halting pressure — without it, the system would always use maximum passes. But the specific BayesianWrite formula is not sacred. **Any mechanism that creates learned, content-dependent halting pressure would work. If you can propose a better halting mechanism, propose it.**
+**Current mechanism:** See `research/ARCHITECTURE.md` for current state. The key validated finding: elastic compute (shallower depth competitive with full depth) has been replicated across ALL prior experiments. See `research/RESEARCH.md` for field research on elastic depth (LoopFormer, MoR) and subquadratic alternatives (Hyena Edge). **Any mechanism that creates learned, content-dependent compute allocation would work. If you can propose a better mechanism, propose it.**
 
 ---
 
-## Design Choice Origins: Why Things Are the Way They Are
+## Design Choice Origins
 
-Every choice has a history. Some solve real problems (load-bearing). Others were experiments that happened to stick (negotiable). **Only load-bearing choices have earned their place. Everything else is on trial.**
+Every choice has a history. Some solve real problems (load-bearing). Others were experiments that happened to stick (negotiable).
 
-### Load-Bearing Choices (solve real constraints — keep unless a better solution to the SAME constraint is found)
+**See `research/ARCHITECTURE.md` for the current design decision audit** — every choice is classified as DERIVED, INHERITED, VALIDATED, QUESTIONED, or FALSIFIED with evidence.
 
-**Scratchpad (External Memory)**
-- **What it is:** An external working memory buffer that positions can read from and write to, separate from the recurrent hidden state.
-- **Why it exists:** State-space models (SSMs) and recurrent architectures lose signal over long contexts. Information written into the hidden state at position 10 may be degraded or lost by position 1000 due to the compressive nature of recurrence. The scratchpad provides a bypass — a position can write a precise value to memory and another position can retrieve it exactly, without it passing through hundreds of recurrent steps that could corrupt it.
-- **The constraint it solves:** Precise retrieval over long distances in a recurrent architecture. This is a fundamental limitation of recurrence that attention solves (attention can look back directly), but attention is O(T²) in sequence length. The scratchpad gives attention-like retrieval at lower cost.
-- **Load-bearing because:** Without this or something equivalent, the model would degrade on any task requiring precise recall of earlier information (copying, reference resolution, multi-step reasoning that refers back to earlier premises).
+### Load-Bearing Constraints (the problems are real — solutions are negotiable)
 
-**Lambda / BayesianWrite (Energy Budget)**
-- **What it is:** Each position carries a "precision" scalar (lambda) that tracks accumulated confidence. The BayesianWrite update blends new information proportionally: high lambda = the model is already confident, so new info has less impact. Low lambda = the model is uncertain, so new info has more impact.
-- **Why it exists:** Without some form of budget pressure, an elastic compute system has no reason to ever STOP computing. If more passes always help, why not run 100 passes? 1000? Lambda acts as a convergence signal — as precision increases, the marginal value of additional computation decreases, creating natural stopping pressure. It also serves as an information-theoretic zoom: high-lambda positions are "zoomed in" and precisely specified, while low-lambda positions are still coarse and need more work.
-- **The constraint it solves:** Elastic compute requires a halting mechanism. Something must tell the compute controller "this token is done, stop wasting cycles on it." Lambda provides this signal through the math of precision-weighted averaging — it's not an arbitrary threshold but an emergent property of how information accumulates.
-- **Load-bearing because:** Without budget pressure, elastic compute degenerates to "always use maximum passes" (wasting compute on easy tokens) or requires an arbitrary external threshold (fragile, not learned).
+- **Elastic compute:** An adaptive-depth system needs some form of pressure to stop computing. Without it, the system always uses maximum depth. Any mechanism that creates learned, content-dependent halting pressure works.
+- **16K custom tokenizer:** Validated as the single biggest win across all experiments. The 50K GPT-2 tokenizer wasted 56.5% of parameters on embeddings.
+- **Warm-start compatibility:** Consistently outperforms from-scratch at equivalent wall-clock time.
 
-### Negotiable Choices (historical, on trial — replace if something better achieves the same outcome)
+### Prior Experiments (implementation-specific — question before generalizing)
 
-**Shared Parameters Across Passes**
-- **What it is:** All 12 recurrent passes use the same weight matrices.
-- **Why it was chosen:** Seemed natural for superposition — if stages are just probability distributions over processing, the same parameters can implement all stages. Also keeps parameter count low (68M instead of 68M × 12).
-- **Why it's negotiable:** Partially shared parameters (e.g., shared core + per-pass adapters) or adaptive parameter routing could give each pass specialized behavior while keeping parameter count manageable. The outcome (parameter efficiency + stage flexibility) might be better served by a hybrid approach.
-
-**Pheromone Routing**
-- **What it is:** A bio-inspired mechanism for cross-position information flow, modeled after how ants leave chemical trails that influence other ants' paths.
-- **Why it was chosen:** Collective intelligence experiment — an exploration of whether swarm-like coordination could be more efficient than attention for routing information between positions.
-- **Why it's negotiable:** It's an experiment, not a proven winner. Any mechanism that achieves efficient cross-position information flow (sparse attention, linear attention, state-space convolutions, locality-sensitive hashing, etc.) would serve the same outcome.
-
-**7 Stages**
-- **What it is:** The current decomposition of processing into 7 named stages.
-- **Why it was chosen:** Emerged from multiple rounds of design iteration and architectural review, not from deep theory. The number 7 has no mathematical significance.
-- **Why it's negotiable:** Could be 5 (merge related stages) or 10 (split complex stages). The outcome (modular decomposition) is independent of the exact count. What matters is that stages have clean interfaces and meaningful semantic boundaries, not that there are exactly 7 of them.
-
-**From-Scratch Training**
-- **What it is:** The model trains from randomly initialized weights, not from a pre-trained checkpoint.
-- **Why it was chosen:** NOT by choice. Warm-starting from the previous version (v0.5.4) had technical issues (architecture changes made weight transfer non-trivial). We would prefer warm-start.
-- **Why it's negotiable:** Multi-teacher learning (Pillar 4) explicitly calls for absorbing knowledge from existing sources. From-scratch training is a temporary constraint, not a design decision.
+Previous architectures (v0.5.x recurrent SSM, v0.6.x 12-pass recurrence, EDSR dense with early exits) were explored. Results are in git history. **Critical caveat:** These results are specific to our particular implementations at a specific scale. "Our implementation of X didn't work" ≠ "X doesn't work." The T+L process must question whether alternative implementations might succeed. See `research/RESEARCH.md` for field research on related approaches.
 
 ---
 
 ## The Core Thesis
 
-Sutra is NOT a language model. It is a **modular intelligence infrastructure** where computation flows through a state graph of independently improvable processing stages.
+Sutra is NOT just a language model. It is an experiment in **building intelligence from better mathematics** — proving that mathematical insight can close a 100x-1000x resource gap vs. models trained with massive scale.
 
-Every existing AI architecture (transformers, SSMs, hybrids) is monolithic: you can't improve the memory system without retraining the whole model. You can't swap out the routing mechanism. You can't let domain experts improve just the verification stage for their field.
+The thesis evolves through empirical testing. Multiple architectural paradigms have been explored (see git history). What survived across all implementations: elastic compute (adaptive depth), 16K tokenizer efficiency, and the fundamental belief that geometry beats scale.
 
-Sutra changes this. Each position in a sequence carries a **probability distribution over processing stages**, and the model's computation is driven by **content-dependent transitions** on a state graph. The stages are independent modules with clean interfaces. Anyone can replace, subdivide, or specialize any stage without touching the rest.
+**See `research/ARCHITECTURE.md` for the current architecture (populated by T+L sessions). See `research/RESEARCH.md` for field research informing the design.**
 
-## The Stage-Superposition State Machine
+### The Adaptive Compute Insight
 
-### What It Is
+Not all tokens are equally hard. The word "the" needs almost zero thought. The word "therefore" connecting complex logic needs deep processing. Any intelligent system should allocate compute proportionally to difficulty.
 
-At every position in the sequence, the model maintains three quantities:
-- **mu** (features): A vector representing what the model currently "knows" about this position — its semantic content, context, and role in the sequence. This is analogous to a hidden state in an RNN, but it evolves through named stages rather than generic layers.
-- **lambda** (precision): A scalar measuring how confident/converged the model's representation of this position is. High lambda means "I've processed this enough, the representation is stable." Low lambda means "this position still needs work." This drives elastic compute decisions.
-- **pi** (stage probabilities): A probability distribution over the 7 processing stages. This tells you WHAT the model is currently doing at this position — is it routing information? Writing to memory? Verifying output? Different positions have different pi distributions, which is what makes this a superposition.
+This insight has been **validated across all experiments** — shallower processing (D10) consistently competitive with deeper (D12). The specific mechanism for implementing adaptive compute has evolved, but the insight is robust.
 
-The key insight: **different positions can be at different stages simultaneously**. One position might be 80% in the routing stage (gathering context from elsewhere in the sequence) while another position is 90% in the verify stage (checking its output against expectations). This is fundamentally different from a transformer, where every token goes through the same layers in lockstep.
+### Content-Dependent Processing
 
-Think of it like a factory assembly line where different products are at different stations simultaneously, versus a batch process where every product goes through every station in the same order. The factory is more efficient because each product gets exactly the processing it needs.
+Different types of content naturally need different processing:
+- **Simple prose** needs minimal compute — pattern matching suffices
+- **Complex code** needs long-range dependency tracking
+- **Mathematical reasoning** needs iterative refinement
 
-### Content-Dependent Transitions
+The architecture must learn these strategies FROM DATA, not from hardcoded rules.
 
-The transition between stages is NOT fixed. A **learned transition kernel** (Markov matrix) depends on:
-- The current hidden state (what the position contains)
-- The precision (how confident the position is)
-- The verification score (did the last readout attempt succeed?)
-
-This means different types of content naturally follow different processing paths:
-- **Simple prose** follows a fast-write-early-verify path (simple local structure, few passes needed)
-- **Complex code** follows a more-routing-late-verify path (complex long-range dependencies, needs many passes)
-- **Mathematical reasoning** would follow a heavy-compute-control path (needs multiple reasoning steps, iterative refinement)
-
-The model discovers these strategies FROM DATA. We don't hardcode them. This is the superposition pillar in action.
-
-## The Infrastructure Vision in Detail
+## The Infrastructure Vision
 
 ### Why Infrastructure, Not a Model
 
 A model is a fixed artifact you deploy. Infrastructure is something people build on.
 
-**Linux analogy (in detail):**
-- Linux kernel = Sutra's state graph + transition kernel (the core routing logic that decides what processing happens when)
-- Filesystem = Sutra's Memory stage (Stage 5) (how information is stored, organized, and retrieved)
-- Network stack = Sutra's Routing stage (Stage 4) (how information flows between different parts of the system)
-- Scheduler = Sutra's Compute Control (Stage 6) (how processing time and resources are allocated)
+The specific module boundaries will be determined by the architecture (see `research/ARCHITECTURE.md` for current state). What matters is the PRINCIPLE: identifiable components with clear interfaces that can be independently improved, replaced, and composed.
 
-Just as different teams improve different parts of Linux independently (the filesystem team doesn't need to understand the network stack, the scheduler team doesn't need to understand the GPU driver), different teams can improve different stages of Sutra independently.
-
-### How Modularity Works
-
-Every stage module follows the same interface contract:
-```
-Input:  (mu, lambda, pi, context)  →  Output: (mu_new, lambda_new)
-```
-
-This uniform interface means:
-1. **Replace** any stage module with a better one — swap in a new routing mechanism without touching memory or verification
-2. **Subdivide** any stage into a sub-graph of specialists — split Memory into short-term, long-term, episodic, domain-specific
-3. **Specialize** any stage for a specific domain — medical verification, legal reasoning, code analysis
-4. **Compose** improvements from different contributors — one team's better routing + another team's better memory = better overall model
-
-### Future: Hierarchical Stages
-
-Each stage evolves from a single module into a sub-graph of specialists:
-
-```
-Stage 4 (Route) → {
-    local_route:   handles within-paragraph dependencies
-    global_route:  handles cross-paragraph dependencies
-    domain_route:  domain-specific routing patterns
-}
-
-Stage 5 (Memory) → {
-    short_term:    working memory for current context
-    long_term:     consolidated knowledge
-    episodic:      specific event memory
-    domain:        domain-specific memory (legal, medical, code...)
-}
-
-Stage 7 (Verify) → {
-    syntax_verify:   grammatical correctness
-    semantic_verify:  meaning consistency
-    domain_verify:    domain-specific validation
-    factual_verify:   factual accuracy checking
-}
-```
-
-The transition kernel routes to sub-stages WITHIN each stage group. The interface stays the same. Everything composes.
+**Linux analogy:** Just as different teams improve different parts of Linux independently (the filesystem team doesn't need to understand the network stack), different contributors should be able to improve different aspects of Sutra independently — whoever they are, wherever they are.
 
 ### How Someone Improves Sutra for Their Domain
 
 Example: A medical AI company wants better medical reasoning.
 
 1. They download the base Sutra model
-2. They replace `Stage 5: Memory` with a medical-knowledge-enriched version
-3. They add `domain_verify` to Stage 7 that checks medical accuracy
-4. They fine-tune ONLY these new modules on medical data
-5. Everything else (routing, compute control, base language) stays from the foundation model
-6. They contribute their medical modules back to the ecosystem
+2. They identify which component(s) handle medical knowledge
+3. They improve those components using medical data
+4. Everything else stays from the foundation model
+5. They contribute their improvements back to the ecosystem
 
-This is **impossible** with transformers. You can't swap out "layer 12's memory mechanism" because transformers don't have named, interfaced stages.
+The architecture must make this workflow POSSIBLE. If it's a monolithic black box where you can't identify or improve individual capabilities, it fails Outcome 3 regardless of how good the benchmarks are.
 
 ## Why This Matters
 
@@ -290,49 +206,14 @@ These rules govern every architectural choice, every experiment design, every de
 
 ---
 
-## Current Status (2026-03-22)
+## Current Status (2026-03-25)
 
-### v0.6.0a Training (COMPLETE — 20K steps)
-- 68.3M params, 12 recurrent passes, attached inter-step history
-- **Best BPT: 6.7946 at step 20K** (new best, beat 17K's 6.8284)
-- Training STOPPED at 20K: 655M tokens (48% of Chinchilla-optimal 1.36B for 68M)
-- Benchmarks: SciQ 48.1%, PIQA 54.5%, LAMBADA 11.2%, ARC-Easy 31.3%
-- Throughput ~6927 tok/s on a single RTX 5090
-- **Next: v0.6.0b-rd12** (random-depth warm-start to fix pass collapse)
+**See `research/ARCHITECTURE.md` for current architecture (populated by T+L design sessions).**
 
-### Critical Discovery: PASS COLLAPSE (structural)
-- Pass 11 alone = 61.6% of all BPT improvement. Passes 0-7 = 6.4%.
-- Logit entropy flat 10.1-10.4 for passes 1-11, crashes to 5.84 at pass 12
-- cos(pass 11, pass 12) = 0.293 (near-orthogonal) — final pass applies massive transformation
-- This pattern is STABLE from 14K to 20K — structural, not training dynamics
-- The model is effectively a 1-pass system with 11 wasted passes
-- **Fix: v0.6.0b-rd12** (random-depth training forces useful output at every pass)
-- **Historical note**: Earlier "late-pass value" finding was CORRECT but understated — the issue isn't that late passes are valuable (they are) but that ONLY the final pass matters (pass collapse).
-
-### What Works (Validated)
-- Stage-superposition: positions flow through stages at their own rate ✓
-- Content-dependent transitions: prose vs code follow different paths ✓
-- 12-pass recurrence: ALL passes contribute, late passes most valuable ✓
-- Attached history: +29% better than detached (validated at dim=128) ✓
-- 3-part loss structure: L_final + L_step + L_probe (L_step provides gradient flow) ✓
-- Competitive learning efficiency vs Pythia at equivalent steps ✓
-
-### Active Investigations
-- **L_step_exact**: Replace sampled CE loss with full-vocab CE on late passes (correct gradient + gradient flow)
-- **Dense baseline**: Matched comparison (same tokenizer, data, params, plain decoder) — needed to honestly assess whether the architecture itself adds value beyond the training setup
-- **Elastic compute**: Freeze at optimal pass per token (gated behind L_step fix)
-
-### Dead Ends (Valuable Negative Results)
-| Probe | Result | Lesson |
-|-------|--------|--------|
-| L_regret | KILLED — solved non-existent problem | Sampled CE artifact, not real degradation |
-| L_step=0 | KILLED — lost gradient flow | L_step helps via gradient flow, not gradient direction |
-| Grokfast | KILLED — overfits at dim=768 | Only training tricks work at 67M params, architecture changes need 200M+ |
-| Syndrome scratchpad | KILLED — no signal (rho=-0.002) | Architecture-scale mechanisms need larger models |
-| Resonant write dither | KILLED — 0% effect | Noise injection negligible at this scale |
-| NCA warm-start | KILLED — 0% BPT improvement | NCA is an init-only benefit, not an ongoing one |
+**See `research/RESEARCH.md` for field research informing the design.**
 
 ### The Bet
-This paradigm either works — positions naturally specialize their computation based on content, stages become independently improvable modules, and the system outperforms monolithic architectures at equivalent scale — or it doesn't.
+
+Mathematical insight closes the resource gap. Better geometry beats brute-force scale. We prove it on a single GPU or we learn why not.
 
 Blue Lock: all or nothing. We sink this paradigm or die trying.
