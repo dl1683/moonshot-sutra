@@ -1,6 +1,6 @@
 {
     "_comment": "15K benchmark gate: control vs ablation winner. Re-run from 5K warm-start with clean WSD schedule. save_at enables lm-eval at intermediate steps. Winner arm to be finalized after 3K ablation completes.",
-    "_temperature_note": "If 3K ablation logit arms show advantage at T=2.0, keep T=2.0. If they don't, re-test with T=1.0 per Minitron evidence (see RESEARCH.md §6.4.27).",
+    "_temperature_note": "T=2.0 confirmed as cross-tokenizer consensus (RESEARCH.md §6.4.28). Minitron T=1.0 was same-tokenizer at moderate ratio — does not apply. No sweep needed.",
     "name": "kd_15k_gate",
     "init_from": "results/checkpoints_probe_pgqa_100m_gate/transformer_24x512_step5000.pt",
     "total_steps": 15000,

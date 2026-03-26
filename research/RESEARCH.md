@@ -2399,11 +2399,48 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 1. **Informational saturation, not just numeric saturation.** CKA/Gram losses align global geometry fast, then stop telling the student *which token boundary to move*. KD loss keeps decreasing (0.032→0.018, -43.8%) but this is a measure of global alignment, not prediction-relevant information transfer. Treat rep KD as saturated once bin-avg KD loss is ~0.020 or lower and anneal it to near-zero before decay starts (fade around step 2000, ≤10% by step 2400).
 
-2. **⚠️ TEMPERATURE CONFLICT (OPEN QUESTION):** This session recommends **T=1.0, top_k=none** (or T=1.0, K=256 if truncation required), citing Minitron's finding that T=1.0 outperforms higher temperatures for LLM KD and top_k≤100 causes significant degradation. §6.4.26 says T=2.0/K=64 is "confirmed." **Resolution:** Current ablation runs with T=2.0/K=64. If logit KD shows advantage → works even with potentially suboptimal settings (strong evidence). If logit KD shows NO advantage → must re-test with T=1.0/K=256 before concluding logit KD fails. For the 15K run: sweep T∈{1.0, 2.0} if budget allows, or default to T=1.0 per Minitron evidence.
+2. **~~TEMPERATURE CONFLICT~~ RESOLVED (see §6.4.28).** This session recommended T=1.0 based on Minitron, but literature synthesis shows: (a) Minitron was same-tokenizer at ~1:2 ratio, doesn't apply; (b) cross-tokenizer consensus is T=2.0 (DSKDv2, DWA-KD, Design Space paper all use T=2.0); (c) T∈{1.0, 1.5, 2.0} all similar for pre-training KD. **T=2.0 is correct for our setup. No sweep needed unless logit KD shows zero benefit.**
 
 3. **Staged transfer option.** For 1:19 ratio, literature suggests intermediate teacher: 1.7B→300-400M→90M. Alternative: keep direct 1.7B→90M but make logit KD dominant late signal while rep KD is early-only.
 
 4. **6K minimum screen** for persistence (2x rep-KD horizon). 3K is inconclusive. Convincing evidence: live gap at both 10-12K and final 15K, with ΔBPT≤-0.03 at 6K and ≤-0.02 at 15K.
+
+### 6.4.28 Cross-Tokenizer Logit KD: Literature Synthesis and Parameter Resolution (2026-03-26)
+
+**Source:** Web research sweep covering cross-tokenizer KD temperature, top-K, and capacity ratio literature.
+
+**Temperature resolution (§6.4.27 conflict RESOLVED):**
+
+The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literature consensus:
+
+- **DSKDv2 (EMNLP 2024, updated 2025):** Uses T=2.0 as default for cross-tokenizer distillation. Their ETA alignment is specifically designed for T=2.0 softening.
+- **DWA-KD (Feb 2026):** Uses T=2.0 for dual-space cross-tokenizer alignment.
+- **Pre-training Distillation Design Space (ACL 2025):** Systematic sweep finds T∈{1.0, 1.5, 2.0} all perform similarly for pre-training KD. No statistically significant difference. Recommends T=2.0 as a safe default but notes robustness across the range.
+- **Minitron (NVIDIA, 2024):** T=1.0 finding was for SAME-TOKENIZER distillation at moderate capacity ratios (~1:2). Does NOT generalize to cross-tokenizer settings.
+
+**Conclusion:** T=2.0 is correct for our setup (cross-tokenizer, ETA alignment). The §6.4.27 Minitron recommendation doesn't apply because: (a) different tokenizers require more softening to align across vocabulary mismatch, and (b) their tested ratio was ~1:2, not 1:19. **The SCRATCHPAD theory predicting T=1.0 outperforms T=2.0 at extreme ratios remains untested but is LOWER PRIORITY** — if the current T=2.0 ablation shows logit KD benefit, there's no need to sweep T.
+
+**Top-K validation:**
+
+- **BiLD (COLING 2025):** K=8-50 actively helps LLM distillation by removing long-tail noise. Optimal K depends on task but K∈[8,50] consistently outperforms K=none. The teacher's opinion on rank 50+ tokens is noise for a smaller student.
+- **MultiLevelOT (AAAI 2025):** Uses K=50 for efficient Sinkhorn computation.
+- **Our K=64:** Slightly above the BiLD optimal range. Acceptable — retains ~95% of teacher signal (per §6.4.26) while filtering noise. Could test K=32 if 15K results are marginal.
+
+**Capacity ratio concern (the 1:19 problem):**
+
+- **Distillation Scaling Laws (ICML 2025):** Optimal teacher-student ratio is approximately 2.5x (teacher 2.5× student params). Performance degrades when ratio exceeds ~5-10x.
+- **Our ratio:** 90M:1.7B = 1:19, which is 7.6× beyond the empirically optimal 2.5x ratio.
+- **Implication:** We are operating far outside the "sweet spot" for KD. This predicts weaker KD benefits but does NOT predict zero benefit. The contingency (scaling student to 166M, ratio 1:8.8) brings us within the comfort zone.
+- **Cross-tokenizer alignment partially compensates:** Our 92.6% student vocab overlap means most of the student's representational capacity is covered. The teacher's knowledge on rare tokens (not in shared vocab) is lost, but these contribute least to student performance anyway.
+
+**Synthesis for current ablation and 15K gate:**
+
+| Parameter | Setting | Confidence | Fallback |
+|-----------|---------|------------|----------|
+| Temperature | T=2.0 | HIGH (cross-tokenizer consensus) | T=1.0 only if logit KD shows zero benefit |
+| Top-K | K=64 | MEDIUM (slightly above BiLD optimal 8-50) | K=32 if marginal results |
+| Capacity ratio | 1:19 | LOW (far from optimal 2.5x) | Scale student to 166M if KD fails |
+| Alignment | ETA (14,822 shared tokens) | HIGH (92.6% coverage) | Byte-span pooling as backup |
 
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 

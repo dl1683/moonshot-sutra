@@ -114,16 +114,15 @@ First probe with α_total=0.8 showed -0.059 (BETTER). α=1.0 is too aggressive f
 - **15K proof gate:** >0.015 BPT at 15K + at least one lm-eval lift = persistent KD.
 - **Contingency if all surfaces fail:** scale student to 166-200M (Codex says 90M 1:19 ratio is below KD comfort zone).
 
-### ⚠️ OPEN: Temperature/Top-K Conflict — NOW WITH THEORETICAL RESOLUTION
+### ~~RESOLVED~~: Temperature/Top-K Conflict (see RESEARCH.md §6.4.28)
 
-Two Codex sessions disagree on optimal logit KD settings:
-- **§6.4.26:** T=2.0/K=64 "confirmed." Sweep T∈{1.5,2.0,2.5} not K.
-- **§6.4.27:** T=1.0/K=none preferred. Cites Minitron finding T=1.0 best, K≤100 hurts.
+**RESOLVED by literature synthesis.** T=2.0 is correct for cross-tokenizer KD:
+- DSKDv2, DWA-KD both use T=2.0 for cross-tokenizer distillation
+- Design Space paper (ACL 2025): T∈{1.0, 1.5, 2.0} all similar for pre-training KD
+- Minitron's T=1.0 finding was same-tokenizer at ~1:2 ratio — doesn't apply to our 1:19 cross-tokenizer setup
+- K=64 is slightly above BiLD optimal (K=8-50) but acceptable
 
-**Current ablation uses T=2.0/K=64.** Interpretation strategy:
-- If logit arms WIN: great, method works even with potentially suboptimal settings
-- If logit arms LOSE: must re-test with T=1.0/K=256 before concluding logit KD fails
-- For 15K run: default to T=1.0 per Minitron evidence unless 3K ablation shows T=2.0 producing strong results
+**No temperature sweep needed** unless logit KD shows zero benefit at T=2.0.
 
 #### Theoretical Resolution: Capacity Ratio Modulates Optimal (T, K)
 
@@ -223,7 +222,7 @@ Rate-distortion theory says: given rate R, the optimal encoder minimizes E[d(x)]
 
 4. **Combined (rep+logit) at extreme ratios may INTERFERE.** Both surfaces compete for the same limited parameter budget. Rep KD pulls representations toward structural alignment; logit KD pulls outputs toward distribution matching. At moderate ratios these are complementary. At 1:19, they may be allocating the same bits to conflicting objectives → the orthogonality prediction from §info-geo becomes a genuine test.
 
-5. **Temperature prediction:** Low T (1.0) should outperform high T (2.0) at extreme ratios because it focuses the KD signal on the teacher's most confident predictions — exactly the ones the student has capacity to learn. High T flattens the distribution, forcing the student to waste gradient on tokens it can't model.
+5. **Temperature prediction:** ~~Low T (1.0) should outperform high T (2.0) at extreme ratios~~ **PARTIALLY CONTRADICTED by literature** (see §6.4.28). Cross-tokenizer consensus is T=2.0. The capacity-ratio × temperature interaction may still exist but is weaker than predicted — T∈{1.0, 1.5, 2.0} all similar per Design Space paper. The more important effect is probably cross-tokenizer alignment quality, not temperature.
 
 ### Connection to Manifesto
 
@@ -275,6 +274,34 @@ Codex §6.4.26/§6.4.27: 90M:1.7B = 1:19, below KD comfort zone (1:1.5 to 1:9). 
 **Recommendation:** 166M (d=768) is the sweet spot — brings ratio to 1:8.8 (within comfort zone), same depth so teacher layer mapping is unchanged, only ~1GB more VRAM. The 200M option (d=832) has 13 heads (unusual) but head_dim=64 works. All fit easily in 24GB.
 
 **Decision rule:** If logit KD gap < 0.01 BPT at 15K → scale student to 166M and re-run 15K gate.
+
+### Arm-by-Arm Numerical Predictions (Added 2026-03-26, pre-arms-3/4 data)
+
+Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.68→4.50
+
+**Arm 2 (rep_only, α=1.0): CONFIRMED WORSE.**
+- Step 500: predicted penalty from α too high. Actual: +0.038 BPT worse. ✓ CONFIRMED.
+- Final 3K: predict convergence to ~control ±0.02 BPT (same as first probe pattern).
+
+**Arm 3 (logit_only, α=1.0): THE CRITICAL TEST.**
+- Step 500: predict BPT ≤ control (5.02 or below). Logit KD is prediction-aligned, should NOT show penalty.
+- Step 1000-2000: predict gap HOLDS or WIDENS (unlike rep KD which narrowed).
+- Step 3000: predict BPT ≤ 4.47 (>0.02 better than control's 4.50) = "promising" per Codex threshold.
+- Kurtosis: predict < 2x control (< 10.0) — logit KD operates on outputs, not activations.
+- **If step 500 BPT > control → T=2.0 or K=64 settings are problematic. Do NOT conclude logit KD fails.**
+
+**Arm 4 (rep+logit, total α=1.0: state=0.3125, sem=0.1875, logit=0.5):**
+- Rate-distortion theory predicts INTERFERENCE at extreme ratios (rep and logit compete for bits).
+- Predict: BPT between arm 2 and arm 3. If BPT < arm 3 → orthogonality (info-geo prediction wins).
+- If BPT > arm 2 AND > arm 3 → destructive interference, confirms extreme-ratio prediction.
+
+**Decision matrix (at step 3000):**
+| Arm 3 vs Control | Arm 4 vs Arm 3 | Interpretation | 15K Action |
+|-------------------|----------------|----------------|------------|
+| ≤ -0.02 (better) | additive | Logit KD persistent, surfaces orthogonal | Run rep+logit at 15K |
+| ≤ -0.02 (better) | worse than arm 3 | Logit KD persistent, surfaces interfere | Run logit-only at 15K |
+| -0.01 to -0.02 | any | Weak signal, possibly head-start | Run logit-only at 15K, monitor carefully |
+| > -0.01 | any | Logit KD also transient at 90M | Re-test T=1.0/K=256, or scale student |
 
 ---
 
