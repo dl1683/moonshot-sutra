@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 7 ACTIVE (2026-03-26). Projected branches DEAD at 100M. Two probes running: R7-P sidecar (post-fusion norm) and P-GQA mainline (full-dim hybrid, no projections). Kill rule: if both fail → ship pure transformer. Section 13 has all results.**
+**Status: Round 7 ACTIVE (2026-03-26). R7-P sidecar DONE: 24G FAIL, 6G+18A PARTIAL (BPT beats transformer by 0.071 but max_act exceeds threshold). P-GQA mainline probe RUNNING — this is the final hybrid test before kill rule. Section 13 has all results.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -2165,8 +2165,38 @@ Params per block: ~3,541K (attn ~393K + conv ~788K + FFN ~2,359K). Model total: 
 
 **New telemetry field:** per-layer cosine similarity between branch outputs (confirms directional divergence).
 
-### 13.10 Pending: R7 Probe Results
+### 13.10 R7-P Sidecar Results (2026-03-26)
 
-Probes running:
-- R7-P sidecar: post-fusion norm probe (q5_r7_postfusion.json) — IN PROGRESS
-- P-GQA mainline: full-dim hybrid probe (q6_pgqa.json) — READY, launches after R7-P
+**Config:** `code/q5b_r7p_hybrids_only.json` (block type G = post-fusion SS-RMSNorm after mean fusion of attention + conv branches)
+
+| Variant | BPT@5000 | kurtosis_max | max_act | Params | Verdict |
+|---------|----------|-------------|---------|--------|---------|
+| Transformer 24A (baseline) | 4.757 | 1.9 | 39.0 | 90M | PASS |
+| R7-P 24G (all hybrid) | 4.909 | 2.5 | 75.6 | 112M | **FAIL** |
+| R7-P 6G+18A (mixed) | **4.686** | 2.0 | 58.5 | 96M | **PARTIAL** |
+
+**Key findings:**
+
+1. **24G all-hybrid: DEAD.** Post-fusion norm delayed instability by ~1000 steps (kurtosis exceeded 2.1 at step 3500 vs step 2500 for R6) but did NOT prevent it. BPT worse than transformer. Projected branches + conv branches in every layer is fundamentally unstable at depth 24.
+
+2. **6G+18A mixed schedule: FIRST HYBRID TO BEAT TRANSFORMER ON BPT.** This is the most significant hybrid result in the entire campaign:
+   - BPT 4.686 vs transformer 4.757 = **+0.071 improvement** (1.5% better)
+   - kurtosis_max=2.0, within 2.1 threshold
+   - **BUT max_act=58.5, exceeds 52 threshold** (1.12x over limit)
+   - Stability trajectory: kurtosis was 1.9 at step 4000, IMPROVED to 1.7 at step 4500 (LR decay helped), then rose to 2.0 at step 5000
+   - max_act trajectory: 48.2 → 50.4 → 58.5 (monotonically increasing, concerning)
+
+3. **Architecture insight:** Limiting G-blocks to early layers (positions 1-6) + attention for rest is the WINNING hybrid schedule. Conv branches in early layers capture local patterns efficiently, then hand off to attention for global reasoning. The 6-layer limit is likely close to the stability frontier — 8+ G-blocks would probably blow up.
+
+4. **Open question:** The max_act violation is in the conv branch of early G-blocks. Could be addressable via per-layer activation clipping, smaller conv init, or reducing the conv contribution ratio. The BPT win suggests this is worth investigating IF P-GQA fails.
+
+### 13.11 P-GQA Mainline Probe (IN PROGRESS)
+
+**Config:** `code/q6_pgqa.json` (block type Q = P-GQA full-dim parallel, GQA 4Q/2KV, full-dim gated conv, direct mean fusion, NO projections)
+
+Probe launched 2026-03-26. Three variants:
+- `transformer_24x512` (baseline, 24A)
+- `pgqa_24x512` (all Q-blocks, 24Q)
+- `pgqa_mixed_8q16a` (8Q early + 16A late)
+
+**This is the PRIMARY R7 test.** Kill rule: if P-GQA AND R7-P both fail → ship pure transformer at 100M.
