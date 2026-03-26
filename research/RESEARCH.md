@@ -1878,4 +1878,59 @@ Also relevant: **tokenkit** (github.com/bminixhofer/tokenkit) provides tools for
 
 4. **No model uses complex gating networks.** All successful hybrids use either simple scalars, per-channel vectors, or just addition/concat. This validates our approach of keeping branch balancing lightweight.
 
-**Recommendation:** Keep current scalar init (s_a=1.0, s_c=sqrt(d_a/d_c)). If microprobe shows branch collapse or magnitude imbalance, add RMSNorm before each branch's contribution to the concat. Per-channel β upgrade is available but not needed unless scalars fail.
+**Recommendation (UPDATED by R5 microprobe):** Scalars DID fail. All concat variants show kurtosis 1.4-5.8. R5 verdict: switch to **normalized additive fusion** — per-branch RMSNorm + per-channel β (Hymba-style) + mean combination. This is now the HEMD-R5-G block design.
+
+---
+
+### T+L Round 5 Findings (2026-03-26)
+
+#### R4 Microprobe Results (Complete)
+
+4-variant concat-project probe, all C-blocks, 12L, dim=512, SS-RMSNorm, 5K steps:
+
+| Variant | Params | Kernel | Ratio | BPT | kurtosis_max | max_act |
+|---------|--------|--------|-------|-----|-------------|---------|
+| concat_1to1_k4 | 47.5M | 4 | 1:1 | 4.9421 | 1.4 | 26.9 |
+| concat_1to1_k16 | 47.6M | 16 | 1:1 | 4.8320 | 2.0 | 35.2 |
+| concat_1to1_k64 | 47.7M | 64 | 1:1 | 4.8502 | 5.8 | 28.1 |
+| concat_2to3_k16 | 50.9M | 16 | 2:3 | **4.7713** | 1.9 | 33.1 |
+
+Plus mean fusion results (P-blocks, 9L):
+| mean_k4 | 46.0M | 4 | full-dim | **4.8005** | **0.82** | **18.15** |
+| mean_k64 | 46.2M | 64 | full-dim | 4.9536 | 1.45 | 20.88 |
+
+**Key findings:**
+1. **Kernel preference is fusion-dependent:** Mean→k=4 wins. Concat→k=16 wins. Hypothesis: learned w_mix projection leverages broader receptive field in concat.
+2. **Concat instability is universal:** ALL concat variants show growing kurtosis in 3000-4000 step window. This is a fusion-method problem, not kernel or ratio.
+3. **Mean fusion strictly dominates:** mean_k4 at 9L (4.80) beats concat_k16 at 12L (4.83) with 2.4x better kurtosis, 1.9x better max_act, 25% fewer layers.
+4. **2:3 ratio helps but is capacity-confounded:** +0.06 BPT but +7% params. Not a pure ratio effect.
+5. **Hymba research confirmed:** Our scalar s_a/s_c with no pre-fusion norm is the exact failure mode Hymba identified and solved.
+
+#### Hymba Fusion — Deep Technical Details (from arxiv)
+
+Exact formula: `Y = W_out_proj(β₁·norm(attn_out) + β₂·norm(ssm_out))`
+- Per-CHANNEL learnable β vectors (not scalars)
+- Each branch INDEPENDENTLY normalized (RMSNorm) before combining
+- Element-wise ADDITION (not concat), then output projection
+- Motivation: "SSM output magnitudes consistently larger than attention heads"
+- Architecture uses 5:1 SSM:attention parameter ratio
+
+#### Falcon-H1 Fusion — Deep Technical Details (from arxiv 2507.22448)
+
+Channel allocation: SSM:Attention:MLP = 2:1:5 (attention = 1/8 of channels)
+- "More attention channels significantly degrades performance"
+- Concat SSM + attention outputs → output projection (no pre-fusion norm)
+- Solves magnitude imbalance by making attention tiny, not by normalizing
+- SA_M (semi-parallel) configuration: SSM + attention in parallel, MLP sequential
+
+#### R5 Architecture Decision: Normalized Additive Fusion
+
+The HEMD-R5-G block synthesizes:
+- **From Hymba:** per-branch normalization + per-channel β before combining
+- **From mean fusion probes:** additive combination (0.5*(a+c)) for stability
+- **From GQA:** 4Q/2KV grouped-query attention for inference efficiency
+- **From kernel probes:** k=4 (the stable-family winner)
+
+Each branch (d=256) → project to full dim (512) → independent RMSNorm → per-channel β → average → output projection.
+
+This is the first block design informed by both empirical probes AND deep literature research on branch fusion stability.

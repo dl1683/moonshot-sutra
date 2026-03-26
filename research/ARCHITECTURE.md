@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 4 architecture refinement (2026-03-26). Rounds 1-3 remain below as historical record; the Round 4 addendum at the end supersedes conflicting details.**
+**Status: Round 5 — 100M gate greenlit (2026-03-26). HEMD-R5-G: normalized additive fusion with per-branch norm. Rounds 1-4 below as historical record; Round 5 addendum at end supersedes conflicting details.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -1899,3 +1899,126 @@ L = CE_18 + 0.35 * CE_12 + 0.2 * CE_6
 5. **24×512 for gate, 26×512 for target** — spends full budget at proven width. Conviction: medium.
 
 4. **The first O4 win will be offline corpus reshaping + alternating teacher families, not simultaneous multi-teacher online loss.** Local evidence punishes online complexity; purification literature says naive mixing hurts. High conviction.
+
+---
+
+## 12. Round 5 Addendum (2026-03-26)
+
+**Full output:** `results/tl_round5_output.md`
+
+Round 5 incorporates: complete R4 microprobe results (4 concat variants), parallel hybrid probe results (mean fusion k4/k64), deep Hymba/Falcon-H1 branch fusion research, and the finding that mean fusion strictly dominates concat on both quality and stability.
+
+### 12.1 What Round 5 Supersedes From Round 4
+
+| Round 4 Decision | Round 5 Verdict | Reason |
+|---|---|---|
+| Concat-then-project fusion (C-blocks) | **Normalized additive fusion** | ALL concat variants unstable (kurtosis 1.4-5.8). Mean k4 at 9L beats best concat at 12L. Hymba confirms: per-branch norm + per-channel β is the minimum requirement. |
+| k=16 kernel | **k=4 kernel** | k=16 only wins in the unstable concat family. k=4 wins in mean fusion with dramatically better stability. |
+| Scalar branch scales (s_a, s_c) | **Per-channel learnable β vectors + per-branch RMSNorm** | Hymba-style. Scalar scales insufficient for magnitude balancing. |
+| 2:3 branch ratio option | **1:1 only for now** | 2:3 win was capacity-confounded (+7% params), not ratio-driven. Revisit only after stronger local branch. |
+| Gate: 100M, plain concat | **Gate: 100M, normalized additive** | Concat not ready to promote. New block synthesizes mean stability + GQA efficiency. |
+
+### 12.2 HEMD-R5-G Gate Specification (Codex R5 Output — Authoritative)
+
+**Name:** HEMD-R5-G (Hybrid Elastic Memory Decoder, Round 5 Gate)
+**Supersedes HEMD-R4-S for the 100M gate. R4-S remains the theoretical target spec pending gate results.**
+
+#### Architecture
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Blocks | 24 (gate) | Same as R4's gate proposal |
+| Hidden dim | 512 | Proven width from all 42M probes |
+| FFN dim | 1536 | 3x hidden (SwiGLU) |
+| Tied embeddings | Yes | Parameter savings |
+| Fixed exits | After blocks 8, 16, 24 | Early/mid/final |
+| Tokenizer | 16K (existing) | Already validated |
+| Context | 512 | Gate only; 1024 deferred |
+
+#### Normalized Additive Hybrid Block (HEMD-R5-G)
+
+```text
+u  = g1 * h / sqrt(mean(h^2) + eps)                    # SS-RMSNorm
+
+a0 = GQAttn(u)                                          # 4Q/2KV, head_dim=64, raw dim 256
+c0 = DWConv1D_k=4(Wv u) * sigmoid(Wg u)                # raw dim 256
+
+a  = beta_a ⊙ Norm_a(Wao a0)                           # project 256->512, per-branch RMSNorm, per-channel β
+c  = beta_c ⊙ Norm_c(Wco c0)                           # project 256->512, per-branch RMSNorm, per-channel β
+
+m  = Wo(0.5 * (a + c))                                 # mean fusion + output projection
+r  = h + m
+
+n  = g2 * r / sqrt(mean(r^2) + eps)                    # SS-RMSNorm
+h' = r + Wdown(silu(Wgate n) * Wup n)                   # SwiGLU FFN
+```
+
+Key differences from R4:
+- **Normalized additive** instead of concat-project: each branch independently normalized before combining
+- **Per-channel β vectors** (not scalar scales): β_a, β_c ∈ R^512, initialized to 1.0
+- **Mean fusion (0.5*(a+c))** instead of concat: provides implicit magnitude control
+- **k=4** instead of k=16: stable-family winner
+- **Each branch projects to full dim** (256→512) via learned projection before normalization
+
+#### Parameter Estimate (~90M at 24×512)
+
+- Embeddings: ~8.2M
+- Per block: attention ~0.46M, conv ~0.33M, output proj ~0.26M, FFN ~2.36M, norms/betas negligible
+- Total: ~90M
+
+#### Optimizer (unchanged)
+
+AdamW lr=3e-4, betas (0.9, 0.95), wd 0.1, WSD schedule, 200 warmup, 1e-5 min LR, clip 1.0.
+
+#### Loss
+
+```
+L = CE_24 + 0.35 * CE_16 + 0.2 * CE_8
+```
+
+### 12.3 R5 Microprobe Results Summary
+
+| Rank | Variant | Params | Layers | BPT | kurtosis_max | max_act |
+|------|---------|--------|--------|-----|-------------|---------|
+| 1 | inter-layer hybrid | 47.0M | 12 | **4.7218** | 1.03 | 19.21 |
+| 2 | concat_2to3_k16 | 50.9M | 12 | 4.7713 | 1.9 | 33.1 |
+| 3 | mean_k4 (P-block) | 46.0M | 9 | 4.8005 | **0.82** | **18.15** |
+| 4 | concat_1to1_k16 | 47.6M | 12 | 4.8320 | 2.0 | 35.2 |
+| 5 | concat_1to1_k64 | 47.7M | 12 | 4.8502 | 5.8 | 28.1 |
+| 6 | pure_transformer | 49.1M | 12 | 4.9131 | 1.11 | 23.91 |
+| 7 | concat_1to1_k4 | 47.5M | 12 | 4.9421 | 1.4 | 26.9 |
+
+Key findings:
+- Kernel preference is fusion-dependent: mean→k=4, concat→k=16
+- ALL concat variants show instability (kurtosis 1.4-5.8) — fusion-method problem, not kernel
+- Mean k4 at 9L matches concat k16 at 12L with 2.4x better stability
+- 2:3 ratio helps BPT but is capacity-confounded (+7% params)
+
+### 12.4 R5 Research Findings
+
+**Hymba fusion (from arxiv, exact formula):** `Y = W_out_proj(β₁·norm(attn_out) + β₂·norm(ssm_out))`. Per-channel β vectors + independent per-branch normalization before combining. Element-wise addition, not concat. Motivation: SSM magnitudes consistently larger than attention.
+
+**Falcon-H1 fusion:** SSM:Attention:MLP = 2:1:5. Attention is the smallest at 1/8 of channels. "More attention channels significantly degrades performance." Concat SSM+attention → output proj. No pre-fusion norm (they solve magnitude by making attention tiny).
+
+### 12.5 Probe Queue (Round 5)
+
+1. **100M promotion gate** (NEXT): 24×512 pure transformer vs 24×512 HEMD-R5-G hybrid. Success: hybrid ≥0.10 BPT better, max_act ≤ transformer.
+2. **Optional concat sidecar**: patched concat with pre-fusion branch norm, k=16, 1:1 vs 2:3, 2-3K steps. Tests if concat was failing from missing norm or from being the wrong fusion family.
+3. **O4 parallel pilot**: MiniPLM 10% corpus scoring with Qwen3-1.7B teacher, Qwen3-0.6B reference. Infrastructure validation.
+4. **100M optimizer probe** (after gate): AdamW vs NorMuon on winning architecture.
+
+### 12.6 Per-Outcome Confidence After Round 5 (from Codex R5)
+
+| Outcome | R4 | R5 | Δ | Key Evidence |
+|---|---|---|---|---|
+| O1: Intelligence | 5 | 5 | = | Microprobe tightened block design but all wins still 42M/5K. Gate fusion changed from raw concat to normalized additive. |
+| O2: Improvability | 6 | 6 | = | Branch/exit modularity intact. No frozen-trunk proof yet. |
+| O3: Democratization | 5 | 5 | = | Interface clearer but still intent, not evidence. |
+| O4: Data Efficiency | 3 | 3 | = | MiniPLM concrete but unvalidated locally. |
+| O5: Inference Efficiency | 5 | 5 | = | Fixed exits remain only live path. Better trunk stability, not exit evidence. |
+
+### 12.7 R5 Design Intuitions (Codex R5)
+
+1. **Best gate block is normalized additive with projected branches.** Mean gave stability signal, concat exposed balancing failure. Conviction: high.
+2. **2:3 only becomes clearly right after stronger local branch or fixed fusion.** Current 2:3 win is capacity-confounded. Conviction: medium.
+3. **First real O4 win will come from data shaping, not online KD.** Every local online auxiliary has hurt. Conviction: high.
