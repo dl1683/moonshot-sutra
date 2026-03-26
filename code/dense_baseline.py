@@ -571,6 +571,223 @@ class NormalizedAdditiveHybridBlock(nn.Module):
         return r
 
 
+class R6FixedHybridBlock(nn.Module):
+    """R6-F: Stabilized hybrid — no learned β, SS-RMSNorm branches, mean fusion.
+
+    Codex Round 6 design. Removes per-channel β vectors (the suspected
+    instability source) and replaces full RMSNorm branches with scalar
+    SS-RMSNorm. Keeps projected asymmetric branches and 0.5*(a+c) fusion.
+
+    Architecture:
+        u  = g1 * h / rms(h)
+        a0 = GQAttn(u)                          # d_attn=256
+        c0 = DWConv1D_k(Wv u) * sigmoid(Wg u)   # d_conv=256
+        a  = sa * AttnProj(a0) / rms(AttnProj(a0))   # scalar SS-RMSNorm
+        c  = sc * ConvProj(c0) / rms(ConvProj(c0))   # scalar SS-RMSNorm
+        m  = Wout(0.5 * (a + c))
+        r  = h + m
+        h' = r + SwiGLU(g2 * r / rms(r))
+    """
+    def __init__(self, dim, ff_dim, d_attn=256, d_conv=256,
+                 n_q_heads=4, n_kv_heads=2, head_dim=64,
+                 conv_kernel_size=4, n_layers=24, layer_idx=0,
+                 norm_type="ss_rmsnorm"):
+        super().__init__()
+        self.d_attn = d_attn
+        self.d_conv = d_conv
+        self.layer_idx = layer_idx
+        self.mix_norm = make_norm(dim, norm_type)
+
+        # Attention path: GQA with asymmetric dims
+        self.attn = GQAttention(dim, d_attn, n_q_heads, n_kv_heads, head_dim)
+
+        # Conv path: gated depthwise causal conv
+        self.conv_v = nn.Linear(dim, d_conv, bias=False)
+        self.conv_g = nn.Linear(dim, d_conv, bias=False)
+        self.dwconv = nn.Conv1d(
+            d_conv, d_conv, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=d_conv, bias=False
+        )
+        self.conv_out = nn.Linear(d_conv, d_conv, bias=False)
+
+        # Branch projections: d_attn/d_conv -> dim
+        self.attn_proj = nn.Linear(d_attn, dim, bias=False)
+        self.conv_proj = nn.Linear(d_conv, dim, bias=False)
+
+        # Per-branch SS-RMSNorm (scalar only — no per-channel gain)
+        self.norm_a = SingleScaleRMSNorm(dim)
+        self.norm_c = SingleScaleRMSNorm(dim)
+
+        # Output projection after mean fusion
+        self.w_out = nn.Linear(dim, dim, bias=False)
+        nn.init.normal_(self.w_out.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+        nn.init.normal_(self.ffn.down.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # Telemetry storage (populated during forward, read at eval)
+        self._telemetry = {}
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path
+        a0 = self.attn(u, cos, sin)
+
+        # Conv path
+        v = self.conv_v(u)
+        g = self.conv_g(u)
+        v_conv = self.dwconv(v.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        c0 = self.conv_out(v_conv * torch.sigmoid(g))
+
+        # Project to full dim + scalar branch norm (no beta)
+        a_proj = self.attn_proj(a0)
+        c_proj = self.conv_proj(c0)
+        a = self.norm_a(a_proj)
+        c = self.norm_c(c_proj)
+
+        # Mean fusion + output projection
+        fused = 0.5 * (a + c)
+        m = self.w_out(fused)
+
+        r = x + m
+        r = r + self.ffn(self.ffn_norm(r))
+
+        # Telemetry (detached, no grad impact)
+        if not self.training:
+            with torch.no_grad():
+                self._telemetry = {
+                    "layer": self.layer_idx,
+                    "branch_a_rms": a_proj.float().pow(2).mean().sqrt().item(),
+                    "branch_c_rms": c_proj.float().pow(2).mean().sqrt().item(),
+                    "branch_a_normed_rms": a.float().pow(2).mean().sqrt().item(),
+                    "branch_c_normed_rms": c.float().pow(2).mean().sqrt().item(),
+                    "fused_rms": fused.float().pow(2).mean().sqrt().item(),
+                    "norm_a_scale": self.norm_a.weight.item(),
+                    "norm_c_scale": self.norm_c.weight.item(),
+                }
+
+        return r
+
+
+class R6SoftmaxHybridBlock(nn.Module):
+    """R6-S: Stabilized hybrid — softmax mixing instead of β.
+
+    Codex Round 6 backup design. Replaces per-channel β with per-channel
+    softmax mixing so α_a + α_c = 1 (convex combination). Uses SS-RMSNorm
+    for branches.
+
+    Architecture:
+        u  = g1 * h / rms(h)
+        a0 = GQAttn(u)
+        c0 = DWConv1D_k(Wv u) * sigmoid(Wg u)
+        a  = sa * AttnProj(a0) / rms(AttnProj(a0))   # scalar SS-RMSNorm
+        c  = sc * ConvProj(c0) / rms(ConvProj(c0))   # scalar SS-RMSNorm
+        alpha = softmax([logit_a, logit_c], dim=-1)    # per-channel, sums to 1
+        m  = Wout(alpha_a * a + alpha_c * c)
+        r  = h + m
+        h' = r + SwiGLU(g2 * r / rms(r))
+    """
+    def __init__(self, dim, ff_dim, d_attn=256, d_conv=256,
+                 n_q_heads=4, n_kv_heads=2, head_dim=64,
+                 conv_kernel_size=4, n_layers=24, layer_idx=0,
+                 norm_type="ss_rmsnorm"):
+        super().__init__()
+        self.d_attn = d_attn
+        self.d_conv = d_conv
+        self.layer_idx = layer_idx
+        self.mix_norm = make_norm(dim, norm_type)
+
+        # Attention path
+        self.attn = GQAttention(dim, d_attn, n_q_heads, n_kv_heads, head_dim)
+
+        # Conv path
+        self.conv_v = nn.Linear(dim, d_conv, bias=False)
+        self.conv_g = nn.Linear(dim, d_conv, bias=False)
+        self.dwconv = nn.Conv1d(
+            d_conv, d_conv, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=d_conv, bias=False
+        )
+        self.conv_out = nn.Linear(d_conv, d_conv, bias=False)
+
+        # Branch projections
+        self.attn_proj = nn.Linear(d_attn, dim, bias=False)
+        self.conv_proj = nn.Linear(d_conv, dim, bias=False)
+
+        # Per-branch SS-RMSNorm
+        self.norm_a = SingleScaleRMSNorm(dim)
+        self.norm_c = SingleScaleRMSNorm(dim)
+
+        # Softmax mixing logits (per-channel, init to 0 = equal mixing)
+        self.logit_a = nn.Parameter(torch.zeros(dim))
+        self.logit_c = nn.Parameter(torch.zeros(dim))
+
+        # Output projection
+        self.w_out = nn.Linear(dim, dim, bias=False)
+        nn.init.normal_(self.w_out.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+        nn.init.normal_(self.ffn.down.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # Telemetry
+        self._telemetry = {}
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path
+        a0 = self.attn(u, cos, sin)
+
+        # Conv path
+        v = self.conv_v(u)
+        g = self.conv_g(u)
+        v_conv = self.dwconv(v.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        c0 = self.conv_out(v_conv * torch.sigmoid(g))
+
+        # Project + scalar branch norm
+        a_proj = self.attn_proj(a0)
+        c_proj = self.conv_proj(c0)
+        a = self.norm_a(a_proj)
+        c = self.norm_c(c_proj)
+
+        # Softmax mixing: alpha_a + alpha_c = 1 per channel
+        logits = torch.stack([self.logit_a, self.logit_c], dim=0)  # (2, dim)
+        alpha = torch.softmax(logits, dim=0)  # (2, dim)
+        fused = alpha[0] * a + alpha[1] * c
+
+        m = self.w_out(fused)
+
+        r = x + m
+        r = r + self.ffn(self.ffn_norm(r))
+
+        # Telemetry
+        if not self.training:
+            with torch.no_grad():
+                self._telemetry = {
+                    "layer": self.layer_idx,
+                    "branch_a_rms": a_proj.float().pow(2).mean().sqrt().item(),
+                    "branch_c_rms": c_proj.float().pow(2).mean().sqrt().item(),
+                    "branch_a_normed_rms": a.float().pow(2).mean().sqrt().item(),
+                    "branch_c_normed_rms": c.float().pow(2).mean().sqrt().item(),
+                    "fused_rms": fused.float().pow(2).mean().sqrt().item(),
+                    "alpha_a_mean": alpha[0].mean().item(),
+                    "alpha_a_min": alpha[0].min().item(),
+                    "alpha_a_max": alpha[0].max().item(),
+                    "norm_a_scale": self.norm_a.weight.item(),
+                    "norm_c_scale": self.norm_c.weight.item(),
+                }
+
+        return r
+
+
 class GainHead(nn.Module):
     """Predicts residual gain from continuing to deeper layers.
     Inputs: hidden state + logit entropy + top-1/top-2 margin = dim+2 -> 256 -> 1"""
@@ -774,7 +991,9 @@ class DenseTransformer(nn.Module):
             block_schedule: list of block types per layer.
                 "A" = attention (TransformerBlock), "H" = gated conv (GatedConvBlock),
                 "P" = parallel hybrid (mean fusion), "C" = concat-project hybrid (R4-S),
-                "N" = normalized additive hybrid (R5-G, Hymba-style branch norm).
+                "N" = normalized additive hybrid (R5-G, Hymba-style branch norm),
+                "F" = R6-F fixed hybrid (no β, SS-RMSNorm branches),
+                "S" = R6-S softmax hybrid (softmax mixing, SS-RMSNorm branches).
                 If None, all layers are attention blocks.
             conv_kernel_size: kernel size for conv blocks (default 64).
             d_attn: attention dim for "C" blocks (default: dim).
@@ -822,6 +1041,18 @@ class DenseTransformer(nn.Module):
                     layer_idx=li, norm_type=norm_type))
             elif btype == "N":
                 layers.append(NormalizedAdditiveHybridBlock(
+                    dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
+                    n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
+                    conv_kernel_size=conv_kernel_size, n_layers=n_layers,
+                    layer_idx=li, norm_type=norm_type))
+            elif btype == "F":
+                layers.append(R6FixedHybridBlock(
+                    dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
+                    n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
+                    conv_kernel_size=conv_kernel_size, n_layers=n_layers,
+                    layer_idx=li, norm_type=norm_type))
+            elif btype == "S":
+                layers.append(R6SoftmaxHybridBlock(
                     dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
                     n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
                     conv_kernel_size=conv_kernel_size, n_layers=n_layers,
@@ -1045,8 +1276,18 @@ def measure_activation_kurtosis(model, dataset, device, n_batches=4, seq_len=512
             kurtosis_per_layer[f"layer_{i}"] = round(kurt, 2)
             max_acts[f"layer_{i}"] = round(acts.abs().max().item(), 2)
 
+    # Collect per-layer telemetry from R6-F/R6-S blocks (if present)
+    branch_telemetry = []
+    for layer in model.layers:
+        if hasattr(layer, '_telemetry') and layer._telemetry:
+            branch_telemetry.append(layer._telemetry.copy())
+            layer._telemetry = {}
+
     model.train()
-    return {"kurtosis": kurtosis_per_layer, "max_activation": max_acts}
+    result = {"kurtosis": kurtosis_per_layer, "max_activation": max_acts}
+    if branch_telemetry:
+        result["branch_telemetry"] = branch_telemetry
+    return result
 
 
 def compute_top_loss(logits, target_tokens, K=4):
@@ -2854,12 +3095,16 @@ def run_ab_probe(config_path):
             n_par = sum(1 for b in v_block_schedule if b == "P")
             n_cat = sum(1 for b in v_block_schedule if b == "C")
             n_nad = sum(1 for b in v_block_schedule if b == "N")
+            n_r6f = sum(1 for b in v_block_schedule if b == "F")
+            n_r6s = sum(1 for b in v_block_schedule if b == "S")
             parts = []
             if n_attn: parts.append(f"{n_attn}A")
             if n_conv: parts.append(f"{n_conv}H")
             if n_par: parts.append(f"{n_par}P")
             if n_cat: parts.append(f"{n_cat}C")
             if n_nad: parts.append(f"{n_nad}N")
+            if n_r6f: parts.append(f"{n_r6f}F")
+            if n_r6s: parts.append(f"{n_r6s}S")
             print(f"  blocks={'+'.join(parts)} (kernel={v_conv_kernel})")
         print(f"  {v_n_layers}L/d={v_dim}/{v_n_heads}h/ff={v_ff_dim}")
         print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
@@ -3008,6 +3253,9 @@ def run_ab_probe(config_path):
                     for k, v in det.items():
                         if k.startswith("bpt_exit"):
                             entry[k] = v
+                # R6 branch telemetry
+                if "branch_telemetry" in kurt:
+                    entry["branch_telemetry"] = kurt["branch_telemetry"]
                 metrics_log.append(entry)
                 msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
                        f"kurtosis_avg={entry['avg_kurtosis']:.1f} "

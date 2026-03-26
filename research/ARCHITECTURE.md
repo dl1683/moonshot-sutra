@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 6 — 100M gate COMPLETE (2026-03-26). BPT wins (+0.11), stability fails (kurtosis 3.94 vs 1.66). Need stronger stabilization before production. Rounds 1-5 below as historical record; Round 6 addendum at end supersedes.**
+**Status: Round 6 — Codex R6 OUTPUT RECEIVED (2026-03-26). Hybrid direction confirmed, β removal prescribed. R6-F/R6-S blocks implemented, stabilization mini-gate ready. Full MiniPLM scoring in parallel. Rounds 1-5 below as historical record; Round 6 addendum (Section 13) supersedes.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -2054,11 +2054,69 @@ Per-channel β vectors amplify branch magnitude differences over training. Even 
 - Source ranking: gutenberg (0.37) > wikipedia (0.29) > fineweb (0.28) > math (0.23) > wildchat (0.21)
 - Infrastructure validated end-to-end.
 
-### 13.5 Pending: R6 Codex Session
+### 13.5 R6 Codex Output (2026-03-26) — Stabilization Design
 
-Questions for Codex R6:
-1. Fix stability and rerun gate, or accept BPT win and move to production with stability fixes?
-2. Best stability fix: clamp betas, post-fusion norm, fixed scaling, smaller init?
-3. Mixed block schedule (N + A blocks)?
-4. When to stop iterating gate vs start production?
-5. O4 priority: full MiniPLM scoring or production training first?
+**Full output:** `results/tl_round6_output.md`
+
+**Key decisions:**
+
+1. **Promote hybrid direction, NOT R5-G as-is.** The 100M gate selected the hybrid *family*, not the exact fusion block. The instability must be fixed before production.
+
+2. **Remove β entirely first (R6-F).** The per-channel β vectors are the most likely instability source — they reintroduce unbounded per-channel scale after normalization. First fix: delete them. Backup: softmax mixing (R6-S). Do NOT start with clamp.
+
+3. **Use SS-RMSNorm for branch norms** (not full per-channel RMSNorm). Reduces hidden per-channel gain vectors that compound across 24 layers.
+
+4. **P-GQA discriminant probe.** Test whether projection (256→512) itself is a stability problem by running a projected mean-fusion block with no β and SS-RMSNorm.
+
+5. **Stop gate iteration at O1=7/10**, defined as: stabilized 100M hybrid wins at 5K, stability within ~1.25x transformer on kurtosis/max_act, no late divergence in 8-10K continuation.
+
+6. **Start full corpus MiniPLM scoring NOW** in parallel with stabilization work. Do not train a custom 100M Qwen-tokenizer reference first.
+
+7. **Per-layer telemetry required** before any rerun: branch RMS pre/post norm, fused pre-W_out RMS, norm scale values.
+
+**Confidence scores (R6):**
+- O1 Intelligence: 6/10 (up from 5)
+- O2 Improvability: 6/10 (unchanged)
+- O3 Democratization: 5/10 (unchanged)
+- O4 Data Efficiency: 4/10 (up from 3)
+- O5 Inference Efficiency: 5/10 (unchanged)
+
+### 13.6 R6-F Production Candidate Block
+
+```text
+u  = g1 * h / sqrt(mean(h^2) + eps)        # SS-RMSNorm
+
+a0 = GQAttn(u)                              # d_attn=256, 4Q/2KV, head_dim=64
+c0 = DWConv1D_k=4(Wv u) * sigmoid(Wg u)    # d_conv=256
+
+a  = sa * AttnProj(a0) / rms(AttnProj(a0))  # scalar SS-RMSNorm only
+c  = sc * ConvProj(c0) / rms(ConvProj(c0))  # scalar SS-RMSNorm only
+
+m  = Wout(0.5 * (a + c))                    # mean fusion, no β
+r  = h + m
+
+n  = g2 * r / sqrt(mean(r^2) + eps)
+h' = r + Wdown(silu(Wgate n) * Wup n)       # SwiGLU FFN
+```
+
+Config: 24×512, FFN 1536, tied 16K embeddings, exits 8/16/24, AdamW lr=3e-4, WSD, BF16.
+
+### 13.7 R6 Stabilization Mini-Gate
+
+**Config:** `code/q4_r6_stabilize.json`
+
+Three-way comparison at 100M scale, 5K steps:
+- **Transformer baseline** (24×512, all A blocks) — stability reference
+- **R6-F** (24×512, all F blocks) — no β, SS-RMSNorm branches
+- **R6-S** (24×512, all S blocks) — softmax mixing, SS-RMSNorm branches
+
+**Success criteria:**
+- BPT: ≥ +0.05 vs transformer (half of R5-G's +0.11)
+- Stability: kurtosis_max ≤ 2.1, max_act ≤ 52
+- No late divergence pattern
+
+### 13.8 R6 Intuitions
+
+1. **Hybrid family is correct, failure is optimization-level.** The early BPT advantage (before instability appears) proves complementarity. Conviction: high.
+2. **BPT gain comes from local+global complementarity, not β.** R6-F should retain most of the gain. Conviction: medium-high.
+3. **Gutenberg/Wikipedia-heavy filtered data will help most.** MiniPLM ranked literature and factual text highest. Conviction: medium.
