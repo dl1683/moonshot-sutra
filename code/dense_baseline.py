@@ -484,6 +484,93 @@ class ConcatProjectHybridBlock(nn.Module):
         return r
 
 
+class NormalizedAdditiveHybridBlock(nn.Module):
+    """HEMD-R5-G intra-layer parallel block with normalized additive fusion.
+
+    Codex Round 5 design. Synthesizes Hymba per-branch normalization with
+    mean fusion stability and GQA inference efficiency.
+
+    Architecture:
+        u  = SSNorm(h)
+        a0 = GQAttn(u)                          # raw dim d_attn
+        c0 = DWConv1D_k(Wv u) * sigmoid(Wg u)   # raw dim d_conv
+        a  = beta_a * Norm_a(Wao a0)             # project d_attn -> dim, per-branch norm
+        c  = beta_c * Norm_c(Wco c0)             # project d_conv -> dim, per-channel beta
+        m  = Wo(0.5 * (a + c))                   # mean fusion + output projection
+        r  = h + m
+        h' = r + SwiGLU(SSNorm(r))
+    """
+    def __init__(self, dim, ff_dim, d_attn=256, d_conv=256,
+                 n_q_heads=4, n_kv_heads=2, head_dim=64,
+                 conv_kernel_size=4, n_layers=24, layer_idx=0,
+                 norm_type="ss_rmsnorm"):
+        super().__init__()
+        self.d_attn = d_attn
+        self.d_conv = d_conv
+        self.mix_norm = make_norm(dim, norm_type)
+
+        # Attention path: GQA with asymmetric dims
+        self.attn = GQAttention(dim, d_attn, n_q_heads, n_kv_heads, head_dim)
+
+        # Conv path: gated depthwise causal conv
+        self.conv_v = nn.Linear(dim, d_conv, bias=False)
+        self.conv_g = nn.Linear(dim, d_conv, bias=False)
+        self.dwconv = nn.Conv1d(
+            d_conv, d_conv, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=d_conv, bias=False
+        )
+        self.conv_out = nn.Linear(d_conv, d_conv, bias=False)
+
+        # Branch projections: d_attn/d_conv -> dim
+        self.attn_proj = nn.Linear(d_attn, dim, bias=False)
+        self.conv_proj = nn.Linear(d_conv, dim, bias=False)
+
+        # Per-branch normalization (RMSNorm, independent)
+        self.norm_a = RMSNorm(dim)
+        self.norm_c = RMSNorm(dim)
+
+        # Per-channel learnable beta (Hymba style), init to 1
+        self.beta_a = nn.Parameter(torch.ones(dim))
+        self.beta_c = nn.Parameter(torch.ones(dim))
+
+        # Output projection after mean fusion
+        self.w_out = nn.Linear(dim, dim, bias=False)
+        # Residual-output scaling: std = 0.02 / sqrt(2*L)
+        nn.init.normal_(self.w_out.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+        nn.init.normal_(self.ffn.down.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path -> (B, T, d_attn)
+        a0 = self.attn(u, cos, sin)
+
+        # Conv path -> (B, T, d_conv)
+        v = self.conv_v(u)
+        g = self.conv_g(u)
+        v_conv = self.dwconv(v.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        c0 = self.conv_out(v_conv * torch.sigmoid(g))
+
+        # Project to full dim + per-branch norm + per-channel beta
+        a = self.beta_a * self.norm_a(self.attn_proj(a0))
+        c = self.beta_c * self.norm_c(self.conv_proj(c0))
+
+        # Normalized additive fusion + output projection
+        m = self.w_out(0.5 * (a + c))
+
+        r = x + m
+
+        # FFN
+        r = r + self.ffn(self.ffn_norm(r))
+        return r
+
+
 class GainHead(nn.Module):
     """Predicts residual gain from continuing to deeper layers.
     Inputs: hidden state + logit entropy + top-1/top-2 margin = dim+2 -> 256 -> 1"""
@@ -686,7 +773,8 @@ class DenseTransformer(nn.Module):
             norm_type: "rmsnorm", "ss_rmsnorm", or "dyt".
             block_schedule: list of block types per layer.
                 "A" = attention (TransformerBlock), "H" = gated conv (GatedConvBlock),
-                "P" = parallel hybrid (mean fusion), "C" = concat-project hybrid (R4-S).
+                "P" = parallel hybrid (mean fusion), "C" = concat-project hybrid (R4-S),
+                "N" = normalized additive hybrid (R5-G, Hymba-style branch norm).
                 If None, all layers are attention blocks.
             conv_kernel_size: kernel size for conv blocks (default 64).
             d_attn: attention dim for "C" blocks (default: dim).
@@ -728,6 +816,12 @@ class DenseTransformer(nn.Module):
                                                    norm_type=norm_type))
             elif btype == "C":
                 layers.append(ConcatProjectHybridBlock(
+                    dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
+                    n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
+                    conv_kernel_size=conv_kernel_size, n_layers=n_layers,
+                    layer_idx=li, norm_type=norm_type))
+            elif btype == "N":
+                layers.append(NormalizedAdditiveHybridBlock(
                     dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
                     n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
                     conv_kernel_size=conv_kernel_size, n_layers=n_layers,
@@ -2759,11 +2853,13 @@ def run_ab_probe(config_path):
             n_conv = sum(1 for b in v_block_schedule if b == "H")
             n_par = sum(1 for b in v_block_schedule if b == "P")
             n_cat = sum(1 for b in v_block_schedule if b == "C")
+            n_nad = sum(1 for b in v_block_schedule if b == "N")
             parts = []
             if n_attn: parts.append(f"{n_attn}A")
             if n_conv: parts.append(f"{n_conv}H")
             if n_par: parts.append(f"{n_par}P")
             if n_cat: parts.append(f"{n_cat}C")
+            if n_nad: parts.append(f"{n_nad}N")
             print(f"  blocks={'+'.join(parts)} (kernel={v_conv_kernel})")
         print(f"  {v_n_layers}L/d={v_dim}/{v_n_heads}h/ff={v_ff_dim}")
         print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
