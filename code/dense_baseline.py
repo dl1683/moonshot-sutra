@@ -2826,7 +2826,7 @@ def run_ab_probe(config_path):
     all_results = {}
     for variant in cfg["variants"]:
         tag = variant["tag"]
-        norm_type = variant.get("norm_type", "rmsnorm")
+        norm_type = variant.get("norm_type", cfg.get("norm_type", "rmsnorm"))
         # Per-variant overrides for architecture params
         v_n_layers = variant.get("n_layers", n_layers)
         v_dim = variant.get("dim", dim)
