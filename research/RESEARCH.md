@@ -2456,6 +2456,75 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 
 **Key papers cited:** Peng et al. ACL 2025 (design space), Busbridge et al. ICML 2025 (scaling laws), Sparse Logit Sampling ACL 2025 Oral (bias warning), DWA-KD arXiv 2602.21669 (entropy weighting), ALM/tokenkit arXiv 2503.20083 (byte matching), CDM arXiv 2502.11104 (coverage data), Cross-Tokenizer Likelihood arXiv 2512.14954 (BPE recursion).
 
+### 6.4.29 Extreme-Ratio KD Mitigations: Research Survey (2026-03-26)
+
+**Context:** Our 90M:1.7B ratio (1:19, 5.3%) is below Peng et al.'s 10% effectiveness threshold. This survey identifies proven mitigations for extreme capacity gaps.
+
+**1. Divergence choice — AMiD alpha-mixture (arXiv 2510.15982, 2025):**
+- Introduces assistant distribution interpolating between teacher and student: `r = (λ·p^((1-α)/2) + (1-λ)·q^((1-α)/2))^(2/(1-α))`
+- **Tested at 15x ratio (GPT-2 XL 1.5B → GPT-2 0.1B) — closest published setup to ours**
+- α=-3 to -5 empirically optimal (mode-seeking behavior); λ=0.1 (closer to student)
+- +1.64 ROUGE-L over best prior method. Unifies forward KL, reverse KL, JSD into one framework
+- **Key insight for us:** At extreme ratios, forward KL forces mode-covering (impossible for 90M student). Mode-seeking (reverse KL / AMiD α<<-1) lets student focus on representable modes
+
+**2. Reverse KL — MiniLLM (arXiv 2306.08543):**
+- Replaces forward KL with reverse KL for generative models. Better at avoiding mode-covering that overwhelms small students. Standard approach for extreme-ratio LLM KD.
+
+**3. Curriculum — MiniPLM Difference Sampling (ICLR 2025, arXiv 2410.17215):**
+- Offline curriculum for pre-training: `score(x) = log p_teacher(x) / p_ref(x)` where p_ref is small reference model
+- Down-samples easy instances, up-samples hard, removes noisy
+- **1.8B → 200M (9x): +1.4 pts average. Achieves same performance with 2.2x less compute**
+- Directly applicable: use our step-5K checkpoint as reference, score all 246 shards offline
+- We already ran a MiniPLM 10% pilot (task #237) — results available
+
+**4. Curriculum — DA-KD Difficulty-Aware (ICML 2025):**
+- Per-sample Distillation Difficulty Scores from CE loss, stratified into tiers
+- **Outperforms SOTA by 2% with half training cost. Surpasses teacher at 4.7x compression**
+
+**5. Curriculum — POCL Progressive Overload (arXiv 2506.05695, June 2025):**
+- Rising temperature schedule tau=1.0→2.0 across 4 stages, difficulty-ranked data
+- At **15x ratio (1.5B→0.1B)**: +2.33 ROUGE-L. Larger gains at larger capacity gaps
+- **Rising temperature is "critical" for gains** — validates a dynamic tau schedule for our 15K gate
+
+**6. Temperature scheduling — Unified Revisit (arXiv 2603.02430, March 2026):**
+- Unexpectedly large τ (10-20) become optimal with longer training
+- Fine-grained datasets prefer τ≥10; coarse-grained prefer τ~1
+- Smaller τ works better early, larger τ better late — **crossover effect**
+- **Implication:** Our static τ=2.0 may be suboptimal. A rising schedule (τ=1.5→4.0) could help
+
+**7. Feature matching — Flex-KD Task-Tangent (arXiv 2507.10155, July 2025):**
+- Identifies functionally relevant teacher dimensions via Jacobian of outputs w.r.t. hidden states
+- Selects top-d_S coordinates by functional contribution — **no learned projector needed**
+- Tested at 7.9x ratio (BERT 110M→14M). **Final layer only is sufficient — multi-layer adds noise**
+- Outperforms CKA-based methods especially under severe dimension mismatch
+
+**8. CKA limitations (IJCAI 2024, arXiv 2401.11824 + arXiv 2509.25253):**
+- CKA has known bias in low-sample, high-dimensional regimes
+- High CKA does NOT guarantee functionally similar features
+- **Geometry-aware alternatives** (Procrustes distance, Feature Gram Matrix norms) show statistically significant improvements over CKA
+
+**9. Speculative KD (ICLR 2025, arXiv 2410.11325):**
+- Student proposes tokens, teacher replaces poorly-ranked ones. On-the-fly training aligned with student's distribution
+- **Tested Qwen 7B→0.5B (14x ratio).** Outperforms both supervised and on-policy KD
+
+**10. Compute-optimal teacher (Busbridge et al. ICML 2025):**
+- A smaller, better-trained teacher may outperform a larger one. Capacity gap manifests as U-shaped curve
+- **Qwen3-0.6B (1:7 ratio, within comfort zone) might be a better primary teacher than Qwen3-1.7B (1:19)**
+- This is testable: add Qwen3-0.6B as a committee member and compare per-token signal quality
+
+**Synthesis — ranked by impact × feasibility for our 15K gate:**
+
+| Mitigation | Impact | Effort | When to Deploy |
+|------------|--------|--------|----------------|
+| Rising τ schedule (1.5→4.0) | HIGH | TRIVIAL | 15K gate (modify get_lr_wsd to also schedule τ) |
+| Reverse KL / AMiD divergence | HIGH | LOW | 15K gate (replace KL computation) |
+| MiniPLM data reweighting | MEDIUM | LOW (pilot done) | After 15K gate proves KD value |
+| Qwen3-0.6B as primary teacher | MEDIUM | LOW | Phase 3 committee (test alongside 1.7B) |
+| CKA → Feature Gram Matrix | MEDIUM | LOW | If rep KD arm shows promise |
+| Difficulty-aware curriculum | MEDIUM | MEDIUM | Phase 4 specialist bursts |
+| Speculative KD | HIGH | MEDIUM | Requires implementation work |
+| Flex-KD task-tangent | LOW | HIGH (Jacobians) | Not feasible during pre-training |
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
