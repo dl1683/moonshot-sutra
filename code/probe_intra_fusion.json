@@ -1,34 +1,50 @@
 {
-    "name": "intra_fusion",
-    "description": "Codex R4 requested probe: intra-layer parallel hybrid fusion methods at ~47M. Tests concat-project (k=8, k=4) vs mean fusion (k=8). Concat variants at 12L (47.2M), mean at 9L (46.0M).",
+    "name": "r4_microprobe",
+    "description": "Codex R4 probes 2+3: kernel sweep (k=4/16/64) on concat-project 1:1, plus ratio comparison (1:1 vs 2:3). All C-blocks, 12L, dim=512. Mean fusion data from parallel_hybrid probe (k4/k64 already done). Cross-compare: concat_k4 vs mean_k4, concat_k64 vs mean_k64 for fusion-type signal.",
     "variants": [
         {
-            "tag": "concat_k8",
-            "block_schedule": ["C","C","C","C","C","C","C","C","C","C","C","C"],
-            "conv_kernel_size": 8,
-            "norm_type": "ss_rmsnorm",
-            "d_attn": 192,
-            "d_conv": 320,
-            "n_q_heads": 3,
-            "n_kv_heads": 1,
-            "head_dim": 64
-        },
-        {
-            "tag": "concat_k4",
+            "tag": "concat_1to1_k4",
             "block_schedule": ["C","C","C","C","C","C","C","C","C","C","C","C"],
             "conv_kernel_size": 4,
             "norm_type": "ss_rmsnorm",
-            "d_attn": 192,
-            "d_conv": 320,
-            "n_q_heads": 3,
-            "n_kv_heads": 1,
+            "d_attn": 256,
+            "d_conv": 256,
+            "n_q_heads": 4,
+            "n_kv_heads": 2,
             "head_dim": 64
         },
         {
-            "tag": "mean_k8",
-            "block_schedule": ["P","P","P","P","P","P","P","P","P"],
-            "conv_kernel_size": 8,
-            "norm_type": "rmsnorm"
+            "tag": "concat_1to1_k16",
+            "block_schedule": ["C","C","C","C","C","C","C","C","C","C","C","C"],
+            "conv_kernel_size": 16,
+            "norm_type": "ss_rmsnorm",
+            "d_attn": 256,
+            "d_conv": 256,
+            "n_q_heads": 4,
+            "n_kv_heads": 2,
+            "head_dim": 64
+        },
+        {
+            "tag": "concat_1to1_k64",
+            "block_schedule": ["C","C","C","C","C","C","C","C","C","C","C","C"],
+            "conv_kernel_size": 64,
+            "norm_type": "ss_rmsnorm",
+            "d_attn": 256,
+            "d_conv": 256,
+            "n_q_heads": 4,
+            "n_kv_heads": 2,
+            "head_dim": 64
+        },
+        {
+            "tag": "concat_2to3_k16",
+            "block_schedule": ["C","C","C","C","C","C","C","C","C","C","C","C"],
+            "conv_kernel_size": 16,
+            "norm_type": "ss_rmsnorm",
+            "d_attn": 256,
+            "d_conv": 384,
+            "n_q_heads": 4,
+            "n_kv_heads": 2,
+            "head_dim": 64
         }
     ],
     "dim": 512,

@@ -1802,20 +1802,80 @@ This addendum records the specific evidence that drove the Round 2 architecture 
 
 ### T+L Round 4 Architectural Decisions (2026-03-26)
 
+**Source: `results/tl_round4_output.md` (Codex R4 — authoritative)**
+
 **Key design pivots from Round 3 → Round 4:**
 
-1. **Depth/width: 14×768 → 18×640.** Hybrid literature uniformly prefers depth. 18×640 is balanced — not as extreme as 24×512 (attention subspace too narrow) but significantly deeper than R3's 14 blocks.
+1. **Depth/width: 14×768 → 24-26×512.** "Depth should dominate width." Falcon-H1, Hymba, and local 12×512 probe all point to depth wins. 24×512 for promotion gate, 26×512 for full scout. Keeps proven width from 42M probes.
 
-2. **Conv kernel: k=64 → k=8.** Pure k=64 conv lost by +0.70 BPT at 42M. Falcon-H1 uses d_conv=4. Short kernels serve as local helpers; attention handles long-range. k=8 is the Mamba-2 surrogate for our depthwise conv.
+2. **Conv kernel: k=64 → k=16 (pending microprobe).** Not k=8 as pre-R4 proposed — Codex leans k=16 as default but requests k=4/k=16/k=64 sweep. Rationale: sparse inter-layer probe used k=64 to compensate for infrequent mixing; intra-layer blocks can use shorter kernels since local mixing happens every layer.
 
-3. **Fusion: unspecified → concat-then-project with branch scales.** Hymba uses mean, Falcon-H1 uses head-interleaving. Codex chooses concat-then-project because branches have asymmetric widths (256 vs 384) — learned fusion adapts better. Branch scales (s_a=1.0, s_c=sqrt(d_a/d_c)) as muP-inspired init.
+3. **Branch ratio: 2:3 → 1:1 (d_attn=256, d_conv=256).** Major pivot from pre-R4 proposal. Codex challenge #6: pure conv losing "argues for more attention while the branch is only GatedConv." 1:1 for GatedConv scout; revisit conv-heavy only after a stronger SSM branch exists. Pending microprobe confirmation.
 
-4. **Attention:conv ratio: 1:2 → 2:3 (256:384).** Pure conv's large loss shifts the ratio toward attention. 2:3 is conservative — still conv-majority but less extreme.
+4. **Fusion: concat-then-project confirmed.** Branch scales ga=gc=1.0 init (Codex proposes equal init, unlike pre-R4's sqrt(d_a/d_c)). Microprobe to compare: mean 1:1 vs scaled-concat 1:1 vs scaled-concat 2:3.
 
-5. **NorMuon replaces Muon lr=0.005 in optimizer probe.** Per-neuron normalization directly addresses the max_act=59.6 spike pattern we observed. More informative than a second LR point.
+5. **NorMuon replaces Muon lr=0.005 in optimizer probe.** Same as pre-R4. Per-neuron normalization targets observed late-stage spike failure mode.
 
-6. **GQA 4Q/2KV heads.** KV-cache efficiency at inference. 4 query heads, 2 KV heads sharing, head_dim=64.
+6. **GQA 4Q/2KV retained.** KV-cache efficient inference.
 
-7. **MiniPLM reference: pilot with Qwen3-0.6B, train 100M ref if distribution too flat.** Paper's ~100M reference is optimal, but Qwen3-0.6B is expedient for initial score variance check.
+7. **First 100M scout: brutally simple online.** Plain NTP + fixed exits only. No memory, no online teachers, no TOP, no MTP, no learned halting. Confidence 9/10 for simplicity.
 
-**Confidence unchanged at 4/6/5/3/5 across 5 outcomes.** Key blocker: no 100M intra-layer win yet. All probes have validated components (SS-RMSNorm, hybrid mixing, fixed exits) but the integrated design is untested.
+8. **MiniPLM: train custom ~100M Qwen-tokenizer reference.** Use Qwen3-0.6B only as quick pipeline pilot. Same-tokenizer teacher/reference validity to be researched.
+
+**Confidence: 5/6/5/3/5 across 5 outcomes** (O1 up from 4 → 5 after trunk-choice positive result). Key blocker: still no 100M intra-layer win. Key unlock: 100M hybrid beating matched pure transformer with better generations.
+
+### Round 4 Research Findings (2026-03-26)
+
+#### R1: MiniPLM Cross-Tokenizer Validity
+
+**Question:** Is MiniPLM-style difference scoring valid when teacher and reference use different tokenizers after per-byte normalization?
+
+**Answer: Same-tokenizer teacher/reference is STRONGLY preferred.** MiniPLM's difference score (teacher_loss - reference_loss) requires comparable per-token losses. Cross-tokenizer pairs produce different sequence lengths and per-token distributions — per-byte normalization (loss/num_bytes) reduces but doesn't eliminate the noise.
+
+Key finding: **arxiv 2503.20083 "Universal Cross-Tokenizer Distillation via Approximate Likelihood Matching" (ALM)** provides a principled cross-tokenizer distillation method by identifying comparable token chunks and minimizing likelihood differences. This is the state of the art for cross-tokenizer KD. However, it addresses token-level distillation, not MiniPLM-style data selection scoring.
+
+For MiniPLM data reweighting specifically: the difference score's quality degrades with tokenizer mismatch because the reference model's loss distribution shifts in non-semantic ways. **Recommendation: train the ~100M Qwen-tokenizer reference as R4 proposes.** Use Qwen3-0.6B only as pipeline pilot to validate MiniPLM infrastructure before investing in the reference.
+
+Also relevant: **tokenkit** (github.com/bminixhofer/tokenkit) provides tools for cross-tokenizer transfer including model conversion and vocabulary mapping.
+
+#### R2: Best Small Embedding Teachers Under 1B
+
+**Top candidates for representation alignment into decoder students:**
+
+| Model | Params | Key Strength |
+|-------|--------|-------------|
+| nomic-embed-text | 137M | Smallest, good baseline, Matryoshka support |
+| EmbeddingGemma-300M | 300M | Google DeepMind, derived from Gemma 3 |
+| GTE-multilingual-base | 305M | Alibaba, strong multilingual |
+| mxbai-embed-large | 335M | Strong English MRL |
+| BGE-M3 | 568M | BAAI, 100+ languages, dense+sparse+multi-vec |
+| Qwen3-Embedding-0.6B | 600M | Qwen family match if using Qwen tokenizer |
+
+**Layer selection:** Last layer of the embedding model only. Research shows intermediate-layer matching doesn't improve alignment quality and over-constrains the student.
+
+**Pooling strategy:** Mean pooling > last-token for decoder-only students. Removing causal attention mask during embedding extraction also works well for decoder-only models.
+
+**Alignment recipe:** Projection layer (student_dim → teacher_dim) + cosine or MSE loss on pooled embeddings. Weight 0.01-0.1 relative to CE loss. Multi-teacher distillation should use staged training (one teacher at a time) or family-per-batch sampling.
+
+**Recommendation for Sutra:** Start with nomic-embed-text (137M) — smallest, good quality, minimal VRAM overhead for parallel teacher inference. Upgrade to BGE-M3 or Qwen3-Embedding if results warrant.
+
+#### R3: Lightest Branch-Balancing Recipes for Two-Path Hybrid Decoders
+
+| Model | Fusion Method | Balance Mechanism | Key Detail |
+|-------|-------------|------------------|------------|
+| **Falcon-H1** | Concat before output proj | Channel allocation ratio | attn:SSM:MLP ≈ 2:1:5. **Critical: more attention channels HURTS.** Attention should be SMALL fraction. |
+| **Hymba** | Weighted sum + norm | Per-channel learnable β₁,β₂ | Y = W_out(β₁·norm(attn) + β₂·norm(ssm)). Extra norm needed because SSM output magnitude > attention, especially in later layers. |
+| **Griffin** | Addition | No learned gating | Recurrence + attention outputs simply added |
+| **Jamba** | Interleaved layers | N/A (inter-layer) | Not intra-layer; alternating Mamba and attention layers |
+
+**Key insights for Sutra:**
+
+1. **Falcon-H1's most important finding: attention should be the SMALLER branch.** Having more attention channels significantly degrades performance, while SSM↔MLP switching has weaker effect. This *may* argue against R4's 1:1 ratio — but our conv surrogate is weaker than Mamba-2, so more attention may be needed to compensate. The microprobe (1:1 vs 2:3) will resolve this.
+
+2. **Hymba's per-channel β is the lightest effective recipe.** Our current scalar s_a/s_c is even simpler — one scalar per branch rather than per-channel. The microprobe will test whether this suffices.
+
+3. **Branch-output normalization before fusion is important.** Hymba explicitly normalizes both outputs before combining because SSM output magnitudes grow in later layers. Our current code does NOT normalize before concat. If the microprobe shows kurtosis/max_act problems in the concat variants, adding pre-fusion norm is the first fix.
+
+4. **No model uses complex gating networks.** All successful hybrids use either simple scalars, per-channel vectors, or just addition/concat. This validates our approach of keeping branch balancing lightweight.
+
+**Recommendation:** Keep current scalar init (s_a=1.0, s_c=sqrt(d_a/d_c)). If microprobe shows branch collapse or magnitude imbalance, add RMSNorm before each branch's contribution to the concat. Per-channel β upgrade is available but not needed unless scalars fail.
