@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 5 — 100M gate greenlit (2026-03-26). HEMD-R5-G: normalized additive fusion with per-branch norm. Rounds 1-4 below as historical record; Round 5 addendum at end supersedes conflicting details.**
+**Status: Round 6 — 100M gate COMPLETE (2026-03-26). BPT wins (+0.11), stability fails (kurtosis 3.94 vs 1.66). Need stronger stabilization before production. Rounds 1-5 below as historical record; Round 6 addendum at end supersedes.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -2022,3 +2022,43 @@ Key findings:
 1. **Best gate block is normalized additive with projected branches.** Mean gave stability signal, concat exposed balancing failure. Conviction: high.
 2. **2:3 only becomes clearly right after stronger local branch or fixed fusion.** Current 2:3 win is capacity-confounded. Conviction: medium.
 3. **First real O4 win will come from data shaping, not online KD.** Every local online auxiliary has hurt. Conviction: high.
+
+## 13. Round 6 Addendum (2026-03-26) — 100M Gate Results
+
+**Full evidence:** `results/tl_r6_evidence.md`, `results/probe_100m_gate_results.json`
+
+### 13.1 100M Gate Verdict: BPT WINS, STABILITY FAILS
+
+| Model | Params | Final BPT | kurtosis_max | max_act |
+|-------|--------|-----------|-------------|---------|
+| Transformer 24×512 | 90.2M | 4.8087 | 1.66 | 44.8 |
+| HEMD-R5-G 24×512 | 93.5M | **4.7019** | 3.94 | 63.6 |
+
+- **BPT: +0.11** — passes ≥0.10 criterion
+- **Stability: FAILS** — kurtosis 2.4x worse, max_act 1.4x worse
+
+### 13.2 Trajectory Analysis
+
+The hybrid learns faster early (step 1000-1500: up to +0.73 BPT advantage), but instability grows monotonically. Kurtosis peaks at 5.09 at step 4500 before partial recovery to 3.94 at step 5000. The transformer also shows instability (kurtosis 1.91 at step 4500) but recovers better (1.66 at step 5000).
+
+**Critical observation**: The instability pattern is the same as concat (kurtosis growth in step 3000-4500 window) but less severe. Normalized additive fusion IMPROVED over concat but did NOT solve the fundamental stability problem.
+
+### 13.3 Hypothesis
+
+Per-channel β vectors amplify branch magnitude differences over training. Even with normalized branches, betas can learn extreme scales. This compounds across 24 layers. The P-block (simple 0.5 mean, no learnable betas) was stable at 42M — betas are likely the problem.
+
+### 13.4 MiniPLM Pilot (O4)
+
+200 windows scored on CPU (Qwen3-1.7B teacher, Qwen3-0.6B reference).
+- Diff score: 0.264 ± 0.113
+- Source ranking: gutenberg (0.37) > wikipedia (0.29) > fineweb (0.28) > math (0.23) > wildchat (0.21)
+- Infrastructure validated end-to-end.
+
+### 13.5 Pending: R6 Codex Session
+
+Questions for Codex R6:
+1. Fix stability and rerun gate, or accept BPT win and move to production with stability fixes?
+2. Best stability fix: clamp betas, post-fusion norm, fixed scaling, smaller init?
+3. Mixed block schedule (N + A blocks)?
+4. When to stop iterating gate vs start production?
+5. O4 priority: full MiniPLM scoring or production training first?
