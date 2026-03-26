@@ -303,6 +303,14 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
 | -0.01 to -0.02 | any | Weak signal, possibly head-start | Run logit-only at 15K, monitor carefully |
 | > -0.01 | any | Logit KD also transient at 90M | Re-test T=1.0/K=256, or scale student |
 
+**NEW: Extreme-ratio mitigations for Codex #274 review (from §6.4.29 research):**
+Regardless of which arm wins, the 15K gate should consider:
+1. **Rising τ schedule** (τ=1.5→4.0): POCL shows "critical" at 15x ratio. Trivial to implement
+2. **Reverse KL / AMiD (α=-3 to -5)**: Mode-seeking instead of mode-covering. Tested at exact 15x ratio
+3. **MiniPLM data reweighting**: 2.2x compute savings, pilot already done (task #237)
+4. **Qwen3-0.6B as alternative primary teacher**: 1:7 ratio (within comfort zone) vs 1:19
+These are QUESTIONS FOR CODEX, not decisions. Present as options in the evidence document.
+
 ---
 
 ## Meta-Learning KD: Category-Theoretic Disagreement Analysis (2026-03-26)
