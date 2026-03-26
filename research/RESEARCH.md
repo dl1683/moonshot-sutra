@@ -1661,9 +1661,11 @@ This addendum records the specific evidence that drove the Round 2 architecture 
   - DyT showed higher activation kurtosis and worse generation.
   - Main mechanistic lesson: DyT is not enough as a **drop-in** because it does not normalize the residual stream.
 
-- **Local probe: TOP vs NTP is still running.**
-  - Only the NTP-only arm has a partial trajectory so far.
-  - This is enough to keep TOP as a live candidate, not enough to make it default.
+- **Local probe: TOP vs NTP COMPLETED — CATASTROPHIC FAILURE.**
+  - NTP-only: BPT `5.07`, kurtosis `0.35` avg / `1.15` max, max activation `22.0`.
+  - NTP+TOP (weight=0.05, K=4, activation at step 200): BPT `9.68` (+4.6 worse), kurtosis `18.75` avg / `99.3` max, max activation `133.8`.
+  - TOP loss magnitude (~20) comparable to CE (~8), contributing ~12% gradient magnitude that conflicts with NTP gradients.
+  - TOP is DEAD at 42M scale with this configuration. Would need weight ≤0.001 or activation at step 2000+ if retried.
 
 - **Muon optimizer evidence is now load-bearing.**
   - Muon offers roughly `2x` compute efficiency versus AdamW and materially better outlier behavior.
@@ -1681,6 +1683,26 @@ This addendum records the specific evidence that drove the Round 2 architecture 
   - Architecture diversity matters more than picking several similar "best" teachers.
   - This supports adaptive family rotation rather than naive static averaging.
 
-- **TOP remains the preferred future-token auxiliary over classic MTP.**
-  - External evidence at `340M+` is strong.
-  - Local promotion still waits on the running probe.
+- **TOP is now REJECTED as a mainline auxiliary at 42M scale.**
+  - External evidence at `340M+` is strong but does not transfer down to `42M`.
+  - Local probe showed catastrophic failure: +4.6 BPT worse, kurtosis explosion.
+  - Combined with MTP also hurting at 42M (from prior session), there are NO validated auxiliary losses for the scout scale.
+  - The scout should train on plain NTP only. Auxiliaries revisited at 200M+.
+
+- **Hybrid architecture research (March 2026) strengthens the HEMD design.**
+  - Systematic analysis (arxiv:2510.04800): inter-layer 1:5 attention-to-SSM optimal for efficiency.
+  - Intra-layer hybrid (parallel attention+SSM heads) > inter-layer (sequential blocks).
+  - "Never place Transformer blocks at the front" — middle layers, evenly distributed.
+  - At 350M: hybrid NLL=2.860 vs pure transformer NLL=2.882 — small but real gain.
+  - Hymba (NVIDIA): 1.5B intra-layer hybrid gives 11.67x cache reduction, 3.49x throughput vs Llama-3.2-3B.
+
+- **Muon optimizer at small scale confirmed by Essential AI.**
+  - Tested across 100M-4B params, works at all scales.
+  - Default: lr=0.02, momentum=0.95, nesterov=True, weight_decay=0.1.
+  - Muon LR ~67x higher than AdamW LR. Our probe config (0.02) is correct.
+  - Only for 2D hidden layer params; embeddings/norms/biases use AdamW.
+
+- **Competitive baselines sharpened.**
+  - SmolLM2-135M: HellaSwag 42.1%, ARC 43.9%, PIQA 68.4% (trained on 2T tokens).
+  - SmolLM2-360M: HellaSwag 54.5%, ARC 53.0% (trained on 4T tokens).
+  - Data gap: SmolLM2-135M uses 87x our tokens. Pythia-160M uses 13x.
