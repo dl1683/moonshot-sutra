@@ -1,0 +1,319 @@
+{
+  "probe": "100m_gate",
+  "config": {
+    "name": "100m_gate",
+    "description": "R5 promotion gate: 24x512 pure transformer vs 24x512 HEMD-R5-G normalized additive hybrid. Plain NTP, exits 8/16/24, 5K steps, seq 512.",
+    "dim": 512,
+    "n_heads": 8,
+    "ff_dim": 1536,
+    "steps": 5000,
+    "eval_every": 500,
+    "batch_size": 16,
+    "grad_accum": 2,
+    "seq_len": 512,
+    "lr": 0.0003,
+    "min_lr": 1e-05,
+    "warmup": 200,
+    "norm_type": "ss_rmsnorm",
+    "d_attn": 256,
+    "d_conv": 256,
+    "n_q_heads": 4,
+    "n_kv_heads": 2,
+    "head_dim": 64,
+    "conv_kernel_size": 4,
+    "variants": [
+      {
+        "tag": "transformer_24x512",
+        "block_schedule": [
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A",
+          "A"
+        ],
+        "exit_layers": [
+          7,
+          15,
+          23
+        ]
+      },
+      {
+        "tag": "hemd_r5g_24x512",
+        "block_schedule": [
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N",
+          "N"
+        ],
+        "exit_layers": [
+          7,
+          15,
+          23
+        ]
+      }
+    ]
+  },
+  "results": {
+    "transformer_24x512": {
+      "params": 90244659,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 8.2821,
+          "avg_kurtosis": 0.24,
+          "max_kurtosis": 0.89,
+          "max_activation": 16.26
+        },
+        {
+          "step": 1000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.7841,
+          "avg_kurtosis": 0.12,
+          "max_kurtosis": 0.46,
+          "max_activation": 17.38
+        },
+        {
+          "step": 1500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.5763,
+          "avg_kurtosis": 0.11,
+          "max_kurtosis": 0.32,
+          "max_activation": 20.34
+        },
+        {
+          "step": 2000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.0483,
+          "avg_kurtosis": 0.12,
+          "max_kurtosis": 0.24,
+          "max_activation": 18.78
+        },
+        {
+          "step": 2500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.8085,
+          "avg_kurtosis": 0.14,
+          "max_kurtosis": 0.34,
+          "max_activation": 25.38
+        },
+        {
+          "step": 3000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4425,
+          "avg_kurtosis": 0.21,
+          "max_kurtosis": 0.68,
+          "max_activation": 28.45
+        },
+        {
+          "step": 3500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4599,
+          "avg_kurtosis": 0.36,
+          "max_kurtosis": 0.96,
+          "max_activation": 41.78
+        },
+        {
+          "step": 4000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.0723,
+          "avg_kurtosis": 0.43,
+          "max_kurtosis": 1.6,
+          "max_activation": 39.25
+        },
+        {
+          "step": 4500,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.9175,
+          "avg_kurtosis": 0.5,
+          "max_kurtosis": 1.91,
+          "max_activation": 36.83
+        },
+        {
+          "step": 5000,
+          "tag": "transformer_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.8087,
+          "avg_kurtosis": 0.45,
+          "max_kurtosis": 1.66,
+          "max_activation": 44.81
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is not only a matter of fact, but a person who is not a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the Earth is a planet, and the Earth is a planet, and the Earth is a planet.\n\nThe Earth is a planet, and the Earth is a planet, and the Earth is a planet, and the Earth is a planet. The Earth is a planet, and the Earth is a planet, and"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "hemd_r5g_24x512": {
+      "params": 93464115,
+      "norm_type": "ss_rmsnorm",
+      "use_top": false,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 8.5044,
+          "avg_kurtosis": -0.1,
+          "max_kurtosis": 0.63,
+          "max_activation": 26.76
+        },
+        {
+          "step": 1000,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 6.671,
+          "avg_kurtosis": 0.24,
+          "max_kurtosis": 0.32,
+          "max_activation": 19.91
+        },
+        {
+          "step": 1500,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.8546,
+          "avg_kurtosis": 0.3,
+          "max_kurtosis": 0.49,
+          "max_activation": 23.84
+        },
+        {
+          "step": 2000,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.7201,
+          "avg_kurtosis": 0.45,
+          "max_kurtosis": 0.76,
+          "max_activation": 31.25
+        },
+        {
+          "step": 2500,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.8084,
+          "avg_kurtosis": 0.32,
+          "max_kurtosis": 0.51,
+          "max_activation": 23.62
+        },
+        {
+          "step": 3000,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.4247,
+          "avg_kurtosis": 0.58,
+          "max_kurtosis": 1.21,
+          "max_activation": 41.7
+        },
+        {
+          "step": 3500,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.2089,
+          "avg_kurtosis": 0.84,
+          "max_kurtosis": 1.7,
+          "max_activation": 45.35
+        },
+        {
+          "step": 4000,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 5.0447,
+          "avg_kurtosis": 1.22,
+          "max_kurtosis": 2.19,
+          "max_activation": 50.05
+        },
+        {
+          "step": 4500,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.7898,
+          "avg_kurtosis": 1.6,
+          "max_kurtosis": 5.09,
+          "max_activation": 73.15
+        },
+        {
+          "step": 5000,
+          "tag": "hemd_r5g_24x512",
+          "norm_type": "ss_rmsnorm",
+          "bpt": 4.7019,
+          "avg_kurtosis": 1.93,
+          "max_kurtosis": 3.94,
+          "max_activation": 63.62
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is the same as the word \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\" or \"same\""
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is a very different place.\n\nThe world is a very different place.\n\nThe world is a very different place.\n\nThe world is a very different place.\n\nThe world is a very different place.\n\nThe world is a very different place.\n\nThe world is"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\n                                                               "
+        }
+      ]
+    }
+  }
+}
