@@ -2017,4 +2017,54 @@ BPT: +0.11 (passes ≥0.10 criterion). Stability: FAILS (kurtosis 2.4x worse).
 - Source ranking: gutenberg (0.37) > wikipedia (0.29) > fineweb (0.28) > math (0.23) > wildchat (0.21)
 - Interpretation: literature/factual text has highest teacher-reference gap = highest training value for small models
 
-**Full scoring (500 windows) running in parallel with R6 stabilization probe.** Results will inform production data filtering.
+**Full scoring (500 windows) completed.** Source-level shard weights derived and saved to `results/miniplm_shard_weights.json`. Range: 0.80x (TinyStories) to 1.17x (Gutenberg). O4 data-shaping probe config ready at `code/q7_o4_data.json`.
+
+### 6.4.12 LFM2: Interleaved Pure-Block Hybrid (Liquid AI, Nov 2025)
+
+**Source:** arxiv.org/abs/2511.23404
+
+LFM2 (350M-8.3B params) uses a different hybrid strategy than intra-layer fusion:
+- **Architecture:** 16 blocks = 10 gated short conv + 6 GQA attention, interleaved
+- Each block is PURE (either conv-only or attention-only) — no intra-layer fusion
+- Conv block: `out = Wout(DWConv1D(Win(x)) * sigmoid(Wgate(x)))` — simple gated conv
+- Found via hardware-in-the-loop NAS over operator types per layer position
+- Key finding: "most benefits from hybrid SSM/linear-attention can be captured by short convolutional submodules + small number of global attention layers"
+- Scales from 350M to 8.3B with consistent stability
+
+**Sutra relevance:** Our hybrid instability comes from FUSION (mixing attn + conv outputs in same block). LFM2 avoids this by keeping blocks pure. Their conv:attn ratio (62.5%:37.5%) is inverted from our 6G+18A (25%:75%) but both validate "conv for local, attention for global." Key question for architecture design: should we switch to inter-layer interleaving instead of fighting intra-layer fusion stability?
+
+### 6.4.13 Gemma 2 Logit Soft-Capping (Google, Jun 2024)
+
+**Source:** arxiv.org/abs/2408.00118
+
+Technique to prevent activation/logit growth without hard truncation:
+- Formula: `x ← cap * tanh(x / cap)`
+- Applied to attention logits (cap=50) and final output logits (cap=30)
+- Smooth, differentiable, bounded — activations cannot exceed ±cap
+- Proven at scale with minor quality impact when removed during inference
+
+**Sutra relevance:** Directly applicable to our max_act problem in hybrid conv branches. Our 6G+18A variant hit max_act=58.5 (threshold 52) while achieving BPT 4.686 (beating transformer). Applying soft-capping to conv output before fusion (e.g., cap=40) would solve the max_act violation while preserving the BPT advantage.
+
+### 6.4.14 QK-Norm and Training Stability (2024-2025 Standard)
+
+**Sources:** Multiple — now adopted by Gemini 2.0, DeepSeek-V3, Gemma 2, etc.
+
+Applying RMSNorm/LayerNorm to Q and K vectors before attention score computation:
+- Prevents attention logit growth over training
+- Allows 1.5x higher learning rates
+- Prevents attention entropy collapse (softmax → one-hot)
+- Now considered standard practice for any transformer training
+
+**Sutra relevance:** We already use SS-RMSNorm on block input. Should verify QK-norm is applied within the attention computation. Could improve stability of attention branches in hybrid blocks.
+
+### 6.4.15 ZClip: Adaptive Gradient Spike Mitigation (Apr 2025)
+
+**Source:** arxiv.org/abs/2504.02507
+
+Z-score-based adaptive gradient clipping:
+- Tracks running mean + std of gradient norms via EMA
+- Clips only when current gradient norm is statistically anomalous (high z-score)
+- Outperforms fixed-threshold and percentile-based clipping on 1B LLaMA
+- Proactively adapts to training dynamics without assumptions about gradient scale evolution
+
+**Sutra relevance:** Could help with activation/gradient spikes in conv branches. Unlike fixed clipping, adapts to the changing dynamics of training (early steps have different gradient distributions than late steps).
