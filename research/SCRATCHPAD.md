@@ -279,9 +279,16 @@ Codex §6.4.26/§6.4.27: 90M:1.7B = 1:19, below KD comfort zone (1:1.5 to 1:9). 
 
 Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.68→4.50
 
-**Arm 2 (rep_only, α=1.0): CONFIRMED WORSE.**
+**Arm 2 (rep_only, α=1.0): ~~CONFIRMED WORSE~~ → SURPRISING CROSSOVER.**
 - Step 500: predicted penalty from α too high. Actual: +0.038 BPT worse. ✓ CONFIRMED.
-- Final 3K: predict convergence to ~control ±0.02 BPT (same as first probe pattern).
+- Step 1000: Recovery to tied (-0.002). ✓ Predicted.
+- **Step 1500: -0.094 BPT BETTER than control (4.736 vs 4.830). ✗ PREDICTION FAILED.**
+  - We predicted convergence to ~control ±0.02. Actual gap is 4.7x our prediction range.
+  - Kurtosis: 4.3 (rep) vs 4.9 (control) — healthier activation distribution.
+  - Max activation: 62.9 (rep) vs 79.9 (control) — less extreme activations.
+  - **3-phase pattern: penalty → recovery → advantage.** The α=1.0 initial disruption may have forced the student to reorganize its representation space, ultimately finding a BETTER configuration.
+  - **Critical question: does advantage survive WSD decay?** Control improved -0.185 during decay. If rep KD's advantage persists through decay, this changes everything.
+- ~~Final 3K: predict convergence to ~control ±0.02 BPT~~ **REVISED: Predict final gap depends on decay behavior. If rep consolidates better during decay, could see -0.05 to -0.10 advantage.**
 
 **Arm 3 (logit_only, α=1.0): THE CRITICAL TEST.**
 - Step 500: predict BPT ≤ control (5.02 or below). Logit KD is prediction-aligned, should NOT show penalty.
