@@ -6,6 +6,46 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## META-PROCESS ANALYSIS: What Are We Learning About How We Learn? (2026-03-26)
+
+**Status: ACTIVE — update at every checkpoint, every experiment**
+
+### Process Failures (things we'd do differently)
+
+1. **Architecture search went 5 rounds too long.** Final spread between ALL variants was 0.07-0.18 BPT. Should have set a "search dimension value" threshold: if total spread across all tested variants is < 0.2 BPT, the dimension is exhausted. Stop searching it. We wasted ~4 rounds of compute.
+
+2. **Built full RMFD system before validating basic KD signal.** Should have run a 500-step "does KD provide ANY signal?" micro-probe before implementing byte-span bridges, CKA losses, multi-phase training. The probe running now should have been the FIRST thing after Round 3.
+
+3. **Fundamentals research produced understanding but not novelty.** All 5 derived mechanisms were reinventions (Codex confirmed). The UNIQUE thing — byte-span cross-tokenizer alignment — emerged from solving a PRACTICAL constraint, not from surveying abstract math. **Codex correction (§6.4.23):** Novelty was the wrong KPI. The REAL mistake was letting theory pull implementation order ahead of signal validation. Theory should INFORM design, but signal validation gates implementation.
+
+### Process Wins (things to keep doing)
+
+1. **Codex correctness audits before training** — caught 3 real bugs, saved potentially wasted GPU hours.
+2. **Kill rules declared before experiments** — prevented post-hoc rationalization of hybrid variants.
+3. **Fundamentals-first approach** — even though it didn't produce novel mechanisms, it gave us deep understanding of WHY routing/scheduling works. This understanding will guide future decisions.
+4. **Competitive baseline tracking** — knowing SmolLM-135M scores gives us a real target.
+
+### Open Meta-Questions
+
+1. **Is the KD advantage a head-start or a limit change?** Steps 500→1000 show gap narrowing (0.059→0.042). If it converges to 0, KD only accelerates convergence. If it stabilizes, the teacher provides genuinely complementary information. Step 1500+ evals will tell.
+
+2. **What determines the theoretical MAXIMUM KD benefit?** Rate-distortion theory says the teacher reduces effective source entropy. But HOW MUCH depends on teacher-student mismatch, cross-tokenizer alignment quality, and alpha tuning. We haven't explored alpha at all.
+
+3. **Are we measuring the right thing?** BPT doesn't predict benchmarks well at low step counts. Should we switch to a benchmark-focused eval earlier? Or is BPT still the right signal during early training?
+
+4. **Should we invest in DATA instead of METHODS?** Our 22.9B tokens is 13x less than Pythia, 26x less than SmolLM. Maybe the biggest gain is data expansion, not better KD math.
+
+5. **What's the opportunity cost of monitoring?** We spend significant time polling training logs. Should we build better automated eval infrastructure so results are automatically logged and analyzed?
+
+### Process Rules (emerging from this analysis)
+
+- **Dimension exhaustion rule:** If spread across all tested variants in a dimension is < 0.2 BPT, stop searching that dimension.
+- **Signal-first rule:** Validate basic signal with a 500-step micro-probe before committing to full implementation.
+- **Meta-checkpoint rule:** Every 5K-step eval asks not just "did metrics improve?" but "is this the right metric? Is this the right approach? What would 2x the improvement?"
+- **Opportunity cost rule:** Before starting any work, ask "what ELSE could we do with this time/compute?" and pick the highest-expected-value option.
+
+---
+
 ## Meta-Learning KD: Category-Theoretic Disagreement Analysis (2026-03-26)
 
 **Status: EVALUATED BY CODEX — category theory overkill, MVP refined below**

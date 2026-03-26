@@ -1680,6 +1680,93 @@ def compute_semantic_kd_loss(student_hidden, teacher_hidden, student_mask, teach
     return (K_s - K_t).pow(2).sum() / (B * B)
 
 
+def compute_vocab_overlap(student_tokenizer, teacher_tokenizer, device="cuda"):
+    """Pre-compute vocabulary overlap between student and teacher tokenizers.
+
+    Uses DSKDv2 ETA approach: finds tokens with identical string representations
+    in both vocabularies. Returns aligned index tensors for shared tokens.
+
+    Args:
+        student_tokenizer: tokenizers.Tokenizer (our 16K BPE)
+        teacher_tokenizer: HuggingFace AutoTokenizer
+        device: target device for index tensors
+
+    Returns:
+        shared_s_ids: (N_shared,) LongTensor — student vocab indices
+        shared_t_ids: (N_shared,) LongTensor — teacher vocab indices
+        n_shared: int — number of shared tokens
+    """
+    stu_vocab = student_tokenizer.get_vocab()  # {str: int}
+    tea_vocab = teacher_tokenizer.get_vocab()   # {str: int}
+
+    shared_s = []
+    shared_t = []
+    for tok_str, s_id in stu_vocab.items():
+        if tok_str in tea_vocab:
+            shared_s.append(s_id)
+            shared_t.append(tea_vocab[tok_str])
+
+    shared_s_ids = torch.tensor(shared_s, dtype=torch.long, device=device)
+    shared_t_ids = torch.tensor(shared_t, dtype=torch.long, device=device)
+    return shared_s_ids, shared_t_ids, len(shared_s)
+
+
+def compute_cross_tok_logit_kd(
+    student_logits,     # (B, T_s, V_s) — from student forward, in computation graph
+    teacher_logits,     # (B, T_t, V_t) — from teacher forward, detached
+    student_offsets,    # (B, T_s, 2) — student byte/char offsets
+    teacher_offsets,    # (B, T_t, 2) — teacher byte/char offsets
+    teacher_mask,       # (B, T_t) — teacher attention mask
+    shared_s_ids,       # (N_shared,) — student vocab indices for shared tokens
+    shared_t_ids,       # (N_shared,) — teacher vocab indices for shared tokens
+    temperature=2.0,
+    top_k=64,
+):
+    """Cross-tokenizer logit-level KD via vocabulary overlap (DSKDv2 ETA).
+
+    Aligns student→teacher by byte-end proximity, then computes KL divergence
+    on the shared vocabulary subset with top-K teacher filtering.
+
+    Memory: ~2x (B, T_s, top_k) plus temporary (B, T_s, N_shared).
+    """
+    B, T_s, V_s = student_logits.shape
+    T_t = teacher_logits.shape[1]
+    N_shared = shared_s_ids.shape[0]
+    device = student_logits.device
+
+    # Step 1: Align by byte-end proximity
+    stu_ends = student_offsets[:, :, 1].float()   # (B, T_s)
+    tea_ends = teacher_offsets[:, :, 1].float()    # (B, T_t)
+    tea_ends = tea_ends.masked_fill(~teacher_mask.bool(), 1e9)
+
+    # (B, T_s, T_t) pairwise distances → argmin → (B, T_s)
+    diffs = (stu_ends.unsqueeze(2) - tea_ends.unsqueeze(1)).abs()
+    aligned_idx = diffs.argmin(dim=2)  # (B, T_s)
+    del diffs
+
+    # Step 2: Extract shared-vocab teacher logits at aligned positions
+    t_shared_all = teacher_logits[:, :, shared_t_ids]  # (B, T_t, N_shared)
+    gather_idx = aligned_idx.unsqueeze(-1).expand(-1, -1, N_shared)
+    aligned_t = t_shared_all.gather(1, gather_idx)  # (B, T_s, N_shared)
+    del t_shared_all, gather_idx
+
+    # Step 3: Top-K filtering on aligned teacher logits
+    K = min(top_k, N_shared)
+    topk_vals, topk_idx = aligned_t.topk(K, dim=-1)  # (B, T_s, K)
+    del aligned_t
+
+    # Gather student logits at same shared-vocab positions
+    s_shared = student_logits[:, :, shared_s_ids]  # (B, T_s, N_shared)
+    s_at_topk = s_shared.gather(-1, topk_idx)       # (B, T_s, K)
+    del s_shared
+
+    # Step 4: KL(teacher || student) with temperature scaling
+    t_probs = F.softmax(topk_vals / temperature, dim=-1)
+    s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
+    kl = F.kl_div(s_log_probs, t_probs, reduction="batchmean")
+    return temperature * temperature * kl
+
+
 def compute_token_kd_loss(student_logits, teacher_logits, temperature=2.0, top_k=32):
     """Token-level KD via KL divergence.
 
@@ -3896,6 +3983,9 @@ def train_kd(config_path):
     n_spans = cfg.get("n_spans", 16)
     alpha_state_default = cfg.get("alpha_state", 0.5)
     alpha_semantic_default = cfg.get("alpha_semantic", 0.3)
+    alpha_logit_default = cfg.get("alpha_logit", 0.0)
+    logit_temperature = cfg.get("logit_temperature", 2.0)
+    logit_top_k = cfg.get("logit_top_k", 64)
 
     print(f"\n{'='*60}")
     print(f"RMFD KD TRAINING: {run_name}")
@@ -3937,11 +4027,12 @@ def train_kd(config_path):
         v_teachers_cfg = variant.get("teachers", [])
         v_alpha_state = variant.get("alpha_state", alpha_state_default)
         v_alpha_semantic = variant.get("alpha_semantic", alpha_semantic_default)
+        v_alpha_logit = variant.get("alpha_logit", alpha_logit_default)
 
         print(f"\n{'='*60}")
         print(f"KD VARIANT: {tag}")
         print(f"  Teachers: {[t['name'] for t in v_teachers_cfg] if v_teachers_cfg else 'NONE (control)'}")
-        print(f"  alpha_state={v_alpha_state}, alpha_semantic={v_alpha_semantic}")
+        print(f"  alpha_state={v_alpha_state}, alpha_semantic={v_alpha_semantic}, alpha_logit={v_alpha_logit}")
 
         # ---- Load student from checkpoint (CPU first to avoid VRAM spike) ----
         init_ckpt = torch.load(init_checkpoint, weights_only=False, map_location="cpu")
@@ -3989,6 +4080,19 @@ def train_kd(config_path):
                 projectors[key] = nn.Linear(dim, teacher.hidden_dim)
         projectors = projectors.to(DEVICE)
 
+        # ---- Pre-compute vocabulary overlap for logit KD ----
+        teacher_vocab_overlaps = {}
+        if v_alpha_logit > 0:
+            for teacher in teachers:
+                if teacher.is_encoder or teacher.is_embedding:
+                    continue  # encoders don't produce causal logits
+                if "logit" in teacher.surfaces:
+                    s_ids, t_ids, n_shared = compute_vocab_overlap(
+                        student_tokenizer, teacher.tokenizer, device=DEVICE)
+                    teacher_vocab_overlaps[teacher.name] = (s_ids, t_ids, n_shared)
+                    print(f"    Vocab overlap {teacher.name}: {n_shared}/{VOCAB_SIZE} "
+                          f"({100*n_shared/VOCAB_SIZE:.1f}%)")
+
         # ---- Optimizer: student + projectors ----
         param_groups = [
             {"params": list(model.parameters()), "lr": lr},
@@ -4004,7 +4108,9 @@ def train_kd(config_path):
         running_kd = 0.0
         actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
         has_kd = len(teachers) > 0
-        use_hidden = has_kd  # only compute hidden states if we need them for KD
+        needs_hidden = any("state" in t.surfaces or "semantic" in t.surfaces
+                           for t in teachers)
+        use_hidden = needs_hidden  # only compute hidden states if rep KD is active
 
         print(f"  Exit weights: {actual_exit_weights}")
         if projectors:
@@ -4038,7 +4144,7 @@ def train_kd(config_path):
                         out, tgt, exit_weights=actual_exit_weights)
                     ce_val = loss_metrics["ce_final"]
 
-                    # KD losses (representation-level only — no token KD for cross-tokenizer)
+                    # KD losses (representation + logit level)
                     kd_loss = torch.tensor(0.0, device=DEVICE)
 
                     if has_kd:
@@ -4057,8 +4163,8 @@ def train_kd(config_path):
                                 stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
                                 stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
 
-                        # Student hidden state (final pre-norm, in computation graph)
-                        student_hidden = out["hidden"]  # (B, T_s, D_s)
+                        # Student hidden state (only needed for state/semantic KD)
+                        student_hidden = out.get("hidden", None)  # (B, T_s, D_s) or None
                         student_mask = torch.ones(inp.shape[0], inp.shape[1],
                                                   device=DEVICE, dtype=torch.long)
 
@@ -4067,6 +4173,8 @@ def train_kd(config_path):
                                                if "state" in t.surfaces)
                         n_sem_teachers = sum(1 for t in teachers
                                              if "semantic" in t.surfaces)
+                        n_logit_teachers = sum(1 for t in teachers
+                                               if "logit" in t.surfaces)
 
                         for teacher in teachers:
                             with torch.no_grad():
@@ -4105,6 +4213,25 @@ def train_kd(config_path):
                                     projector=proj,
                                 )
                                 kd_loss = kd_loss + (v_alpha_semantic / max(n_sem_teachers, 1)) * sem_kd
+
+                            # Logit-level KD: cross-tokenizer via shared vocabulary
+                            if "logit" in teacher.surfaces and teacher.name in teacher_vocab_overlaps:
+                                assert t_out["logits"] is not None, (
+                                    f"Teacher {teacher.name} requested logit surface "
+                                    f"but returned logits=None (encoder model?)")
+                                s_ids, t_ids, _ = teacher_vocab_overlaps[teacher.name]
+                                logit_kd = compute_cross_tok_logit_kd(
+                                    student_logits=out["logits"],
+                                    teacher_logits=t_out["logits"],
+                                    student_offsets=stu_offsets,
+                                    teacher_offsets=t_out["byte_offsets"],
+                                    teacher_mask=t_out["attention_mask"],
+                                    shared_s_ids=s_ids,
+                                    shared_t_ids=t_ids,
+                                    temperature=logit_temperature,
+                                    top_k=logit_top_k,
+                                )
+                                kd_loss = kd_loss + (v_alpha_logit / max(n_logit_teachers, 1)) * logit_kd
 
                     total_loss = (base_loss + kd_loss) / grad_accum
 

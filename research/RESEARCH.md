@@ -2290,6 +2290,38 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Assumption note:** HF tokenizer offset_mapping returns character offsets, not byte offsets. The "byte-span bridge" is technically a character-span bridge on Unicode text. Functionally equivalent for most content.
 
+### 6.4.23 Codex Strategic Review: KD Approach and Next Steps (2026-03-26)
+
+**Source:** Codex GPT-o4-mini-high, comprehensive strategic review of all KD hypotheses and decisions.
+
+**Major decisions:**
+
+1. **NO 120K production run** on current KD stack. Current +0.023 BPT at step 1500 justifies more KD work but NOT 6+ GPU days on current system.
+2. **KD confirmed as mainline** approach.
+3. **Abort arm 3** (multi_3family) — unfair loss-scaling bug makes win uninterpretable, loss unhelpful. Violates signal-first rule.
+4. **Head-start hypothesis: partially approved, not concluded.** Gap narrowing (0.059→0.042→0.023) consistent with transient acceleration, especially since KD loss saturates early and this is a 5K CE warm-start. At ~106M tokens by step 1500, too early to call the limit. Extrapolating to zero at step 3000 NOT justified.
+5. **Logit-level KD: APPROVED as next major test.** Direct supervision on teacher's predictive distribution is the real advantage. Cross-tokenizer blocker removed via DSKDv2. Prefer key-query path over ETA unless ETA is materially simpler.
+6. **15K validation gate: approved** — validate best logit-enhanced variant against control, not current system alone.
+7. **Alpha tuning: do NOT blanket-increase.** 22.9B is corpus size; actual 120K plan only sees ~1.97B tokens. Alpha should follow signal quality, not corpus size. If tuning: sweep or schedule. If forced to choose, front-load state alpha and decay rather than increasing constant semantic weight.
+8. **No bigger teacher yet.** Change supervision surface first, keep teacher fixed. Otherwise experiment is confounded.
+9. **Routing/scheduling: premature.** Build fair static baseline with stronger KD surfaces first.
+
+**Meta-process corrections:**
+- Architecture search too long: AGREED.
+- RMFD before signal validation: AGREED.
+- "Fundamentals produced understanding not novelty": Codex correction — novelty was wrong KPI. The real mistake was letting theory pull implementation order ahead of signal validation.
+
+**Codex-mandated execution plan:**
+1. Let arm 2 finish to 3000
+2. Kill arm 3
+3. Reconcile probe-state inconsistency in ledger
+4. Implement minimal single-teacher cross-tokenizer logit KD
+5. Run 3K ablation: control vs rep-KD vs logit-KD vs rep+logit-KD (same Qwen3-1.7B)
+6. Take winner to 15K with lm-eval at 5K/10K/15K
+7. Launch 120K ONLY if sustained loss advantage + benchmark lift
+
+**Process rule:** One teacher, one new surface, one clean codepath → short ablation → 15K gate → only then: teacher-size ablation → fair static multi-teacher → routing.
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
