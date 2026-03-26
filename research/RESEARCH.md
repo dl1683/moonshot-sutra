@@ -2147,7 +2147,28 @@ Extends ULD with token-level AND sequence-level alignment using Sinkhorn distanc
 Principled method that directly matches the likelihood of text under teacher and student, bypassing token alignment entirely. First method to enable effective distillation across "fundamentally different" tokenizers.
 - **Sutra relevance:** Potentially the cleanest approach — no token alignment, no optimal transport, just likelihood matching
 
-**Key synthesis:** The tokenizer mismatch that ARCHITECTURE.md flagged as the reason to prefer representation-first KD (Section A7) is no longer a valid concern. We can now do FULL logit-level KD from any teacher family. This dramatically expands the design space for multi-source learning.
+#### Cross-Tokenizer Likelihood Scoring (Dec 2025)
+**Source:** arxiv.org/abs/2512.14954
+
+Exploits BPE's implicit recursive structure to derive a probabilistic framework for cross-tokenizer likelihood scoring. No token alignment — uses the tokenizer's own structure. Applied to Qwen2.5-1.5B with 12% memory reduction and up to 4% performance improvement on evaluated tasks, 2% improvement on GSM8K.
+- **Sutra relevance:** This paper's BPE recursive approach is a logit-level analogue of our byte-span bridge. Could be combined with our representation-level KD for richer supervision.
+
+#### CDM: Contextual Dynamic Mapping (ACL Findings 2025)
+**Source:** aclanthology.org/2025.findings-acl.419
+
+Uses contextual information to enhance sequence alignment precision and dynamically improve vocabulary mapping between mismatched tokenizers. Addresses both sequence misalignment and vocabulary composition mismatch.
+
+#### DWA-KD: Dual-Space Weighting and Time-Warped Alignment (Feb 2026)
+**Source:** arxiv.org/abs/2602.21669
+
+Combines DSKD's dual-space projection with time-warped alignment to handle sequence-length mismatches. Adds learned per-token weighting.
+
+#### DSKDv2 with Key-Query Matching (Mar 2026)
+**Source:** arxiv.org/abs/2603.22056
+
+Latest DSKD iteration. Uses key-query matching for vocabulary-mismatch alignment, improving over the ETA (Exact Token Alignment) used in DSKDv1. General framework for cross-architecture, cross-tokenizer KD.
+
+**Key synthesis:** The tokenizer mismatch that ARCHITECTURE.md flagged as the reason to prefer representation-first KD (Section A7) is no longer a valid concern. We can now do FULL logit-level KD from any teacher family. This dramatically expands the design space for multi-source learning. **Our byte-span bridge for hidden-state alignment is a valid parallel approach. Future: add logit-level KD (ULD/MultiLevelOT) on top of our representation-level CKA for richer multi-surface supervision.**
 
 ### 6.4.17 Knowledge Purification: Scaling Multi-Teacher KD (Feb 2026)
 
