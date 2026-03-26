@@ -218,7 +218,7 @@ Rate-distortion theory says: given rate R, the optimal encoder minimizes E[d(x)]
 
 2. **Logit KD should have a different learning curve shape:** Initial progress may be SLOWER (cross-tokenizer noise, high-dimensional KL), but the signal doesn't saturate because KL divergence on new batches always provides novel gradient information. The teacher's opinion on "what comes next" is input-dependent and refreshes with each batch.
 
-3. **Top-K filtering should be BENEFICIAL at extreme ratios** (contrary to Minitron which tested moderate ratios). At 1:19, the student can only model the top ~10-20 plausible tokens per position anyway. Showing it the teacher's full distribution (K=none) adds noise from tokens the student can't represent. K=64 focuses the gradient on the learnable portion of the teacher's distribution.
+3. **Top-K filtering should be BENEFICIAL at extreme ratios** (contrary to Minitron which tested moderate ratios). At 1:19, the student can only model the top ~10-20 plausible tokens per position anyway. Showing it the teacher's full distribution (K=none) adds noise from tokens the student can't represent. K=64 focuses the gradient on the learnable portion of the teacher's distribution. **UPDATE (§6.4.28 expanded):** Peng et al. ACL 2025 found K=50 optimal; our K=64 is acceptable. ⚠️ Sparse Logit Sampling (ACL 2025 Oral) proves naive top-K truncation gives biased gradient estimates — but Peng et al. K=50 still works well in practice, so bias is tolerable at these K values.
 
 4. **Combined (rep+logit) at extreme ratios may INTERFERE.** Both surfaces compete for the same limited parameter budget. Rep KD pulls representations toward structural alignment; logit KD pulls outputs toward distribution matching. At moderate ratios these are complementary. At 1:19, they may be allocating the same bits to conflicting objectives → the orthogonality prediction from §info-geo becomes a genuine test.
 
@@ -262,7 +262,7 @@ Derived from §7.2 (Information Geometry) in RESEARCH.md:
 
 **Status: CONTINGENCY PLAN — only activate if logit KD fails at 90M**
 
-Codex §6.4.26/§6.4.27: 90M:1.7B = 1:19, below KD comfort zone (1:1.5 to 1:9). If logit KD doesn't persist at 90M, scale student before giving up on KD.
+Codex §6.4.26/§6.4.27: 90M:1.7B = 1:19, below KD comfort zone (1:1.5 to 1:9). **Peng et al. ACL 2025 confirms: "effective when student reaches ~10% of teacher size" — our 5.3% is below this threshold.** If logit KD doesn't persist at 90M, scale student before giving up on KD.
 
 | Config | Width | Depth | Heads | Params | Ratio | VRAM(est) |
 |--------|-------|-------|-------|--------|-------|-----------|
