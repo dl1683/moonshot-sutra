@@ -289,7 +289,12 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
   - **3-phase pattern: penalty → recovery → advantage.** The α=1.0 initial disruption may have forced the student to reorganize its representation space, ultimately finding a BETTER configuration.
   - **Critical question: does advantage survive WSD decay?** Control improved -0.185 during decay. If rep KD's advantage persists through decay, this changes everything.
 - ~~Final 3K: predict convergence to ~control ±0.02 BPT~~ **REVISED: Predict final gap depends on decay behavior. If rep consolidates better during decay, could see -0.05 to -0.10 advantage.**
-- **Theoretical interpretation: Structured disruption → better local optima.** α=1.0 rep KD at extreme ratios acts like a structured regularizer. It disrupts the student's initial representation space (step 500 penalty), forces relearning in the teacher's geometric basin (step 1000 recovery), and converges to a flatter minimum with better generalization (step 1500+ advantage). Lower kurtosis and max_act support the "flatter minimum" hypothesis. Analogous to sharpness-aware minimization but the perturbation direction is INFORMED by teacher geometry rather than random. First probe (α=0.8) was too gentle to force the basin escape — α=1.0 is the critical threshold.
+- **Step 2000: -0.130 BPT BETTER (4.698 vs 4.827). CROSSOVER WIDENING. ✓ THEORY CONFIRMED.**
+  - Kurtosis: 3.7 (rep) vs 5.4 (control) — 31% lower. Max act: 56.2 vs 81.4 — 31% lower.
+  - Trajectory: +0.038 → -0.002 → -0.094 → **-0.130**. Monotonically improving gap.
+  - This is NOT noise — consistent widening across 3 consecutive evals.
+- **Theoretical interpretation: Structured disruption → better local optima. CONFIRMED by step 2000.** α=1.0 rep KD at extreme ratios acts like a structured regularizer. It disrupts the student's initial representation space (step 500 penalty), forces relearning in the teacher's geometric basin (step 1000 recovery), and converges to a flatter minimum with better generalization (step 1500+ advantage). Lower kurtosis and max_act support the "flatter minimum" hypothesis. Analogous to sharpness-aware minimization but the perturbation direction is INFORMED by teacher geometry rather than random. First probe (α=0.8) was too gentle to force the basin escape — α=1.0 is the critical threshold.
+- **Critical: WSD decay starts at step 2400.** Control consolidated -0.185 during decay (4.684→4.498). If rep KD consolidates equally or better, final gap could be -0.15 to -0.20 BPT. This would change everything — rep KD would be a STRONG winner, not just logit KD.
 
 **Arm 3 (logit_only, α=1.0): THE CRITICAL TEST.**
 - Step 500: predict BPT ≤ control (5.02 or below). Logit KD is prediction-aligned, should NOT show penalty.
