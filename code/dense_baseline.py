@@ -4023,6 +4023,7 @@ def train_kd(config_path):
     alpha_logit_default = cfg.get("alpha_logit", 0.0)
     logit_temperature = cfg.get("logit_temperature", 2.0)
     logit_top_k = cfg.get("logit_top_k", 64)
+    save_at_steps = set(cfg.get("save_at", []))  # save named checkpoints at these steps
 
     print(f"\n{'='*60}")
     print(f"RMFD KD TRAINING: {run_name}")
@@ -4350,6 +4351,19 @@ def train_kd(config_path):
                 tmp = rolling.with_suffix(".tmp")
                 torch.save(ckpt, tmp)
                 os.replace(str(tmp), str(rolling))
+
+            # ---- Named checkpoint at specific steps ----
+            if step in save_at_steps:
+                ckpt = {
+                    "step": start_step + step,
+                    "model_state_dict": model.state_dict(),
+                    "config": stu_cfg,
+                    "kd_config": variant,
+                    "metrics": metrics_log,
+                }
+                save_path = ckpt_dir / f"{tag}_step{step}.pt"
+                torch.save(ckpt, save_path)
+                print(f"  Saved named checkpoint: {save_path}")
 
         # ---- Final generation check ----
         model.eval()
