@@ -43,6 +43,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 - **Signal-first rule:** Validate basic signal with a 500-step micro-probe before committing to full implementation.
 - **Meta-checkpoint rule:** Every 5K-step eval asks not just "did metrics improve?" but "is this the right metric? Is this the right approach? What would 2x the improvement?"
 - **Opportunity cost rule:** Before starting any work, ask "what ELSE could we do with this time/compute?" and pick the highest-expected-value option.
+- **Crude heuristic rule (from Devansh, 2026-03-26):** When a system is implicitly doing something, making it explicit — even crudely — yields orders-of-magnitude more improvement than leaving it implicit. Ask: "what is our system IMPLICITLY doing that we could make EXPLICIT?" The explicit mechanism doesn't need to be optimal; it needs to exist so it becomes a tunable lever. Examples: flat compute allocation → crude early exit; flat KD alpha → crude confidence weighting; unbounded search → crude bounds.
 
 ---
 
@@ -176,12 +177,28 @@ In contrast, logit KD supervises the student's OUTPUT DISTRIBUTION to match the 
 
 3. **The signal refreshes with new data.** Unlike CKA (which can saturate when representations are structurally aligned regardless of the specific batch), logit KD provides unique supervision for each new batch because the teacher's output distribution depends on the specific input sequence.
 
+### NEW: Basin Compatibility Theory (from arm 2 step 2500 collapse, 2026-03-26)
+
+**Why did rep KD collapse during WSD decay?** Control improved -0.144 BPT during early decay (steps 2000→2500); rep-only improved only -0.010. The 15x gap needs explaining.
+
+**Basin compatibility hypothesis:** During stable LR (exploration), the optimizer moves through loss landscape seeking good regions. Rep KD shifts WHERE the student explores — toward the teacher's representational geometry. This finds a different basin than NTP-only. During WSD decay (consolidation), the optimizer must settle into a local minimum. The key: **rep KD's basin is optimized for CKA+Gram similarity, not for NTP loss.** When LR drops and the model consolidates, the NTP loss surface is what determines the quality of the final minimum. Rep KD's basin may be geometrically aligned with the teacher but SHALLOWER on the NTP surface.
+
+**Evidence from step 2500:**
+- Kurtosis spiked from 3.7→5.6 during decay (rep-only). Higher kurtosis = sharper activations = less stable under perturbation.
+- Control's kurtosis: 5.4→5.0 during the same interval. Stabilizing, not destabilizing.
+- The rep KD basin appears LESS stable under LR changes, not more.
+
+**Implication for logit KD:** This is the key differentiator. Logit KD's loss is KL(teacher_dist || student_dist) — this is ALIGNED with the NTP objective (both optimize prediction distributions). The logit KD basin should be NTP-compatible: settling into this basin during decay should HELP consolidation, not hurt it.
+
+**Testable prediction (arm 3):** If logit KD shows BETTER consolidation than control during WSD decay (unlike rep KD which showed worse), it confirms the basin compatibility theory and means logit KD provides PERSISTENT benefit, not just a head-start.
+
 ### Prediction: Logit KD Pattern
 
 If logit KD is qualitatively different from rep KD, we should see:
 - Initial gap similar to rep KD or possibly smaller (logit KD is noisier due to cross-tokenizer alignment)
 - Gap WIDENS or STAYS CONSTANT during stable LR phase (unlike rep KD which narrowed)
 - Gap persists through WSD decay (control doesn't catch up like it did with rep KD)
+- **NEW: Logit KD should show BETTER consolidation during decay than control** (basin compatibility). This is the opposite of rep KD's pattern. If confirmed, it's the strongest evidence for logit KD's persistent value.
 
 **Kill condition for logit KD:** If logit-only arm converges to within 0.02 BPT of control by step 3000, logit KD is ALSO head-start-only at this scale. Would require longer training to be useful.
 
@@ -294,7 +311,15 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
   - Trajectory: +0.038 → -0.002 → -0.094 → **-0.130**. Monotonically improving gap.
   - This is NOT noise — consistent widening across 3 consecutive evals.
 - **Theoretical interpretation: Structured disruption → better local optima. CONFIRMED by step 2000.** α=1.0 rep KD at extreme ratios acts like a structured regularizer. It disrupts the student's initial representation space (step 500 penalty), forces relearning in the teacher's geometric basin (step 1000 recovery), and converges to a flatter minimum with better generalization (step 1500+ advantage). Lower kurtosis and max_act support the "flatter minimum" hypothesis. Analogous to sharpness-aware minimization but the perturbation direction is INFORMED by teacher geometry rather than random. First probe (α=0.8) was too gentle to force the basin escape — α=1.0 is the critical threshold.
-- **Critical: WSD decay starts at step 2400.** Control consolidated -0.185 during decay (4.684→4.498). If rep KD consolidates equally or better, final gap could be -0.15 to -0.20 BPT. This would change everything — rep KD would be a STRONG winner, not just logit KD.
+- **Step 2500 (WSD decay): GAP COLLAPSED. +0.004 BPT (tied/slightly worse).** BPT=4.6880 vs control 4.6838.
+  - Control improved -0.144 during decay (4.827→4.684). Rep-only improved only -0.010 (4.698→4.688).
+  - **15x consolidation gap.** Decay massively favored control.
+  - Kurtosis SPIKED: 3.7→5.6 (now above control's 5.0). Max_act: 56.2→70.2 (also above control's 68.4).
+  - **The "structured disruption" advantage was a TRAINING DYNAMIC, not permanent knowledge transfer.**
+  - This perfectly mirrors the first KD probe: gap peaked mid-training, collapsed during WSD decay.
+  - **Rep KD at α=1.0 = confirmed head-start only. Twice.** Different configs (α=0.8 first time, α=1.0 second), same result.
+  - 500 more steps of deep decay remain. Predict: gap stays near zero or goes slightly negative (control may overshoot slightly during aggressive decay). Final gap will be ≤0.01 either direction.
+- **REVISED structured disruption theory:** α=1.0 rep KD does push the student into a different basin during stable-LR training. But this basin is NOT "flatter" — it's just DIFFERENT. During WSD decay consolidation, the control finds an equally good or better local minimum. The kurtosis spike (3.7→5.6) during decay suggests rep-only's basin may actually be LESS stable under LR changes. **The advantage was trajectory, not topology.**
 
 **Arm 3 (logit_only, α=1.0): THE CRITICAL TEST.**
 - Step 500: predict BPT ≤ control (5.02 or below). Logit KD is prediction-aligned, should NOT show penalty.
@@ -323,6 +348,25 @@ Regardless of which arm wins, the 15K gate should consider:
 3. **MiniPLM data reweighting**: 2.2x compute savings, pilot already done (task #237)
 4. **Qwen3-0.6B as alternative primary teacher**: 1:7 ratio (within comfort zone) vs 1:19
 These are QUESTIONS FOR CODEX, not decisions. Present as options in the evidence document.
+
+### Crude Heuristic Analysis: Making Implicit Mechanisms Explicit (2026-03-26)
+
+**Principle (from Devansh):** A crude explicit mechanism >> no mechanism. The value isn't precision but existence — explicit = tunable lever.
+
+**Current implicit mechanisms in our KD system and proposed crude-but-directional fixes:**
+
+| Implicit Behavior | What's Wrong | Crude Explicit Heuristic | Effort | Expected Impact |
+|---|---|---|---|---|
+| Every token gets equal KD weight | Teacher confident on some tokens, guessing on others. Flat weight wastes gradient on noise. | **Confidence gating:** if max(teacher_softmax) > 0.5, scale KD loss ×1.5; if < 0.1, scale ×0.3. | LOW (5 lines) | MEDIUM — focuses gradient on learnable knowledge |
+| Static T=2.0 for all training | Early training needs focused signal; later training benefits from broader dark knowledge. | **Rising τ:** τ=1.5 for steps 0-5K, linear ramp to 3.0 by 10K, hold at 3.0. | TRIVIAL (3 lines) | HIGH per POCL paper |
+| Static α=1.0 for all training | α=1.0 causes initial penalty (proven: arm 2 step 500). Student needs NTP stability first. | **Rising α:** α=0.3 for steps 0-1K, linear ramp to 1.0 by 3K. | TRIVIAL (3 lines) | MEDIUM — avoids early disruption |
+| All shared tokens weighted equally | High-frequency tokens have reliable alignment stats; rare tokens are noisy. | **Frequency-weighted KD:** weight each shared token by log(freq+1) during loss. | LOW (10 lines) | LOW-MEDIUM |
+| Uniform data sampling | MiniPLM scores show some shards are much more informative for KD. | **MiniPLM shard weighting:** sample shards proportional to teacher-student divergence. Pilot done (task #237). | LOW (already built) | MEDIUM per MiniPLM paper (2.2× savings) |
+| No gradient quality monitoring | Bad KD gradients (high variance, conflicting with NTP) silently dilute training. | **Gradient cosine monitor:** if cos(∇NTP, ∇KD) < -0.1 for 3 steps, halve α temporarily. | MEDIUM (20 lines) | MEDIUM — prevents destructive interference |
+
+**The meta-point for Codex #274:** Even if the ablation shows weak KD signal, there are 6 crude heuristics that could amplify whatever signal exists. The ablation tests the SURFACE (rep vs logit); these heuristics optimize the MECHANISM. Both matter. Recommend Codex pick the top 2-3 for the 15K gate.
+
+**Connection to manifesto:** This IS "Intelligence = Geometry" applied to the training process itself. We're not adding more parameters or data — we're adding STRUCTURE to how existing signal flows. The crude heuristic principle says even rough structure >> no structure.
 
 ---
 
