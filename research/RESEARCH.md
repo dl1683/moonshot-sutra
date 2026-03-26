@@ -2322,6 +2322,26 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Process rule:** One teacher, one new surface, one clean codepath → short ablation → 15K gate → only then: teacher-size ablation → fair static multi-teacher → routing.
 
+### 6.4.24 Codex Correctness Engineer Review: Cross-Tokenizer Logit KD (2026-03-26)
+
+**Source:** Codex GPT-o4-mini, Correctness Engineer persona, read-only review of `compute_cross_tok_logit_kd()` and integration in `train_kd()`.
+
+**3 HIGH issues found (ALL FIXED):**
+1. **Causal alignment bug:** Nearest byte-end alignment could pair student position to a LATER teacher position, leaking future text. Fix: Changed from `abs()` distance to causal `signed_diff >= 0` with argmin — only aligns to teacher positions whose char-end <= student char-end.
+2. **Loss scaling mismatch:** `F.kl_div(reduction="batchmean")` divides by B only, not B*T. With T=512, alpha_logit=1.0 would be ~512x too large vs CE loss. Fix: Changed to `reduction="none"`, sum over vocab dim, then divide by count of valid positions.
+3. **Teacher truncation masking:** If teacher tokenizer is finer-grained, teacher runs out of tokens before student. Late student positions get wrong supervision. Fix: Added `valid_mask` that detects positions where no valid teacher token exists, zeros out KL loss there.
+
+**3 MEDIUM issues found (ALL FIXED):**
+1. **Missing offset fallback:** Added edge-case returns for None offsets and N_shared=0.
+2. **Unfair ablation weights:** Rep-only total=0.8, logit-only=1.0, rep+logit=1.8. Fix: Normalized all arms to total=1.0 (rep_only: state=0.625, semantic=0.375; logit_only: logit=1.0; rep+logit: state=0.3125, semantic=0.1875, logit=0.5).
+3. **`train_kd_phased()` stale `use_hidden`:** Still used `use_hidden = has_kd` instead of surface-aware check. Fix: Changed to `needs_hidden = any("state" in t.surfaces or "semantic" in t.surfaces for t in current_teachers)`.
+
+**Additional note:** Temperature validation added (`assert temperature > 0`). Memory analysis: real pressure from `(B,T,N_shared)` tensors (~116 MiB each at N_shared=14822), not `(B,T_s,T_t)` alignment tensor (~8 MiB). Total extra memory ~350 MiB for logit KD path.
+
+**Gradient flow:** Confirmed correct — student path stays in-graph, teacher under `no_grad()`.
+
+**Status:** All HIGH and MEDIUM fixes applied. Needs re-review per Tier 1 loop-until-clean rule.
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.

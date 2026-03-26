@@ -1,5 +1,5 @@
 {
-    "_comment": "Codex-mandated 4-arm surface ablation: control vs rep vs logit vs rep+logit",
+    "_comment": "Codex-mandated 4-arm surface ablation: control vs rep vs logit vs rep+logit. Total KD weight normalized to 1.0 per arm for fair comparison (tests surface TYPE, not amount).",
     "name": "kd_surface_ablation",
     "init_from": "results/checkpoints_probe_pgqa_100m_gate/transformer_24x512_step5000.pt",
     "total_steps": 3000,
@@ -23,15 +23,17 @@
         },
         {
             "tag": "rep_only_cka",
+            "_note": "state:semantic = 5:3 ratio, total=1.0",
             "teachers": [
                 {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic"]}
             ],
-            "alpha_state": 0.5,
-            "alpha_semantic": 0.3,
+            "alpha_state": 0.625,
+            "alpha_semantic": 0.375,
             "alpha_logit": 0.0
         },
         {
             "tag": "logit_only_eta",
+            "_note": "logit only, total=1.0",
             "teachers": [
                 {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["logit"]}
             ],
@@ -41,12 +43,13 @@
         },
         {
             "tag": "rep_plus_logit",
+            "_note": "rep:logit = 50:50, within rep state:semantic = 5:3, total=1.0",
             "teachers": [
                 {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic", "logit"]}
             ],
-            "alpha_state": 0.5,
-            "alpha_semantic": 0.3,
-            "alpha_logit": 1.0
+            "alpha_state": 0.3125,
+            "alpha_semantic": 0.1875,
+            "alpha_logit": 0.5
         }
     ]
 }

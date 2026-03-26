@@ -1724,8 +1724,14 @@ def compute_cross_tok_logit_kd(
 ):
     """Cross-tokenizer logit-level KD via vocabulary overlap (DSKDv2 ETA).
 
-    Aligns student→teacher by byte-end proximity, then computes KL divergence
-    on the shared vocabulary subset with top-K teacher filtering.
+    Aligns student→teacher by causal char-end (teacher end <= student end),
+    then computes KL divergence on shared vocabulary with top-K teacher filtering.
+
+    Fixes applied per Codex correctness review:
+    - Causal alignment: teacher end must be <= student end (no future leaking)
+    - Per-token normalization: KL divided by B*T, not just B
+    - Truncation masking: positions where teacher runs out get zero loss
+    - Edge-case guards for None offsets and N_shared=0
 
     Memory: ~2x (B, T_s, top_k) plus temporary (B, T_s, N_shared).
     """
@@ -1734,15 +1740,42 @@ def compute_cross_tok_logit_kd(
     N_shared = shared_s_ids.shape[0]
     device = student_logits.device
 
-    # Step 1: Align by byte-end proximity
+    # Validate temperature
+    if temperature <= 0:
+        raise ValueError(f"temperature must be > 0, got {temperature}")
+
+    # Edge case: no shared vocabulary
+    if N_shared == 0:
+        return torch.tensor(0.0, device=device)
+
+    # Edge case: missing offsets
+    if teacher_offsets is None or student_offsets is None:
+        return torch.tensor(0.0, device=device)
+
+    # Step 1: Causal alignment — find greatest teacher char-end <= student char-end
+    # This ensures the teacher prediction only uses context up to or before the
+    # student's context boundary (no future leaking).
     stu_ends = student_offsets[:, :, 1].float()   # (B, T_s)
     tea_ends = teacher_offsets[:, :, 1].float()    # (B, T_t)
-    tea_ends = tea_ends.masked_fill(~teacher_mask.bool(), 1e9)
 
-    # (B, T_s, T_t) pairwise distances → argmin → (B, T_s)
-    diffs = (stu_ends.unsqueeze(2) - tea_ends.unsqueeze(1)).abs()
-    aligned_idx = diffs.argmin(dim=2)  # (B, T_s)
-    del diffs
+    # Mask invalid teacher positions (padding)
+    tea_ends_masked = tea_ends.masked_fill(~teacher_mask.bool(), -1.0)
+
+    # For each student position, find the teacher position with the greatest
+    # char-end that is <= the student's char-end.
+    # signed_diff[b,i,j] = stu_ends[b,i] - tea_ends[b,j]
+    # We want the j that minimizes signed_diff where signed_diff >= 0
+    signed_diff = stu_ends.unsqueeze(2) - tea_ends_masked.unsqueeze(1)  # (B, T_s, T_t)
+    # Make future teacher positions (negative diff) very large so argmin ignores them
+    signed_diff = signed_diff.masked_fill(signed_diff < 0, 1e9)
+    # Also mask padding teacher positions
+    signed_diff = signed_diff.masked_fill(
+        ~teacher_mask.bool().unsqueeze(1).expand(-1, T_s, -1), 1e9)
+    aligned_idx = signed_diff.argmin(dim=2)  # (B, T_s)
+
+    # Positions where no valid teacher token exists (all diffs are 1e9)
+    valid_mask = signed_diff.min(dim=2).values < 1e8  # (B, T_s)
+    del signed_diff
 
     # Step 2: Extract shared-vocab teacher logits at aligned positions
     t_shared_all = teacher_logits[:, :, shared_t_ids]  # (B, T_t, N_shared)
@@ -1760,10 +1793,14 @@ def compute_cross_tok_logit_kd(
     s_at_topk = s_shared.gather(-1, topk_idx)       # (B, T_s, K)
     del s_shared
 
-    # Step 4: KL(teacher || student) with temperature scaling
+    # Step 4: Per-token KL with temperature, masked for valid positions
     t_probs = F.softmax(topk_vals / temperature, dim=-1)
     s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
-    kl = F.kl_div(s_log_probs, t_probs, reduction="batchmean")
+    # Per-token KL: sum over vocab dim, then average over valid positions
+    per_token_kl = F.kl_div(s_log_probs, t_probs, reduction="none").sum(dim=-1)  # (B, T_s)
+    per_token_kl = per_token_kl * valid_mask.float()  # zero out invalid positions
+    n_valid = valid_mask.float().sum().clamp(min=1.0)
+    kl = per_token_kl.sum() / n_valid  # per-token average
     return temperature * temperature * kl
 
 
@@ -4632,7 +4669,9 @@ def train_kd_phased(config_path):
         step_kd = 0.0
         bad_step = False
         has_kd = len(current_teachers) > 0
-        use_hidden = has_kd
+        needs_hidden = any("state" in t.surfaces or "semantic" in t.surfaces
+                           for t in current_teachers)
+        use_hidden = needs_hidden  # only compute hidden states if rep KD active
 
         for _ in range(grad_accum):
             inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)

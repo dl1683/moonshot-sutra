@@ -27,7 +27,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ### Open Meta-Questions
 
-1. **Is the KD advantage a head-start or a limit change?** Steps 500→1000 show gap narrowing (0.059→0.042). If it converges to 0, KD only accelerates convergence. If it stabilizes, the teacher provides genuinely complementary information. Step 1500+ evals will tell.
+1. **Is the KD advantage a head-start or a limit change?** Gap trajectory: -0.059 (500) → -0.042 (1000) → -0.023 (1500) → **-0.036 (2000)**. The narrowing REVERSED at step 2000 — gap widened from -0.023 to -0.036. This weakens the pure head-start hypothesis. Codex verdict (§6.4.23): "partially approved, not as conclusion — too early to call at ~106M tokens." Await steps 2500/3000 for full picture.
 
 2. **What determines the theoretical MAXIMUM KD benefit?** Rate-distortion theory says the teacher reduces effective source entropy. But HOW MUCH depends on teacher-student mismatch, cross-tokenizer alignment quality, and alpha tuning. We haven't explored alpha at all.
 
