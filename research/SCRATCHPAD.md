@@ -144,10 +144,41 @@ where w_Q, w_L are bucket-derived weights (not learned — discrete routing).
 5. Multi-depth teacher state extraction
 6. Probe: routed vs uniform at equal FLOPs
 
-### Questions for Fundamentals Research
-- Optimal Transport: Is the Wasserstein barycenter the right "committee average" for consensus?
-- Information Geometry: Should bucket thresholds use KL or Fisher-Rao distance?
-- Ensemble Theory: Does the ambiguity decomposition predict when routing helps vs hurts?
+### Questions for Fundamentals Research — ANSWERED (2026-03-26)
+- Optimal Transport: Is the Wasserstein barycenter the right consensus average? → YES, Codex P3. Only if consensus bucket is large enough and simple averaging measurably lossy. +2-10ms via Sinkhorn on 16×16 span matrices.
+- Information Geometry: Should bucket thresholds use Fisher-Rao? → NO, KILLED. Fisher routing needs +15-40 TFLOP/step. Not feasible at our scale. Stick with CKA/cosine.
+- Ensemble Theory: Does ambiguity decomposition predict when routing helps? → YES, this is ambiguity-aware scheduling (Codex P1). Diversity × reliability gates routing decisions.
+
+### Codex-Approved Mechanism Stack (2026-03-26)
+
+**Source:** Codex Architecture Theorist evaluation of 5 fundamentals-derived mechanisms. See RESEARCH.md §7.6.
+
+```
+LAYER 0: 4-Bucket Audit (existing design, every 500 steps)
+  │
+LAYER 1: Ambiguity-Aware Scheduling [PRIORITY 1, ~free]
+  │  Track: pairwise teacher disagreement + rolling bucket win-rate
+  │  Gate:  high-diversity + high-reliability → specialist routing
+  │         high-diversity + low-reliability → consensus-only or skip KD
+  │         low-diversity → single best teacher
+  │
+LAYER 2: GW Routing [PRIORITY 2, +5-80ms/step]
+  │  Only for specialist state-surface decisions
+  │  16×16 span-distance matrices, 10-20 entropic GW iterations
+  │  Stop-grad routing, existing CKA losses unchanged
+  │
+LAYER 3: WB Consensus [PRIORITY 3, +2-10ms/step]
+  │  Only inside consensus bucket
+  │  3-teacher Sinkhorn barycenter over 16 span masses
+  │  Replace simple averaging with geometry-respecting average
+  │
+KILLED: Info-geometric projection routing (+15-40 TFLOP — not feasible)
+DEFERRED: Multi-marginal OT loss (ablation only, after P1-P3 work)
+```
+
+**Implementation order:** After probe confirms signal, implement P1 → measure → P2 → measure → P3 if needed.
+
+**The novelty is the SYSTEM, not the components:** byte-span cross-tokenizer alignment + multi-architecture teachers + surface-specific routing + disagreement-driven adaptive scheduling = a combination that doesn't exist in any published system.
 
 ---
 
