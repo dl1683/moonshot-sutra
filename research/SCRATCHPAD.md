@@ -27,7 +27,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ### Open Meta-Questions
 
-1. **Is the KD advantage a head-start or a limit change?** Gap trajectory: -0.059 (500) → -0.042 (1000) → -0.023 (1500) → -0.036 (2000) → **-0.144 (2500)**. The gap EXPLODED during LR decay phase. Control REGRESSED from 4.8250 to 4.8583 at step 2500, while KD dropped to 4.7142. Control then recovers to 4.5579 at step 3000 (massive decay-phase consolidation). KD step 3000 pending — critical data point. If KD final BPT < 4.5579, head-start hypothesis is dead and KD provides genuine limit change. If KD final ≈ 4.5579, the mid-training divergence was transient WSD interaction.
+1. **Is the KD advantage a head-start or a limit change? ANSWERED: HEAD-START (for rep-KD).** Gap: -0.059 (500) → -0.042 → -0.023 → -0.036 → -0.144 (2500, WSD artifact) → **-0.008 (3000, noise)**. Rep-KD (CKA+semantic) provides transient acceleration only. Control catches up during WSD decay. Still open: does LOGIT KD change this? The surface ablation tests this directly.
 
 2. **What determines the theoretical MAXIMUM KD benefit?** Rate-distortion theory says the teacher reduces effective source entropy. But HOW MUCH depends on teacher-student mismatch, cross-tokenizer alignment quality, and alpha tuning. We haven't explored alpha at all.
 
@@ -80,9 +80,18 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Key: KD loss is NOT saturating.** If KD were pure head-start, we'd expect KD loss to plateau (student fully caught up to teacher). Instead it's still decreasing at step 2650, suggesting the student has more to absorb.
 
-**Prediction for step 3000:** If the KD-amplified-decay hypothesis is correct, KD arm should show a BPT drop proportionally larger than control's (4.8583 → 4.5579 = -0.300). If KD arm drops from 4.7142 by a similar or larger amount, final BPT could be ~4.35-4.45. This would be a definitive win.
+**RESULT (step 3000):** KD BPT = **4.5500**, Control BPT = **4.5579**. Gap = **-0.0079** (essentially a tie).
 
-**Implications for surface ablation:** If representation KD provides this consolidation advantage, logit KD should provide even stronger consolidation — direct distribution supervision during the critical decay phase. The surface ablation's most informative data point will be the step 2500-3000 trajectory, not the final number.
+**Prediction was WRONG.** The KD-amplified-decay hypothesis failed. Control recovered MORE during decay (4.8583→4.5579 = -0.300 drop) than KD (4.7142→4.5500 = -0.164 drop). The step 2500 "explosion" was a transient WSD artifact — the control simply started its decay-consolidation later.
+
+**Revised trajectory interpretation:**
+- Steps 500-1500: gap narrowing (-0.059 → -0.023) = head-start erosion
+- Steps 1500-2500: gap unstable due to WSD schedule interaction
+- Step 3000: gap closed to noise level (-0.008)
+
+**Conclusion: Representation KD (CKA + semantic) provides a transient head-start that vanishes by 3000 steps with WSD schedule.** This is consistent with Codex's earlier assessment ("too early to call") being correct — it wasn't too early, it was the wrong signal.
+
+**Critical implication for surface ablation:** Rep-only KD ≈ control at 3000 steps. If logit KD also converges to control, then KD needs more steps to show sustained benefit. If logit KD shows a PERSISTENT gap at 3000 steps, it provides qualitatively different value (distribution-level vs representation-level supervision). This is exactly what the 4-arm ablation is designed to test.
 
 ---
 
