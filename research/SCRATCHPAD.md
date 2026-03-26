@@ -289,6 +289,7 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
   - **3-phase pattern: penalty → recovery → advantage.** The α=1.0 initial disruption may have forced the student to reorganize its representation space, ultimately finding a BETTER configuration.
   - **Critical question: does advantage survive WSD decay?** Control improved -0.185 during decay. If rep KD's advantage persists through decay, this changes everything.
 - ~~Final 3K: predict convergence to ~control ±0.02 BPT~~ **REVISED: Predict final gap depends on decay behavior. If rep consolidates better during decay, could see -0.05 to -0.10 advantage.**
+- **Theoretical interpretation: Structured disruption → better local optima.** α=1.0 rep KD at extreme ratios acts like a structured regularizer. It disrupts the student's initial representation space (step 500 penalty), forces relearning in the teacher's geometric basin (step 1000 recovery), and converges to a flatter minimum with better generalization (step 1500+ advantage). Lower kurtosis and max_act support the "flatter minimum" hypothesis. Analogous to sharpness-aware minimization but the perturbation direction is INFORMED by teacher geometry rather than random. First probe (α=0.8) was too gentle to force the basin escape — α=1.0 is the critical threshold.
 
 **Arm 3 (logit_only, α=1.0): THE CRITICAL TEST.**
 - Step 500: predict BPT ≤ control (5.02 or below). Logit KD is prediction-aligned, should NOT show penalty.
