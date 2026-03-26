@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 2 architecture refinement (2026-03-26). Round 1 remains below as historical record; the Round 2 addendum at the end supersedes conflicting details.**
+**Status: Round 3 architecture refinement (2026-03-26). Rounds 1-2 remain below as historical record; the Round 3 addendum at the end supersedes conflicting details.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -1585,3 +1585,306 @@ The main Round 2 conclusion is therefore:
 - make data shaping concrete and mandatory
 - stop treating DyT as a default
 - spend the next scout budget on `Muon + Single-Scale RMSNorm + quality filter + MiniPLM` before touching more exotic modules
+
+---
+
+## 10. Round 3 Addendum (2026-03-26)
+
+**Codex T+L session:** `019d28df-dc73-7f61-ae2a-ecb91f2d3d97`
+**Full output:** `results/tl_round3_output.md`
+
+Round 3 incorporates new probe evidence (DyT, TOP, Muon optimizer, MTP, halting) and field research (Falcon-H1, Hymba, NorMuon, MiniPLM). Several Round 2 decisions are **superseded**.
+
+### 10.1 What Round 3 Supersedes From Round 2
+
+| Round 2 Decision | Round 3 Verdict | Reason |
+|---|---|---|
+| Muon as default optimizer | **AdamW is default.** Muon demoted to side probe. | Muon at lr=0.02 lost by +0.10 BPT at 42M with 2.7x larger max activations and periodic instability at steps 2000, 3500-4000. |
+| Inter-layer hybrid (alternating block types) | **Intra-layer parallel hybrid** (attention + conv heads WITHIN each block). | March 2026 evidence: Falcon-H1 and Hymba both use parallel attn+SSM inside every block. Systematic analysis says intra-layer > inter-layer. |
+| 42M as the decision scale | **Two-scale protocol.** 42M = catastrophic screen. 100M = promotion gate. | TOP, MTP, halting all failed at 42M but literature validates them at 200M+. Capacity-threshold effects are real. |
+| Day-1 memory, teacher ports, planning losses | **Brutally simple first scout.** No memory, no teacher ports, no online KD. | Every extra online loss hurt locally. Complexity before base stability = probe failure. |
+| `Muon + SS-RMSNorm + quality filter + MiniPLM` | **AdamW + SS-RMSNorm + quality filter + MiniPLM.** Only optimizer changed. | SS-RMSNorm validated (+0.08 BPT), but Muon did not. |
+
+### 10.2 Assumption Audit
+
+1. **42M is the right probe scale.** Confirmed as FLOOR, not ceiling. Catastrophic failures (DyT +0.75, TOP +4.61 with kurtosis 99.3) stay dead. Mild negatives (Muon +0.10) get one 100M retry. Confidence: 9/10.
+
+2. **All failed auxiliaries are universally dead.** Nuanced: catastrophic 42M failures = dead for scout. Mild negatives = retest at 100M. TOP, classic MTP, and learned halting are dead for scout mainline. Confidence: 8/10.
+
+3. **Inter-layer hybrid is the right hybrid.** **Superseded.** Pivot to intra-layer parallel hybrid. The live inter-layer trunk probe serves only as a lower bound for "does mixing help at all." Confidence: 7/10.
+
+4. **Muon should be the scout optimizer.** **Superseded.** AdamW + SS-RMSNorm is the default. Muon at lower LR (0.01, 0.005) and NorMuon are 100M side probes only. Confidence: 8/10.
+
+5. **Day-1 extras (memory, teachers, planning).** **Deferred.** First scout = data shaping offline, plain NTP online, fixed exits, nothing else. Confidence: 9/10.
+
+### 10.3 HEMD-R3-S Scout Specification
+
+**Name:** HEMD-R3-S (Hybrid Elastic Memory Decoder, Round 3 Scout)
+**NOT Round 2 HEMD.** It is an intra-layer parallel-hybrid decoder with fixed exits and no day-1 extras.
+
+#### Architecture
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Blocks | 14 | Slightly deeper than old 12-block scout, stays near 100M budget |
+| Hidden dim | 768 | Multiples of 64, fits 100M budget |
+| FFN dim | 2048 | ~2.67x hidden dim (SwiGLU) |
+| Tied embeddings | Yes | Parameter savings at this scale |
+| Fixed exits | After blocks 5, 10, 14 | Early/mid/final |
+| Tokenizer | 16K (existing) | Already validated |
+| Context | 512 first, then 1024 | Start short, extend after base loss stable |
+
+#### Parallel Hybrid Block (per block)
+
+```text
+u = g * h / sqrt(mean(h^2) + eps)                    # SS-RMSNorm (pre-norm)
+a = Attn(Wa u)                                        # d_att=256, GQA 4Q/2KV, head_dim=64
+c = ConvOut(DepthwiseConv1D(Wv u) * sigmoid(Wg u))   # d_conv=512, kernel=64
+r = h + Wmix[a ; c]                                   # concat then project
+n = g' * r / sqrt(mean(r^2) + eps)                    # SS-RMSNorm (post-norm)
+h_next = r + Wdown(silu(Wgate n) * Wup n)            # SwiGLU FFN
+```
+
+Keeps the Falcon-H1/Hymba principle but uses causal depthwise conv1d instead of Mamba for implementation realism (GatedConv code already exists in repo).
+
+#### Number System
+
+| Choice | Value |
+|---|---|
+| Activations | Real-valued (no complex, no hyperbolic) |
+| FFN | SwiGLU |
+| Norm | SS-RMSNorm everywhere |
+| Training precision | BF16 |
+| Optimizer states | FP32 |
+| **Excluded** | Complex states, hyperbolic geometry, DyT |
+
+#### Optimizer
+
+| Parameter | Value |
+|---|---|
+| Optimizer | AdamW |
+| LR | 3e-4 |
+| Betas | (0.9, 0.95) |
+| Weight decay | 0.1 |
+| Schedule | WSD (warmup-stable-decay) |
+| Warmup | 200 steps |
+| Min LR | 1e-5 |
+| Gradient clip | 1.0 |
+| **Side probes (not default)** | Muon lr=0.01, Muon lr=0.005, NorMuon |
+
+#### Loss
+
+```
+L = CE_14 + 0.2 * CE_5 + 0.35 * CE_10
+```
+
+No TOP, no MTP, no learned halting, no memory, no online KD in the first scout. Self-distillation only as a follow-up if exit quality is weak.
+
+#### Data Pipeline
+
+| Stage | Description |
+|---|---|
+| 0A: Quality filter | Drop bottom 10% of shards (spot-checked), half-weight next 20% |
+| 0B: MiniPLM | Qwen3-1.7B teacher, Qwen3-0.6B reference, score raw text windows, feed weights into shard-weight path |
+| **Excluded day-1** | Online teacher losses, multi-source learning |
+
+Multi-source learning enters only AFTER plain scout is positive. First extension: one decoder teacher + one semantic embedding teacher, one family per batch.
+
+### 10.4 Probe Scale Policy
+
+```
+42M / 5K steps  →  catastrophic screen (kills obviously bad ideas)
+100M / 5-10K steps  →  promotion gate (validates capacity-sensitive mechanisms)
+```
+
+- Catastrophic 42M failures (TOP, DyT) stay dead permanently.
+- Mild 42M negatives (Muon) get exactly one 100M retry.
+- Capacity-sensitive mechanisms (MTP, halting) wait for 100M scale.
+
+### 10.5 Remaining Probes (ordered by priority)
+
+1. **Finish live trunk-choice probe** (running on GPU): pure transformer vs pure conv vs inter-layer hybrid at 42M. Does NOT decide final hybrid style — only tells us whether non-attention mixing helps at all.
+
+2. **100M intra-layer parallel hybrid vs pure transformer** (next GPU job): Same tokenizer, AdamW, SS-RMSNorm, plain NTP, fixed exits, no memory, no TOP, no KD. THE architectural decision probe.
+
+3. **100M optimizer probe**: AdamW+SS-RMSNorm vs Muon lr=0.01 vs Muon lr=0.005. Promote Muon only if it beats AdamW at final BPT AND keeps max activation under 2x the AdamW baseline.
+
+4. **100M data-shaping probe**: raw data vs quality filter only vs MiniPLM only vs quality filter + MiniPLM. The real O4 gate.
+
+5. **Multi-source probe** (only after plain scout is healthy): pooled-state alignment to one decoder teacher + one embedding teacher, one family per batch.
+
+6. **Quantized exit fidelity probe** (from Round 2, still needed for O5).
+
+### 10.6 Per-Outcome Confidence After Round 3
+
+| Outcome | R2 | R3 | Δ | Key Evidence |
+|---|---|---|---|---|
+| O1: Intelligence | 4 | 4 | = | Simplified recipe (SS-RMSNorm validated, TOP/Muon rejected), but no integrated scout win yet. |
+| O2: Improvability | 6 | 6 | = | Architecture still exposes named modules, but no module-isolation proof. |
+| O3: Democratization | 5 | 5 | = | Modular ports + swappable blocks, still architectural intent. |
+| O4: Data Efficiency | 3 | 3 | = | MiniPLM + quality filtering concrete but unvalidated locally. |
+| O5: Inference Efficiency | 6 | 5 | -1 | TOP killed at 42M, halting negative, Muon not quantization-friendly. Fixed exits are the only live O5 path. |
+
+### 10.7 What Would Change Confidence
+
+**Raise:**
+- O1: 100M scout beats best 42M control by ≥0.25 BPT on same eval cache.
+- O2: Module-local change improves behavior without retraining trunk.
+- O3: Contributor-style extension (new teacher port or block family) works.
+- O4: Quality filter + MiniPLM wins at equal compute.
+- O5: Fixed exits stay well-ordered after PTQ with real latency savings.
+
+**Lower:**
+- O1: 100M scout still can't beat plain transformer control.
+- O2: Every improvement requires touching the whole model.
+- O4: MiniPLM and quality filtering are neutral or negative locally.
+- O5: Fixed exits don't calibrate well after training.
+
+### 10.8 Remaining Gaps to Reach ≥9/10
+
+Round 3 clarified the recipe but did not yet produce wins. The gaps remain structural:
+
+- **O1 gap:** No scout beats a dense baseline. Closes when 100M HEMD-R3-S scout beats 42M control by ≥0.25 BPT.
+- **O2 gap:** No module isolation proof. Closes after scout exists and one module is changed successfully.
+- **O3 gap:** No operational ecosystem test. Closes with one contributor-style extension.
+- **O4 gap:** MiniPLM + quality filter unvalidated locally. Closes with 100M data-shaping probe.
+- **O5 gap:** Only fixed exits remain as live path. Closes with quantized exit fidelity probe.
+
+### 10.9 Round 3 Design Intuitions (High Conviction)
+
+1. **Data > losses.** The scout should get most early gains from better data, not clever losses. Every extra online loss has hurt locally; quality filtering and MiniPLM are low-risk and scale well.
+
+2. **Muon's failure is LR/horizon, not conceptual.** It wins hard early, then destabilizes late. NorMuon or lower-LR Muon may fix this at 100M.
+
+3. **Intra-layer hybrid is the right pivot,** but GatedConv is the right first SSM surrogate because it already exists in the repo.
+
+4. **Stop asking the scout to solve O4 and O5 with the same mechanism.** TOP, MTP, and halting all tried to do both and all failed. Keep O4 offline first, O5 as fixed exits first.
+
+---
+
+## 11. Round 4 Addendum (2026-03-26)
+
+**Full output:** `results/tl_round4_output.md`
+
+Round 4 incorporates new evidence: trunk-choice probe V3 (hybrid wins by 0.19 BPT), plus detailed characterization of Falcon-H1, Hymba, NorMuon, MiniPLM, and depth-vs-width tradeoffs.
+
+### 11.1 What Round 4 Supersedes From Round 3
+
+| Round 3 Decision | Round 4 Verdict | Reason |
+|---|---|---|
+| 14 blocks × dim=768 | **18 blocks × dim=640** | Both Falcon-H1 and Hymba prefer depth. 18×640 is balanced; 14×768 too shallow for hybrids. |
+| d_conv=512, kernel=64 | **d_conv=384, kernel=8** | Pure k=64 conv lost by +0.70 BPT. Falcon-H1's d_conv=4 shows short kernels work in successful hybrids. k=8 is the Mamba-2 surrogate. |
+| 1:2 attention:conv split (256:512) | **2:3 attention:conv split (256:384)** | Pure conv's large loss shifts ratio toward more attention. 2:3 is a moderate correction. |
+| Unspecified fusion method | **Concat-then-project with branch scales** | Mean (Hymba) is simpler but branch widths are asymmetric. Learned fusion is safer. Branch scales: s_a=1.0, s_c≈sqrt(d_a/d_c)=0.816. |
+| No muP-style scaling | **Weak muP-inspired branch scales** | Not Falcon-H1's exact constants, but width-based initialization help for branch balance. |
+| Muon lr=0.005 as optimizer arm | **NorMuon replaces Muon lr=0.005** | NorMuon directly addresses the observed per-neuron max_act spike. More informative than a second LR point. |
+| FFN dim 2048 | **FFN dim 1792** | Adjusted for dim=640 (~2.8x ratio, SwiGLU-appropriate). |
+| Exit layers 5/10/14 | **Exit layers 6/12/18** | Adjusted for 18 blocks (early/mid/final). |
+
+### 11.2 HEMD-R4-S Scout Specification
+
+**Name:** HEMD-R4-S (Hybrid Elastic Memory Decoder, Round 4 Scout)
+**Supersedes HEMD-R3-S.**
+
+#### Architecture
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Blocks | 18 | Deeper than R3's 14. Hybrid literature prefers depth. |
+| Hidden dim | 640 | Balanced with 18 blocks for ~101M params. |
+| FFN dim | 1792 | ~2.8x hidden (SwiGLU) |
+| Tied embeddings | Yes | Parameter savings at this scale |
+| Fixed exits | After blocks 6, 12, 18 | Early/mid/final |
+| Tokenizer | 16K (existing) | Already validated |
+| Context | 512 first, then 1024 | Activation checkpointing for 1024 |
+
+#### Parallel Hybrid Block (per block)
+
+```text
+u = SSNorm(h_l)
+a = Attn_l(u; d_att=256, 4 heads, GQA 4Q/2KV, head_dim=64)
+c = W_o^c( DWConv_k(W_v^c u, k=8) ⊙ sigmoid(W_g^c u) )   with d_conv=384
+m = W_mix [ s_a a ; s_c c ]                               with s_a=1.0, s_c≈sqrt(256/384)=0.816 init
+r = h_l + m
+v = SSNorm(r)
+h_{l+1} = r + W_down( SiLU(W_gate v) ⊙ W_up v )
+```
+
+Key design choices:
+- **Concat-then-project** fusion (not mean, not head-interleaved)
+- **Branch scales** as muP-inspired init: s_a=1.0, s_c=sqrt(d_a/d_c) to balance gradient flow
+- **Short kernel k=8** (Mamba-2 surrogate, not Hyena-style k=64)
+- **GQA 4Q/2KV** for KV-cache efficiency at inference
+
+#### Parameter Breakdown (~101.1M)
+
+| Component | Params |
+|---|---|
+| Embeddings/head (tied) | ~10.24M |
+| FFN (18 blocks × SwiGLU) | ~61.93M |
+| Attention branch | ~10.03M |
+| Conv branch | ~11.56M |
+| Fusion projections (W_mix) | ~7.37M |
+| Norms/exits | negligible |
+| **Total** | **~101.1M** |
+
+#### Init
+
+- All linear weights: std=0.02
+- Residual-output projections (W_mix, W_down): std = 0.02 / sqrt(2L) where L=18
+- Branch scales: s_a=1.0, s_c=sqrt(256/384) ≈ 0.816
+
+#### Optimizer (unchanged from R3 except NorMuon replaces Muon lr=0.005)
+
+| Parameter | Value |
+|---|---|
+| Default optimizer | AdamW |
+| LR | 3e-4 |
+| Betas | (0.9, 0.95) |
+| Weight decay | 0.1 |
+| Schedule | WSD (warmup-stable-decay) |
+| Warmup | 200 steps |
+| Min LR | 1e-5 |
+| Gradient clip | 1.0 |
+| **Side probes** | Muon lr=0.01, NorMuon (β₁=0.95, β₂=0.95) |
+
+#### Loss
+
+```
+L = CE_18 + 0.35 * CE_12 + 0.2 * CE_6
+```
+
+#### VRAM Budget
+
+- seq=512, microbatch=16, grad_accum=2: ~12-14GB
+- seq=1024: ~18-20GB (requires activation checkpointing)
+
+### 11.3 Updated Probe Queue (Round 4)
+
+1. **42M intra-layer microprobe** (running): k=64+mean, k=4+mean. Then: k=8+concat+scales, k=4+concat+scales, k=8+mean.
+2. **100M promotion gate**: pure transformer vs best intra-layer parallel hybrid (HEMD-R4-S). THE architectural decision.
+3. **100M optimizer probe**: AdamW vs Muon lr=0.01 vs NorMuon.
+4. **MiniPLM 1% pilot**: Qwen3-1.7B teacher / Qwen3-0.6B reference. Check score variance. Train ~100M reference if distribution too flat.
+5. **100M data-shaping probe**: raw vs filter vs MiniPLM vs both.
+6. **Multi-source probe** (deferred until plain scout positive).
+7. **Quantized exit fidelity probe** (O5 bottleneck).
+
+### 11.4 Per-Outcome Confidence After Round 4
+
+| Outcome | R3 | R4 | Δ | Key Evidence |
+|---|---|---|---|---|
+| O1: Intelligence | 4 | 4 | = | V3 hybrid wins by 0.19 BPT (encouraging), but no 100M intra-layer win yet. |
+| O2: Improvability | 6 | 6 | = | Named branches still support diagnosis; no module-isolation proof yet. |
+| O3: Democratization | 5 | 5 | = | Modular story still architectural intent. |
+| O4: Data Efficiency | 3 | 3 | = | MiniPLM/filtering concrete but unvalidated locally. Reference model choice unresolved. |
+| O5: Inference Efficiency | 5 | 5 | = | Fixed exits only live path. No PTQ or calibrated-exit evidence. |
+
+### 11.5 Round 4 Design Intuitions
+
+1. **Data shaping will beat new online losses again.** Every local auxiliary has hurt. Filtering and MiniPLM are low-risk external levers. High conviction.
+
+2. **Short-k conv + slightly larger attention share will beat R3's k=64, 1:2 assumption.** Pure long-k conv lost badly, but conv-heavy hybrid mixing is still promising with the right kernel. Medium-high conviction.
+
+3. **NorMuon is more likely than low-LR Muon to preserve Muon's early speed without late spikes.** Its row-wise normalization directly matches the observed max_act failure mode. Medium conviction.
+
+4. **The first O4 win will be offline corpus reshaping + alternating teacher families, not simultaneous multi-teacher online loss.** Local evidence punishes online complexity; purification literature says naive mixing hurts. High conviction.

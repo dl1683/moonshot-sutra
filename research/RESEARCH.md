@@ -1732,3 +1732,90 @@ This addendum records the specific evidence that drove the Round 2 architecture 
 - **MiniPLM confirmed at ICLR 2025. Open source: https://github.com/thu-coai/MiniPLM**
   - Benefit MORE pronounced at 500M and 1.2B than at 200M.
   - "Down-samples common patterns, filters noisy signals, avoids wasting compute on easy knowledge."
+
+### Round 4 Research (2026-03-26)
+
+- **Trunk-choice probe COMPLETE: hybrid WINS over pure transformer!**
+  - V1 pure_transformer (12A, 49.1M): BPT=4.9131.
+  - V2 pure_conv (12H, 46.3M): BPT=5.6147 — loses by +0.70 BPT.
+  - **V3 hybrid_3to1 (3A+9H, 47.0M): BPT=4.7218 — WINS by 0.19 BPT over pure transformer!**
+  - V3 also has better activation health: kurtosis_max=1.03 (vs 1.11), max_act=19.2 (vs 23.9).
+  - Hybrid wins with FEWER params (47M vs 49M).
+  - Inter-layer mixing helps: conv provides long-range receptive field, attention provides exact retrieval.
+  - Intra-layer parallel (every block has both) should be even stronger.
+
+- **NorMuon algorithm fully characterized (arxiv:2510.05491).**
+  - After Muon's Newton-Schulz orthogonalization, computes per-neuron (row-wise) second-order momentum: `v_t = β₂v_{t-1} + (1-β₂)mean_cols(O_t ⊙ O_t)`.
+  - Normalizes each row: `Õ_t = O_t / √(v_t + ε)`.
+  - Memory overhead: only m extra scalars per m×n weight matrix.
+  - Hypers: β₁=0.95, β₂=0.95, lr=3.6e-4 (124M), lr=7.5e-4 (350M).
+  - Small-scale results: 6% gain at 124M, 15% at 350M, 11.31% at 1.1B.
+  - Directly addresses our Muon instability: per-neuron normalization would prevent the max_act=59.6 spike.
+
+- **Falcon-H1 0.5B exact config obtained from HuggingFace.**
+  - 36 layers, dim=1024, 8 attn heads, 24 mamba heads, head_dim=64, FFN=2048.
+  - Mamba-2 with d_conv=4 (tiny!), d_state=128, d_ssm=1536.
+  - 1:3 attention:SSM ratio.
+  - μP-style multipliers: attention_out=0.9375, ssm_out=0.2357, ssm_in=1.25.
+  - Does NOT tie embeddings. vocab_size=32784.
+
+- **Hymba 1.5B architecture details.**
+  - 32 layers, dim=1600, 25 attention heads.
+  - 5:1 SSM:attention PARAMETER ratio.
+  - Combination: parallel paths → mean → output projection (NOT concat).
+  - 128 meta tokens (learnable cache initialization, acts as attention drain backstop).
+  - Cross-layer KV sharing between every 2 consecutive layers.
+  - Only 3 full-attention layers (first, middle, last) — rest use sliding window.
+
+- **Knowledge Purification (Jin et al., Feb 2026): fine-tuning only, NOT pretraining.**
+  - 5 methods: GPT-4 aggregation, Plackett-Luce ranking, PLM classifier, similarity router, RL selection.
+  - Best: similarity router and RL selection (+5% over naive multi-teacher).
+  - Key finding: more teachers WITHOUT purification HURTS performance.
+  - Tested on 77M, 248M, 783M students. NOT applicable to pretraining stage.
+  - No pretraining-specific multi-teacher purification exists in literature.
+
+- **MiniPLM practical details fully characterized.**
+  - Difference Sampling formula: `r(x) = log p_teacher(x) / log p_ref(x)`.
+  - Reference model: 104M trained on 5B tokens (SMALLER than all students).
+  - Works CROSS-FAMILY: Qwen teacher/ref → Llama and Mamba students.
+  - All data scored UPFRONT (no incremental option). Top-50% selected.
+  - 200M student: 41.3% vs 39.9% baseline (+1.4% average accuracy).
+  - Our corpus (22.9B tokens) is feasible to score in ~1-2 hours on RTX 5090.
+
+- **Design tension identified: depth vs width at 100M.**
+  - Falcon-H1-0.5B: 36 layers × dim=1024 = 0.5B params.
+  - Our Round 3 spec: 14 blocks × dim=768 = ~100M params.
+  - Scaling down: 14 blocks at dim=768 may be too shallow for the hybrid paradigm.
+  - Alternative: 24 blocks × dim=512 = ~100M params but much deeper.
+  - Falcon-H1 and Hymba both prefer DEPTH over WIDTH for hybrids.
+  - HuggingFace study at 70M: 32 layers w/ hidden=384 beats 12 layers w/ hidden=512 (+0.35% avg). But transformer-only, not validated for hybrids.
+
+- **Mamba-3 (ICLR 2026, Together AI): Removes causal conv, adds complex states.**
+  - Eliminates the short causal convolution that Mamba-1/2 relied on.
+  - Exponential-trapezoidal discretization induces implicit conv-like behavior.
+  - Complex-valued state updates for richer state tracking (solves parity that Mamba-2 cannot).
+  - MIMO formulation: 4x decode FLOPs at fixed state size, better hardware utilization.
+  - 180M results: Mamba-3 MIMO ppl=16.46 vs SISO ppl=16.59 on FineWeb-Edu.
+  - Compatible with hybrid: 5:1 SSM:attention ratio tested.
+  - Requires custom Triton kernels. Implementation complexity: HIGH.
+  - Implication: conv branch could evolve toward Mamba-3 style recurrence later. Start with simpler GatedConv for scout.
+
+### T+L Round 4 Architectural Decisions (2026-03-26)
+
+**Key design pivots from Round 3 → Round 4:**
+
+1. **Depth/width: 14×768 → 18×640.** Hybrid literature uniformly prefers depth. 18×640 is balanced — not as extreme as 24×512 (attention subspace too narrow) but significantly deeper than R3's 14 blocks.
+
+2. **Conv kernel: k=64 → k=8.** Pure k=64 conv lost by +0.70 BPT at 42M. Falcon-H1 uses d_conv=4. Short kernels serve as local helpers; attention handles long-range. k=8 is the Mamba-2 surrogate for our depthwise conv.
+
+3. **Fusion: unspecified → concat-then-project with branch scales.** Hymba uses mean, Falcon-H1 uses head-interleaving. Codex chooses concat-then-project because branches have asymmetric widths (256 vs 384) — learned fusion adapts better. Branch scales (s_a=1.0, s_c=sqrt(d_a/d_c)) as muP-inspired init.
+
+4. **Attention:conv ratio: 1:2 → 2:3 (256:384).** Pure conv's large loss shifts the ratio toward attention. 2:3 is conservative — still conv-majority but less extreme.
+
+5. **NorMuon replaces Muon lr=0.005 in optimizer probe.** Per-neuron normalization directly addresses the max_act=59.6 spike pattern we observed. More informative than a second LR point.
+
+6. **GQA 4Q/2KV heads.** KV-cache efficiency at inference. 4 query heads, 2 KV heads sharing, head_dim=64.
+
+7. **MiniPLM reference: pilot with Qwen3-0.6B, train 100M ref if distribution too flat.** Paper's ~100M reference is optimal, but Qwen3-0.6B is expedient for initial score variance check.
+
+**Confidence unchanged at 4/6/5/3/5 across 5 outcomes.** Key blocker: no 100M intra-layer win yet. All probes have validated components (SS-RMSNorm, hybrid mixing, fixed exits) but the integrated design is untested.
