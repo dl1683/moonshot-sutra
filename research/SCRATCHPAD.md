@@ -48,7 +48,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ## KD Training Dynamics Analysis: WSD × KD Interaction (2026-03-26)
 
-**Status: IN PROGRESS — awaiting arm 2 step 3000 for final data**
+**Status: COMPLETE — rep KD = head-start only, gap converged to -0.008 at step 3000**
 
 ### Observed Pattern: KD amplifies LR decay consolidation
 
@@ -59,7 +59,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 | 1500 | 4.8725 | 4.8493 | -0.023 | Stable |
 | 2000 | 4.8250 | 4.7888 | -0.036 | Stable |
 | 2500 | 4.8583 | 4.7142 | **-0.144** | Decay (2.52e-4) |
-| 3000 | 4.5579 | ??? | ??? | Decay (1e-5) |
+| 3000 | 4.5579 | 4.5500 | **-0.008** | Decay (1e-5) |
 
 **Three-phase interpretation:**
 1. **Steps 500-1500 (stable LR, gap narrowing):** Initial KD head-start erodes. Control catches up on NTP alone. Consistent with head-start hypothesis.
@@ -92,6 +92,45 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 **Conclusion: Representation KD (CKA + semantic) provides a transient head-start that vanishes by 3000 steps with WSD schedule.** This is consistent with Codex's earlier assessment ("too early to call") being correct — it wasn't too early, it was the wrong signal.
 
 **Critical implication for surface ablation:** Rep-only KD ≈ control at 3000 steps. If logit KD also converges to control, then KD needs more steps to show sustained benefit. If logit KD shows a PERSISTENT gap at 3000 steps, it provides qualitatively different value (distribution-level vs representation-level supervision). This is exactly what the 4-arm ablation is designed to test.
+
+---
+
+## Theoretical Analysis: Why Logit KD Should Differ from Rep KD (2026-03-26)
+
+**Status: HYPOTHESIS — awaiting ablation results for validation/falsification**
+
+### The Saturation Argument
+
+Rep KD (CKA + relational Gram) supervises STRUCTURAL similarity of internal representations. Two distinct failure modes:
+
+1. **CKA saturates before functional convergence.** CKA measures kernel alignment between student and teacher hidden states. It is possible for CKA loss to be low (representations look structurally similar) while the student's output quality remains far from the teacher's. CKA convergence ≠ functional convergence. This explains the head-start pattern: CKA loss drops fast (0.032→0.015 in first 2500 steps), representations get structurally aligned, but the student still needs to learn HOW TO USE those representations through NTP.
+
+2. **Relational Gram is a low-rank signal.** The Gram matrix captures pairwise similarities within a sequence. For 512 tokens, this is a 512×512 matrix — but the information content is bounded by the rank of the teacher's hidden states (typically much less than 512). The relational signal is relatively low-dimensional.
+
+In contrast, logit KD supervises the student's OUTPUT DISTRIBUTION to match the teacher's predictions. This is a FUNCTIONAL supervision signal — it doesn't care about representation structure, only about prediction quality.
+
+### Why Logit KD Should Be Harder to Saturate
+
+1. **Output KL is a tighter bound.** KL(teacher || student) on output distributions directly measures the gap between student and teacher predictions. The student cannot "look aligned" while being functionally different — the loss explicitly measures functional distance.
+
+2. **Dark knowledge signal is per-token and high-dimensional.** For each token, the teacher provides a full probability distribution over K=64 tokens (after top-k filtering). This encodes nuanced information: "token A is likely (p=0.3), token B is half as likely (p=0.15), tokens C-F are plausible alternatives (p=0.05 each)." The student gets 64 bits of gradient information per token position, per batch.
+
+3. **The signal refreshes with new data.** Unlike CKA (which can saturate when representations are structurally aligned regardless of the specific batch), logit KD provides unique supervision for each new batch because the teacher's output distribution depends on the specific input sequence.
+
+### Prediction: Logit KD Pattern
+
+If logit KD is qualitatively different from rep KD, we should see:
+- Initial gap similar to rep KD or possibly smaller (logit KD is noisier due to cross-tokenizer alignment)
+- Gap WIDENS or STAYS CONSTANT during stable LR phase (unlike rep KD which narrowed)
+- Gap persists through WSD decay (control doesn't catch up like it did with rep KD)
+
+**Kill condition for logit KD:** If logit-only arm converges to within 0.02 BPT of control by step 3000, logit KD is ALSO head-start-only at this scale. Would require longer training to be useful.
+
+### Cross-Tokenizer Signal Loss
+
+Our logit KD uses only N_shared ≈ 14,822 tokens out of student's 16K vocabulary and teacher's 152K vocabulary. This is ~92.6% of student vocab but only ~9.7% of teacher vocab. We're only seeing the teacher's opinion on tokens the student knows — which is most of the student's world but a tiny fraction of the teacher's world.
+
+**Implication:** The cross-tokenizer alignment may attenuate the logit KD signal. If the teacher's dark knowledge is concentrated on rare tokens (which are less likely to be in shared vocabulary), we lose high-value signal. This is testable: compare logit KD loss magnitude across positions — if some positions have very few valid shared tokens, the signal quality drops there.
 
 ---
 
