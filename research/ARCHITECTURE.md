@@ -58,7 +58,7 @@ Both architectures produce identical near-random benchmarks at 5K steps, confirm
 
 ## RMFD: Routed Multi-Family Distillation System (Round 8 Design)
 
-Full design in `results/tl_round8_output.md`. Key elements:
+Key elements (from Codex R8 design, ingested into RESEARCH.md §6.4.21):
 
 ### 4 Distillation Surfaces
 1. **Token surface:** final logits at depth 24 — for decoder-like teachers

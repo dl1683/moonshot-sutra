@@ -2220,6 +2220,23 @@ The DiverseDistill framework handles heterogeneous teacher committees by dynamic
 
 **Sutra relevance:** Static rotation (the failed 2Q system) vs dynamic routing (this) — the difference is learning WHEN each teacher is most useful, not just cycling through them. Critical for our multi-family setup where different teachers excel at different content types.
 
+### 6.4.19b Knowledge Purification in Multi-Teacher KD (2026)
+
+**Source:** arxiv.org/abs/2602.01064, "Exploring Knowledge Purification in Multi-Teacher Knowledge Distillation for LLMs"
+
+**Core finding: Routing to a single best teacher per sample beats combining all teachers.** Teacher conflicts (hallucinations, inconsistent reasoning, expertise mismatches) are the #1 failure mode of multi-teacher KD.
+
+5 purification methods tested:
+1. **Knowledge Aggregation** — GPT-4 synthesizes all rationales into one (expensive, offline)
+2. **Plackett-Luce Ranking** — probabilistic ranking by historical teacher performance (no training)
+3. **PLM Classifier** — MLP predicts routing probabilities per sample (lightweight)
+4. **Similarity-based Router** — contrastive learning on embeddings, cosine routing (BEST overall)
+5. **RL-based Teacher Selection** — policy network learns optimal teacher per question type
+
+**Key result:** Similarity-based router achieves highest Conflict Mitigation Value (CMV) across all student sizes. Routing (select one teacher) consistently beats combining (average all teachers). The mechanism: routing eliminates exposure to conflicting signals rather than trying to harmonize them.
+
+**Sutra relevance:** Directly validates our 4-bucket routing MVP. Our approach routes samples to Specialist-Q, Specialist-L, or Consensus based on per-sample disagreement metrics — this IS similarity-based routing. Key difference from this paper: their routing is question→teacher similarity, ours is disagreement + student-gap based. Ours is arguably more principled because it accounts for the student's current knowledge state.
+
 ### 6.4.20 Hybrid Scheduling Theoretical Foundations (2026)
 
 **Source:** results/research_hybrid_scheduling.md (background research agent, March 2026)
@@ -2354,3 +2371,64 @@ From combining the three fundamental domains, several novel mechanisms emerge th
 5. **Multi-marginal transport loss**: Replace the sum of pairwise KD losses with a multi-marginal OT loss that finds the joint-optimal transport from all teachers to student simultaneously. Captures cross-teacher dependencies that pairwise losses miss.
 
 **Status:** These are DERIVED mechanisms from fundamentals. NOT yet validated. Requires Codex evaluation for feasibility at our scale (90M student, M=16 spans, 3 teachers) before any implementation.
+
+#### 7.5 Rate-Distortion Theory & Information Bottleneck — The Fundamental Limits of Knowledge Compression
+
+**Core idea:** Rate-distortion theory (Shannon 1959) defines the minimum bit-rate R(D) needed to encode a source with distortion ≤ D. The information bottleneck (Tishby 1999) applies this to representation learning: find compressed T minimizing I(T;X) while maximizing I(T;Y).
+
+**Key structures:**
+
+1. **Rate-distortion function R(D)**: For source X and distortion d, R(D) = min_{p(t|x): E[d(x,t)]≤D} I(X;T). Monotonically decreasing — more distortion tolerance = lower rate needed. Convex. Parametric solution via Lagrange multiplier β: p(t|x) ∝ p(t)·exp(-β·d(x,t)).
+
+2. **Information bottleneck (IB)**: min I(T;X) - β·I(T;Y). When β→0, maximum compression (discard everything). When β→∞, preserve all relevant information. The IB curve traces optimal compression-relevance tradeoffs.
+
+3. **Successive refinement (Equitz-Cover 1991)**: Two-stage lossy encoding — coarse description first, then refinement. A source is "successively refinable" if two-stage encoding achieves the same R(D) as single-stage at each rate point. Gaussian sources are successively refinable for MSE distortion. Log-loss (cross-entropy) is universally successively refinable (Kostina-Verdú 2020).
+
+4. **Multiple description coding**: N parallel descriptions (encoders) of the same source. Decoder receives any subset and must reconstruct. The rate-distortion region characterizes achievable rate-tuples for given distortion constraints. Diversity between descriptions is the key resource.
+
+5. **Wyner-Ziv coding (source coding with side information)**: Compress X knowing decoder has correlated side information Y. The rate needed drops: R_WZ(D) ≤ R(D). The reduction depends on I(X;Y) — more informative side information = more compression.
+
+**Derived connections to KD (our analysis):**
+
+- **The student IS a rate-distortion system.** Student capacity = rate R, prediction error = distortion D. There exists a fundamental R(D) below which the student CANNOT achieve distortion D regardless of training. KD changes the effective source — instead of compressing raw text (high entropy), the student compresses the teacher's cleaned-up representation (lower entropy, lower R(D)).
+
+- **KD as Wyner-Ziv coding.** The teacher's output is "side information" available at the decoder (student). This reduces the rate needed: the student needs fewer parameters to achieve the same BPT because the teacher's signal reduces the effective source entropy. This is the information-theoretic justification for why KD works with smaller students.
+
+- **Phased RMFD IS successive refinement.** Our 4-phase approach (CE-only → single teacher → committee → consolidation) is a successive refinement code. Phase 1 = coarse description (CE). Phase 2 = first refinement (single teacher). Phase 3 = second refinement (committee adds diversity). The fundamental theorem: this is optimal IF teacher knowledge is successively refinable — and cross-entropy loss IS universally successively refinable (Kostina-Verdú 2020), providing theoretical justification for our phased design.
+
+- **Multi-teacher KD IS multiple description coding.** Each teacher is a "description" of the ground truth from a different perspective. The student (decoder) receives all descriptions. The rate-distortion region predicts: multiple descriptions outperform single descriptions IFF descriptions are diverse AND decoder has capacity. This predicts our routing outcome — cross-architecture teachers (transformer, SSM, encoder) provide diverse descriptions, but the student needs sufficient capacity to combine them.
+
+- **Optimal teacher selection = maximize complementary MI.** For each sample, the "right" teacher maximizes I(T_teacher; Y | T_student) — the mutual information between teacher and target CONDITIONAL on what the student already knows. This is more principled than minimizing raw loss (which favors teachers that repeat what the student can already predict).
+
+- **Capacity saturation predicts routing kill point.** When the student's rate R reaches the fundamental R(D) limit, no additional teacher information helps — the bottleneck is student capacity, not teacher signal. This predicts WHEN to stop adding teachers and start increasing student capacity instead.
+
+#### 7.6 Codex Architecture Theorist Evaluation: Fundamentals-Derived Mechanisms (2026-03-26)
+
+**Source:** Codex GPT-o4-mini-high, Architecture Theorist persona, evaluating §7.4 novel mechanisms.
+
+**Compute context:** Student training ~13.8 TFLOPs/step, current KD ~3.6 GFLOPs/step, step time ~4-6s with 3 online teachers. Any mechanism on 16×16 span geometry is cheap; anything needing Fisher/Jacobian is not.
+
+**Verdicts:**
+
+1. **Ambiguity-aware scheduling** — PRIORITY 1 (implement now). ~Free overhead (<0.05 GFLOP, <5ms). Distinguishes useful disagreement from toxic disagreement. Upgrades static 4-bucket heuristic to adaptive policy: high-diversity + high-reliability → specialist routing, high-diversity + low-reliability → consensus-only or skip KD, low-diversity → single best teacher.
+
+2. **Gromov-Wasserstein routing** — PRIORITY 2. +0.2-0.5 GFLOP, +5-80ms. Real structural coupling on 16×16 span-distance matrices vs CKA scalar. 10-20 entropic GW iterations, use lowest-GW teacher for specialist state-surface routing. Keep existing CKA/cosine losses unchanged.
+
+3. **Wasserstein barycenter consensus** — PRIORITY 3. <0.1 GFLOP, +2-10ms. Only inside consensus bucket. 3-teacher Sinkhorn barycenter over 16 span masses. Geometry-respecting average vs plain averaging which blurs incompatible supports. Only if consensus bucket is large enough and simple averaging is measurably lossy.
+
+4. **Multi-marginal OT loss** — PRIORITY 4 (ablation only). +1-3 GFLOP, +20-100ms. Span-level only (16^4 = 65K entries manageable). Do NOT replace main KD objective. Only revisit after 1-3 work.
+
+5. **Info-geometric projection routing** — KILL. +15-40 TFLOPs/step (1-3 extra backward passes), +2-6GB. Not feasible at our scale. Only a degraded proxy is implementable, and that's just a heuristic weighting rule.
+
+**Novelty assessment:** Individual mechanisms (OT, barycenters, adaptive weighting) are NOT novel in isolation. They exist in prior art. The novelty is in the **byte-span, cross-family, routed system design** — the integration of cross-tokenizer alignment via byte spans, multi-architecture teachers with surface-specific routing, and disagreement-driven adaptive scheduling. This combination doesn't exist in any published system.
+
+**Recommended system architecture:**
+```
+4-Bucket Audit (existing)
+  → Ambiguity-Aware Scheduling (controller, PRIORITY 1)
+    → GW routing (specialist state-surface only, PRIORITY 2)
+    → WB consensus (consensus bucket only, PRIORITY 3)
+    → Semantic anchor (EmbeddingGemma, fixed weight, unchanged)
+```
+
+**Implementation order:** (1) Ambiguity-aware scheduling on top of 4 buckets → must beat static multi_3family at equal teacher FLOPs. (2) GW routing for specialist state-surface with stop-grad routing. (3) WB consensus only if bucket is large enough and simple averaging is measurably lossy. (4) Defer Fisher routing. (5) Kill full MMOT as mainline.
