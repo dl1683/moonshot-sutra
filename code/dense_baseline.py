@@ -1387,9 +1387,21 @@ def get_lr_wsd(step, warmup, max_steps, lr, min_lr):
     return lr - progress * (lr - min_lr)
 
 
-# ---- Exit loss weights (R21 spec) ----
-EXIT_WEIGHTS = {3: 0.20, 7: 0.35}  # layer 4 (idx=3) and layer 8 (idx=7)
+# ---- Exit loss weights ----
+# Auto-derived from actual exit layers. Deeper exits get higher weight.
+# For exits at [7, 15, 23] in a 24L model: {7: 0.15, 15: 0.30} (final always 1.0)
+EXIT_WEIGHTS = {3: 0.20, 7: 0.35}  # legacy fallback for 12-layer models
 GAIN_WEIGHT = 0.05
+
+
+def derive_exit_weights(exit_layers, n_layers):
+    """Derive exit weights from positions. Deeper exits get more weight. Final layer excluded."""
+    weights = {}
+    non_final = [l for l in exit_layers if l < n_layers - 1]
+    for l in non_final:
+        depth_frac = (l + 1) / n_layers  # 0..1
+        weights[l] = round(0.10 + 0.25 * depth_frac, 2)  # 0.10..0.35 range
+    return weights
 
 
 def compute_edsr_loss(out, tgt, exit_weights=EXIT_WEIGHTS, gain_weight=GAIN_WEIGHT):
@@ -1680,8 +1692,11 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
             except Exception:
                 continue
     if resume_path is not None:
-        model.load_state_dict(ckpt["model"])
-        opt.load_state_dict(ckpt["optimizer"])
+        # Support both checkpoint schemas: probe checkpoints use model_state_dict/optimizer_state_dict
+        model_key = "model_state_dict" if "model_state_dict" in ckpt else "model"
+        opt_key = "optimizer_state_dict" if "optimizer_state_dict" in ckpt else "optimizer"
+        model.load_state_dict(ckpt[model_key])
+        opt.load_state_dict(ckpt[opt_key])
         if "scaler" in ckpt:
             scaler.load_state_dict(ckpt["scaler"])
         start_step = ckpt.get("step", 0)
@@ -1690,8 +1705,10 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
     elif init_from is not None:
         # Initialize from another run's checkpoint (for A/B tests)
         init_ckpt = torch.load(init_from, weights_only=False, map_location=DEVICE)
-        model.load_state_dict(init_ckpt["model"])
-        opt.load_state_dict(init_ckpt["optimizer"])
+        init_model_key = "model_state_dict" if "model_state_dict" in init_ckpt else "model"
+        init_opt_key = "optimizer_state_dict" if "optimizer_state_dict" in init_ckpt else "optimizer"
+        model.load_state_dict(init_ckpt[init_model_key])
+        opt.load_state_dict(init_ckpt[init_opt_key])
         if "scaler" in init_ckpt:
             scaler.load_state_dict(init_ckpt["scaler"])
         start_step = init_ckpt.get("step", 0)
@@ -1704,6 +1721,10 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
     n_tokens = 0
     t0 = time.time()
     use_exits = edsr and exit_layers
+    # Derive exit weights from actual configured exits (fixes hard-coded {3,7} for 24L models)
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+    if use_exits:
+        print(f"  Exit weights: {actual_exit_weights}")
 
     model.train()
     while step < MAX_TRAIN_STEPS:
@@ -1714,7 +1735,7 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
             with torch.amp.autocast("cuda", dtype=DTYPE):
                 if use_exits:
                     out = model(inp, return_exits=True)
-                    loss, loss_metrics = compute_edsr_loss(out, tgt)
+                    loss, loss_metrics = compute_edsr_loss(out, tgt, exit_weights=actual_exit_weights)
                     ce_val = loss_metrics["ce_final"]
                     loss = loss / grad_accum
                 else:
