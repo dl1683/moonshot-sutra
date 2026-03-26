@@ -788,6 +788,107 @@ class R6SoftmaxHybridBlock(nn.Module):
         return r
 
 
+class R7PostFusionHybridBlock(nn.Module):
+    """R7-P: Post-fusion normalization hybrid — controls fused magnitude before W_out.
+
+    Adds SS-RMSNorm AFTER mean fusion but BEFORE output projection, addressing
+    the root cause identified by R6 telemetry: projected branches diverge in
+    direction causing fused magnitude to shrink/spike unpredictably.
+
+    Architecture:
+        u  = g1 * h / rms(h)
+        a0 = GQAttn(u)
+        c0 = DWConv1D_k(Wv u) * sigmoid(Wg u)
+        a  = AttnProj(a0)                      # NO branch norm (unnecessary with post-fusion)
+        c  = ConvProj(c0)                       # NO branch norm
+        f  = sf * (0.5*(a+c)) / rms(0.5*(a+c))  # POST-FUSION SS-RMSNorm
+        m  = Wout(f)
+        r  = h + m
+        h' = r + SwiGLU(g2 * r / rms(r))
+    """
+    def __init__(self, dim, ff_dim, d_attn=256, d_conv=256,
+                 n_q_heads=4, n_kv_heads=2, head_dim=64,
+                 conv_kernel_size=4, n_layers=24, layer_idx=0,
+                 norm_type="ss_rmsnorm"):
+        super().__init__()
+        self.d_attn = d_attn
+        self.d_conv = d_conv
+        self.layer_idx = layer_idx
+        self.mix_norm = make_norm(dim, norm_type)
+
+        # Attention path
+        self.attn = GQAttention(dim, d_attn, n_q_heads, n_kv_heads, head_dim)
+
+        # Conv path
+        self.conv_v = nn.Linear(dim, d_conv, bias=False)
+        self.conv_g = nn.Linear(dim, d_conv, bias=False)
+        self.dwconv = nn.Conv1d(
+            d_conv, d_conv, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=d_conv, bias=False
+        )
+        self.conv_out = nn.Linear(d_conv, d_conv, bias=False)
+
+        # Branch projections (no branch norms — post-fusion norm handles scale)
+        self.attn_proj = nn.Linear(d_attn, dim, bias=False)
+        self.conv_proj = nn.Linear(d_conv, dim, bias=False)
+
+        # Post-fusion normalization (SS-RMSNorm on the fused output)
+        self.fuse_norm = SingleScaleRMSNorm(dim)
+
+        # Output projection
+        self.w_out = nn.Linear(dim, dim, bias=False)
+        nn.init.normal_(self.w_out.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+        nn.init.normal_(self.ffn.down.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # Telemetry
+        self._telemetry = {}
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path
+        a0 = self.attn(u, cos, sin)
+
+        # Conv path
+        v = self.conv_v(u)
+        g = self.conv_g(u)
+        v_conv = self.dwconv(v.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        c0 = self.conv_out(v_conv * torch.sigmoid(g))
+
+        # Project to full dim (no branch norm)
+        a = self.attn_proj(a0)
+        c = self.conv_proj(c0)
+
+        # Mean fusion + post-fusion norm
+        raw_fused = 0.5 * (a + c)
+        fused = self.fuse_norm(raw_fused)
+
+        m = self.w_out(fused)
+
+        r = x + m
+        r = r + self.ffn(self.ffn_norm(r))
+
+        # Telemetry
+        if not self.training:
+            with torch.no_grad():
+                self._telemetry = {
+                    "layer": self.layer_idx,
+                    "branch_a_rms": a.float().pow(2).mean().sqrt().item(),
+                    "branch_c_rms": c.float().pow(2).mean().sqrt().item(),
+                    "raw_fused_rms": raw_fused.float().pow(2).mean().sqrt().item(),
+                    "fused_normed_rms": fused.float().pow(2).mean().sqrt().item(),
+                    "fuse_norm_scale": self.fuse_norm.weight.item(),
+                }
+
+        return r
+
+
 class GainHead(nn.Module):
     """Predicts residual gain from continuing to deeper layers.
     Inputs: hidden state + logit entropy + top-1/top-2 margin = dim+2 -> 256 -> 1"""
@@ -993,7 +1094,8 @@ class DenseTransformer(nn.Module):
                 "P" = parallel hybrid (mean fusion), "C" = concat-project hybrid (R4-S),
                 "N" = normalized additive hybrid (R5-G, Hymba-style branch norm),
                 "F" = R6-F fixed hybrid (no β, SS-RMSNorm branches),
-                "S" = R6-S softmax hybrid (softmax mixing, SS-RMSNorm branches).
+                "S" = R6-S softmax hybrid (softmax mixing, SS-RMSNorm branches),
+                "G" = R7-P post-fusion hybrid (no branch norms, post-fusion SS-RMSNorm).
                 If None, all layers are attention blocks.
             conv_kernel_size: kernel size for conv blocks (default 64).
             d_attn: attention dim for "C" blocks (default: dim).
@@ -1053,6 +1155,12 @@ class DenseTransformer(nn.Module):
                     layer_idx=li, norm_type=norm_type))
             elif btype == "S":
                 layers.append(R6SoftmaxHybridBlock(
+                    dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
+                    n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
+                    conv_kernel_size=conv_kernel_size, n_layers=n_layers,
+                    layer_idx=li, norm_type=norm_type))
+            elif btype == "G":
+                layers.append(R7PostFusionHybridBlock(
                     dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
                     n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
                     conv_kernel_size=conv_kernel_size, n_layers=n_layers,
@@ -3097,6 +3205,7 @@ def run_ab_probe(config_path):
             n_nad = sum(1 for b in v_block_schedule if b == "N")
             n_r6f = sum(1 for b in v_block_schedule if b == "F")
             n_r6s = sum(1 for b in v_block_schedule if b == "S")
+            n_r7p = sum(1 for b in v_block_schedule if b == "G")
             parts = []
             if n_attn: parts.append(f"{n_attn}A")
             if n_conv: parts.append(f"{n_conv}H")
@@ -3105,6 +3214,7 @@ def run_ab_probe(config_path):
             if n_nad: parts.append(f"{n_nad}N")
             if n_r6f: parts.append(f"{n_r6f}F")
             if n_r6s: parts.append(f"{n_r6s}S")
+            if n_r7p: parts.append(f"{n_r7p}G")
             print(f"  blocks={'+'.join(parts)} (kernel={v_conv_kernel})")
         print(f"  {v_n_layers}L/d={v_dim}/{v_n_heads}h/ff={v_ff_dim}")
         print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
