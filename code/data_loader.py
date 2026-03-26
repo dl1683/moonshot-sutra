@@ -725,11 +725,18 @@ if __name__ == "__main__":
         score_shards_teacher(teacher=teacher)
     elif "--miniplm" in sys.argv:
         n_windows = 500
+        sample_pct = 0.1
+        output_path = None
         for arg in sys.argv:
             if arg.startswith("--n-windows="):
                 n_windows = int(arg.split("=", 1)[1])
-        print(f"=== MINIPLM DIFFERENCE SCORING (n={n_windows}) ===")
-        score_miniplm(n_windows=n_windows)
+            elif arg.startswith("--sample-pct="):
+                sample_pct = float(arg.split("=", 1)[1])
+            elif arg.startswith("--output="):
+                output_path = arg.split("=", 1)[1]
+        print(f"=== MINIPLM DIFFERENCE SCORING (n={n_windows}, sample={sample_pct*100:.0f}%) ===")
+        score_miniplm(n_windows=n_windows, sample_pct=sample_pct,
+                      output_path=output_path)
     else:
         print("=== TESTING STREAMING LOADER ===")
         ds = ShardedDataset()

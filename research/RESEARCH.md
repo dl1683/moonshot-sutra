@@ -1934,3 +1934,39 @@ The HEMD-R5-G block synthesizes:
 Each branch (d=256) → project to full dim (512) → independent RMSNorm → per-channel β → average → output projection.
 
 This is the first block design informed by both empirical probes AND deep literature research on branch fusion stability.
+
+#### R6 100M Gate Results & Stability Analysis
+
+**100M gate (24×512, 5K steps): HEMD-R5-G vs pure transformer**
+
+| Model | Params | Final BPT | kurtosis_max | max_act |
+|-------|--------|-----------|-------------|---------|
+| Transformer 24×512 | 90.2M | 4.8087 | 1.66 | 44.8 |
+| HEMD-R5-G 24×512 | 93.5M | 4.7019 | 3.94 | 63.6 |
+
+BPT: +0.11 (passes ≥0.10 criterion). Stability: FAILS (kurtosis 2.4x worse).
+
+**Trajectory insights:**
+- Hybrid learns faster early (step 1000-1500: up to +0.73 BPT advantage)
+- Mid-training advantage erodes (step 2000-3000: 0-0.03)
+- Late recovery during cooldown (step 4500-5000: +0.11-0.13)
+- Instability grows monotonically — kurtosis peaks 5.09 at step 4500
+
+**Root cause hypothesis:** Per-channel β vectors (dim=512 each) reintroduce unbounded scale after normalization. Compounds across 24 layers. Evidence: the 42M P-block (fixed 0.5 mean, no β) was stable (kurtosis 0.82).
+
+**R6 fix strategy (Codex-designed):**
+- **R6-F (primary):** Remove β entirely, use SS-RMSNorm for branches, keep projected branches + 0.5*(a+c) mean fusion
+- **R6-S (backup):** Replace β with softmax mixing (α_a + α_c = 1 per channel)
+- Both include per-layer telemetry for branch RMS, norm scales, fused RMS
+
+**Key insight:** The 100M gate validated the hybrid FAMILY (local+global complementarity produces genuine BPT gains). The exact fusion mechanism (per-channel β) is what failed. The BPT gain appears before instability grows, suggesting the underlying complementarity is real.
+
+#### MiniPLM Data Scoring (O4 Progress)
+
+**Pilot (200 windows, 10% corpus):** Infrastructure validated end-to-end.
+- Teacher: Qwen3-1.7B-Base, Reference: Qwen3-0.6B-Base
+- Diff score: 0.264 ± 0.113
+- Source ranking: gutenberg (0.37) > wikipedia (0.29) > fineweb (0.28) > math (0.23) > wildchat (0.21)
+- Interpretation: literature/factual text has highest teacher-reference gap = highest training value for small models
+
+**Full scoring (500 windows) running in parallel with R6 stabilization probe.** Results will inform production data filtering.
