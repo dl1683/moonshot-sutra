@@ -2371,6 +2371,26 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Implication for logit KD:** Logit KD provides TOKEN-LEVEL PREDICTION supervision (not global structure). Should be harder to saturate because the student must match the teacher's output distribution, not just its representation geometry. The 4-arm surface ablation (NOW RUNNING) tests whether logit KD provides persistent vs transient advantage.
 
+### 6.4.26 Codex Scaling Expert + Architecture Theorist: KD Probe Interpretation (2026-03-26)
+
+**Source:** Codex GPT-5.4, Scaling Expert + Architecture Theorist combined persona.
+
+**Key findings:**
+
+1. **Rep KD = fast geometric regularizer, not durable teacher.** CKA loss doesn't fully saturate (ends at 0.036) but the objective mismatch is the issue: 16-span CKA + semantic Gram teach global structure fast but don't sharpen token prediction after coarse geometry is learned.
+
+2. **Kurtosis warning: RED FLAG for long runs.** 17.6 vs 4.8 at 3K steps. Critical: after WSD decay starts, control kurtosis RECOVERS (6.7→4.8) while KD gets WORSE (7.8→17.6). Thresholds for 15K gate: kurtosis >2x control OR max_act >1.15x control = yellow/red. Would NOT launch 120K with this kurtosis signature without fixing it first.
+
+3. **Logit KD should be more persistent.** Supervises the actual prediction target (next-token distribution) at every position, not just global span geometry. 92.6% student vocab overlap is "unusually favorable." Could still degrade to head-start at 90M if student lacks capacity.
+
+4. **T=2.0 / K=64 confirmed.** If sweeping: sweep temperature (1.5, 2.0, 2.5) not K. K=64 retains ~95% of full-logit signal.
+
+5. **Persistence thresholds: 10K = evidence, 15K = proof.** Logit KD must be >0.02 BPT better than control at 10K AND >0.015-0.02 at 15K with at least one lm-eval lift. If <0.01 by 10K, it's another head-start.
+
+6. **90M is below the common KD comfort zone.** Ratio 1:19 (90M/1.7B). Literature success at 1:1.5 to 1:9. Recommendation: if logit KD weak at 15K, scale student to 166-200M rather than scaling teacher.
+
+**Codex verdict:** "Rep KD is acting like a fast geometric regularizer, not a durable teacher. Logit KD is the right next surface, T=2.0/K=64 is a good first shot, 15K is the real persistence gate, and 90M is usable for scouting but probably below the size where a 1.7B teacher's gains become durable."
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
