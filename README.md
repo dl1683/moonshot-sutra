@@ -34,18 +34,7 @@ Everything in Sutra serves exactly 5 outcomes. The outcomes are sacred. The mech
 
 Sutra uses a rigorous **Tesla+Leibniz design workflow** — deep theoretical reasoning combined with empirical probes as first-class reasoning tools. Architecture is discovered through iterative cycles of assumption-questioning, cross-domain research, and falsification testing.
 
-### Key Research Areas (2025-2026 Literature)
-
-| Area | Key Innovations | Relevance |
-|------|----------------|-----------|
-| **DeepSeek Engram** | O(1) hash-indexed n-gram memory, separates knowledge from reasoning | Frees neural capacity for reasoning, memory in CPU RAM |
-| **Multi-Token Prediction** | Predict D+1 tokens, discard at inference or use for 1.8x speedup | Direct data efficiency multiplier, zero inference cost |
-| **Hyperbolic Neural Networks** | Exponential volume growth matches hierarchical data, 4% gains | Fewer dimensions needed, structural priors reduce data needs |
-| **Sheaf Neural Networks** | Relationship-specific geometries per token pair | Richer per-parameter expressiveness |
-| **Hyena Edge** | Gated convolutions replace 2/3 of attention, 30% faster on edge | O(N log N), better quality AND speed |
-| **Elastic Depth** | LoopFormer, MoR — token-level adaptive compute | Matched inference cost reduction |
-
-Full details: `research/RESEARCH.md`
+Full field research: `research/RESEARCH.md`
 
 ---
 
@@ -57,8 +46,8 @@ Full details: `research/RESEARCH.md`
 
 ## Data
 
-- 22.9B tokens available across 246 shards, 18 sources
-- 16K custom BPE tokenizer (validated as biggest single efficiency win)
+- ~22.9B tokens available across 246 shards, 18 sources
+- 16K custom BPE tokenizer
 - No restrictions on data sources
 
 ---
@@ -81,7 +70,7 @@ Full details: `research/RESEARCH.md`
 ```
 sutra/
 ├── code/
-│   ├── dense_baseline.py      # Current model + trainer
+│   ├── dense_baseline.py      # Model + trainer (to be replaced by T+L output)
 │   ├── data_loader.py          # Sharded streaming data pipeline
 │   └── lm_eval_wrapper.py      # lm-eval harness integration
 ├── research/
@@ -90,7 +79,7 @@ sutra/
 │   ├── ARCHITECTURE.md         # Architecture reference (populated by T+L sessions)
 │   ├── TESLA_LEIBNIZ_CODEX_PROMPT.md  # Design session template
 │   └── TESLA_LEIBNIZ_WORKFLOW.md      # Design loop specification
-├── results/                    # Structured JSON: benchmarks, metrics
+├── results/                    # Structured JSON: benchmarks, metrics (empty — fresh start)
 ├── experiments/
 │   └── ledger.jsonl            # Every experiment logged
 ├── eval/                       # Custom evaluation suite
@@ -99,23 +88,11 @@ sutra/
 
 ---
 
-## Where We Are — Honest Status
+## Where We Are
 
-This is a **fresh start** (2026-03-25). Previous architectural explorations (v0.5.x recurrent SSM, v0.6.x 12-pass recurrence, EDSR dense with early exits) taught us valuable lessons but were products of path-dependent assumptions. Rather than continue iterating on designs born from reactive pivots, we're returning to first principles.
+Architecture is an open question. The T+L design workflow will discover it from first principles, informed by the 5 outcomes and extensive field research on cutting-edge approaches (DeepSeek innovations, geometric representations, alternative architectures, quantization-native design).
 
-**What we're keeping:**
-- The 5 non-negotiable outcomes (thoroughly validated through 20+ design rounds)
-- The Tesla+Leibniz design workflow (proven methodology for rigorous architecture discovery)
-- Field research on cutting-edge approaches (DeepSeek innovations, geometric representations, alternative architectures)
-- Hardware constraints and data pipeline
-- The 16K tokenizer (empirically validated across all experiments)
-
-**What we're resetting:**
-- Architecture (to be discovered by T+L from first principles)
-- Implementation-specific conclusions (our specific failures ≠ universal truths)
-- Benchmark claims (no claims until new architecture is trained and evaluated)
-
-**Next:** Launch fresh T+L design sessions where the architecture is discovered dynamically, informed by the 5 outcomes + field research + questioning of every assumption.
+What we're keeping: the process (T+L workflow, Codex reviewer suites, Chrome experimentation cycle), the data pipeline, the 16K tokenizer, and the field research.
 
 ---
 

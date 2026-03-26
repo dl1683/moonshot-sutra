@@ -371,11 +371,171 @@ def migrate_shards():
     print(f"  Migration complete: {total} shards in {SHARD_DIR}")
 
 
+def score_shards_teacher(shard_dir=None, teacher="qwen3:4b",
+                         samples_per_source=2, output_path=None):
+    """Score training shards with teacher model for importance weighting.
+
+    Uses Ollama to score representative text samples from each data source.
+    Scoring is per-SOURCE (not per-shard) for speed, then applied to all
+    shards from that source.
+
+    Scoring criteria (teacher-evaluated):
+    - Quality: How well-written/informative is the text?
+    - Informativeness: Does this teach useful knowledge?
+    - Difficulty: How complex/challenging is the content?
+
+    Combined into a single importance weight per shard, clipped to [0.5, 2.0].
+    """
+    import json
+    import time
+    import requests
+
+    if shard_dir is None:
+        shard_dir = REPO / "data" / "shards_16k"
+    shard_dir = Path(shard_dir)
+
+    # Load tokenizer for decoding
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    if not tok_path.exists():
+        print(f"ERROR: Tokenizer not found at {tok_path}")
+        return None
+
+    from tokenizers import Tokenizer
+    tokenizer = Tokenizer.from_file(str(tok_path))
+    print(f"Loaded tokenizer: {tok_path}")
+
+    # Group shards by source
+    shard_files = sorted(shard_dir.glob("*.pt"))
+    sources = {}  # source_name -> list of shard paths
+    for f in shard_files:
+        name = f.stem
+        parts = name.rsplit("_", 1)
+        source = parts[0] if len(parts) == 2 and parts[1].isdigit() else name
+        if source not in sources:
+            sources[source] = []
+        sources[source].append(f)
+
+    print(f"Found {len(shard_files)} shards from {len(sources)} sources")
+
+    # Score each source
+    PROMPT_TEMPLATE = (
+        "Rate this text on three criteria (1-10 each). "
+        "Reply ONLY with three numbers separated by spaces.\n"
+        "Quality (writing quality): ?\n"
+        "Informativeness (teaches useful knowledge): ?\n"
+        "Difficulty (complexity): ?\n\n"
+        "Text:\n{text}\n\n"
+        "Three numbers:"
+    )
+
+    source_scores = {}
+    for source_name, shard_paths in sorted(sources.items()):
+        print(f"\nScoring source: {source_name} ({len(shard_paths)} shards)")
+        scores = []
+
+        for sample_idx in range(min(samples_per_source, len(shard_paths))):
+            shard_path = shard_paths[sample_idx % len(shard_paths)]
+            try:
+                tokens = torch.load(shard_path, weights_only=True)
+                # Sample a random window
+                start = random.randint(0, max(0, len(tokens) - 256))
+                window = tokens[start:start + 256].tolist()
+                text = tokenizer.decode(window)
+
+                # Truncate for speed
+                text = text[:500]
+
+                # Call Ollama
+                t0 = time.time()
+                resp = requests.post(
+                    "http://localhost:11434/api/generate",
+                    json={
+                        "model": teacher,
+                        "prompt": PROMPT_TEMPLATE.format(text=text),
+                        "stream": False,
+                        "options": {"temperature": 0, "num_predict": 20}
+                    },
+                    timeout=60
+                )
+                elapsed = time.time() - t0
+
+                if resp.status_code == 200:
+                    reply = resp.json().get("response", "").strip()
+                    # Parse three numbers
+                    nums = [float(x) for x in reply.split() if x.replace('.', '').isdigit()]
+                    if len(nums) >= 3:
+                        quality, info, difficulty = nums[0], nums[1], nums[2]
+                        # Combined score: weight informativeness highest
+                        score = 0.2 * quality + 0.5 * info + 0.3 * difficulty
+                        scores.append(score)
+                        print(f"  Sample {sample_idx}: q={quality:.0f} i={info:.0f} "
+                              f"d={difficulty:.0f} -> {score:.1f} ({elapsed:.1f}s)")
+                    else:
+                        print(f"  Sample {sample_idx}: Parse failed: '{reply}' ({elapsed:.1f}s)")
+                else:
+                    print(f"  Sample {sample_idx}: HTTP {resp.status_code}")
+
+            except Exception as e:
+                print(f"  Sample {sample_idx}: Error: {e}")
+
+        if scores:
+            avg_score = sum(scores) / len(scores)
+            source_scores[source_name] = avg_score
+            print(f"  -> Average score: {avg_score:.2f}")
+        else:
+            source_scores[source_name] = 5.0  # default middle score
+            print(f"  -> No valid scores, using default 5.0")
+
+    # Normalize to importance weights [0.5, 2.0]
+    if source_scores:
+        min_s = min(source_scores.values())
+        max_s = max(source_scores.values())
+        spread = max(max_s - min_s, 0.1)
+
+        shard_scores = []
+        for shard_path in shard_files:
+            name = shard_path.stem
+            parts = name.rsplit("_", 1)
+            source = parts[0] if len(parts) == 2 and parts[1].isdigit() else name
+            raw = source_scores.get(source, 5.0)
+            # Map to [0.5, 2.0]
+            weight = 0.5 + 1.5 * (raw - min_s) / spread
+            weight = max(0.5, min(2.0, weight))
+            shard_scores.append({
+                "shard": shard_path.name,
+                "source": source,
+                "raw_score": round(raw, 2),
+                "importance_weight": round(weight, 4),
+            })
+
+        result = {
+            "teacher": teacher,
+            "samples_per_source": samples_per_source,
+            "source_scores": {k: round(v, 2) for k, v in sorted(source_scores.items())},
+            "shard_scores": shard_scores,
+        }
+
+        if output_path is None:
+            output_path = REPO / "results" / "teacher_shard_weights.json"
+        with open(output_path, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"\nSaved weights: {output_path}")
+        print(f"Source scores: {result['source_scores']}")
+        return str(output_path)
+
+
 if __name__ == "__main__":
     import sys
     if "--migrate" in sys.argv:
         print("=== MIGRATING SHARDS ===")
         migrate_shards()
+    elif "--score-shards" in sys.argv:
+        teacher = "qwen3:4b"
+        for arg in sys.argv:
+            if arg.startswith("--teacher="):
+                teacher = arg.split("=", 1)[1]
+        print(f"=== TEACHER-GUIDED SHARD SCORING ({teacher}) ===")
+        score_shards_teacher(teacher=teacher)
     else:
         print("=== TESTING STREAMING LOADER ===")
         ds = ShardedDataset()

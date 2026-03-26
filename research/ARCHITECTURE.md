@@ -1,69 +1,80 @@
 # Sutra Architecture Reference
 
-**Status: FRESH START (2026-03-25)**
+**Status: Clean slate (2026-03-25)**
 
-This file is the single source of truth for Sutra's architecture. It is populated and updated by Tesla+Leibniz design sessions. Every T+L round reads this file and questions every decision in it.
+This file is the architecture source of truth for Sutra. Every T+L round reads it, questions it, and updates it only when local evidence justifies the change.
 
 ---
 
 ## Current Architecture
 
-**No architecture has been selected yet.** The T+L design loop will evaluate options from first principles, informed by the research in `research/RESEARCH.md` and the 5 non-negotiable outcomes in `research/VISION.md`.
+**None decided.** The next T+L design session will propose an architecture from first principles, informed by the 5 outcomes and field research in RESEARCH.md.
 
-The search space is unlimited: transformers, SSMs, hybrids, gated convolutions, hyperbolic networks, sheaf-theoretic models, reservoir computing, evolutionary systems, or something entirely novel. The architecture must be DERIVED from mathematics, not copied from convention.
+---
+
+## What We Know Works (Process Knowledge, Not Architecture Commitments)
+
+These are lessons from prior experimentation. They inform the search but do not constrain it — any of these could be wrong due to implementation bugs.
+
+- **16K custom BPE tokenizer** — Consistently the biggest single efficiency win across all experiments. Keep unless there's a strong reason to change.
+- **Warm-starting** — Continuing from checkpoints consistently outperforms training from scratch.
+- **WSD learning rate schedule** — Warmup-Stable-Decay with warm restart showed good training dynamics.
+- **Fixed early exits** — Post-hoc threshold calibration on fixed exits showed compute savings without learned halting overhead. Worth exploring again.
+
+## What We Tried and Failed (Caveat: Possibly Implementation Issues)
+
+At 98M scale, the following were tested and lost to a plain dense AR control. However, we had multiple bugs during development, so these failures may not be universal truths:
+
+- MTP D=1 (multi-token prediction) — lost to control, 10% slower
+- Learned halting controller — lost to control, 21% slower
+- N-gram memory fusion — lost to control, gate barely opened
+- All GPU-side auxiliary objectives that competed for backbone capacity
+
+**The right response is not "these don't work" but "our implementations didn't work at 98M scale." A fresh T+L session should decide whether to retry any of these with better implementations or at larger scale.**
+
+---
+
+## Hardware Constraints
+
+- **GPU:** Single NVIDIA RTX 5090 Laptop (24GB VRAM)
+- **RAM:** 68GB system
+- **Data:** ~22.9B tokens available, 246 shards, 18 sources, 16K custom BPE tokenizer
+- **Target:** Trainable from scratch on this hardware, deployable on edge
+
+---
+
+## Token Accounting Reference
+
+- Config template: batch_size=8, grad_accum=4, seq_len=512 = **16,384 tokens/optimizer step**
+- Step 1000 = 16.4M tokens
+- Step 5000 = 81.9M tokens
+- Step 10000 = 163.8M tokens
+- Chinchilla-optimal for 98M params = ~2B tokens
 
 ---
 
 ## Design Decision Audit
 
-Every design choice will be classified:
-- **DERIVED** — mathematically justified from first principles for our specific constraints
-- **INHERITED** — carried from convention or prior work, needs re-evaluation
-- **VALIDATED** — empirically tested and confirmed beneficial
-- **QUESTIONED** — under active investigation
-- **FALSIFIED** — empirically tested and found wanting
+*To be populated by the next T+L session.*
 
-*This section will be populated as T+L sessions make and validate decisions.*
+| Decision | Status | Confidence | Evidence |
+|----------|--------|------------|----------|
+| *None yet* | | | |
 
 ---
 
-## Parameter Budget
+## Per-Outcome Confidence
 
-*To be determined by T+L design sessions.*
-
-Constraints:
-- Trainable from scratch on a single RTX 5090 (24GB VRAM)
-- Target: competitive in the 100M-4B parameter class
-- 16K custom BPE tokenizer (validated as biggest single win)
-- Must be deployable on edge hardware (phones, laptops, embedded)
-
----
-
-## Benchmark Tables
-
-*To be populated as models are trained and evaluated.*
-
-Baselines for comparison:
-- Pythia-160M (300B tokens)
-- SmolLM2-135M (2T tokens)
-- Gemma-3-1B (~6T tokens)
-- Qwen3-4B (~18T tokens)
-- Phi-4 5.6B (~10T tokens)
+| Outcome | Score | Why |
+|---------|-------|-----|
+| O1: Intelligence | 0/10 | No current model. Fresh start. |
+| O2: Improvability | 0/10 | No current model. |
+| O3: Democratization | 0/10 | No package, no composability proof. |
+| O4: Data Efficiency | 0/10 | No current approach decided. |
+| O5: Inference Efficiency | 0/10 | No current model. |
 
 ---
 
-## Prior Attempts (from git history)
+## Training Priorities
 
-Previous architectures were tried and evolved through v0.5.x → v0.6.x → EDSR-98M. These are documented in git history. **Important caveat:** Many "falsification" results were specific to our particular implementation at a specific scale (42-68M params, specific hyperparameters, specific training setup). They should be interpreted as "this specific implementation didn't work" rather than "this concept doesn't work." The T+L process must question whether alternative implementations of the same concepts might succeed.
-
-Key learnings that appear robust (survived multiple implementations):
-- **16K tokenizer** is a massive win over 50K GPT-2 tokenizer (recovered 56.5% of dead embedding parameters)
-- **Elastic compute** (shallower depth competitive with full depth) replicated across ALL experiments
-- **Warm-starting** consistently outperforms from-scratch at equivalent wall-clock time
-
-Learnings that are implementation-specific (question before generalizing):
-- Recurrence results depend heavily on implementation details (shared vs unshared weights, number of passes, etc.)
-- Online KD results are specific to our teacher selection and scale
-- Stage bank results are specific to our 7-stage decomposition
-
-See `research/RESEARCH.md` for field research on alternative approaches.
+*To be set by the next T+L session.*

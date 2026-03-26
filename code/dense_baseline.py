@@ -45,7 +45,7 @@ MAX_SEQ_LEN = 512
 BATCH_SIZE = 16
 GRAD_ACCUM = 2
 SEQ_LEN = 512
-MAX_TRAIN_STEPS = 5000
+MAX_TRAIN_STEPS = 10000
 EVAL_EVERY = 1000
 ROLLING_SAVE = 500
 LOG_EVERY = 50
@@ -155,20 +155,193 @@ class GainHead(nn.Module):
         return self.net(feat)  # (B,T,1)
 
 
+class MTPModule(nn.Module):
+    """Multi-Token Prediction head (D=1). Training-only, discarded at inference.
+
+    Takes final-layer hidden state h_t and next-token embedding E[x_{t+1}],
+    predicts x_{t+2}. Uses one transformer block with shared embedding head.
+    """
+
+    def __init__(self, dim, n_heads, ff_dim):
+        super().__init__()
+        self.concat_proj = nn.Linear(2 * dim, dim, bias=False)
+        self.block = TransformerBlock(dim, n_heads, ff_dim)
+        self.norm = RMSNorm(dim)
+        # Zero-init the projection so MTP doesn't affect backbone at start
+        nn.init.zeros_(self.concat_proj.weight)
+
+    def forward(self, h_final, next_tok_emb, cos, sin):
+        """
+        Args:
+            h_final: (B, T, D) — stopgrad'd final hidden state
+            next_tok_emb: (B, T, D) — embedding of x_{t+1}
+            cos, sin: RoPE buffers
+        Returns:
+            mtp_hidden: (B, T, D) — hidden state for predicting x_{t+2}
+        """
+        u = self.concat_proj(torch.cat([h_final, next_tok_emb], dim=-1))
+        u = self.block(u, cos, sin)
+        return self.norm(u)
+
+
+class NgramMemoryFusion(nn.Module):
+    """Engram-style hash-indexed n-gram memory with learned gating.
+
+    CPU-resident sparse embedding tables (bigram + trigram) are looked up
+    by hashing the recent token context. Looked-up vectors are projected
+    to model dim, gated by the current hidden state, and added to residual.
+
+    Key property: tables are on CPU (SparseAdam), so they do NOT compete
+    with the backbone for GPU gradient capacity. Only the small projection
+    + gate params are on GPU.
+    """
+
+    def __init__(self, dim, num_buckets=1_000_000, mem_dim=48):
+        super().__init__()
+        self.dim = dim
+        self.mem_dim = mem_dim
+        self.num_buckets = num_buckets
+
+        # CPU-resident sparse embedding tables (bigram + trigram)
+        self.bigram_table = nn.Embedding(num_buckets, mem_dim, sparse=True)
+        self.trigram_table = nn.Embedding(num_buckets, mem_dim, sparse=True)
+        # Zero-init so model starts at exact parity
+        nn.init.zeros_(self.bigram_table.weight)
+        nn.init.zeros_(self.trigram_table.weight)
+
+        # GPU-resident projection: 2*mem_dim -> dim (combine bigram + trigram)
+        self.proj = nn.Linear(2 * mem_dim, dim, bias=False)
+        nn.init.zeros_(self.proj.weight)
+
+        # GPU-resident gate: sigmoid(W_g * h) controls how much memory enters
+        self.gate = nn.Linear(dim, dim, bias=True)
+        nn.init.zeros_(self.gate.weight)
+        nn.init.constant_(self.gate.bias, -2.0)  # start near-zero gate
+
+    def _hash_bigrams(self, tokens):
+        """Hash bigram context. tokens: (B, T) long tensor -> (B, T-1) bucket indices."""
+        t = tokens.long()
+        a = t[:, :-1]
+        b = t[:, 1:]
+        # Murmur3-inspired hash in PyTorch (matches numpy probe)
+        C1 = 0xcc9e2d51 & 0xFFFFFFFF
+        C2 = 0x1b873593 & 0xFFFFFFFF
+        SEED = 0x9747b28c & 0xFFFFFFFF
+        C3 = 0xe6546b64 & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(torch.tensor(SEED, device=t.device, dtype=torch.long),
+                               a * C1)
+        h = torch.bitwise_or(h << 15, h.remainder(2**32) >> 17) & 0xFFFFFFFF
+        h = (h * C2) & 0xFFFFFFFF
+        h = torch.bitwise_or(h << 13, h.remainder(2**32) >> 19) & 0xFFFFFFFF
+        h = (h * 5 + C3) & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(h, b * C1)
+        h = torch.bitwise_or(h << 15, h.remainder(2**32) >> 17) & 0xFFFFFFFF
+        h = (h * C2) & 0xFFFFFFFF
+        h = torch.bitwise_or(h << 13, h.remainder(2**32) >> 19) & 0xFFFFFFFF
+        h = (h * 5 + C3) & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(h, h >> 16)
+        h = (h * 0x85ebca6b) & 0xFFFFFFFF
+        h = torch.bitwise_xor(h, h >> 13)
+        h = (h * 0xc2b2ae35) & 0xFFFFFFFF
+        h = torch.bitwise_xor(h, h >> 16)
+
+        return h.remainder(self.num_buckets)
+
+    def _hash_trigrams(self, tokens):
+        """Hash trigram context. tokens: (B, T) long tensor -> (B, T-2) bucket indices."""
+        t = tokens.long()
+        a, b, c = t[:, :-2], t[:, 1:-1], t[:, 2:]
+        C1 = 0xcc9e2d51 & 0xFFFFFFFF
+        C2 = 0x1b873593 & 0xFFFFFFFF
+        SEED = 0x9747b28c & 0xFFFFFFFF
+        C3 = 0xe6546b64 & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(torch.tensor(SEED, device=t.device, dtype=torch.long),
+                               a * C1)
+        h = torch.bitwise_or(h << 15, h.remainder(2**32) >> 17) & 0xFFFFFFFF
+        h = (h * C2) & 0xFFFFFFFF
+        h = torch.bitwise_or(h << 13, h.remainder(2**32) >> 19) & 0xFFFFFFFF
+        h = (h * 5 + C3) & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(h, b * C1)
+        h = torch.bitwise_or(h << 15, h.remainder(2**32) >> 17) & 0xFFFFFFFF
+        h = (h * C2) & 0xFFFFFFFF
+        h = torch.bitwise_or(h << 13, h.remainder(2**32) >> 19) & 0xFFFFFFFF
+        h = (h * 5 + C3) & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(h, c * C1)
+        h = torch.bitwise_or(h << 15, h.remainder(2**32) >> 17) & 0xFFFFFFFF
+        h = (h * C2) & 0xFFFFFFFF
+        h = torch.bitwise_or(h << 13, h.remainder(2**32) >> 19) & 0xFFFFFFFF
+        h = (h * 5 + C3) & 0xFFFFFFFF
+
+        h = torch.bitwise_xor(h, h >> 16)
+        h = (h * 0x85ebca6b) & 0xFFFFFFFF
+        h = torch.bitwise_xor(h, h >> 13)
+        h = (h * 0xc2b2ae35) & 0xFFFFFFFF
+        h = torch.bitwise_xor(h, h >> 16)
+
+        return h.remainder(self.num_buckets)
+
+    def forward(self, tokens, h):
+        """Look up n-gram memory and gate with hidden state.
+
+        Args:
+            tokens: (B, T) input token IDs (on GPU)
+            h: (B, T, D) current hidden state (on GPU)
+        Returns:
+            (B, T, D) memory contribution to add to residual
+        """
+        B, T, D = h.shape
+
+        # Hash n-gram context on GPU
+        bi_idx = self._hash_bigrams(tokens)  # (B, T-1)
+        tri_idx = self._hash_trigrams(tokens)  # (B, T-2)
+
+        # Look up from tables (all on same device)
+        bi_mem = self.bigram_table(bi_idx)  # (B, T-1, mem_dim)
+        tri_mem = self.trigram_table(tri_idx)  # (B, T-2, mem_dim)
+
+        # Pad to T length (first 1-2 tokens have no bigram/trigram context)
+        bi_padded = F.pad(bi_mem, (0, 0, 1, 0))  # (B, T, mem_dim) — pad time dim
+        tri_padded = F.pad(tri_mem, (0, 0, 2, 0))  # (B, T, mem_dim)
+
+        # Concatenate and project
+        mem_cat = torch.cat([bi_padded, tri_padded], dim=-1)  # (B, T, 2*mem_dim)
+        mem_proj = self.proj(mem_cat)  # (B, T, D)
+
+        # Gate with hidden state
+        gate = torch.sigmoid(self.gate(h))  # (B, T, D)
+
+        return gate * mem_proj
+
+
 class DenseTransformer(nn.Module):
     def __init__(self, vocab_size=VOCAB_SIZE, dim=DIM, n_layers=N_LAYERS,
                  n_heads=N_HEADS, ff_dim=FF_DIM, max_seq_len=MAX_SEQ_LEN,
-                 exit_layers=None):
+                 exit_layers=None, use_mtp=False, memory_layers=None,
+                 mem_buckets=1_000_000, mem_dim=48):
         """
         Args:
             exit_layers: list of 0-indexed layer numbers for early exits.
                 e.g. [3,7,11] for exits after layers 4,8,12 (1-indexed).
                 If None, no early exits (standard dense model).
+            use_mtp: if True, add D=1 MTP module (training-only).
+            memory_layers: list of 0-indexed layers AFTER which to inject
+                n-gram memory (e.g. [1,4,7] for after layers 2,5,8).
+                If None, no memory fusion.
+            mem_buckets: number of hash buckets per n-gram table.
+            mem_dim: embedding dimension per n-gram table entry.
         """
         super().__init__()
         self.dim = dim
         self.n_layers = n_layers
         self.exit_layers = sorted(exit_layers) if exit_layers else []
+        self.use_mtp = use_mtp
+        self.memory_layers = sorted(memory_layers) if memory_layers else []
         self.emb = nn.Embedding(vocab_size, dim)
         self.layers = nn.ModuleList([
             TransformerBlock(dim, n_heads, ff_dim) for _ in range(n_layers)
@@ -183,6 +356,15 @@ class DenseTransformer(nn.Module):
                 self.exit_norms[str(i)] = RMSNorm(dim)
                 self.gain_heads[str(i)] = GainHead(dim)
 
+        # MTP module (training-only, discarded at inference)
+        self.mtp = MTPModule(dim, n_heads, ff_dim) if use_mtp else None
+
+        # N-gram memory fusion (one shared module, applied at multiple layers)
+        if self.memory_layers:
+            self.memory = NgramMemoryFusion(dim, num_buckets=mem_buckets, mem_dim=mem_dim)
+        else:
+            self.memory = None
+
         # RoPE cache
         cos, sin = precompute_rope(dim // n_heads, max_seq_len)
         self.register_buffer("rope_cos", cos)
@@ -190,34 +372,54 @@ class DenseTransformer(nn.Module):
 
         self._init_weights()
 
-    def _init_weights(self):
+    def _init_weights(self, resumed_ckpt=None):
+        # Collect modules to skip (MTP and Memory have their own zero-init)
+        skip_modules = set()
         for m in self.modules():
+            if isinstance(m, (MTPModule, NgramMemoryFusion)):
+                for child in m.modules():
+                    skip_modules.add(id(child))
+        for m in self.modules():
+            if id(m) in skip_modules:
+                continue
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=0.02)
             elif isinstance(m, nn.Embedding):
                 nn.init.normal_(m.weight, std=0.02)
 
-    def forward(self, x, return_exits=False):
+    def forward(self, x, return_exits=False, return_hidden=False):
         """
         Args:
             return_exits: if True, return dict with exit logits and gain predictions.
+            return_hidden: if True, include pre-norm final hidden state in output dict.
+                Also includes per-exit normed hidden states ('exit_hidden') and
+                input embeddings ('h_input') for halting controller.
         Returns:
-            If return_exits=False: final logits (B, T, V)
-            If return_exits=True: dict {
+            If return_exits=False and return_hidden=False: final logits (B, T, V)
+            If return_exits=True or return_hidden=True: dict {
                 'logits': final logits,
                 'exit_logits': {layer_idx: logits},
                 'exit_gains': {layer_idx: gain predictions},
+                'hidden': pre-norm hidden state (only if return_hidden),
+                'exit_hidden': {layer_idx: normed hidden} (only if return_hidden),
+                'h_input': input embeddings (only if return_hidden),
             }
         """
         B, T = x.shape
         h = self.emb(x) * math.sqrt(self.dim)
+        h_input = h  # Save for halting controller
         cos, sin = self.rope_cos, self.rope_sin
 
         exit_logits = {}
         exit_gains = {}
+        exit_hidden = {}
 
         for i, layer in enumerate(self.layers):
             h = layer(h, cos, sin)
+
+            # Inject n-gram memory after this layer?
+            if self.memory is not None and i in self.memory_layers:
+                h = h + self.memory(x, h)
 
             # Early exit at this layer?
             if return_exits and i in self.exit_layers and i < self.n_layers - 1:
@@ -225,16 +427,26 @@ class DenseTransformer(nn.Module):
                 e_logits = F.linear(h_normed, self.emb.weight)
                 exit_logits[i] = e_logits
                 exit_gains[i] = self.gain_heads[str(i)](h_normed, e_logits)
+                if return_hidden:
+                    exit_hidden[i] = h_normed
 
+        h_pre_norm = h  # Save pre-norm hidden for MTP
         h = self.norm(h)
         logits = F.linear(h, self.emb.weight)  # tied embeddings
 
-        if return_exits:
-            return {
+        if return_exits or return_hidden:
+            out = {
                 'logits': logits,
                 'exit_logits': exit_logits,
                 'exit_gains': exit_gains,
             }
+            if return_hidden:
+                out['hidden'] = h_pre_norm
+                # Final exit hidden = normed final
+                exit_hidden[self.exit_layers[-1] if self.exit_layers else self.n_layers - 1] = h
+                out['exit_hidden'] = exit_hidden
+                out['h_input'] = h_input
+            return out
         return logits
 
     def count_params(self):
@@ -314,9 +526,71 @@ def compute_edsr_loss(out, tgt, exit_weights=EXIT_WEIGHTS, gain_weight=GAIN_WEIG
     return total, metrics
 
 
-def train(run_name="dense_f4", edsr=False):
+def compute_mtp_loss(model, hidden, input_tokens, target_tokens):
+    """Compute D=1 MTP loss: predict x_{t+2} from stopgrad(h_t) + E[x_{t+1}].
+
+    Args:
+        model: DenseTransformer with MTP module
+        hidden: (B, T, D) pre-norm hidden state from final layer
+        input_tokens: (B, T) input token IDs
+        target_tokens: (B, T) target token IDs (shifted by 1 from input)
+    Returns:
+        mtp_loss: scalar
+    """
+    if model.mtp is None:
+        return torch.tensor(0.0, device=hidden.device)
+
+    B, T, D = hidden.shape
+    if T < 2:
+        return torch.tensor(0.0, device=hidden.device)
+
+    # h_t predicts x_{t+2}, so we use positions 0..T-2
+    h_detached = hidden[:, :-1].detach()  # (B, T-1, D) — stopgrad
+
+    # Next-token embeddings: E[x_{t+1}] = E[target_tokens[t]] for t in 0..T-2
+    next_tok_emb = model.emb(target_tokens[:, :-1])  # (B, T-1, D)
+
+    # MTP forward
+    cos, sin = model.rope_cos, model.rope_sin
+    mtp_hidden = model.mtp(h_detached, next_tok_emb, cos, sin)  # (B, T-1, D)
+
+    # Predict x_{t+2} = target_tokens[t+1] for t in 0..T-2
+    mtp_logits = F.linear(mtp_hidden, model.emb.weight)  # (B, T-1, V)
+
+    # Target: x_{t+2} — which is target_tokens shifted by 1
+    mtp_target = target_tokens[:, 1:]  # (B, T-1)
+
+    # Align lengths (mtp_logits and mtp_target should match)
+    min_len = min(mtp_logits.size(1), mtp_target.size(1))
+    mtp_loss = F.cross_entropy(
+        mtp_logits[:, :min_len].reshape(-1, mtp_logits.size(-1)),
+        mtp_target[:, :min_len].reshape(-1)
+    )
+    return mtp_loss
+
+
+def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, init_from=None):
     # Select config
-    if edsr:
+    if from_ckpt:
+        # Load config from checkpoint — used for 200M and custom models
+        _ckpt = torch.load(from_ckpt, weights_only=False, map_location="cpu")
+        cfg = _ckpt.get("config", {})
+        dim = cfg.get("dim", 768)
+        n_layers = cfg.get("n_layers", 12)
+        n_heads = cfg.get("n_heads", 12)
+        ff_dim = cfg.get("ff_dim", 2048)
+        exit_layers = cfg.get("exit_layers", [3, 7, 11])
+        lr, min_lr = 3e-4, 1e-5
+        warmup = 500
+        # Adjust batch size for larger models
+        if dim >= 1024:
+            batch_size, grad_accum = 4, 8  # 32 effective, less VRAM per micro
+        else:
+            batch_size, grad_accum = 8, 4
+        lr_schedule = "wsd"
+        mode_name = f"Custom-{sum(p.numel() for p in DenseTransformer(dim=dim, n_layers=n_layers, n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers).parameters())/1e6:.0f}M"
+        del _ckpt  # Free memory before training
+    elif edsr:
         dim, n_layers, n_heads, ff_dim = 768, 12, 12, 2048
         exit_layers = [3, 7, 11]  # after layers 4, 8, 12 (1-indexed)
         lr, min_lr = 3e-4, 1e-5
@@ -354,7 +628,9 @@ def train(run_name="dense_f4", edsr=False):
     if not shard_dir.exists() or len(list(shard_dir.glob("*.pt"))) < 64:
         print(f"ERROR: Need >=64 shards in {shard_dir}. Currently: {len(list(shard_dir.glob('*.pt')))}")
         sys.exit(1)
-    dataset = ShardedDataset(shard_dir=str(shard_dir))
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+    if weight_file:
+        print(f"  Weighted sampling: {weight_file}")
 
     ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -395,6 +671,17 @@ def train(run_name="dense_f4", edsr=False):
         start_step = ckpt.get("step", 0)
         best_bpt = ckpt.get("best_bpt", float("inf"))
         print(f"Resumed from step {start_step}, best BPT={best_bpt:.4f}")
+    elif init_from is not None:
+        # Initialize from another run's checkpoint (for A/B tests)
+        init_ckpt = torch.load(init_from, weights_only=False, map_location=DEVICE)
+        model.load_state_dict(init_ckpt["model"])
+        opt.load_state_dict(init_ckpt["optimizer"])
+        if "scaler" in init_ckpt:
+            scaler.load_state_dict(init_ckpt["scaler"])
+        start_step = init_ckpt.get("step", 0)
+        best_bpt = init_ckpt.get("best_bpt", float("inf"))
+        print(f"Initialized from {Path(init_from).name} at step {start_step}")
+        del init_ckpt
 
     step = start_step
     running_loss = 0
@@ -455,8 +742,9 @@ def train(run_name="dense_f4", edsr=False):
             dt = time.time() - t0
             tok_s = n_tokens / max(dt, 1e-6)
             ce = running_loss / max(step - start_step, 1)
+            tokens_seen = step * grad_accum * batch_size * SEQ_LEN
             with open(log_file, "a") as f:
-                msg = f"Step {step:5d}: CE={ce:.4f} lr={cur_lr:.2e} {tok_s:.0f}tok/s"
+                msg = f"Step {step:5d}: CE={ce:.4f} lr={cur_lr:.2e} {tok_s:.0f}tok/s tok={tokens_seen/1e6:.1f}M"
                 if use_exits:
                     extras = " ".join(f"{k}={v:.3f}" for k, v in loss_metrics.items()
                                       if k != "ce_final")
@@ -569,6 +857,1345 @@ def deterministic_eval_dense(model, cache_path, depths=None, device=None):
     return result
 
 
+def calibrate_exits(ckpt_path, run_name="exit_calibration"):
+    """Post-hoc exit threshold calibration: sweep entropy/margin thresholds.
+
+    Codex R2 Probe 3.4: Test whether token-level adaptive exit can work
+    WITHOUT a trained routing network. Uses entropy and margin thresholds
+    on existing exit logits to decide per-token exit depth.
+
+    Compares: always-full-depth vs always-exit-8 vs thresholded policies.
+    """
+    print(f"=== POST-HOC EXIT CALIBRATION ===")
+    print(f"Checkpoint: {ckpt_path}")
+
+    # Load model
+    ckpt = torch.load(ckpt_path, weights_only=False, map_location=DEVICE)
+    cfg = ckpt.get("config", {})
+    model = DenseTransformer(
+        vocab_size=cfg.get("vocab_size", VOCAB_SIZE),
+        dim=cfg.get("dim", 768),
+        n_layers=cfg.get("n_layers", 12),
+        n_heads=cfg.get("n_heads", 12),
+        ff_dim=cfg.get("ff_dim", 2048),
+        exit_layers=cfg.get("exit_layers", [3, 7, 11]),
+    ).to(DEVICE)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    step = ckpt.get("step", "?")
+    print(f"Loaded step {step}, exits at {cfg.get('exit_layers', [3,7,11])}")
+
+    # Load eval cache
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    cache = torch.load(cache_path, weights_only=False, map_location="cpu")
+    windows = cache["windows"]
+
+    # Collect per-token metrics at each exit
+    print(f"Collecting per-token exit metrics on {len(windows)} windows...")
+    all_data = []  # list of (entropy_4, margin_4, entropy_8, margin_8, ce_4, ce_8, ce_12)
+    exit_layers = cfg.get("exit_layers", [3, 7, 11])
+
+    with torch.no_grad():
+        for w in windows:
+            x = w.unsqueeze(0).to(DEVICE)
+            inp, tgt = x[:, :-1], x[:, 1:]
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                out = model(inp, return_exits=True)
+
+            V = out['logits'].size(-1)
+            tgt_flat = tgt.reshape(-1)
+            T = tgt.size(1)
+
+            # Per-token CE at each exit
+            ce_final = F.cross_entropy(
+                out['logits'][:, :T].float().reshape(-1, V), tgt_flat,
+                reduction='none')  # (T,)
+            ce_exits = {}
+            entropy_exits = {}
+            margin_exits = {}
+
+            for li in exit_layers[:-1]:  # non-final exits
+                if li in out['exit_logits']:
+                    e_logits = out['exit_logits'][li][:, :T].float()
+                    ce_exits[li] = F.cross_entropy(
+                        e_logits.reshape(-1, V), tgt_flat,
+                        reduction='none')  # (T,)
+                    # Entropy
+                    probs = F.softmax(e_logits.squeeze(0), dim=-1)
+                    ent = -(probs * (probs + 1e-10).log()).sum(-1)  # (T,)
+                    entropy_exits[li] = ent
+                    # Margin
+                    topk = e_logits.squeeze(0).topk(2, dim=-1).values
+                    margin_exits[li] = topk[:, 0] - topk[:, 1]  # (T,)
+
+            # Store per-token data
+            for t_idx in range(T):
+                row = {"ce_final": ce_final[t_idx].item()}
+                for li in exit_layers[:-1]:
+                    if li in ce_exits:
+                        row[f"ce_{li}"] = ce_exits[li][t_idx].item()
+                        row[f"ent_{li}"] = entropy_exits[li][t_idx].item()
+                        row[f"margin_{li}"] = margin_exits[li][t_idx].item()
+                all_data.append(row)
+
+    print(f"Collected {len(all_data)} tokens")
+
+    # Now sweep thresholds
+    import numpy as np
+    data = {k: np.array([d[k] for d in all_data]) for k in all_data[0].keys()}
+
+    ce_final_mean = data["ce_final"].mean()
+    bpt_final = ce_final_mean / math.log(2)
+    print(f"\nBaseline: always-full-depth BPT = {bpt_final:.4f}")
+
+    # Always exit at layer 8
+    if "ce_7" in data:
+        bpt_exit8 = data["ce_7"].mean() / math.log(2)
+        print(f"Always exit-8: BPT = {bpt_exit8:.4f} (at 67% compute)")
+    elif "ce_3" in data:
+        bpt_exit4 = data["ce_3"].mean() / math.log(2)
+        print(f"Always exit-4: BPT = {bpt_exit4:.4f} (at 33% compute)")
+
+    results = {
+        "checkpoint": str(ckpt_path),
+        "step": step,
+        "n_tokens": len(all_data),
+        "bpt_full": round(bpt_final, 4),
+        "policies": [],
+    }
+
+    # Threshold sweep on exit-8 (layer index 7) using entropy
+    if "ent_7" in data and "ce_7" in data:
+        print(f"\n--- Entropy threshold sweep (exit-8) ---")
+        ent_vals = data["ent_7"]
+        percentiles = [10, 20, 30, 40, 50, 60, 70, 80, 90]
+        for pct in percentiles:
+            threshold = np.percentile(ent_vals, pct)
+            # Exit early if entropy < threshold (confident tokens exit early)
+            exit_early = ent_vals < threshold
+            frac_early = exit_early.mean()
+            # Mix: early tokens use exit-8 CE, rest use final CE
+            mixed_ce = np.where(exit_early, data["ce_7"], data["ce_final"])
+            mixed_bpt = mixed_ce.mean() / math.log(2)
+            avg_depth = frac_early * 8/12 + (1 - frac_early) * 1.0
+            compute_saving = (1 - avg_depth) * 100
+            policy = {
+                "type": "entropy_exit8",
+                "threshold": round(float(threshold), 4),
+                "percentile": pct,
+                "frac_early": round(float(frac_early), 4),
+                "bpt": round(float(mixed_bpt), 4),
+                "bpt_delta": round(float(mixed_bpt - bpt_final), 4),
+                "avg_depth_frac": round(float(avg_depth), 4),
+                "compute_saving_pct": round(float(compute_saving), 1),
+            }
+            results["policies"].append(policy)
+            print(f"  p{pct:2d}: thresh={threshold:.2f} exit={frac_early*100:.0f}% "
+                  f"BPT={mixed_bpt:.4f} (delta={mixed_bpt-bpt_final:+.4f}) "
+                  f"save={compute_saving:.0f}%")
+
+    # Threshold sweep on exit-4 (layer index 3) using entropy
+    if "ent_3" in data and "ce_3" in data:
+        print(f"\n--- Entropy threshold sweep (exit-4) ---")
+        ent_vals = data["ent_3"]
+        percentiles = [5, 10, 15, 20, 30]
+        for pct in percentiles:
+            threshold = np.percentile(ent_vals, pct)
+            exit_early = ent_vals < threshold
+            frac_early = exit_early.mean()
+            mixed_ce = np.where(exit_early, data["ce_3"], data["ce_final"])
+            mixed_bpt = mixed_ce.mean() / math.log(2)
+            avg_depth = frac_early * 4/12 + (1 - frac_early) * 1.0
+            compute_saving = (1 - avg_depth) * 100
+            policy = {
+                "type": "entropy_exit4",
+                "threshold": round(float(threshold), 4),
+                "percentile": pct,
+                "frac_early": round(float(frac_early), 4),
+                "bpt": round(float(mixed_bpt), 4),
+                "bpt_delta": round(float(mixed_bpt - bpt_final), 4),
+                "avg_depth_frac": round(float(avg_depth), 4),
+                "compute_saving_pct": round(float(compute_saving), 1),
+            }
+            results["policies"].append(policy)
+            print(f"  p{pct:2d}: thresh={threshold:.2f} exit={frac_early*100:.0f}% "
+                  f"BPT={mixed_bpt:.4f} (delta={mixed_bpt-bpt_final:+.4f}) "
+                  f"save={compute_saving:.0f}%")
+
+    # Two-stage cascade: exit-4 if very confident, else exit-8 if confident, else full
+    if all(k in data for k in ["ent_3", "ent_7", "ce_3", "ce_7"]):
+        print(f"\n--- Two-stage cascade (exit-4 -> exit-8 -> full) ---")
+        for p4 in [5, 10]:
+            t4 = np.percentile(data["ent_3"], p4)
+            for p8 in [30, 50, 70]:
+                t8 = np.percentile(data["ent_7"], p8)
+                exit_at_4 = data["ent_3"] < t4
+                exit_at_8 = (~exit_at_4) & (data["ent_7"] < t8)
+                exit_at_12 = ~(exit_at_4 | exit_at_8)
+                mixed_ce = (
+                    exit_at_4 * data["ce_3"] +
+                    exit_at_8 * data["ce_7"] +
+                    exit_at_12 * data["ce_final"]
+                )
+                mixed_bpt = mixed_ce.mean() / math.log(2)
+                f4 = exit_at_4.mean()
+                f8 = exit_at_8.mean()
+                f12 = exit_at_12.mean()
+                avg_depth = f4 * 4/12 + f8 * 8/12 + f12 * 1.0
+                compute_saving = (1 - avg_depth) * 100
+                policy = {
+                    "type": "cascade_4_8_12",
+                    "threshold_4": round(float(t4), 4),
+                    "threshold_8": round(float(t8), 4),
+                    "percentile_4": p4,
+                    "percentile_8": p8,
+                    "frac_exit4": round(float(f4), 4),
+                    "frac_exit8": round(float(f8), 4),
+                    "frac_exit12": round(float(f12), 4),
+                    "bpt": round(float(mixed_bpt), 4),
+                    "bpt_delta": round(float(mixed_bpt - bpt_final), 4),
+                    "avg_depth_frac": round(float(avg_depth), 4),
+                    "compute_saving_pct": round(float(compute_saving), 1),
+                }
+                results["policies"].append(policy)
+                print(f"  p4={p4} p8={p8}: "
+                      f"exit4={f4*100:.0f}% exit8={f8*100:.0f}% full={f12*100:.0f}% "
+                      f"BPT={mixed_bpt:.4f} (delta={mixed_bpt-bpt_final:+.4f}) "
+                      f"save={compute_saving:.0f}%")
+
+    # Save results
+    out_path = REPO / "results" / f"{run_name}.json"
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nCalibration complete. Results: {out_path}")
+
+
+def early_exit_inference(ckpt_path, run_name="early_exit_bench"):
+    """Real early-exit inference engine with wall-clock benchmarking.
+
+    Measures actual latency/throughput for:
+    1. Full-depth (all 12 layers)
+    2. Always exit-8 (layers 1-8 only)
+    3. Calibrated exit-8 (entropy threshold, exit early when confident)
+
+    Uses the eval cache for consistent comparison. Reports BPT + real latency.
+    """
+    print("=== EARLY-EXIT INFERENCE ENGINE ===")
+    print(f"Checkpoint: {ckpt_path}")
+
+    # Load model
+    ckpt = torch.load(ckpt_path, weights_only=False, map_location=DEVICE)
+    cfg = ckpt.get("config", {})
+    exit_layers = cfg.get("exit_layers", [3, 7, 11])
+    model = DenseTransformer(
+        vocab_size=cfg.get("vocab_size", VOCAB_SIZE),
+        dim=cfg.get("dim", 768),
+        n_layers=cfg.get("n_layers", 12),
+        n_heads=cfg.get("n_heads", 12),
+        ff_dim=cfg.get("ff_dim", 2048),
+        exit_layers=exit_layers,
+    ).to(DEVICE)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    model.half()  # FP16 for inference speed
+    step = ckpt.get("step", "?")
+    print(f"Loaded step {step}, exits at {exit_layers}")
+
+    # Load eval cache
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    cache = torch.load(cache_path, weights_only=False, map_location="cpu")
+    windows = cache["windows"]
+    print(f"Eval windows: {len(windows)}")
+
+    # Get calibrated thresholds from exit_calibration.json if available
+    cal_path = REPO / "results" / "exit_calibration.json"
+    ent_threshold_p30 = 2.6607  # default from step_3000 calibration
+    if cal_path.exists():
+        import json as _json
+        cal = _json.load(open(cal_path))
+        for p in cal.get("policies", []):
+            if p.get("name") == "exit8_ent_p30":
+                ent_threshold_p30 = p.get("threshold", ent_threshold_p30)
+                break
+    print(f"Exit-8 entropy threshold (p30): {ent_threshold_p30:.4f}")
+
+    # Helper: forward through layers with optional early stopping
+    @torch.no_grad()
+    def forward_adaptive(model, inp, policy="full"):
+        """Forward pass with exit policy.
+
+        policy: "full" | "always_exit8" | "calibrated_p30"
+        Returns: logits (B, T, V), dict with per-token exit info
+        """
+        B, T = inp.shape
+        h = model.emb(inp) * math.sqrt(model.dim)
+        cos, sin = model.rope_cos, model.rope_sin
+
+        exit8_idx = exit_layers[-2] if len(exit_layers) >= 2 else exit_layers[0]
+        final_idx = model.n_layers - 1
+
+        for i, layer in enumerate(model.layers):
+            h = layer(h, cos, sin)
+
+            # Check for early exit at exit-8
+            if i == exit8_idx and policy != "full":
+                h_normed = model.exit_norms[str(i)](h)
+                e_logits = F.linear(h_normed, model.emb.weight.half())
+
+                if policy == "always_exit8":
+                    return e_logits, {"exit_layer": i, "fraction_early": 1.0}
+
+                if policy == "calibrated_p30":
+                    # Per-token entropy check
+                    probs = F.softmax(e_logits.float(), dim=-1)
+                    ent = -(probs * (probs + 1e-10).log()).sum(-1)  # (B, T)
+                    early_mask = ent < ent_threshold_p30  # (B, T) bool
+
+                    # If ALL tokens can exit early, return exit logits
+                    frac = early_mask.float().mean().item()
+                    if frac > 0.95:  # batch-level: if >95% can exit, all exit
+                        return e_logits, {"exit_layer": i, "fraction_early": frac}
+
+                    # Otherwise, continue to full depth
+                    # In a real per-token engine, we'd split the batch.
+                    # For this benchmark: continue to full depth if any token needs it.
+
+        h = model.norm(h)
+        logits = F.linear(h, model.emb.weight.half())
+        return logits, {"exit_layer": final_idx, "fraction_early": 0.0}
+
+    # Benchmark function
+    def bench_policy(policy_name, n_warmup=3, n_runs=5):
+        """Run eval with a given policy, return metrics and timing."""
+        # Warmup
+        for _ in range(n_warmup):
+            w = windows[0].unsqueeze(0).to(DEVICE)
+            inp = w[:, :-1]
+            with torch.amp.autocast("cuda", dtype=torch.float16):
+                forward_adaptive(model, inp, policy=policy_name)
+            torch.cuda.synchronize()
+
+        total_loss = 0.0
+        n_tokens = 0
+        early_fracs = []
+
+        torch.cuda.synchronize()
+        t0 = time.time()
+
+        for _ in range(n_runs):
+            for w in windows:
+                x = w.unsqueeze(0).to(DEVICE)
+                inp, tgt = x[:, :-1], x[:, 1:]
+                with torch.amp.autocast("cuda", dtype=torch.float16):
+                    logits, info = forward_adaptive(model, inp, policy=policy_name)
+                V = logits.size(-1)
+                T = min(logits.size(1), tgt.size(1))
+                loss = F.cross_entropy(
+                    logits[:, :T].float().reshape(-1, V),
+                    tgt[:, :T].reshape(-1), reduction="sum")
+                total_loss += loss.item()
+                n_tokens += tgt[:, :T].numel()
+                early_fracs.append(info["fraction_early"])
+
+        torch.cuda.synchronize()
+        elapsed = time.time() - t0
+
+        bpt = (total_loss / n_tokens) / math.log(2)
+        tok_per_sec = n_tokens / elapsed
+        avg_early = sum(early_fracs) / len(early_fracs) if early_fracs else 0
+
+        return {
+            "policy": policy_name,
+            "bpt": round(bpt, 4),
+            "latency_s": round(elapsed / n_runs, 4),
+            "throughput_tok_s": round(tok_per_sec, 0),
+            "avg_early_exit_frac": round(avg_early, 4),
+            "n_tokens_total": n_tokens,
+            "n_runs": n_runs,
+        }
+
+    # Run all policies
+    results = {}
+    for policy in ["full", "always_exit8", "calibrated_p30"]:
+        print(f"\nBenchmarking: {policy}...")
+        r = bench_policy(policy)
+        results[policy] = r
+        print(f"  BPT={r['bpt']:.4f}  latency={r['latency_s']:.3f}s/pass  "
+              f"throughput={r['throughput_tok_s']:.0f}tok/s  "
+              f"early_frac={r['avg_early_exit_frac']:.2%}")
+
+    # Summary
+    full = results["full"]
+    print("\n" + "=" * 60)
+    print("EARLY-EXIT INFERENCE RESULTS")
+    print("=" * 60)
+    for name, r in results.items():
+        delta_bpt = r["bpt"] - full["bpt"]
+        speedup = full["latency_s"] / max(r["latency_s"], 1e-6)
+        print(f"  {name:20s}: BPT={r['bpt']:.4f} ({delta_bpt:+.4f})  "
+              f"speedup={speedup:.2f}x  {r['throughput_tok_s']:.0f}tok/s")
+
+    # Save
+    out_path = REPO / "results" / f"{run_name}.json"
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved: {out_path}")
+    return results
+
+
+def expand_98m_to_200m(parent_ckpt, output_path=None):
+    """Net2Wider + layer insertion: expand 98M checkpoint to ~197M model.
+
+    Codex T+L R3 spec:
+    - 98M: 12 layers, d=768, 12 heads, ff=2048, exits at [3,7,11]
+    - 200M: 14 layers, d=1024, 16 heads, ff=2816, exits at [4,9,13]
+
+    Expansion method:
+    1. Width: Net2Wider duplication (768→1024). First 768 channels copy,
+       remaining 256 duplicate random parent channels. Outgoing weights
+       divided by replication count.
+    2. Depth: Insert 2 new layers with zero-init residual gates.
+    3. Heads: 12→16 by duplicating 4 parent heads, dividing output.
+
+    Step-0 parity: not exact (width expansion changes output slightly due
+    to channel duplication), but close enough for warm-start.
+    """
+    import random
+
+    print("=== 98M -> 200M WARM-START EXPANSION ===")
+    print(f"Parent: {parent_ckpt}")
+
+    # Load parent
+    ckpt = torch.load(parent_ckpt, weights_only=False, map_location="cpu")
+    parent_cfg = ckpt.get("config", {})
+    parent_sd = ckpt["model"]
+
+    # Parent config
+    p_dim = parent_cfg.get("dim", 768)
+    p_layers = parent_cfg.get("n_layers", 12)
+    p_heads = parent_cfg.get("n_heads", 12)
+    p_ff = parent_cfg.get("ff_dim", 2048)
+    p_exits = parent_cfg.get("exit_layers", [3, 7, 11])
+    p_head_dim = p_dim // p_heads
+
+    # Child config
+    c_dim = 1024
+    c_layers = 14
+    c_heads = 16
+    c_ff = 2816
+    c_head_dim = c_dim // c_heads  # 64, same as parent
+    c_exits = [4, 9, 13]  # exits after layers 5, 10, 14 (1-indexed)
+
+    assert p_head_dim == c_head_dim == 64, "Head dim must match"
+
+    print(f"Parent: {p_layers}L d={p_dim} {p_heads}h ff={p_ff} exits={p_exits}")
+    print(f"Child:  {c_layers}L d={c_dim} {c_heads}h ff={c_ff} exits={c_exits}")
+
+    # Build channel duplication map: 768 → 1024
+    random.seed(42)
+    dup_map = list(range(p_dim))  # first 768 map to themselves
+    extra = c_dim - p_dim  # 256 extra channels
+    dup_sources = [random.randint(0, p_dim - 1) for _ in range(extra)]
+    dup_map.extend(dup_sources)
+
+    # Count how many times each parent channel is used
+    from collections import Counter
+    channel_counts = Counter(dup_map)
+
+    # Similarly for FF dim: 2048 → 2816
+    ff_dup_map = list(range(p_ff))
+    ff_extra = c_ff - p_ff
+    ff_dup_sources = [random.randint(0, p_ff - 1) for _ in range(ff_extra)]
+    ff_dup_map.extend(ff_dup_sources)
+    ff_channel_counts = Counter(ff_dup_map)
+
+    # Head duplication map: 12 → 16
+    head_dup_map = list(range(p_heads))
+    head_extra = c_heads - p_heads
+    head_dup_sources = [random.randint(0, p_heads - 1) for _ in range(head_extra)]
+    head_dup_map.extend(head_dup_sources)
+    head_counts = Counter(head_dup_map)
+
+    def widen_incoming(w, dim_map, axis=1):
+        """Duplicate channels on the given axis using dim_map."""
+        return torch.index_select(w, axis, torch.tensor(dim_map))
+
+    def widen_outgoing(w, dim_map, counts, axis=0):
+        """Duplicate channels and divide by replication count."""
+        expanded = torch.index_select(w, axis, torch.tensor(dim_map))
+        # Build scale factors
+        scale = torch.tensor([1.0 / counts[dim_map[i]] for i in range(len(dim_map))])
+        shape = [1] * expanded.dim()
+        shape[axis] = len(dim_map)
+        return expanded * scale.reshape(shape)
+
+    # Create child model
+    child = DenseTransformer(
+        vocab_size=parent_cfg.get("vocab_size", VOCAB_SIZE),
+        dim=c_dim, n_layers=c_layers, n_heads=c_heads, ff_dim=c_ff,
+        exit_layers=c_exits,
+    )
+
+    child_sd = child.state_dict()
+
+    # Layer mapping: which child layer gets which parent layer
+    # Parent: 12 layers [0..11], Child: 14 layers [0..13]
+    # Insert 2 new layers. Strategy: insert after parent layers 5 and 10
+    # Parent 0-5 → Child 0-5, new child 6, Parent 6-10 → Child 7-11, new child 12, Parent 11 → Child 13
+    # This gives even spacing and preserves exit-relative positions.
+    parent_to_child = {
+        0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5,
+        # child 6 is NEW (zero-init)
+        6: 7, 7: 8, 8: 9, 9: 10, 10: 11,
+        # child 12 is NEW (zero-init)
+        11: 13,
+    }
+    new_layers = {6, 12}  # child layers that are new (zero-init)
+
+    print(f"Layer mapping: parent->child = {parent_to_child}")
+    print(f"New layers (zero-init): {new_layers}")
+
+    # 1. Embedding: widen from 768 → 1024
+    emb_w = parent_sd["emb.weight"]  # (V, 768)
+    child_sd["emb.weight"] = widen_incoming(emb_w, dup_map, axis=1)
+    print(f"Embedding: {emb_w.shape} -> {child_sd['emb.weight'].shape}")
+
+    # 2. Copy transformer layers
+    for p_idx, c_idx in parent_to_child.items():
+        prefix_p = f"layers.{p_idx}"
+        prefix_c = f"layers.{c_idx}"
+
+        # Attention norms (RMSNorm): weight is (dim,) → widen
+        norm_w = parent_sd[f"{prefix_p}.attn_norm.weight"]
+        child_sd[f"{prefix_c}.attn_norm.weight"] = norm_w[dup_map]
+
+        # FFN norms
+        ffn_norm_w = parent_sd[f"{prefix_p}.ffn_norm.weight"]
+        child_sd[f"{prefix_c}.ffn_norm.weight"] = ffn_norm_w[dup_map]
+
+        # QKV projection: (3*dim, dim) → widen both dims
+        # QKV is stored as (3*768, 768). For widening:
+        # - Input dim (axis=1): duplicate channels
+        # - Output dim (axis=0): expand heads from 12→16
+        qkv_w = parent_sd[f"{prefix_p}.attn.qkv.weight"]  # (3*768, 768)
+        # Split into Q, K, V each (768, 768)
+        q_w, k_w, v_w = qkv_w.chunk(3, dim=0)
+
+        # Each of Q, K, V has shape (n_heads * head_dim, dim)
+        # Reshape to (n_heads, head_dim, dim) to duplicate heads
+        def expand_qkv_block(w):
+            """Expand (p_heads*64, p_dim) → (c_heads*64, c_dim)"""
+            w_heads = w.reshape(p_heads, p_head_dim, p_dim)  # (12, 64, 768)
+            # Duplicate heads: 12→16
+            expanded_heads = w_heads[head_dup_map]  # (16, 64, 768)
+            # Widen input dim: 768→1024
+            expanded_heads = widen_incoming(expanded_heads, dup_map, axis=2)  # (16, 64, 1024)
+            return expanded_heads.reshape(c_heads * c_head_dim, c_dim)
+
+        new_q = expand_qkv_block(q_w)
+        new_k = expand_qkv_block(k_w)
+        new_v = expand_qkv_block(v_w)
+        child_sd[f"{prefix_c}.attn.qkv.weight"] = torch.cat([new_q, new_k, new_v], dim=0)
+
+        # Output projection: (dim, n_heads*head_dim) → widen + head duplication
+        out_w = parent_sd[f"{prefix_p}.attn.out.weight"]  # (768, 768)
+        # Input side: (dim, n_heads*64) → duplicate heads on axis=1
+        out_heads = out_w.reshape(p_dim, p_heads, p_head_dim)  # (768, 12, 64)
+        out_expanded = out_heads[:, head_dup_map, :]  # (768, 16, 64)
+        # Divide by head count to preserve output magnitude
+        for i in range(c_heads):
+            parent_head = head_dup_map[i]
+            out_expanded[:, i, :] /= head_counts[parent_head]
+        out_expanded = out_expanded.reshape(p_dim, c_heads * c_head_dim)
+        # Widen output dim: 768→1024
+        child_sd[f"{prefix_c}.attn.out.weight"] = widen_outgoing(
+            widen_incoming(out_expanded.T, dup_map, axis=1).T,
+            dup_map, channel_counts, axis=0)
+
+        # SwiGLU: gate (ff_dim, dim), up (ff_dim, dim), down (dim, ff_dim)
+        gate_w = parent_sd[f"{prefix_p}.ffn.gate.weight"]  # (2048, 768)
+        up_w = parent_sd[f"{prefix_p}.ffn.up.weight"]      # (2048, 768)
+        down_w = parent_sd[f"{prefix_p}.ffn.down.weight"]  # (768, 2048)
+
+        # gate/up: widen input (768→1024), widen output (2048→2816)
+        child_sd[f"{prefix_c}.ffn.gate.weight"] = widen_incoming(
+            widen_outgoing(gate_w, ff_dup_map, ff_channel_counts, axis=0),
+            dup_map, axis=1) * (p_ff / c_ff)  # scale to preserve magnitude
+        # Actually, for gate and up, we just duplicate — no need for count division
+        # since these are INCOMING to the FF. Let me redo:
+        gate_widened = widen_incoming(gate_w, dup_map, axis=1)  # (2048, 1024)
+        gate_widened = widen_incoming(gate_widened.T, ff_dup_map, axis=1).T  # (2816, 1024)
+        child_sd[f"{prefix_c}.ffn.gate.weight"] = gate_widened
+
+        up_widened = widen_incoming(up_w, dup_map, axis=1)  # (2048, 1024)
+        up_widened = widen_incoming(up_widened.T, ff_dup_map, axis=1).T  # (2816, 1024)
+        child_sd[f"{prefix_c}.ffn.up.weight"] = up_widened
+
+        # down: widen input (2048→2816 on axis=1), widen output (768→1024 on axis=0)
+        down_widened = widen_incoming(down_w, ff_dup_map, axis=1)  # (768, 2816)
+        # Divide by ff dup count on input axis
+        ff_scale = torch.tensor([1.0 / ff_channel_counts[ff_dup_map[i]]
+                                 for i in range(c_ff)])
+        down_widened = down_widened * ff_scale.unsqueeze(0)
+        down_widened = widen_outgoing(down_widened, dup_map, channel_counts, axis=0)
+        child_sd[f"{prefix_c}.ffn.down.weight"] = down_widened
+
+    # 3. New layers (child 6 and 12): zero-init residual contribution
+    # The model already init'd these randomly. We want zero-init for the
+    # output projections so the new layers start as identity (residual skip).
+    for new_idx in new_layers:
+        prefix = f"layers.{new_idx}"
+        # Zero out attention output and FFN down projection
+        child_sd[f"{prefix}.attn.out.weight"].zero_()
+        child_sd[f"{prefix}.ffn.down.weight"].zero_()
+        print(f"  Layer {new_idx}: zero-init output projections (residual skip)")
+
+    # 4. Final norm: widen
+    child_sd["norm.weight"] = parent_sd["norm.weight"][dup_map]
+
+    # 5. Exit norms and gain heads for new exit positions
+    # Parent exits: [3,7,11] → Child exits: [4,9,13]
+    # Mapping: parent exit 3 (after parent layer 4) → child exit 4 (after child layer 5)
+    # parent exit 7 (after parent layer 8) → child exit 9 (after child layer 10)
+    # parent exit 11 is final (no exit norm needed)
+    exit_map = {3: 4, 7: 9}  # parent exit → child exit (non-final exits only)
+    for p_exit, c_exit in exit_map.items():
+        p_key = f"exit_norms.{p_exit}.weight"
+        c_key = f"exit_norms.{c_exit}.weight"
+        if p_key in parent_sd:
+            child_sd[c_key] = parent_sd[p_key][dup_map]
+
+        # Gain heads: Linear(dim+2, 256) and Linear(256, 1)
+        p_prefix = f"gain_heads.{p_exit}"
+        c_prefix = f"gain_heads.{c_exit}"
+        for suffix in [".fc1.weight", ".fc1.bias", ".fc2.weight", ".fc2.bias"]:
+            p_k = p_prefix + suffix
+            c_k = c_prefix + suffix
+            if p_k in parent_sd:
+                w = parent_sd[p_k]
+                if suffix == ".fc1.weight":
+                    # (256, dim+2) — widen input dim+2 → c_dim+2
+                    # First dim channels are hidden state, last 2 are entropy+margin
+                    new_w = torch.zeros(w.shape[0], c_dim + 2)
+                    new_w[:, :p_dim] = w[:, :p_dim][:, dup_map]
+                    new_w[:, c_dim:] = w[:, p_dim:]  # copy entropy/margin weights
+                    child_sd[c_k] = new_w
+                else:
+                    child_sd[c_k] = w.clone()
+
+    # Load into child model
+    child.load_state_dict(child_sd)
+    total_params = child.count_params()
+    print(f"\nChild model: {total_params:,} parameters")
+
+    # Save
+    if output_path is None:
+        output_path = REPO / "results" / "checkpoints_200m" / "expanded_from_98m.pt"
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    save_ckpt = {
+        "model": child.state_dict(),
+        "step": 0,  # Reset step for 200M line
+        "best_bpt": float("inf"),
+        "parent_step": ckpt.get("step", 0),
+        "parent_ckpt": str(parent_ckpt),
+        "config": {
+            "vocab_size": parent_cfg.get("vocab_size", VOCAB_SIZE),
+            "dim": c_dim, "n_layers": c_layers,
+            "n_heads": c_heads, "ff_dim": c_ff,
+            "exit_layers": c_exits,
+        },
+    }
+    torch.save(save_ckpt, output_path)
+    print(f"Saved expanded checkpoint: {output_path}")
+    print(f"Config: {save_ckpt['config']}")
+    return str(output_path)
+
+
+def probe_mtp(parent_ckpt, steps=1000, run_name="probe_mtp"):
+    """MTP probe: add D=1 MTP to EDSR parent, train, compare to control.
+
+    T+L Round 1, Probe 3: tests whether MTP improves data efficiency.
+    """
+    MTP_WEIGHT = 0.30
+    print(f"=== MTP PROBE (D=1) ===")
+    print(f"Parent: {parent_ckpt}")
+    print(f"Steps: {steps}, MTP weight: {MTP_WEIGHT}")
+
+    # Load parent
+    ckpt = torch.load(parent_ckpt, weights_only=False, map_location=DEVICE)
+    cfg = ckpt.get("config", {})
+    dim = cfg.get("dim", 768)
+    n_layers = cfg.get("n_layers", 12)
+    n_heads = cfg.get("n_heads", 12)
+    ff_dim = cfg.get("ff_dim", 2048)
+    exit_layers = cfg.get("exit_layers", [3, 7, 11])
+
+    # Create model WITH MTP
+    model = DenseTransformer(
+        vocab_size=cfg.get("vocab_size", VOCAB_SIZE),
+        dim=dim, n_layers=n_layers, n_heads=n_heads, ff_dim=ff_dim,
+        exit_layers=exit_layers, use_mtp=True,
+    ).to(DEVICE)
+
+    # Load parent weights (strict=False since MTP is new)
+    model.load_state_dict(ckpt["model"], strict=False)
+    parent_step = ckpt.get("step", 0)
+    print(f"Loaded parent step {parent_step}, added MTP module")
+    print(f"  Backbone params: {sum(p.numel() for n,p in model.named_parameters() if 'mtp' not in n):,}")
+    print(f"  MTP params: {sum(p.numel() for n,p in model.named_parameters() if 'mtp' in n):,}")
+    print(f"  Total: {model.count_params():,}")
+
+    # Data
+    shard_dir = REPO / "data" / "shards_16k"
+    dataset = ShardedDataset(shard_dir=str(shard_dir))
+
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"{run_name}_log.txt"
+
+    # Optimizer: separate LR for backbone vs MTP
+    backbone_params = [p for n, p in model.named_parameters() if 'mtp' not in n]
+    mtp_params = [p for n, p in model.named_parameters() if 'mtp' in n]
+    opt = torch.optim.AdamW([
+        {"params": backbone_params, "lr": 1.5e-4},
+        {"params": mtp_params, "lr": 4e-4},
+    ], betas=(0.9, 0.95), weight_decay=0.1)
+    scaler = torch.amp.GradScaler("cuda")
+
+    batch_size, grad_accum = 8, 4
+    warmup = 100
+    use_exits = bool(exit_layers)
+
+    model.train()
+    running_ar_loss = 0
+    running_mtp_loss = 0
+    n_tokens = 0
+    t0 = time.time()
+
+    for step in range(1, steps + 1):
+        opt.zero_grad()
+        for micro in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, SEQ_LEN, device=DEVICE)
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                if use_exits:
+                    out = model(inp, return_exits=True, return_hidden=True)
+                    ar_loss, metrics = compute_edsr_loss(out, tgt)
+                else:
+                    out = model(inp, return_hidden=True)
+                    if isinstance(out, dict):
+                        logits = out['logits']
+                        Tc = min(logits.size(1), tgt.size(1))
+                        ar_loss = F.cross_entropy(logits[:, :Tc].reshape(-1, logits.size(-1)),
+                                                   tgt[:, :Tc].reshape(-1))
+                        metrics = {"ce_final": ar_loss.item()}
+                    else:
+                        Tc = min(out.size(1), tgt.size(1))
+                        ar_loss = F.cross_entropy(out[:, :Tc].reshape(-1, out.size(-1)),
+                                                   tgt[:, :Tc].reshape(-1))
+                        metrics = {"ce_final": ar_loss.item()}
+
+                # MTP loss
+                hidden = out['hidden'] if isinstance(out, dict) else None
+                if hidden is not None:
+                    mtp_loss = compute_mtp_loss(model, hidden, inp, tgt)
+                else:
+                    mtp_loss = torch.tensor(0.0, device=DEVICE)
+
+                total_loss = (ar_loss + MTP_WEIGHT * mtp_loss) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"WARNING: NaN loss at step {step}")
+                opt.zero_grad()
+                break
+            scaler.scale(total_loss).backward()
+            running_ar_loss += metrics["ce_final"]
+            running_mtp_loss += mtp_loss.item()
+            n_tokens += inp.numel()
+
+        scaler.unscale_(opt)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+
+        # LR warmup
+        if step <= warmup:
+            frac = step / warmup
+            for i, pg in enumerate(opt.param_groups):
+                base_lr = 1.5e-4 if i == 0 else 4e-4
+                pg["lr"] = base_lr * frac
+
+        scaler.step(opt)
+        scaler.update()
+
+        if step % 50 == 0:
+            dt = time.time() - t0
+            ar_avg = running_ar_loss / step
+            mtp_avg = running_mtp_loss / step
+            tok_s = n_tokens / max(dt, 1e-6)
+            msg = f"Step {step:5d}: AR={ar_avg:.4f} MTP={mtp_avg:.4f} {tok_s:.0f}tok/s"
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+
+        if step % 500 == 0 or step == steps:
+            save = {
+                "model": model.state_dict(),
+                "optimizer": opt.state_dict(),
+                "scaler": scaler.state_dict(),
+                "step": step,
+                "parent_step": parent_step,
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim,
+                    "exit_layers": exit_layers, "use_mtp": True,
+                }
+            }
+            torch.save(save, ckpt_dir / f"step_{step}.pt")
+
+        if step % 500 == 0 or step == steps:
+            model.eval()
+            cache_path = REPO / "results" / "eval_cache_16k.pt"
+            if cache_path.exists():
+                det_result = deterministic_eval_dense(model, cache_path)
+                msg = f"Det-eval step {step}: {det_result}"
+                print(msg)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+            model.train()
+
+        if step % 500 == 0:
+            torch.cuda.empty_cache()
+
+    # Save final results
+    results = {
+        "probe": "mtp_d1",
+        "parent": str(parent_ckpt),
+        "steps": steps,
+        "mtp_weight": MTP_WEIGHT,
+        "final_ar_loss": running_ar_loss / steps,
+        "final_mtp_loss": running_mtp_loss / steps,
+    }
+    with open(REPO / "results" / f"{run_name}_metrics.json", "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nMTP probe complete. Results: results/{run_name}_metrics.json")
+
+
+class HaltingController(nn.Module):
+    """Differentiable per-token halting for 3-exit mixture.
+
+    T+L Round 1 design: at each non-final exit, compute continue probability
+    rho from features (entropy, logit margin, state-change magnitude, hidden state).
+    Mixture weights beta follow a cascade: if you stop at exit k, you didn't
+    continue past it.
+
+    For exits at layers [4, 8, 12] (0-indexed [3, 7, 11]):
+      rho_4 = sigma(w_4 . q_4 + v_4 . h_4)
+      rho_8 = sigma(w_8 . q_8 + v_8 . h_8)
+      beta_4  = 1 - rho_4
+      beta_8  = rho_4 * (1 - rho_8)
+      beta_12 = rho_4 * rho_8
+
+    q_l = [entropy(logits_l), margin(logits_l), ||h_l - h_{l-1}||_2]
+    """
+
+    def __init__(self, dim, exit_layers):
+        """
+        Args:
+            dim: model dimension
+            exit_layers: list of 0-indexed exit layer indices (e.g., [3, 7, 11])
+        """
+        super().__init__()
+        self.exit_layers = sorted(exit_layers)
+        # For each non-final exit: small linear from features -> scalar
+        # Features: entropy(1) + margin(1) + state_change(1) + hidden(dim) = dim+3
+        self.halt_projs = nn.ModuleDict()
+        for i in self.exit_layers[:-1]:  # all except last exit
+            self.halt_projs[str(i)] = nn.Linear(dim + 3, 1, bias=True)
+            # Initialize bias to +2.0 so rho starts near sigmoid(2)=0.88
+            # meaning "continue" is the default — model starts at full depth
+            nn.init.zeros_(self.halt_projs[str(i)].weight)
+            nn.init.constant_(self.halt_projs[str(i)].bias, 2.0)
+
+    def compute_features(self, h_curr, h_prev, logits):
+        """Compute halting features q_l for a given exit.
+
+        Args:
+            h_curr: (B, T, D) hidden state at this exit
+            h_prev: (B, T, D) hidden state at previous exit (or input embeds)
+            logits: (B, T, V) logits at this exit
+        Returns:
+            features: (B, T, D+3)
+        """
+        with torch.no_grad():
+            probs = F.softmax(logits.float(), dim=-1)
+            entropy = -(probs * (probs + 1e-10).log()).sum(-1, keepdim=True)  # (B,T,1)
+            topk = logits.topk(2, dim=-1).values
+            margin = (topk[:, :, 0:1] - topk[:, :, 1:2])  # (B,T,1)
+            state_change = (h_curr - h_prev).norm(dim=-1, keepdim=True)  # (B,T,1)
+        return torch.cat([
+            entropy.to(h_curr.dtype),
+            margin.to(h_curr.dtype),
+            state_change.to(h_curr.dtype),
+            h_curr
+        ], dim=-1)  # (B, T, D+3)
+
+    def forward(self, exit_hidden, exit_logits, h_input):
+        """Compute mixture weights for all exits.
+
+        Args:
+            exit_hidden: dict {layer_idx: (B,T,D)} normed hidden at each exit
+            exit_logits: dict {layer_idx: (B,T,V)} logits at each exit
+            h_input: (B,T,D) input embeddings (for state-change at first exit)
+        Returns:
+            betas: dict {layer_idx: (B,T,1)} mixture weights summing to 1
+            rhos: dict {layer_idx: (B,T,1)} continue probabilities (for logging)
+        """
+        rhos = {}
+        betas = {}
+
+        # Get ordered exits
+        exits = sorted(exit_hidden.keys())
+
+        # Compute continue probabilities for non-final exits
+        for idx, layer_i in enumerate(exits[:-1]):
+            h_curr = exit_hidden[layer_i]
+            h_prev = h_input if idx == 0 else exit_hidden[exits[idx - 1]]
+            logits = exit_logits[layer_i]
+            feat = self.compute_features(h_curr, h_prev, logits)
+            rho = torch.sigmoid(self.halt_projs[str(layer_i)](feat))  # (B,T,1)
+            rhos[layer_i] = rho
+
+        # Compute mixture weights using cascade
+        # beta_0 = 1 - rho_0
+        # beta_1 = rho_0 * (1 - rho_1)
+        # beta_2 = rho_0 * rho_1  (last exit gets all remaining probability)
+        cum_continue = torch.ones_like(list(rhos.values())[0])  # (B,T,1)
+        for idx, layer_i in enumerate(exits):
+            if layer_i in rhos:
+                betas[layer_i] = cum_continue * (1 - rhos[layer_i])
+                cum_continue = cum_continue * rhos[layer_i]
+            else:
+                # Last exit gets remaining probability
+                betas[layer_i] = cum_continue
+
+        return betas, rhos
+
+
+def compute_halting_loss(out, tgt, betas, lambda_cost=0.0):
+    """Compute loss with differentiable halting mixture.
+
+    Instead of fixed-weight multi-exit loss, the prediction is a weighted
+    mixture of exit softmax distributions, and there's a compute penalty
+    that encourages early stopping.
+
+    Args:
+        out: model output dict with 'logits', 'exit_logits'
+        tgt: target tokens (B, T)
+        betas: dict {layer_idx: (B,T,1)} mixture weights from HaltingController
+        lambda_cost: compute penalty coefficient (ramped from 0 to 0.08)
+    Returns:
+        (total_loss, metrics_dict)
+    """
+    V = out['logits'].size(-1)
+    B, T = tgt.shape
+
+    # Collect all exit softmax distributions
+    all_exits = sorted(betas.keys())
+    exit_probs = []
+    exit_weights = []
+
+    for layer_i in all_exits:
+        if layer_i in out['exit_logits']:
+            logits_i = out['exit_logits'][layer_i]
+        else:
+            # Final exit
+            logits_i = out['logits']
+        Tc = min(logits_i.size(1), T)
+        probs_i = F.softmax(logits_i[:, :Tc].float(), dim=-1)  # (B, Tc, V)
+        exit_probs.append(probs_i)
+        exit_weights.append(betas[layer_i][:, :Tc])
+
+    # Mixture distribution: p_t = sum_l beta_l * softmax(logits_l)
+    Tc = min(p.size(1) for p in exit_probs)
+    mixture = torch.zeros(B, Tc, V, device=tgt.device, dtype=torch.float32)
+    for probs_i, weight_i in zip(exit_probs, exit_weights):
+        mixture += weight_i[:, :Tc] * probs_i[:, :Tc]
+
+    # Cross-entropy of mixture
+    mixture = mixture.clamp(min=1e-10)
+    tgt_flat = tgt[:, :Tc].reshape(-1)
+    log_probs = mixture.log().reshape(-1, V)
+    ce_loss = F.nll_loss(log_probs, tgt_flat)
+
+    # Compute penalty: weighted sum of betas * relative cost
+    # cost_coeffs: fraction of compute at each exit
+    n_exits = len(all_exits)
+    cost_coeffs = [(i + 1) / n_exits for i in range(n_exits)]
+    compute_cost = torch.zeros(B, Tc, 1, device=tgt.device, dtype=torch.float32)
+    for idx, (layer_i, coeff) in enumerate(zip(all_exits, cost_coeffs)):
+        compute_cost += betas[layer_i][:, :Tc] * coeff
+    cost_penalty = lambda_cost * compute_cost.mean()
+
+    total_loss = ce_loss + cost_penalty
+
+    # Metrics
+    metrics = {
+        "ce_mixture": ce_loss.item(),
+        "cost_penalty": cost_penalty.item(),
+        "lambda_cost": lambda_cost,
+    }
+    for idx, layer_i in enumerate(all_exits):
+        beta_mean = betas[layer_i][:, :Tc].mean().item()
+        metrics[f"beta_{layer_i}"] = beta_mean
+
+    return total_loss, metrics
+
+
+def probe_halting(parent_ckpt, steps=1000, run_name="probe_halting"):
+    """Halting controller probe: differentiable 3-exit mixture with compute penalty.
+
+    T+L Round 1, Probe 6: tests whether learned halting improves efficiency.
+    Replaces fixed exit weights with a learned mixture, adds compute penalty.
+    """
+    LAMBDA_COST_MAX = 0.08
+    LAMBDA_RAMP_STEPS = 500  # ramp from 0 to LAMBDA_COST_MAX over first 500 steps
+    print(f"=== HALTING CONTROLLER PROBE ===")
+    print(f"Parent: {parent_ckpt}")
+    print(f"Steps: {steps}, lambda_cost ramp: 0 -> {LAMBDA_COST_MAX} over {LAMBDA_RAMP_STEPS} steps")
+
+    # Load parent
+    ckpt = torch.load(parent_ckpt, weights_only=False, map_location=DEVICE)
+    cfg = ckpt.get("config", {})
+    dim = cfg.get("dim", 768)
+    n_layers = cfg.get("n_layers", 12)
+    n_heads = cfg.get("n_heads", 12)
+    ff_dim = cfg.get("ff_dim", 2048)
+    exit_layers = cfg.get("exit_layers", [3, 7, 11])
+
+    # Create model (no MTP for this probe — isolate halting effect)
+    model = DenseTransformer(
+        vocab_size=cfg.get("vocab_size", VOCAB_SIZE),
+        dim=dim, n_layers=n_layers, n_heads=n_heads, ff_dim=ff_dim,
+        exit_layers=exit_layers,
+    ).to(DEVICE)
+
+    # Load parent weights
+    model.load_state_dict(ckpt["model"], strict=False)
+    parent_step = ckpt.get("step", 0)
+
+    # Create halting controller
+    halt_ctrl = HaltingController(dim, exit_layers).to(DEVICE)
+
+    backbone_params_n = sum(p.numel() for p in model.parameters())
+    halt_params_n = sum(p.numel() for p in halt_ctrl.parameters())
+    print(f"Loaded parent step {parent_step}")
+    print(f"  Backbone params: {backbone_params_n:,}")
+    print(f"  Halting params: {halt_params_n:,}")
+    print(f"  Total: {backbone_params_n + halt_params_n:,}")
+
+    # Data
+    shard_dir = REPO / "data" / "shards_16k"
+    dataset = ShardedDataset(shard_dir=str(shard_dir))
+
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"{run_name}_log.txt"
+
+    # Optimizer: backbone at lower LR, halting at higher LR
+    opt = torch.optim.AdamW([
+        {"params": model.parameters(), "lr": 1.5e-4},
+        {"params": halt_ctrl.parameters(), "lr": 4e-4},
+    ], betas=(0.9, 0.95), weight_decay=0.1)
+    scaler = torch.amp.GradScaler("cuda")
+
+    batch_size, grad_accum = 8, 4
+    warmup = 100
+
+    model.train()
+    halt_ctrl.train()
+    running_metrics = {}
+    n_tokens = 0
+    t0 = time.time()
+
+    for step in range(1, steps + 1):
+        # Ramp lambda_cost
+        lambda_cost = LAMBDA_COST_MAX * min(step / LAMBDA_RAMP_STEPS, 1.0)
+
+        opt.zero_grad()
+        for micro in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, SEQ_LEN, device=DEVICE)
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                # Forward with exits + per-exit hidden states
+                out = model(inp, return_exits=True, return_hidden=True)
+
+                # exit_hidden and exit_logits now include all exits
+                exit_hidden_dict = out['exit_hidden']
+                exit_logits_dict = dict(out['exit_logits'])
+                exit_logits_dict[exit_layers[-1]] = out['logits']
+                h_input = out['h_input']
+
+                # Compute mixture weights
+                betas, rhos = halt_ctrl(exit_hidden_dict, exit_logits_dict, h_input)
+
+                # Halting loss
+                loss, metrics = compute_halting_loss(out, tgt, betas, lambda_cost)
+                loss = loss / grad_accum
+
+            if not torch.isfinite(loss):
+                print(f"WARNING: NaN loss at step {step}")
+                opt.zero_grad()
+                break
+            scaler.scale(loss).backward()
+
+            for k, v in metrics.items():
+                running_metrics[k] = running_metrics.get(k, 0) + v
+            n_tokens += inp.numel()
+
+        scaler.unscale_(opt)
+        torch.nn.utils.clip_grad_norm_(
+            list(model.parameters()) + list(halt_ctrl.parameters()), GRAD_CLIP)
+
+        # LR warmup
+        if step <= warmup:
+            frac = step / warmup
+            for i, pg in enumerate(opt.param_groups):
+                base_lr = 1.5e-4 if i == 0 else 4e-4
+                pg["lr"] = base_lr * frac
+
+        scaler.step(opt)
+        scaler.update()
+
+        if step % 50 == 0:
+            dt = time.time() - t0
+            tok_s = n_tokens / max(dt, 1e-6)
+            denom = step * grad_accum  # accumulated over microbatches
+            ce = running_metrics.get("ce_mixture", 0) / denom
+            cost = running_metrics.get("cost_penalty", 0) / denom
+            beta_strs = []
+            for i in exit_layers:
+                b = running_metrics.get(f"beta_{i}", 0) / denom
+                beta_strs.append(f"b{i}={b:.3f}")
+            msg = f"Step {step:5d}: CE={ce:.4f} cost={cost:.4f} {' '.join(beta_strs)} {tok_s:.0f}tok/s lam={lambda_cost:.4f}"
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+
+        if step % 500 == 0 or step == steps:
+            model.eval()
+            halt_ctrl.eval()
+            cache_path = REPO / "results" / "eval_cache_16k.pt"
+            if cache_path.exists():
+                det_result = deterministic_eval_dense(model, cache_path)
+                msg = f"Det-eval step {step}: {det_result}"
+                print(msg)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+            model.train()
+            halt_ctrl.train()
+
+    # Save results
+    results = {
+        "probe": "halting_controller",
+        "parent": str(parent_ckpt),
+        "steps": steps,
+        "lambda_cost_max": LAMBDA_COST_MAX,
+    }
+    for k, v in running_metrics.items():
+        results[k] = v / steps
+    with open(REPO / "results" / f"{run_name}_metrics.json", "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nHalting probe complete. Results: results/{run_name}_metrics.json")
+
+
+def probe_memory(parent_ckpt, steps=1000, run_name="probe_memory",
+                  mem_buckets=1_000_000, mem_dim=48):
+    """Memory fusion probe: add Engram-style n-gram memory to EDSR parent.
+
+    T+L Round 1, Probe 2: tests whether CPU-resident n-gram memory with
+    learned gating improves BPT without competing for GPU gradient capacity.
+
+    Memory tables are on CPU (SparseAdam). Only projection + gate on GPU.
+    Zero-initialized so model starts at exact parity with parent.
+    """
+    MEMORY_LAYERS = [1, 4, 7]  # After layers 2, 5, 8 (1-indexed)
+    print(f"=== MEMORY FUSION PROBE ===")
+    print(f"Parent: {parent_ckpt}")
+    print(f"Steps: {steps}, memory at layers {[l+1 for l in MEMORY_LAYERS]}")
+    print(f"Tables: {mem_buckets:,} buckets x {mem_dim}d, bigram + trigram")
+
+    # Load parent
+    ckpt = torch.load(parent_ckpt, weights_only=False, map_location=DEVICE)
+    cfg = ckpt.get("config", {})
+    dim = cfg.get("dim", 768)
+    n_layers = cfg.get("n_layers", 12)
+    n_heads = cfg.get("n_heads", 12)
+    ff_dim = cfg.get("ff_dim", 2048)
+    exit_layers = cfg.get("exit_layers", [3, 7, 11])
+
+    # Create model WITH memory
+    model = DenseTransformer(
+        vocab_size=cfg.get("vocab_size", VOCAB_SIZE),
+        dim=dim, n_layers=n_layers, n_heads=n_heads, ff_dim=ff_dim,
+        exit_layers=exit_layers, memory_layers=MEMORY_LAYERS,
+        mem_buckets=mem_buckets, mem_dim=mem_dim,
+    ).to(DEVICE)
+
+    # Load parent weights (strict=False since memory is new)
+    model.load_state_dict(ckpt["model"], strict=False)
+    parent_step = ckpt.get("step", 0)
+
+    # Count params
+    backbone_params = sum(p.numel() for n, p in model.named_parameters()
+                          if 'memory' not in n)
+    mem_table_params = sum(p.numel() for n, p in model.named_parameters()
+                           if 'table' in n)
+    mem_gate_params = sum(p.numel() for n, p in model.named_parameters()
+                          if 'memory' in n and 'table' not in n)
+    print(f"Loaded parent step {parent_step}")
+    print(f"  Backbone params: {backbone_params:,}")
+    print(f"  Memory table params: {mem_table_params:,} ({mem_table_params * 4 / 1e6:.0f}MB)")
+    print(f"  Memory gate+proj params: {mem_gate_params:,}")
+    print(f"  Estimated VRAM for tables: {mem_table_params * 2 / 1e6:.0f}MB (bf16)")
+
+    # Data
+    shard_dir = REPO / "data" / "shards_16k"
+    dataset = ShardedDataset(shard_dir=str(shard_dir))
+
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"{run_name}_log.txt"
+
+    # Optimizer: separate groups for backbone, memory gate/proj, memory tables
+    backbone_p = [p for n, p in model.named_parameters()
+                  if 'memory' not in n and p.requires_grad]
+    mem_dense_p = [p for n, p in model.named_parameters()
+                   if 'memory' in n and 'table' not in n and p.requires_grad]
+    mem_sparse_p = [p for n, p in model.named_parameters()
+                    if 'table' in n and p.requires_grad]
+
+    # Dense optimizer for backbone + memory gate/proj
+    opt_dense = torch.optim.AdamW([
+        {"params": backbone_p, "lr": 1.5e-4},
+        {"params": mem_dense_p, "lr": 4e-4},
+    ], betas=(0.9, 0.95), weight_decay=0.1)
+
+    # SparseAdam for sparse embedding tables (handles sparse gradients)
+    opt_sparse = torch.optim.SparseAdam(mem_sparse_p, lr=4e-4)
+
+    scaler = torch.amp.GradScaler("cuda")
+
+    batch_size, grad_accum = 8, 4
+    warmup = 100
+    use_exits = bool(exit_layers)
+
+    model.train()
+    running_loss = 0
+    n_tokens = 0
+    t0 = time.time()
+
+    for step in range(1, steps + 1):
+        opt_dense.zero_grad()
+        opt_sparse.zero_grad()
+
+        for micro in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, SEQ_LEN, device=DEVICE)
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                if use_exits:
+                    out = model(inp, return_exits=True)
+                    loss, metrics = compute_edsr_loss(out, tgt)
+                    ce_val = metrics["ce_final"]
+                    loss = loss / grad_accum
+                else:
+                    logits = model(inp)
+                    Tc = min(logits.size(1), tgt.size(1))
+                    loss = F.cross_entropy(
+                        logits[:, :Tc].reshape(-1, logits.size(-1)),
+                        tgt[:, :Tc].reshape(-1))
+                    ce_val = loss.item()
+                    loss = loss / grad_accum
+
+            if not torch.isfinite(loss):
+                print(f"WARNING: NaN loss at step {step}")
+                opt_dense.zero_grad()
+                opt_sparse.zero_grad()
+                break
+            scaler.scale(loss).backward()
+            running_loss += ce_val
+            n_tokens += inp.numel()
+
+        scaler.unscale_(opt_dense)
+        # Manually unscale sparse grads (SparseAdam doesn't work with GradScaler)
+        inv_scale = 1.0 / scaler.get_scale()
+        for p in mem_sparse_p:
+            if p.grad is not None:
+                if p.grad.is_sparse:
+                    p.grad = p.grad.coalesce()
+                    p.grad._values().mul_(inv_scale)
+                else:
+                    p.grad.data.mul_(inv_scale)
+
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in model.parameters() if p.grad is not None and not p.grad.is_sparse],
+            GRAD_CLIP)
+
+        # LR warmup
+        if step <= warmup:
+            frac = step / warmup
+            for i, pg in enumerate(opt_dense.param_groups):
+                base_lr = 1.5e-4 if i == 0 else 4e-4
+                pg["lr"] = base_lr * frac
+            for pg in opt_sparse.param_groups:
+                pg["lr"] = 4e-4 * frac
+
+        scaler.step(opt_dense)
+        opt_sparse.step()
+        scaler.update()
+
+        if step % 50 == 0:
+            dt = time.time() - t0
+            tok_s = n_tokens / max(dt, 1e-6)
+            ce_avg = running_loss / (step * grad_accum)
+            # Check memory gate activity
+            with torch.no_grad():
+                gate_mean = torch.sigmoid(model.memory.gate.bias).mean().item()
+            msg = (f"Step {step:5d}: CE={ce_avg:.4f} gate={gate_mean:.4f} "
+                   f"{tok_s:.0f}tok/s")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+
+        if step % 500 == 0 or step == steps:
+            model.eval()
+            cache_path = REPO / "results" / "eval_cache_16k.pt"
+            if cache_path.exists():
+                det_result = deterministic_eval_dense(model, cache_path)
+                msg = f"Det-eval step {step}: {det_result}"
+                print(msg)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+            model.train()
+
+        if step % 500 == 0:
+            torch.cuda.empty_cache()
+
+    # Save results
+    results = {
+        "probe": "memory_fusion",
+        "parent": str(parent_ckpt),
+        "steps": steps,
+        "memory_layers": MEMORY_LAYERS,
+        "mem_buckets": mem_buckets,
+        "mem_dim": mem_dim,
+        "final_ce": running_loss / (steps * grad_accum),
+        "backbone_params": backbone_params,
+        "mem_table_params": mem_table_params,
+        "mem_gate_params": mem_gate_params,
+    }
+    with open(REPO / "results" / f"{run_name}_metrics.json", "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nMemory probe complete. Results: results/{run_name}_metrics.json")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Dense Transformer (F4 baseline / EDSR-98M)")
@@ -581,12 +2208,68 @@ if __name__ == "__main__":
                         help="Override FF dim (1312 for 42M match, 1536 default)")
     parser.add_argument("--det-eval", type=str, default=None,
                         help="Evaluate checkpoint(s)")
+    parser.add_argument("--mtp-probe", type=str, default=None,
+                        help="Run MTP probe from this parent checkpoint")
+    parser.add_argument("--mtp-steps", type=int, default=1000,
+                        help="Number of steps for MTP probe")
+    parser.add_argument("--halt-probe", type=str, default=None,
+                        help="Run halting controller probe from this parent checkpoint")
+    parser.add_argument("--halt-steps", type=int, default=1000,
+                        help="Number of steps for halting probe")
+    parser.add_argument("--mem-probe", type=str, default=None,
+                        help="Run memory fusion probe from this parent checkpoint")
+    parser.add_argument("--mem-steps", type=int, default=1000,
+                        help="Number of steps for memory probe")
+    parser.add_argument("--mem-buckets", type=int, default=1_000_000,
+                        help="Number of hash buckets for memory tables")
+    parser.add_argument("--calibrate-exits", type=str, default=None,
+                        help="Run post-hoc exit threshold calibration on checkpoint")
+    parser.add_argument("--exit-bench", type=str, default=None,
+                        help="Run early-exit inference benchmark on checkpoint")
+    parser.add_argument("--expand-200m", type=str, default=None,
+                        help="Expand 98M checkpoint to 200M via Net2Wider")
+    parser.add_argument("--from-ckpt", type=str, default=None,
+                        help="Train from checkpoint (loads config from ckpt)")
+    parser.add_argument("--weight-file", type=str, default=None,
+                        help="Shard importance weights JSON for weighted sampling")
+    parser.add_argument("--init-from", type=str, default=None,
+                        help="Initialize model+optimizer from another run's checkpoint (for A/B tests)")
     args = parser.parse_args()
 
     if args.ff_dim is not None:
         FF_DIM = args.ff_dim
     if args.max_steps is not None:
         MAX_TRAIN_STEPS = args.max_steps
+
+    if args.mtp_probe:
+        probe_mtp(args.mtp_probe, steps=args.mtp_steps,
+                  run_name=args.run_name or "probe_mtp")
+        sys.exit(0)
+
+    if args.halt_probe:
+        probe_halting(args.halt_probe, steps=args.halt_steps,
+                      run_name=args.run_name or "probe_halting")
+        sys.exit(0)
+
+    if args.mem_probe:
+        probe_memory(args.mem_probe, steps=args.mem_steps,
+                     run_name=args.run_name or "probe_memory",
+                     mem_buckets=args.mem_buckets)
+        sys.exit(0)
+
+    if args.calibrate_exits:
+        calibrate_exits(args.calibrate_exits,
+                        run_name=args.run_name or "exit_calibration")
+        sys.exit(0)
+
+    if args.exit_bench:
+        early_exit_inference(args.exit_bench,
+                             run_name=args.run_name or "early_exit_bench")
+        sys.exit(0)
+
+    if args.expand_200m:
+        expand_98m_to_200m(args.expand_200m)
+        sys.exit(0)
 
     if args.det_eval:
         # Load model from checkpoint and evaluate
@@ -610,4 +2293,5 @@ if __name__ == "__main__":
         sys.exit(0)
 
     run_name = args.run_name or ("edsr_98m" if args.edsr else "dense_f4")
-    train(run_name=run_name, edsr=args.edsr)
+    train(run_name=run_name, edsr=args.edsr, from_ckpt=args.from_ckpt,
+          weight_file=args.weight_file, init_from=args.init_from)
