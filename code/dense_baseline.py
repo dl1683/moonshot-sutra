@@ -1453,6 +1453,267 @@ def compute_edsr_loss(out, tgt, exit_weights=EXIT_WEIGHTS, gain_weight=GAIN_WEIG
     return total, metrics
 
 
+# ---- RMFD: Routed Multi-Family Distillation ----
+# Cross-tokenizer, cross-architecture KD system designed in T+L Round 8.
+# Components: teacher loading, byte-span bridge, KD losses, routing.
+
+class TeacherAdapter:
+    """Wraps a HuggingFace model for use as a KD teacher.
+
+    Handles: loading, tokenization, forward pass, hidden state extraction.
+    All teacher inference is no-grad, no-train.
+    """
+
+    def __init__(self, model_name, device="cuda", dtype=torch.float16, quantize=None):
+        from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
+        self.name = model_name
+        self.device = torch.device(device)
+        self.dtype = dtype
+        self.is_encoder = "roberta" in model_name.lower() or "bert" in model_name.lower()
+        self.is_embedding = "embedding" in model_name.lower() or "bge" in model_name.lower()
+
+        print(f"  Loading teacher: {model_name}...", flush=True)
+        if self.is_encoder or self.is_embedding:
+            self.model = AutoModel.from_pretrained(model_name, torch_dtype=dtype)
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, torch_dtype=dtype, output_hidden_states=True
+            )
+        self.model.to(self.device).eval()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token or "[PAD]"
+
+        self.hidden_dim = self.model.config.hidden_size
+        self.vocab_size = getattr(self.model.config, "vocab_size", 0)
+        n_params = sum(p.numel() for p in self.model.parameters())
+        vram_mb = n_params * (2 if dtype == torch.float16 else 4) / 1e6
+        print(f"    {n_params/1e6:.1f}M params, ~{vram_mb:.0f}MB VRAM, hidden={self.hidden_dim}")
+
+    @torch.no_grad()
+    def forward(self, texts, max_length=512):
+        """Run teacher forward pass on raw text strings.
+
+        Returns dict with:
+            'logits': (B, T_teacher, V_teacher) or None for encoders
+            'hidden': (B, T_teacher, D_teacher) final layer hidden states
+            'token_ids': (B, T_teacher) teacher token IDs
+            'byte_offsets': list of (start, end) byte offsets per token per batch item
+        """
+        enc = self.tokenizer(
+            texts, return_tensors="pt", padding=True,
+            truncation=True, max_length=max_length, return_offsets_mapping=True
+        )
+        input_ids = enc["input_ids"].to(self.device)
+        attention_mask = enc["attention_mask"].to(self.device)
+        offsets = enc.get("offset_mapping", None)  # (B, T, 2)
+
+        if self.is_encoder or self.is_embedding:
+            out = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            hidden = out.last_hidden_state
+            return {
+                "logits": None,
+                "hidden": hidden,
+                "token_ids": input_ids,
+                "attention_mask": attention_mask,
+                "byte_offsets": offsets,
+            }
+        else:
+            out = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            logits = out.logits
+            hidden = out.hidden_states[-1] if hasattr(out, "hidden_states") and out.hidden_states else None
+            return {
+                "logits": logits,
+                "hidden": hidden,
+                "token_ids": input_ids,
+                "attention_mask": attention_mask,
+                "byte_offsets": offsets,
+            }
+
+    def vram_mb(self):
+        return sum(p.numel() * p.element_size() for p in self.model.parameters()) / 1e6
+
+
+def byte_span_pool(hidden, byte_offsets, attention_mask, n_spans=16):
+    """Pool hidden states into M=n_spans equal byte spans.
+
+    This is the cross-tokenizer bridge from R8 design.
+    For each raw window, split its raw bytes into n_spans equal spans.
+    For each span, average the hidden states of tokens whose byte range intersects it.
+
+    Args:
+        hidden: (B, T, D) hidden states from teacher
+        byte_offsets: (B, T, 2) start/end byte offsets per token (from tokenizer)
+        attention_mask: (B, T) — 1 for real tokens, 0 for padding
+        n_spans: number of equal byte spans
+
+    Returns:
+        span_matrix: (B, n_spans, D) averaged hidden states per byte span
+    """
+    B, T, D = hidden.shape
+    device = hidden.device
+
+    if byte_offsets is None:
+        # Fallback: uniform position-based pooling
+        span_matrix = torch.zeros(B, n_spans, D, device=device, dtype=hidden.dtype)
+        for b in range(B):
+            real_len = attention_mask[b].sum().item()
+            if real_len == 0:
+                continue
+            chunk_size = max(1, real_len // n_spans)
+            for s in range(n_spans):
+                start = s * chunk_size
+                end = min(start + chunk_size, real_len)
+                if start < end:
+                    span_matrix[b, s] = hidden[b, start:end].mean(0)
+        return span_matrix
+
+    span_matrix = torch.zeros(B, n_spans, D, device=device, dtype=hidden.dtype)
+    for b in range(B):
+        offsets_b = byte_offsets[b]  # (T, 2)
+        mask_b = attention_mask[b]  # (T,)
+        # Find total byte range
+        real_offsets = offsets_b[mask_b.bool()]
+        if len(real_offsets) == 0:
+            continue
+        max_byte = real_offsets[:, 1].max().item()
+        if max_byte == 0:
+            continue
+        span_size = max(1, max_byte / n_spans)
+
+        for s in range(n_spans):
+            span_start = s * span_size
+            span_end = (s + 1) * span_size
+            # Find tokens that intersect this byte span
+            tok_starts = offsets_b[:, 0].float()
+            tok_ends = offsets_b[:, 1].float()
+            intersects = (tok_ends > span_start) & (tok_starts < span_end) & mask_b.bool()
+            if intersects.any():
+                span_matrix[b, s] = hidden[b, intersects].mean(0)
+
+    return span_matrix
+
+
+def compute_cka(X, Y):
+    """Linear CKA between two matrices. X: (B, D1), Y: (B, D2).
+
+    Returns scalar CKA similarity in [0, 1].
+    """
+    # Center
+    X = X - X.mean(0, keepdim=True)
+    Y = Y - Y.mean(0, keepdim=True)
+    # Gram matrices
+    K_X = X @ X.T  # (B, B)
+    K_Y = Y @ Y.T  # (B, B)
+    # HSIC
+    hsic_xy = (K_X * K_Y).sum()
+    hsic_xx = (K_X * K_X).sum()
+    hsic_yy = (K_Y * K_Y).sum()
+    denom = torch.sqrt(hsic_xx * hsic_yy).clamp(min=1e-8)
+    return hsic_xy / denom
+
+
+def compute_state_kd_loss(student_hidden, teacher_hidden, student_offsets, teacher_offsets,
+                          student_mask, teacher_mask, projector, n_spans=16):
+    """State-level KD via CKA on byte-span-pooled hidden states.
+
+    Args:
+        student_hidden: (B, T_s, D_s)
+        teacher_hidden: (B, T_t, D_t)
+        student/teacher_offsets: (B, T, 2) byte offsets
+        student/teacher_mask: (B, T) attention masks
+        projector: nn.Linear(D_s, D_t) projecting student to teacher dim
+        n_spans: number of byte spans
+
+    Returns:
+        loss: 1 - CKA(projected_student_spans, teacher_spans)
+    """
+    # Pool into byte spans
+    S_s = byte_span_pool(student_hidden, student_offsets, student_mask, n_spans)  # (B, M, D_s)
+    S_t = byte_span_pool(teacher_hidden, teacher_offsets, teacher_mask, n_spans)  # (B, M, D_t)
+
+    # Project student to teacher dim
+    B, M, D_s = S_s.shape
+    S_s_proj = projector(S_s.reshape(B * M, D_s)).reshape(B, M, -1)  # (B, M, D_t)
+
+    # CKA on flattened span representations
+    S_s_flat = S_s_proj.reshape(B, -1)  # (B, M*D_t)
+    S_t_flat = S_t.reshape(B, -1)  # (B, M*D_t)
+
+    return 1.0 - compute_cka(S_s_flat, S_t_flat)
+
+
+def compute_semantic_kd_loss(student_hidden, teacher_hidden, student_mask, teacher_mask,
+                             projector):
+    """Semantic KD via relational loss on pooled representations.
+
+    The student and teacher should produce similar PAIRWISE similarity structures
+    within a batch, even if the actual vectors differ.
+
+    Args:
+        student_hidden: (B, T_s, D_s)
+        teacher_hidden: (B, T_t, D_t)
+        student/teacher_mask: (B, T) attention masks
+        projector: nn.Linear(D_s, D_sem) projecting student to semantic dim
+
+    Returns:
+        loss: Frobenius norm of Gram matrix difference, normalized by B^2
+    """
+    # Mean-pool over sequence (masked)
+    s_mask = student_mask.unsqueeze(-1).float()  # (B, T, 1)
+    t_mask = teacher_mask.unsqueeze(-1).float()
+
+    s_pooled = (student_hidden * s_mask).sum(1) / s_mask.sum(1).clamp(min=1)  # (B, D_s)
+    t_pooled = (teacher_hidden * t_mask).sum(1) / t_mask.sum(1).clamp(min=1)  # (B, D_t)
+
+    # Project and normalize
+    s_proj = F.normalize(projector(s_pooled), dim=-1)  # (B, D_sem)
+    t_norm = F.normalize(t_pooled, dim=-1)  # (B, D_t)
+
+    # Gram matrices
+    K_s = s_proj @ s_proj.T  # (B, B)
+    K_t = t_norm @ t_norm.T  # (B, B)
+
+    B = K_s.size(0)
+    return (K_s - K_t).pow(2).sum() / (B * B)
+
+
+def compute_token_kd_loss(student_logits, teacher_logits, temperature=2.0, top_k=32):
+    """Token-level KD via KL divergence.
+
+    For same-tokenizer or pre-aligned logits. For cross-tokenizer, use
+    transported logits (computed externally).
+
+    Args:
+        student_logits: (B, T, V_s)
+        teacher_logits: (B, T, V_t) — same V if same tokenizer, or transported
+        temperature: softmax temperature
+        top_k: only use top-K teacher logits for efficiency
+
+    Returns:
+        loss: tau^2 * KL(teacher || student), averaged over B*T
+    """
+    T_min = min(student_logits.size(1), teacher_logits.size(1))
+    s_logits = student_logits[:, :T_min]
+    t_logits = teacher_logits[:, :T_min]
+
+    # Top-K filtering on teacher for efficiency
+    if top_k and top_k < t_logits.size(-1):
+        topk_vals, topk_idx = t_logits.topk(top_k, dim=-1)
+        # Gather student logits at teacher's top-K positions
+        s_at_topk = s_logits.gather(-1, topk_idx)
+        t_soft = F.log_softmax(topk_vals / temperature, dim=-1)
+        s_soft = F.log_softmax(s_at_topk / temperature, dim=-1)
+    else:
+        V_min = min(s_logits.size(-1), t_logits.size(-1))
+        t_soft = F.log_softmax(t_logits[:, :, :V_min] / temperature, dim=-1)
+        s_soft = F.log_softmax(s_logits[:, :, :V_min] / temperature, dim=-1)
+
+    # KL(teacher || student)
+    kl = F.kl_div(s_soft, t_soft.exp(), reduction="batchmean")
+    return temperature * temperature * kl
+
+
 def measure_activation_kurtosis(model, dataset, device, n_batches=4, seq_len=512):
     """Measure activation kurtosis across model layers.
 
@@ -3579,6 +3840,399 @@ def run_ab_probe(config_path):
     print(f"{'='*60}")
 
 
+def train_kd(config_path):
+    """Knowledge Distillation training with RMFD system.
+
+    Loads student from warm-start checkpoint, loads teacher models,
+    and trains with representation-level KD losses (state CKA + semantic relational).
+    Supports multi-arm probes with different teacher configurations.
+
+    Config JSON format:
+    {
+        "name": "kd_probe_01",
+        "init_from": "path/to/student_checkpoint.pt",
+        "total_steps": 3000,
+        "batch_size": 8,
+        "grad_accum": 4,
+        "lr": 3e-4,
+        "min_lr": 1e-5,
+        "warmup": 200,
+        "eval_every": 500,
+        "seq_len": 512,
+        "n_spans": 16,
+        "variants": [
+            {
+                "tag": "control",
+                "teachers": [],
+                "alpha_state": 0.0,
+                "alpha_semantic": 0.0
+            },
+            {
+                "tag": "single_anchor",
+                "teachers": [
+                    {"name": "Qwen/Qwen3-1.7B-Base", "surfaces": ["state", "semantic"]}
+                ],
+                "alpha_state": 0.5,
+                "alpha_semantic": 0.3
+            }
+        ]
+    }
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    init_checkpoint = cfg["init_from"]
+    total_steps = cfg.get("total_steps", 3000)
+    batch_size = cfg.get("batch_size", 8)
+    grad_accum = cfg.get("grad_accum", 4)
+    lr = cfg.get("lr", 3e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 200)
+    eval_every = cfg.get("eval_every", 500)
+    seq_len = cfg.get("seq_len", 512)
+    n_spans = cfg.get("n_spans", 16)
+    alpha_state_default = cfg.get("alpha_state", 0.5)
+    alpha_semantic_default = cfg.get("alpha_semantic", 0.3)
+
+    print(f"\n{'='*60}")
+    print(f"RMFD KD TRAINING: {run_name}")
+    print(f"  Student init: {init_checkpoint}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  LR: {lr} -> {min_lr}, warmup={warmup}")
+    print(f"  Byte spans: {n_spans}")
+    print(f"{'='*60}")
+
+    # Load student tokenizer for decoding tokens -> raw text (for cross-tokenizer KD)
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    from tokenizers import Tokenizer
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # Dataset
+    shard_dir = REPO / "data" / "shards_16k"
+    weight_file = cfg.get("weight_file", None)
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+
+    # Eval cache
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+        print(f"  Saved {len(windows)} windows to {cache_path}")
+
+    variants = cfg.get("variants", [cfg])
+    all_results = {}
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    for variant in variants:
+        tag = variant.get("tag", run_name)
+        v_teachers_cfg = variant.get("teachers", [])
+        v_alpha_state = variant.get("alpha_state", alpha_state_default)
+        v_alpha_semantic = variant.get("alpha_semantic", alpha_semantic_default)
+
+        print(f"\n{'='*60}")
+        print(f"KD VARIANT: {tag}")
+        print(f"  Teachers: {[t['name'] for t in v_teachers_cfg] if v_teachers_cfg else 'NONE (control)'}")
+        print(f"  alpha_state={v_alpha_state}, alpha_semantic={v_alpha_semantic}")
+
+        # ---- Load student from checkpoint ----
+        init_ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
+        stu_cfg = init_ckpt.get("config", {})
+        dim = stu_cfg.get("dim", 512)
+        n_layers = stu_cfg.get("n_layers", 24)
+        n_heads = stu_cfg.get("n_heads", 8)
+        ff_dim = stu_cfg.get("ff_dim", 1536)
+        exit_layers = stu_cfg.get("exit_layers", [7, 15, 23])
+
+        model = DenseTransformer(
+            vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+            n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+            norm_type=stu_cfg.get("norm_type", "rmsnorm"),
+            block_schedule=stu_cfg.get("block_schedule", None),
+            conv_kernel_size=stu_cfg.get("conv_kernel_size", 64),
+            d_attn=stu_cfg.get("d_attn", None),
+            d_conv=stu_cfg.get("d_conv", None),
+            n_q_heads=stu_cfg.get("n_q_heads", None),
+            n_kv_heads=stu_cfg.get("n_kv_heads", None),
+            head_dim=stu_cfg.get("head_dim", 64),
+        ).to(DEVICE)
+
+        init_key = "model_state_dict" if "model_state_dict" in init_ckpt else "model"
+        model.load_state_dict(init_ckpt[init_key])
+        start_step = init_ckpt.get("step", 0)
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"  Student: {n_params:,} params, warm-start from step {start_step}")
+        del init_ckpt
+
+        # ---- Load teachers ----
+        teachers = []
+        projectors = nn.ModuleDict()  # trainable projectors for state/semantic KD
+        for t_cfg in v_teachers_cfg:
+            teacher = TeacherAdapter(t_cfg["name"], device=DEVICE, dtype=torch.float16)
+            teacher.surfaces = t_cfg.get("surfaces", ["state"])
+            teachers.append(teacher)
+
+            # Create learned projectors for each KD surface
+            if "state" in teacher.surfaces:
+                key = t_cfg["name"].replace("/", "_").replace("-", "_") + "__state"
+                projectors[key] = nn.Linear(dim, teacher.hidden_dim)
+            if "semantic" in teacher.surfaces:
+                key = t_cfg["name"].replace("/", "_").replace("-", "_") + "__semantic"
+                projectors[key] = nn.Linear(dim, teacher.hidden_dim)
+        projectors = projectors.to(DEVICE)
+
+        # ---- Optimizer: student + projectors ----
+        param_groups = [
+            {"params": list(model.parameters()), "lr": lr},
+            {"params": list(projectors.parameters()), "lr": lr * 3},  # projectors learn faster
+        ]
+        opt = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=0.1)
+        scaler = torch.amp.GradScaler("cuda")
+
+        # ---- Training state ----
+        log_file = REPO / "results" / f"kd_{tag}_log.txt"
+        metrics_log = []
+        running_ce = 0.0
+        running_kd = 0.0
+        actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+        has_kd = len(teachers) > 0
+        use_hidden = has_kd  # only compute hidden states if we need them for KD
+
+        print(f"  Exit weights: {actual_exit_weights}")
+        if projectors:
+            proj_params = sum(p.numel() for p in projectors.parameters())
+            print(f"  Projector params: {proj_params:,}")
+        print(f"  Starting training...\n")
+
+        model.train()
+        for step in range(1, total_steps + 1):
+            current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+            for pg in opt.param_groups:
+                # Scale projector LR proportionally
+                base = pg.get("lr", lr)
+                if base > lr:  # projector group
+                    pg["lr"] = current_lr * 3
+                else:
+                    pg["lr"] = current_lr
+
+            opt.zero_grad()
+            step_ce = 0.0
+            step_kd = 0.0
+            bad_step = False
+
+            for _ in range(grad_accum):
+                inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+                with torch.amp.autocast("cuda", dtype=DTYPE):
+                    # Student forward (with hidden states if KD active)
+                    out = model(inp, return_exits=True, return_hidden=use_hidden)
+
+                    # Base CE + exit supervision loss
+                    base_loss, loss_metrics = compute_edsr_loss(
+                        out, tgt, exit_weights=actual_exit_weights)
+                    ce_val = loss_metrics["ce_final"]
+
+                    # KD losses (representation-level only — no token KD for cross-tokenizer)
+                    kd_loss = torch.tensor(0.0, device=DEVICE)
+
+                    if has_kd:
+                        # Decode student tokens -> raw text for teacher tokenizers
+                        texts = [student_tokenizer.decode(inp[b].tolist())
+                                 for b in range(inp.size(0))]
+
+                        # Student hidden state (final pre-norm, in computation graph)
+                        student_hidden = out["hidden"]  # (B, T_s, D_s)
+                        student_mask = torch.ones(inp.shape[0], inp.shape[1],
+                                                  device=DEVICE, dtype=torch.long)
+
+                        for teacher in teachers:
+                            with torch.no_grad():
+                                t_out = teacher.forward(texts, max_length=seq_len)
+
+                            safe_name = (teacher.name.replace("/", "_")
+                                         .replace("-", "_"))
+
+                            # State-level KD: CKA on byte-span-pooled hidden states
+                            if ("state" in teacher.surfaces
+                                    and t_out["hidden"] is not None):
+                                proj = projectors[safe_name + "__state"]
+                                s_kd = compute_state_kd_loss(
+                                    student_hidden, t_out["hidden"],
+                                    student_offsets=None,  # position fallback
+                                    teacher_offsets=t_out["byte_offsets"],
+                                    student_mask=student_mask,
+                                    teacher_mask=t_out["attention_mask"],
+                                    projector=proj, n_spans=n_spans,
+                                )
+                                kd_loss = kd_loss + v_alpha_state * s_kd
+
+                            # Semantic KD: relational Gram matrix loss
+                            if ("semantic" in teacher.surfaces
+                                    and t_out["hidden"] is not None):
+                                proj = projectors[safe_name + "__semantic"]
+                                sem_kd = compute_semantic_kd_loss(
+                                    student_hidden, t_out["hidden"],
+                                    student_mask=student_mask,
+                                    teacher_mask=t_out["attention_mask"],
+                                    projector=proj,
+                                )
+                                kd_loss = kd_loss + v_alpha_semantic * sem_kd
+
+                    total_loss = (base_loss + kd_loss) / grad_accum
+
+                if not torch.isfinite(total_loss):
+                    print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                    opt.zero_grad()
+                    bad_step = True
+                    break
+
+                scaler.scale(total_loss).backward()
+                step_ce += ce_val / grad_accum
+                step_kd += kd_loss.item() / grad_accum
+
+            if bad_step:
+                continue
+
+            scaler.unscale_(opt)
+            all_params = list(model.parameters()) + list(projectors.parameters())
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in all_params if p.grad is not None], GRAD_CLIP)
+            scaler.step(opt)
+            scaler.update()
+
+            running_ce += step_ce
+            running_kd += step_kd
+
+            # ---- Logging ----
+            if step % LOG_EVERY == 0:
+                avg_ce = running_ce / LOG_EVERY
+                avg_kd = running_kd / LOG_EVERY
+                bpt = avg_ce / math.log(2)
+                msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                       f"KD={avg_kd:.4f} LR={current_lr:.2e}")
+                print(msg, flush=True)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+                running_ce = 0.0
+                running_kd = 0.0
+
+            # ---- Eval ----
+            if step % eval_every == 0 or step == total_steps:
+                model.eval()
+                det = deterministic_eval_dense(model, cache_path)
+                kurt = measure_activation_kurtosis(model, dataset, DEVICE)
+                entry = {
+                    "step": step, "tag": tag,
+                    "bpt": det["bpt"],
+                    "avg_kurtosis": round(
+                        sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+                    "max_kurtosis": round(max(kurt["kurtosis"].values()), 2),
+                    "max_activation": round(max(kurt["max_activation"].values()), 2),
+                    "teachers": [t.name for t in teachers],
+                }
+                for k, v in det.items():
+                    if k.startswith("bpt_exit"):
+                        entry[k] = v
+                metrics_log.append(entry)
+                msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
+                       f"kurtosis_max={entry['max_kurtosis']:.1f} "
+                       f"max_act={entry['max_activation']:.1f}")
+                print(msg, flush=True)
+                with open(log_file, "a") as f:
+                    f.write(msg + "\n")
+                model.train()
+                torch.cuda.empty_cache()
+
+            # ---- Rolling checkpoint ----
+            if step % ROLLING_SAVE == 0:
+                ckpt = {
+                    "step": start_step + step,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": opt.state_dict(),
+                    "projectors": projectors.state_dict(),
+                    "config": stu_cfg,
+                    "kd_config": variant,
+                    "metrics": metrics_log,
+                }
+                rolling = ckpt_dir / f"{tag}_rolling.pt"
+                tmp = rolling.with_suffix(".tmp")
+                torch.save(ckpt, tmp)
+                os.replace(str(tmp), str(rolling))
+
+        # ---- Final generation check ----
+        model.eval()
+        generations = []
+        tok_path_gen = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+        if tok_path_gen.exists():
+            prompts = ["The meaning of life is", "In a distant future",
+                       "def fibonacci(n):\n"]
+            for prompt_text in prompts:
+                input_ids = student_tokenizer.encode(prompt_text).ids
+                gen_inp = torch.tensor([input_ids], device=DEVICE)
+                with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+                    for _ in range(64):
+                        logits = model(gen_inp)
+                        if isinstance(logits, dict):
+                            logits = logits["logits"]
+                        next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                        gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                        if gen_inp.size(1) > seq_len:
+                            break
+                gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+                generations.append({"prompt": prompt_text, "generation": gen_text})
+        model.train()
+
+        # ---- Save variant results ----
+        all_results[tag] = {
+            "params": n_params,
+            "teachers": [t.name for t in teachers],
+            "alpha_state": v_alpha_state,
+            "alpha_semantic": v_alpha_semantic,
+            "metrics": metrics_log,
+            "generations": generations,
+        }
+
+        # Final checkpoint
+        torch.save({
+            "step": start_step + total_steps,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": opt.state_dict(),
+            "projectors": projectors.state_dict(),
+            "config": stu_cfg,
+            "kd_config": variant,
+            "metrics": metrics_log,
+        }, ckpt_dir / f"{tag}_step{total_steps}.pt")
+        print(f"  Saved checkpoint: {ckpt_dir / f'{tag}_step{total_steps}.pt'}")
+
+        # ---- Cleanup GPU ----
+        del model, opt, scaler
+        for t in teachers:
+            del t.model
+        del teachers, projectors
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    # ---- Save combined results ----
+    output = {"probe": run_name, "config": cfg, "results": all_results}
+    out_path = REPO / "results" / f"kd_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"KD PROBE COMPLETE: {run_name}")
+    print(f"Results: {out_path}")
+    for tag, res in all_results.items():
+        final = res["metrics"][-1] if res["metrics"] else {}
+        print(f"  {tag}: BPT={final.get('bpt', '?')}, teachers={res['teachers']}")
+    print(f"{'='*60}")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Dense Transformer (F4 baseline / EDSR-98M)")
@@ -3619,12 +4273,18 @@ if __name__ == "__main__":
                         help="Initialize model+optimizer from another run's checkpoint (for A/B tests)")
     parser.add_argument("--ab-probe", type=str, default=None,
                         help="Run A/B probe from JSON config file")
+    parser.add_argument("--kd-train", type=str, default=None,
+                        help="Run RMFD KD training from JSON config file")
     args = parser.parse_args()
 
     if args.ff_dim is not None:
         FF_DIM = args.ff_dim
     if args.max_steps is not None:
         MAX_TRAIN_STEPS = args.max_steps
+
+    if args.kd_train:
+        train_kd(args.kd_train)
+        sys.exit(0)
 
     if args.ab_probe:
         run_ab_probe(args.ab_probe)
