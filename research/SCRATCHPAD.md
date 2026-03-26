@@ -33,7 +33,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 3. **Are we measuring the right thing?** BPT doesn't predict benchmarks well at low step counts. Should we switch to a benchmark-focused eval earlier? Or is BPT still the right signal during early training?
 
-4. **Should we invest in DATA instead of METHODS?** Our 22.9B tokens is 13x less than Pythia, 26x less than SmolLM. Maybe the biggest gain is data expansion, not better KD math.
+4. **Should we invest in DATA instead of METHODS? ANSWERED: NO (for current horizon).** Even at 120K steps we see only 8.6% of our 22.9B corpus (22 tokens/param ≈ Chinchilla optimal). The gap with competitors isn't data VARIETY — it's total training tokens seen (SmolLM-135M: 600B = 4444 tok/param). We'd need ~2.2M steps to match SmolLM's overtraining. KD is the lever to close this gap with fewer steps — exactly the manifesto thesis.
 
 5. **What's the opportunity cost of monitoring?** We spend significant time polling training logs. Should we build better automated eval infrastructure so results are automatically logged and analyzed?
 
@@ -93,6 +93,24 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Critical implication for surface ablation:** Rep-only KD ≈ control at 3000 steps. If logit KD also converges to control, then KD needs more steps to show sustained benefit. If logit KD shows a PERSISTENT gap at 3000 steps, it provides qualitatively different value (distribution-level vs representation-level supervision). This is exactly what the 4-arm ablation is designed to test.
 
+**Codex-mandated monitoring thresholds (§6.4.26):**
+- **Kurtosis:** >2x control = yellow, >3x = red. Watch for kurtosis growing DURING WSD decay (bad sign).
+- **Max_act:** >1.15x control = yellow.
+- **3K persistence:** if logit KD gap >0.02 BPT at 3K, promising. If <0.01, another head-start.
+- **15K proof gate:** >0.015 BPT at 15K + at least one lm-eval lift = persistent KD.
+- **Contingency if all surfaces fail:** scale student to 166-200M (Codex says 90M 1:19 ratio is below KD comfort zone).
+
+### ⚠️ OPEN: Temperature/Top-K Conflict
+
+Two Codex sessions disagree on optimal logit KD settings:
+- **§6.4.26:** T=2.0/K=64 "confirmed." Sweep T∈{1.5,2.0,2.5} not K.
+- **§6.4.27:** T=1.0/K=none preferred. Cites Minitron finding T=1.0 best, K≤100 hurts.
+
+**Current ablation uses T=2.0/K=64.** Interpretation strategy:
+- If logit arms WIN: great, method works even with potentially suboptimal settings
+- If logit arms LOSE: must re-test with T=1.0/K=256 before concluding logit KD fails
+- For 15K run: default to T=1.0 per Minitron evidence unless 3K ablation shows T=2.0 producing strong results
+
 ---
 
 ## Theoretical Analysis: Why Logit KD Should Differ from Rep KD (2026-03-26)
@@ -131,6 +149,41 @@ If logit KD is qualitatively different from rep KD, we should see:
 Our logit KD uses only N_shared ≈ 14,822 tokens out of student's 16K vocabulary and teacher's 152K vocabulary. This is ~92.6% of student vocab but only ~9.7% of teacher vocab. We're only seeing the teacher's opinion on tokens the student knows — which is most of the student's world but a tiny fraction of the teacher's world.
 
 **Implication:** The cross-tokenizer alignment may attenuate the logit KD signal. If the teacher's dark knowledge is concentrated on rare tokens (which are less likely to be in shared vocabulary), we lose high-value signal. This is testable: compare logit KD loss magnitude across positions — if some positions have very few valid shared tokens, the signal quality drops there.
+
+### Information-Geometric Predictions for 4-Arm Ablation (TESTABLE)
+
+Derived from §7.2 (Information Geometry) in RESEARCH.md:
+
+**Prediction 1: Orthogonality Test.** Rep KD constrains manifold SHAPE; logit KD constrains OUTPUT DISTRIBUTION. If these are "orthogonal" in the information-geometric sense (Fisher-Rao metric), the combined arm should show additive benefits:
+- Let Δ_rep = BPT_control - BPT_rep_only
+- Let Δ_logit = BPT_control - BPT_logit_only
+- Let Δ_both = BPT_control - BPT_rep_plus_logit
+- **Orthogonal:** Δ_both ≈ Δ_rep + Δ_logit (additive)
+- **Redundant:** Δ_both ≈ max(Δ_rep, Δ_logit) (dominated)
+- **Interfering:** Δ_both < max(Δ_rep, Δ_logit) (destructive)
+
+**Prediction 2: WSD Consolidation.** Logit KD should show MORE improvement during WSD decay (steps 2400-3000) than control, because it provides per-token consolidation signal richer than NTP alone. Rep KD showed LESS improvement during decay (control: -0.300, rep: -0.164). If logit KD shows >-0.300 during decay → it provides a consolidation advantage rep KD doesn't.
+
+**Prediction 3: Kurtosis Divergence.** Rep KD caused 3.67x kurtosis at 3K. Logit KD operates on output distributions, not internal representations — should produce LESS kurtosis divergence than rep KD. If logit-only kurtosis < 2x control → logit KD is a safer signal.
+
+---
+
+## Student Scaling Contingency (if 90M fails KD) (2026-03-26)
+
+**Status: CONTINGENCY PLAN — only activate if logit KD fails at 90M**
+
+Codex §6.4.26/§6.4.27: 90M:1.7B = 1:19, below KD comfort zone (1:1.5 to 1:9). If logit KD doesn't persist at 90M, scale student before giving up on KD.
+
+| Config | Width | Depth | Heads | Params | Ratio | VRAM(est) |
+|--------|-------|-------|-------|--------|-------|-----------|
+| Current | 512 | 24 | 8 | 90M | 1:19 | 7.3GB |
+| **Scale-166M** | **768** | **24** | **12** | **196M** | **1:8.8** | **8.4GB** |
+| **Scale-200M** | **832** | **24** | **13** | **229M** | **1:7.5** | **8.7GB** |
+| Scale-250M | 896 | 24 | 14 | 265M | 1:6.5 | 9.0GB |
+
+**Recommendation:** 166M (d=768) is the sweet spot — brings ratio to 1:8.8 (within comfort zone), same depth so teacher layer mapping is unchanged, only ~1GB more VRAM. The 200M option (d=832) has 13 heads (unusual) but head_dim=64 works. All fit easily in 24GB.
+
+**Decision rule:** If logit KD gap < 0.01 BPT at 15K → scale student to 166M and re-run 15K gate.
 
 ---
 

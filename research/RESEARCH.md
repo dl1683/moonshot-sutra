@@ -2391,6 +2391,20 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Codex verdict:** "Rep KD is acting like a fast geometric regularizer, not a durable teacher. Logit KD is the right next surface, T=2.0/K=64 is a good first shot, 15K is the real persistence gate, and 90M is usable for scouting but probably below the size where a 1.7B teacher's gains become durable."
 
+### 6.4.27 Codex Architecture Theorist: KD Probe Deep Interpretation (2026-03-26)
+
+**Source:** Codex GPT-5.4, Architecture Theorist persona (separate session from §6.4.26).
+
+**Unique insights not captured in §6.4.26:**
+
+1. **Informational saturation, not just numeric saturation.** CKA/Gram losses align global geometry fast, then stop telling the student *which token boundary to move*. KD loss keeps decreasing (0.032→0.018, -43.8%) but this is a measure of global alignment, not prediction-relevant information transfer. Treat rep KD as saturated once bin-avg KD loss is ~0.020 or lower and anneal it to near-zero before decay starts (fade around step 2000, ≤10% by step 2400).
+
+2. **⚠️ TEMPERATURE CONFLICT (OPEN QUESTION):** This session recommends **T=1.0, top_k=none** (or T=1.0, K=256 if truncation required), citing Minitron's finding that T=1.0 outperforms higher temperatures for LLM KD and top_k≤100 causes significant degradation. §6.4.26 says T=2.0/K=64 is "confirmed." **Resolution:** Current ablation runs with T=2.0/K=64. If logit KD shows advantage → works even with potentially suboptimal settings (strong evidence). If logit KD shows NO advantage → must re-test with T=1.0/K=256 before concluding logit KD fails. For the 15K run: sweep T∈{1.0, 2.0} if budget allows, or default to T=1.0 per Minitron evidence.
+
+3. **Staged transfer option.** For 1:19 ratio, literature suggests intermediate teacher: 1.7B→300-400M→90M. Alternative: keep direct 1.7B→90M but make logit KD dominant late signal while rep KD is early-only.
+
+4. **6K minimum screen** for persistence (2x rep-KD horizon). 3K is inconclusive. Convincing evidence: live gap at both 10-12K and final 15K, with ΔBPT≤-0.03 at 6K and ≤-0.02 at 15K.
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
