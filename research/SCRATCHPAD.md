@@ -114,7 +114,7 @@ First probe with α_total=0.8 showed -0.059 (BETTER). α=1.0 is too aggressive f
 - **15K proof gate:** >0.015 BPT at 15K + at least one lm-eval lift = persistent KD.
 - **Contingency if all surfaces fail:** scale student to 166-200M (Codex says 90M 1:19 ratio is below KD comfort zone).
 
-### ⚠️ OPEN: Temperature/Top-K Conflict
+### ⚠️ OPEN: Temperature/Top-K Conflict — NOW WITH THEORETICAL RESOLUTION
 
 Two Codex sessions disagree on optimal logit KD settings:
 - **§6.4.26:** T=2.0/K=64 "confirmed." Sweep T∈{1.5,2.0,2.5} not K.
@@ -124,6 +124,34 @@ Two Codex sessions disagree on optimal logit KD settings:
 - If logit arms WIN: great, method works even with potentially suboptimal settings
 - If logit arms LOSE: must re-test with T=1.0/K=256 before concluding logit KD fails
 - For 15K run: default to T=1.0 per Minitron evidence unless 3K ablation shows T=2.0 producing strong results
+
+#### Theoretical Resolution: Capacity Ratio Modulates Optimal (T, K)
+
+**Key insight: the optimal (temperature, top-K) settings depend on the student:teacher capacity ratio.**
+
+**The argument:**
+1. At **moderate ratios** (1:2 to 1:9, typical in literature): the student has enough capacity to absorb MOST of the teacher's output distribution. Higher T reveals more dark knowledge → helpful. Larger K (or no K) preserves more of the distribution → helpful. This is the regime Minitron measured: teacher ~8B, student ~4B, ratio ~1:2. Their conclusion (T=1.0, K→none) was for moderate ratios.
+
+2. At **extreme ratios** (1:19, our case): the student CANNOT absorb the full teacher distribution — it lacks representational capacity. Two failure modes emerge:
+   - **High T (2.0):** Flattens the teacher distribution, revealing dark knowledge on rank 30-64+ tokens. But the student doesn't have capacity to model these subtle distinctions → gradient noise, not signal. The KD loss pulls the student toward a flatter distribution than it can represent.
+   - **Low T (1.0):** Keeps the teacher distribution peaked. The student sees fewer "dark knowledge" tokens but the signal is cleaner — focused on the top predictions the student CAN learn. Less noise, more transferable signal per gradient step.
+
+3. Similarly for **top-K at extreme ratios:**
+   - **K=64:** Focuses on the teacher's top 64 tokens per position. At 1:19 ratio, the student might only have capacity to model the top 10-20 plausible tokens anyway. K=64 is already generous.
+   - **K=none (full vocab):** The teacher's opinion on rank 100+ tokens is pure noise for a 90M student. Including them dilutes the gradient with signal the student can't absorb.
+
+**Prediction:** For 90M:1.7B (1:19):
+- T=1.0 should outperform T=2.0 (cleaner signal for low-capacity student)
+- K=64 should be fine or BETTER than K=none (focuses signal on learnable knowledge)
+- **This REVERSES the Minitron recommendation** which was measured at ~1:2 ratio
+
+**But Minitron's recommendation may still apply if we scale the student:**
+- At 166M (1:8.8 ratio): in the "comfort zone" → T=1.0, K→128+ may be better
+- At 200M (1:7.5 ratio): T and K closer to Minitron regime
+
+**Testable prediction from current ablation:** If logit arms (T=2.0, K=64) show a PENALTY at 90M (like rep-only did), the most likely explanation is T=2.0 is too high for this ratio. Re-test with T=1.0 before concluding logit KD fails.
+
+**Conversely:** If logit arms show benefit even at T=2.0/1:19 → the method is robust and T=1.0 would likely be even better (more signal for 15K).
 
 ---
 
@@ -157,6 +185,55 @@ If logit KD is qualitatively different from rep KD, we should see:
 - Gap persists through WSD decay (control doesn't catch up like it did with rep KD)
 
 **Kill condition for logit KD:** If logit-only arm converges to within 0.02 BPT of control by step 3000, logit KD is ALSO head-start-only at this scale. Would require longer training to be useful.
+
+---
+
+## Rate-Distortion Theory of KD at Extreme Capacity Ratios (2026-03-26)
+
+**Status: HYPOTHESIS — novel theoretical framework, awaiting ablation validation**
+
+### The Core Insight: KD at 1:19 is Information SELECTION, Not Compression
+
+Standard KD (ratios 1:2 to 1:9): student learns a compressed version of teacher. Has enough capacity to approximate most of the teacher's behavior. Temperature and top-K are tuning knobs for SIGNAL QUALITY.
+
+Extreme KD (ratio 1:19, our case): student CANNOT compress the teacher — it must SIMPLIFY. The student's limited capacity forces it to SELECT which aspects of the teacher's knowledge to learn. This changes the optimization landscape fundamentally.
+
+### Rate-Distortion Framing
+
+The student at 90M params has a fixed "rate budget" R (in bits of representational capacity). The teacher provides knowledge across the input distribution. Different KD surfaces define different distortion metrics:
+
+- **Rep KD distortion:** d_rep(x) = ||P·S_student(x) - S_teacher(x)||² — measures structural distance in hidden state space
+- **Logit KD distortion:** d_logit(x) = KL(p_teacher(·|x) || p_student(·|x)) — measures prediction distribution distance
+
+Rate-distortion theory says: given rate R, the optimal encoder minimizes E[d(x)] by allocating more bits to inputs where distortion is highest. At extreme ratios, R is so small that the student can only achieve low distortion on a SUBSET of the input distribution.
+
+### What Each Surface Selects
+
+**Rep KD at 1:19:** Student matches teacher on inputs where projected representations are easy to align. CKA and Gram losses are "structural" — they reward geometric similarity regardless of which specific tokens are being predicted. This biases toward **common patterns** (data manifold modes with low-rank structure).
+
+**Logit KD at 1:19:** Student matches teacher on inputs where the teacher's top-K predictions are most concentrated. High-confidence teacher predictions (easy tokens) have more KL mass in top-K → stronger gradient signal. This biases toward **teacher-confident predictions** (tokens the teacher "knows well").
+
+### Predictions
+
+1. **Rep KD should plateau earlier** at extreme ratios because structural alignment saturates when the student exhausts its geometric capacity. CKA can be low while functional performance is still poor. This is exactly what we observed (head-start only, gap closed by step 3000).
+
+2. **Logit KD should have a different learning curve shape:** Initial progress may be SLOWER (cross-tokenizer noise, high-dimensional KL), but the signal doesn't saturate because KL divergence on new batches always provides novel gradient information. The teacher's opinion on "what comes next" is input-dependent and refreshes with each batch.
+
+3. **Top-K filtering should be BENEFICIAL at extreme ratios** (contrary to Minitron which tested moderate ratios). At 1:19, the student can only model the top ~10-20 plausible tokens per position anyway. Showing it the teacher's full distribution (K=none) adds noise from tokens the student can't represent. K=64 focuses the gradient on the learnable portion of the teacher's distribution.
+
+4. **Combined (rep+logit) at extreme ratios may INTERFERE.** Both surfaces compete for the same limited parameter budget. Rep KD pulls representations toward structural alignment; logit KD pulls outputs toward distribution matching. At moderate ratios these are complementary. At 1:19, they may be allocating the same bits to conflicting objectives → the orthogonality prediction from §info-geo becomes a genuine test.
+
+5. **Temperature prediction:** Low T (1.0) should outperform high T (2.0) at extreme ratios because it focuses the KD signal on the teacher's most confident predictions — exactly the ones the student has capacity to learn. High T flattens the distribution, forcing the student to waste gradient on tokens it can't model.
+
+### Connection to Manifesto
+
+This framing directly serves "Intelligence = Geometry": the student doesn't need MORE parameters, it needs BETTER selection of what to learn from the teacher. The optimal KD surface at extreme ratios is the one that selects the highest-value knowledge for the student's capacity budget. This is a geometric problem (information geometry on the student's parameter manifold), not a scale problem.
+
+### Falsification
+
+- If arm 4 (rep+logit) is ADDITIVE rather than interfering → rate budget is not the binding constraint at 90M, and the extreme-ratio effects are weaker than predicted
+- If logit KD also converges to control by 3K → the rate-distortion framing is correct but the "refreshing gradient" advantage isn't enough at this horizon
+- If T=2.0 logit KD works well → capacity ratio doesn't modulate optimal temperature as strongly as predicted
 
 ### Cross-Tokenizer Signal Loss
 
