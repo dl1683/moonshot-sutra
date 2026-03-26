@@ -91,11 +91,10 @@ PCGrad on three loss buckets: L_base, L_gen, L_aux. Auto-halve KD weights if gra
 - Phase 4: Steps 30K-95K — + specialist bursts + hard-bank
 - Phase 5: Steps 95K-120K — consolidation (decay KD weights)
 
-### First KD Probe (3000 steps, 4 arms)
-1. Control: NTP + exits only
-2. Single-teacher: + Qwen3-1.7B token KD
-3. 3-family routed: + LFM2.5 + EmbeddingGemma
-4. + disagreement weighting (if budget permits)
+### First KD Probe (COMPLETED — 3000 steps, head-start only)
+1. Control: NTP + exits only → BPT 4.498
+2. Single-teacher: + Qwen3-1.7B state + semantic KD → BPT 4.550 (no advantage)
+*Original plan (arms 3-4) replaced by 4-arm surface ablation: control vs rep vs logit vs rep+logit*
 
 ---
 

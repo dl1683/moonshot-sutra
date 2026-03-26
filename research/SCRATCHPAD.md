@@ -93,6 +93,20 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Critical implication for surface ablation:** Rep-only KD ≈ control at 3000 steps. If logit KD also converges to control, then KD needs more steps to show sustained benefit. If logit KD shows a PERSISTENT gap at 3000 steps, it provides qualitatively different value (distribution-level vs representation-level supervision). This is exactly what the 4-arm ablation is designed to test.
 
+### Early Ablation Signal: Rep-Only α=1.0 HURTS (arm 2 step 500)
+
+| Metric | Control (arm 1) | Rep-only α=1.0 (arm 2) | Delta |
+|--------|-----------------|------------------------|-------|
+| BPT | 5.0211 | 5.0591 | **+0.038 (WORSE)** |
+| kurtosis_max | 3.1 | 3.2 | OK |
+| max_act | 50.5 | 58.6 | 1.16x (borderline yellow) |
+
+First probe with α_total=0.8 showed -0.059 (BETTER). α=1.0 is too aggressive for rep-only. The KD objectives (CKA + Gram) compete with NTP at this weight.
+
+**Implication for logit KD:** Logit KD at α=1.0 should NOT show this penalty because it directly optimizes the prediction distribution (aligned with BPT metric). If arm 3 (logit-only, α=1.0) ALSO shows a penalty → KD weight itself is the issue. If arm 3 shows benefit → rep KD specifically is the problem at high weight.
+
+**Implication for 15K:** Use lower rep KD weight. First probe's α=0.8 was better. For combined (rep+logit), keep total α≤0.8 with rep portion ≤0.3.
+
 **Codex-mandated monitoring thresholds (§6.4.26):**
 - **Kurtosis:** >2x control = yellow, >3x = red. Watch for kurtosis growing DURING WSD decay (bad sign).
 - **Max_act:** >1.15x control = yellow.
