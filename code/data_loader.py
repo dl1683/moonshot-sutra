@@ -524,6 +524,193 @@ def score_shards_teacher(shard_dir=None, teacher="qwen3:4b",
         return str(output_path)
 
 
+def score_miniplm(teacher_name="Qwen/Qwen3-1.7B-Base",
+                   reference_name="Qwen/Qwen3-0.6B-Base",
+                   n_windows=500, seq_len=512, sample_pct=0.1,
+                   output_path=None):
+    """MiniPLM difference scoring: score corpus windows by teacher-reference NLL gap.
+
+    For each sampled window, computes:
+        score = NLL_reference(window) - NLL_teacher(window)
+
+    High score = teacher knows this content much better than reference = high
+    training value for small models.
+
+    Args:
+        teacher_name: HuggingFace model ID for teacher (larger model).
+        reference_name: HuggingFace model ID for reference (smaller model).
+        n_windows: Number of windows to score (for pilot validation).
+        seq_len: Window length in our tokenizer's tokens (decoded to text).
+        sample_pct: Fraction of corpus to sample from (0.1 = 10%).
+        output_path: Where to save results JSON.
+
+    Returns:
+        Path to output JSON with per-window scores and histogram.
+    """
+    import json
+    import time
+    import numpy as np
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    shard_dir = REPO / "data" / "shards_16k"
+
+    # Load our tokenizer for decoding shards
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    from tokenizers import Tokenizer
+    our_tokenizer = Tokenizer.from_file(str(tok_path))
+    print(f"Loaded shard tokenizer: {tok_path}")
+
+    # Collect windows from shards (sample_pct of corpus)
+    shard_files = sorted(shard_dir.glob("*.pt"))
+    n_shards = max(1, int(len(shard_files) * sample_pct))
+    sampled_shards = random.sample(shard_files, n_shards)
+    print(f"Sampling from {n_shards}/{len(shard_files)} shards ({sample_pct*100:.0f}%)")
+
+    # Gather text windows
+    windows = []
+    shard_sources = []
+    for sf in sampled_shards:
+        tokens = torch.load(sf, weights_only=True)
+        # Extract source name
+        name = sf.stem
+        parts = name.rsplit("_", 1)
+        source = parts[0] if len(parts) == 2 and parts[1].isdigit() else name
+
+        n_possible = max(1, len(tokens) // seq_len)
+        n_sample = max(1, min(n_windows // n_shards + 1, n_possible))
+        for _ in range(n_sample):
+            start = random.randint(0, max(0, len(tokens) - seq_len))
+            window_tokens = tokens[start:start + seq_len].tolist()
+            text = our_tokenizer.decode(window_tokens)
+            if len(text.strip()) > 50:  # skip near-empty windows
+                windows.append(text)
+                shard_sources.append(source)
+            if len(windows) >= n_windows:
+                break
+        if len(windows) >= n_windows:
+            break
+
+    windows = windows[:n_windows]
+    shard_sources = shard_sources[:n_windows]
+    print(f"Collected {len(windows)} text windows")
+
+    # Load teacher and reference tokenizer (same for Qwen3 family)
+    print(f"\nLoading tokenizer from {teacher_name}...")
+    qwen_tokenizer = AutoTokenizer.from_pretrained(teacher_name)
+
+    # Score with reference model first (smaller, faster)
+    print(f"\nLoading reference model: {reference_name} (CPU, float32)...")
+    t0 = time.time()
+    ref_model = AutoModelForCausalLM.from_pretrained(
+        reference_name, dtype=torch.float32, device_map="cpu"
+    )
+    ref_model.eval()
+    print(f"  Loaded in {time.time()-t0:.1f}s, params: {sum(p.numel() for p in ref_model.parameters()):,}")
+
+    ref_nlls = []
+    print(f"Scoring {len(windows)} windows with reference...")
+    for i, text in enumerate(windows):
+        inputs = qwen_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = ref_model(**inputs, labels=inputs["input_ids"])
+            ref_nlls.append(outputs.loss.item())
+        if (i + 1) % 50 == 0:
+            print(f"  Reference: {i+1}/{len(windows)} (avg NLL: {np.mean(ref_nlls):.4f})")
+
+    del ref_model
+    import gc; gc.collect()
+    print(f"Reference scoring complete. Mean NLL: {np.mean(ref_nlls):.4f}")
+
+    # Score with teacher model
+    print(f"\nLoading teacher model: {teacher_name} (CPU, float32)...")
+    t0 = time.time()
+    teacher_model = AutoModelForCausalLM.from_pretrained(
+        teacher_name, dtype=torch.float32, device_map="cpu"
+    )
+    teacher_model.eval()
+    print(f"  Loaded in {time.time()-t0:.1f}s, params: {sum(p.numel() for p in teacher_model.parameters()):,}")
+
+    teacher_nlls = []
+    print(f"Scoring {len(windows)} windows with teacher...")
+    for i, text in enumerate(windows):
+        inputs = qwen_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = teacher_model(**inputs, labels=inputs["input_ids"])
+            teacher_nlls.append(outputs.loss.item())
+        if (i + 1) % 50 == 0:
+            print(f"  Teacher: {i+1}/{len(windows)} (avg NLL: {np.mean(teacher_nlls):.4f})")
+
+    del teacher_model
+    gc.collect()
+    print(f"Teacher scoring complete. Mean NLL: {np.mean(teacher_nlls):.4f}")
+
+    # Compute difference scores
+    ref_nlls = np.array(ref_nlls)
+    teacher_nlls = np.array(teacher_nlls)
+    diff_scores = ref_nlls - teacher_nlls  # high = teacher knows more
+
+    # Histogram bins
+    hist_counts, hist_edges = np.histogram(diff_scores, bins=20)
+
+    # Per-source stats
+    source_stats = {}
+    for i, src in enumerate(shard_sources):
+        if src not in source_stats:
+            source_stats[src] = []
+        source_stats[src].append(diff_scores[i])
+    source_summary = {
+        src: {"mean": float(np.mean(scores)), "std": float(np.std(scores)),
+              "n": len(scores)}
+        for src, scores in source_stats.items()
+    }
+
+    # Top-50% selection threshold
+    threshold = float(np.median(diff_scores))
+    n_selected = int(np.sum(diff_scores >= threshold))
+
+    result = {
+        "pilot": "miniplm_difference_scoring",
+        "teacher": teacher_name,
+        "reference": reference_name,
+        "n_windows": len(windows),
+        "seq_len": seq_len,
+        "sample_pct": sample_pct,
+        "stats": {
+            "ref_nll_mean": float(np.mean(ref_nlls)),
+            "ref_nll_std": float(np.std(ref_nlls)),
+            "teacher_nll_mean": float(np.mean(teacher_nlls)),
+            "teacher_nll_std": float(np.std(teacher_nlls)),
+            "diff_mean": float(np.mean(diff_scores)),
+            "diff_std": float(np.std(diff_scores)),
+            "diff_min": float(np.min(diff_scores)),
+            "diff_max": float(np.max(diff_scores)),
+            "diff_median": float(np.median(diff_scores)),
+            "threshold_top50": threshold,
+            "n_selected": n_selected,
+        },
+        "histogram": {
+            "counts": hist_counts.tolist(),
+            "edges": [float(e) for e in hist_edges],
+        },
+        "source_summary": source_summary,
+    }
+
+    if output_path is None:
+        output_path = REPO / "results" / "miniplm_pilot.json"
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"\n{'='*60}")
+    print(f"MiniPLM pilot complete!")
+    print(f"  Windows scored: {len(windows)}")
+    print(f"  Ref NLL: {np.mean(ref_nlls):.4f} +/- {np.std(ref_nlls):.4f}")
+    print(f"  Teacher NLL: {np.mean(teacher_nlls):.4f} +/- {np.std(teacher_nlls):.4f}")
+    print(f"  Diff score: {np.mean(diff_scores):.4f} +/- {np.std(diff_scores):.4f}")
+    print(f"  Top-50% threshold: {threshold:.4f}")
+    print(f"  Sources: {dict(sorted(source_summary.items(), key=lambda x: -x[1]['mean']))}")
+    print(f"  Saved: {output_path}")
+    return str(output_path)
+
+
 if __name__ == "__main__":
     import sys
     if "--migrate" in sys.argv:
@@ -536,6 +723,13 @@ if __name__ == "__main__":
                 teacher = arg.split("=", 1)[1]
         print(f"=== TEACHER-GUIDED SHARD SCORING ({teacher}) ===")
         score_shards_teacher(teacher=teacher)
+    elif "--miniplm" in sys.argv:
+        n_windows = 500
+        for arg in sys.argv:
+            if arg.startswith("--n-windows="):
+                n_windows = int(arg.split("=", 1)[1])
+        print(f"=== MINIPLM DIFFERENCE SCORING (n={n_windows}) ===")
+        score_miniplm(n_windows=n_windows)
     else:
         print("=== TESTING STREAMING LOADER ===")
         ds = ShardedDataset()
