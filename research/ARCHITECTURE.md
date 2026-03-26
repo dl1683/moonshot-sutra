@@ -1,6 +1,6 @@
 # Sutra Architecture Reference
 
-**Status: Round 6 — Codex R6 OUTPUT RECEIVED (2026-03-26). Hybrid direction confirmed, β removal prescribed. R6-F/R6-S blocks implemented, stabilization mini-gate ready. Full MiniPLM scoring in parallel. Rounds 1-5 below as historical record; Round 6 addendum (Section 13) supersedes.**
+**Status: Round 7 PENDING (2026-03-26). R6 stabilization gate FAILED — both R6-F and R6-S behind transformer at step 5000. Root cause: branch projection magnitude accumulation. Critical decision point for hybrid vs pure transformer. Section 13 has all results.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -2115,8 +2115,25 @@ Three-way comparison at 100M scale, 5K steps:
 - Stability: kurtosis_max ≤ 2.1, max_act ≤ 52
 - No late divergence pattern
 
-### 13.8 R6 Intuitions
+### 13.8 R6 Stabilization Gate RESULTS (2026-03-26)
 
-1. **Hybrid family is correct, failure is optimization-level.** The early BPT advantage (before instability appears) proves complementarity. Conviction: high.
-2. **BPT gain comes from local+global complementarity, not β.** R6-F should retain most of the gain. Conviction: medium-high.
-3. **Gutenberg/Wikipedia-heavy filtered data will help most.** MiniPLM ranked literature and factual text highest. Conviction: medium.
+**Full results:** `results/probe_r6_stabilization_gate_results.json`
+
+| Model | Params | Final BPT | kurtosis_max | max_act | Pass? |
+|-------|--------|-----------|-------------|---------|-------|
+| Transformer | 90.2M | **4.6669** | **1.7** | **41.6** | baseline |
+| R6-F (no β) | 93.4M | 4.7768 | 3.5 | 58.5 | **FAIL** |
+| R6-S (softmax) | 93.4M | 4.7661 | 2.6 | 55.0 | **FAIL** |
+
+**Both R6 variants fail ALL criteria.** Transformer wins on both BPT and stability.
+
+**Root cause (telemetry):** Branch projections (256→512) accumulate magnitude through depth. Attention a_rms grows 6-8x from layer 0→23. Fused RMS shrinks from 0.36→0.08 as branches diverge in direction. This is structural to the projected dual-branch architecture, not a mixing mechanism problem.
+
+**R6 Intuition updates:**
+1. ~~Hybrid family is correct, failure is optimization-level.~~ **FALSIFIED at 100M.** The early advantage (+0.54 at step 2000) is real but unsustainable. Every projected variant collapses by step 5000.
+2. ~~BPT gain comes from complementarity, not β.~~ **CONFIRMED but irrelevant.** Removing β didn't help — confirming complementarity is real, but projection amplification destroys it.
+3. **Gutenberg/Wikipedia-heavy filtering validated** by 500-window MiniPLM (0.268 diff score, consistent ranking).
+
+### 13.9 Pending: T+L Round 7
+
+Critical decision point: 3 consecutive projected hybrid variants fail stability at 100M. The 42M P-block (full-dim, no projection) was stable. Options include abandoning projections, adding post-fusion norm, mixed schedules, or moving to pure transformer for production.
