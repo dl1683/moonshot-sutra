@@ -55,6 +55,97 @@ WARMUP_STEPS = 200
 GRAD_CLIP = 1.0
 
 
+class NorMuon(torch.optim.Optimizer):
+    """NorMuon optimizer (Li et al., arxiv:2510.05491).
+
+    Extends Muon with per-neuron second-order normalization to fix
+    the late-training instability we observed (max_act=59.6 spike).
+
+    Algorithm:
+        1. First-order momentum: M = β₁M + (1-β₁)G
+        2. Newton-Schulz orthogonalization (5 iterations)
+        3. Per-neuron second moment: v = β₂v + (1-β₂)mean_cols(O⊙O)
+        4. Row-wise normalize: Ô = O / sqrt(v + eps)
+        5. Scaled update: W -= η*λ*W + η̂*Ô where η̂ = 0.2*η*sqrt(mn)/‖Ô‖_F
+    """
+    def __init__(self, params, lr=0.01, beta1=0.95, beta2=0.95,
+                 weight_decay=0.1, ns_iters=5, eps=1e-8):
+        defaults = dict(lr=lr, beta1=beta1, beta2=beta2,
+                        weight_decay=weight_decay, ns_iters=ns_iters, eps=eps)
+        super().__init__(params, defaults)
+
+    @staticmethod
+    def _newton_schulz5(M, iters=5):
+        """5-iteration Newton-Schulz orthogonalization."""
+        a, b, c = (3.4445, -4.7750, 2.0315)
+        X = M / (M.norm() + 1e-7)
+        for _ in range(iters):
+            A = X @ X.T
+            B = b * A + c * A @ A
+            X = a * X + B @ X
+        return X
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            lr = group['lr']
+            b1 = group['beta1']
+            b2 = group['beta2']
+            wd = group['weight_decay']
+            ns_iters = group['ns_iters']
+            eps = group['eps']
+
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                g = p.grad.float()
+
+                state = self.state[p]
+                if len(state) == 0:
+                    state['step'] = 0
+                    state['momentum'] = torch.zeros_like(g)
+                    state['v'] = torch.zeros(g.shape[0], device=g.device)  # per-row
+
+                state['step'] += 1
+                m = state['momentum']
+                v = state['v']
+
+                # 1. First-order momentum
+                m.mul_(b1).add_(g, alpha=1.0 - b1)
+
+                # 2. Newton-Schulz orthogonalization
+                if m.ndim == 2:
+                    O = self._newton_schulz5(m, ns_iters)
+                else:
+                    O = m  # fallback for non-2D (shouldn't happen)
+
+                # 3. Per-neuron second moment
+                row_sq = (O * O).mean(dim=-1)  # mean over columns
+                v.mul_(b2).add_(row_sq, alpha=1.0 - b2)
+
+                # 4. Row-wise normalization
+                O_hat = O / (v.unsqueeze(-1).sqrt() + eps)
+
+                # 5. Scaled update
+                mn_sqrt = math.sqrt(p.shape[0] * p.shape[1]) if p.ndim == 2 else 1.0
+                fro = O_hat.norm() + 1e-7
+                eta_hat = 0.2 * lr * mn_sqrt / fro
+
+                # Weight decay
+                if wd > 0:
+                    p.data.mul_(1.0 - lr * wd)
+
+                # Apply update
+                p.data.add_(O_hat.to(p.dtype), alpha=-eta_hat)
+
+        return loss
+
+
 # ---- RoPE ----
 def precompute_rope(dim, max_len, theta=10000.0):
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
@@ -224,6 +315,168 @@ class GatedConvBlock(nn.Module):
 
         # Gated output
         m = self.out_proj(a_conv * torch.sigmoid(b))
+        r = x + m
+
+        # FFN
+        r = r + self.ffn(self.ffn_norm(r))
+        return r
+
+
+class ParallelHybridBlock(nn.Module):
+    """Intra-layer parallel hybrid: attention + gated conv run in parallel.
+
+    Inspired by Hymba (NVIDIA, ICLR 2025) and Falcon-H1 (TII).
+    Both paths process the full hidden dim. Outputs averaged (Hymba style).
+    Shared FFN on top.
+
+    Architecture:
+        u = Norm(x)
+        a = Attention(u)         # full-dim attention path
+        c = GatedConv(u)         # full-dim gated conv path
+        x = x + 0.5*(a + c)     # Hymba-style mean combination
+        x = x + FFN(Norm(x))    # shared FFN
+    """
+    def __init__(self, dim, n_heads, ff_dim, conv_kernel_size=64, norm_type="rmsnorm"):
+        super().__init__()
+        self.mix_norm = make_norm(dim, norm_type)
+        # Attention path
+        self.attn = CausalAttention(dim, n_heads)
+        # Conv path (gated causal depthwise conv, same as GatedConvBlock mixing)
+        self.conv_in = nn.Linear(dim, 2 * dim, bias=False)
+        self.conv = nn.Conv1d(
+            dim, dim, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=dim, bias=False
+        )
+        self.conv_out = nn.Linear(dim, dim, bias=False)
+        # Shared FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path
+        attn_out = self.attn(u, cos, sin)
+
+        # Conv path (gated)
+        ab = self.conv_in(u)
+        a, b = ab.chunk(2, dim=-1)
+        a_conv = self.conv(a.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        conv_out = self.conv_out(a_conv * torch.sigmoid(b))
+
+        # Mean combination (Hymba style)
+        x = x + 0.5 * (attn_out + conv_out)
+
+        # Shared FFN
+        x = x + self.ffn(self.ffn_norm(x))
+        return x
+
+
+class GQAttention(nn.Module):
+    """Grouped-Query Attention with asymmetric input/output dims.
+
+    Supports projecting from a larger hidden dim to a smaller attention dim,
+    with GQA (fewer KV heads than Q heads) for KV-cache efficiency.
+    """
+    def __init__(self, in_dim, d_attn, n_q_heads, n_kv_heads, head_dim=64):
+        super().__init__()
+        self.n_q_heads = n_q_heads
+        self.n_kv_heads = n_kv_heads
+        self.head_dim = head_dim
+        self.d_attn = d_attn
+        self.q_proj = nn.Linear(in_dim, n_q_heads * head_dim, bias=False)
+        self.k_proj = nn.Linear(in_dim, n_kv_heads * head_dim, bias=False)
+        self.v_proj = nn.Linear(in_dim, n_kv_heads * head_dim, bias=False)
+        self.out_proj = nn.Linear(n_q_heads * head_dim, d_attn, bias=False)
+
+    def forward(self, x, cos, sin):
+        B, T, _ = x.shape
+        q = self.q_proj(x).reshape(B, T, self.n_q_heads, self.head_dim)
+        k = self.k_proj(x).reshape(B, T, self.n_kv_heads, self.head_dim)
+        v = self.v_proj(x).reshape(B, T, self.n_kv_heads, self.head_dim)
+        q = apply_rope(q, cos, sin)
+        k = apply_rope(k, cos, sin)
+        q = q.transpose(1, 2)  # (B, Hq, T, Dh)
+        k = k.transpose(1, 2)  # (B, Hkv, T, Dh)
+        v = v.transpose(1, 2)
+        # Expand KV heads for GQA
+        if self.n_kv_heads < self.n_q_heads:
+            rep = self.n_q_heads // self.n_kv_heads
+            k = k.repeat_interleave(rep, dim=1)
+            v = v.repeat_interleave(rep, dim=1)
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        out = out.transpose(1, 2).reshape(B, T, self.n_q_heads * self.head_dim)
+        return self.out_proj(out)
+
+
+class ConcatProjectHybridBlock(nn.Module):
+    """HEMD-R4-S intra-layer parallel block with concat-then-project fusion.
+
+    Architecture (Codex Round 4 spec):
+        u = SSNorm(h_l)
+        a = GQAttn(u; d_att, GQA)                                    # attention path
+        c = W_o^c( DWConv_k(W_v^c u, k) ⊙ sigmoid(W_g^c u) )      # gated conv path
+        m = W_mix [ s_a * a ; s_c * c ]                              # concat + project
+        r = h_l + m
+        v = SSNorm(r)
+        h_{l+1} = r + SwiGLU(v)
+    """
+    def __init__(self, dim, ff_dim, d_attn=256, d_conv=384,
+                 n_q_heads=4, n_kv_heads=2, head_dim=64,
+                 conv_kernel_size=8, n_layers=18, layer_idx=0,
+                 norm_type="ss_rmsnorm"):
+        super().__init__()
+        self.d_attn = d_attn
+        self.d_conv = d_conv
+        self.mix_norm = make_norm(dim, norm_type)
+
+        # Attention path
+        self.attn = GQAttention(dim, d_attn, n_q_heads, n_kv_heads, head_dim)
+
+        # Conv path (gated depthwise causal conv)
+        self.conv_v = nn.Linear(dim, d_conv, bias=False)
+        self.conv_g = nn.Linear(dim, d_conv, bias=False)
+        self.dwconv = nn.Conv1d(
+            d_conv, d_conv, kernel_size=conv_kernel_size,
+            padding=conv_kernel_size - 1,
+            groups=d_conv, bias=False
+        )
+        self.conv_out = nn.Linear(d_conv, d_conv, bias=False)
+
+        # Branch scales (muP-inspired init)
+        self.s_a = nn.Parameter(torch.ones(1))
+        self.s_c = nn.Parameter(torch.full((1,), math.sqrt(d_attn / d_conv)))
+
+        # Fusion: concat [d_attn + d_conv] -> dim
+        self.w_mix = nn.Linear(d_attn + d_conv, dim, bias=False)
+        # Residual-output scaling: std = 0.02 / sqrt(2*L)
+        nn.init.normal_(self.w_mix.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+        # FFN
+        self.ffn_norm = make_norm(dim, norm_type)
+        self.ffn = SwiGLU(dim, ff_dim)
+        # Scale FFN output proj too
+        nn.init.normal_(self.ffn.down.weight, std=0.02 / math.sqrt(2 * n_layers))
+
+    def forward(self, x, cos, sin):
+        B, T, D = x.shape
+        u = self.mix_norm(x)
+
+        # Attention path -> (B, T, d_attn)
+        a = self.attn(u, cos, sin)
+
+        # Conv path -> (B, T, d_conv)
+        v = self.conv_v(u)  # (B, T, d_conv)
+        g = self.conv_g(u)  # (B, T, d_conv)
+        v_conv = self.dwconv(v.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        c = self.conv_out(v_conv * torch.sigmoid(g))
+
+        # Concat + project with branch scales
+        fused = torch.cat([self.s_a * a, self.s_c * c], dim=-1)  # (B, T, d_attn+d_conv)
+        m = self.w_mix(fused)  # (B, T, dim)
+
         r = x + m
 
         # FFN
@@ -422,23 +675,25 @@ class DenseTransformer(nn.Module):
                  n_heads=N_HEADS, ff_dim=FF_DIM, max_seq_len=MAX_SEQ_LEN,
                  exit_layers=None, use_mtp=False, memory_layers=None,
                  mem_buckets=1_000_000, mem_dim=48, norm_type="rmsnorm",
-                 block_schedule=None, conv_kernel_size=64):
+                 block_schedule=None, conv_kernel_size=64,
+                 d_attn=None, d_conv=None, n_q_heads=None, n_kv_heads=None,
+                 head_dim=64):
         """
         Args:
             exit_layers: list of 0-indexed layer numbers for early exits.
-                e.g. [3,7,11] for exits after layers 4,8,12 (1-indexed).
-                If None, no early exits (standard dense model).
             use_mtp: if True, add D=1 MTP module (training-only).
-            memory_layers: list of 0-indexed layers AFTER which to inject
-                n-gram memory (e.g. [1,4,7] for after layers 2,5,8).
-                If None, no memory fusion.
-            mem_buckets: number of hash buckets per n-gram table.
-            mem_dim: embedding dimension per n-gram table entry.
-            norm_type: "rmsnorm" or "dyt" (Dynamic Tanh).
-            block_schedule: list of block types per layer, e.g. ["H","H","A","H",...].
-                "A" = attention (TransformerBlock), "H" = gated conv (GatedConvBlock).
-                If None, all layers are attention blocks (pure transformer).
-            conv_kernel_size: kernel size for GatedConvBlock (default 64).
+            memory_layers: list of layers AFTER which to inject n-gram memory.
+            norm_type: "rmsnorm", "ss_rmsnorm", or "dyt".
+            block_schedule: list of block types per layer.
+                "A" = attention (TransformerBlock), "H" = gated conv (GatedConvBlock),
+                "P" = parallel hybrid (mean fusion), "C" = concat-project hybrid (R4-S).
+                If None, all layers are attention blocks.
+            conv_kernel_size: kernel size for conv blocks (default 64).
+            d_attn: attention dim for "C" blocks (default: dim).
+            d_conv: conv dim for "C" blocks (default: dim).
+            n_q_heads: query heads for GQA in "C" blocks (default: n_heads).
+            n_kv_heads: KV heads for GQA in "C" blocks (default: n_q_heads).
+            head_dim: head dimension for "C" blocks (default: 64).
         """
         super().__init__()
         self.dim = dim
@@ -456,11 +711,27 @@ class DenseTransformer(nn.Module):
             f"block_schedule length {len(block_schedule)} != n_layers {n_layers}"
         self.block_schedule = block_schedule
 
+        # Defaults for "C" block params
+        _d_attn = d_attn or dim
+        _d_conv = d_conv or dim
+        _n_q = n_q_heads or n_heads
+        _n_kv = n_kv_heads or _n_q
+
         layers = []
-        for btype in block_schedule:
+        for li, btype in enumerate(block_schedule):
             if btype == "H":
                 layers.append(GatedConvBlock(dim, ff_dim, kernel_size=conv_kernel_size,
                                              norm_type=norm_type))
+            elif btype == "P":
+                layers.append(ParallelHybridBlock(dim, n_heads, ff_dim,
+                                                   conv_kernel_size=conv_kernel_size,
+                                                   norm_type=norm_type))
+            elif btype == "C":
+                layers.append(ConcatProjectHybridBlock(
+                    dim, ff_dim, d_attn=_d_attn, d_conv=_d_conv,
+                    n_q_heads=_n_q, n_kv_heads=_n_kv, head_dim=head_dim,
+                    conv_kernel_size=conv_kernel_size, n_layers=n_layers,
+                    layer_idx=li, norm_type=norm_type))
             else:
                 layers.append(TransformerBlock(dim, n_heads, ff_dim, norm_type=norm_type))
         self.layers = nn.ModuleList(layers)
@@ -483,8 +754,9 @@ class DenseTransformer(nn.Module):
         else:
             self.memory = None
 
-        # RoPE cache
-        cos, sin = precompute_rope(dim // n_heads, max_seq_len)
+        # RoPE cache — use explicit head_dim if "C" blocks present, else dim//n_heads
+        rope_dim = head_dim if "C" in block_schedule else dim // n_heads
+        cos, sin = precompute_rope(rope_dim, max_seq_len)
         self.register_buffer("rope_cos", cos)
         self.register_buffer("rope_sin", sin)
 
@@ -2461,11 +2733,20 @@ def run_ab_probe(config_path):
     for variant in cfg["variants"]:
         tag = variant["tag"]
         norm_type = variant.get("norm_type", "rmsnorm")
+        # Per-variant overrides for architecture params
+        v_n_layers = variant.get("n_layers", n_layers)
+        v_dim = variant.get("dim", dim)
+        v_n_heads = variant.get("n_heads", n_heads)
+        v_ff_dim = variant.get("ff_dim", ff_dim)
         v_use_top = variant.get("use_top", use_top)
         v_top_weight = variant.get("top_weight", top_weight)
         v_exit_layers = variant.get("exit_layers", exit_layers)
         v_block_schedule = variant.get("block_schedule", cfg.get("block_schedule", None))
         v_conv_kernel = variant.get("conv_kernel_size", cfg.get("conv_kernel_size", 64))
+
+        # Auto-infer n_layers from block_schedule if provided
+        if v_block_schedule:
+            v_n_layers = len(v_block_schedule)
 
         run_name = f"probe_{probe_name}_{tag}"
         print(f"\n{'='*60}")
@@ -2476,40 +2757,65 @@ def run_ab_probe(config_path):
         if v_block_schedule:
             n_attn = sum(1 for b in v_block_schedule if b == "A")
             n_conv = sum(1 for b in v_block_schedule if b == "H")
-            print(f"  blocks={n_attn}A+{n_conv}H (kernel={v_conv_kernel})")
-        print(f"  {n_layers}L/d={dim}/{n_heads}h/ff={ff_dim}")
+            n_par = sum(1 for b in v_block_schedule if b == "P")
+            n_cat = sum(1 for b in v_block_schedule if b == "C")
+            parts = []
+            if n_attn: parts.append(f"{n_attn}A")
+            if n_conv: parts.append(f"{n_conv}H")
+            if n_par: parts.append(f"{n_par}P")
+            if n_cat: parts.append(f"{n_cat}C")
+            print(f"  blocks={'+'.join(parts)} (kernel={v_conv_kernel})")
+        print(f"  {v_n_layers}L/d={v_dim}/{v_n_heads}h/ff={v_ff_dim}")
         print(f"  steps={steps}, BS={batch_size}x{grad_accum}, LR={lr}")
         print(f"{'='*60}")
 
+        # Extra params for "C" (concat-project hybrid) blocks
+        v_d_attn = variant.get("d_attn", cfg.get("d_attn", None))
+        v_d_conv = variant.get("d_conv", cfg.get("d_conv", None))
+        v_n_q_heads = variant.get("n_q_heads", cfg.get("n_q_heads", None))
+        v_n_kv_heads = variant.get("n_kv_heads", cfg.get("n_kv_heads", None))
+        v_head_dim = variant.get("head_dim", cfg.get("head_dim", 64))
+
         model = DenseTransformer(
-            vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
-            n_heads=n_heads, ff_dim=ff_dim, exit_layers=v_exit_layers,
+            vocab_size=VOCAB_SIZE, dim=v_dim, n_layers=v_n_layers,
+            n_heads=v_n_heads, ff_dim=v_ff_dim, exit_layers=v_exit_layers,
             norm_type=norm_type, block_schedule=v_block_schedule,
             conv_kernel_size=v_conv_kernel,
+            d_attn=v_d_attn, d_conv=v_d_conv,
+            n_q_heads=v_n_q_heads, n_kv_heads=v_n_kv_heads,
+            head_dim=v_head_dim,
         ).to(DEVICE)
         n_params = sum(p.numel() for p in model.parameters())
         print(f"  Params: {n_params:,}")
 
         v_optimizer = variant.get("optimizer", cfg.get("optimizer", "adamw"))
         muon_lr = variant.get("muon_lr", cfg.get("muon_lr", 0.02))
+        normuon_lr = variant.get("normuon_lr", cfg.get("normuon_lr", 0.01))
         use_muon = v_optimizer == "muon"
+        use_normuon = v_optimizer == "normuon"
 
-        if use_muon:
-            # Split: 2D hidden weights -> Muon, everything else -> AdamW
-            muon_params = []
+        if use_muon or use_normuon:
+            # Split: 2D hidden weights -> Muon/NorMuon, everything else -> AdamW
+            special_params = []
             adam_params = []
             for name, p in model.named_parameters():
                 if p.ndim == 2 and "emb" not in name:
-                    muon_params.append(p)
+                    special_params.append(p)
                 else:
                     adam_params.append(p)
-            from torch.optim import Muon as TorchMuon
-            opt = TorchMuon(muon_params, lr=muon_lr, momentum=0.95,
-                            weight_decay=0.1)
+            if use_normuon:
+                opt = NorMuon(special_params, lr=normuon_lr, beta1=0.95, beta2=0.95,
+                              weight_decay=0.1)
+                opt_label = f"NorMuon (lr={normuon_lr})"
+            else:
+                from torch.optim import Muon as TorchMuon
+                opt = TorchMuon(special_params, lr=muon_lr, momentum=0.95,
+                                weight_decay=0.1)
+                opt_label = f"Muon (lr={muon_lr})"
             opt_adam = torch.optim.AdamW(adam_params, lr=lr, betas=(0.9, 0.95),
                                         weight_decay=0.1)
-            print(f"  Optimizer: Muon (lr={muon_lr}) + AdamW (lr={lr})")
-            print(f"    Muon params: {sum(p.numel() for p in muon_params):,}")
+            print(f"  Optimizer: {opt_label} + AdamW (lr={lr})")
+            print(f"    Special params: {sum(p.numel() for p in special_params):,}")
             print(f"    AdamW params: {sum(p.numel() for p in adam_params):,}")
         else:
             opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95),
@@ -2529,6 +2835,8 @@ def run_ab_probe(config_path):
             for pg in opt.param_groups:
                 if use_muon:
                     pg["lr"] = muon_lr * (current_lr / lr)
+                elif use_normuon:
+                    pg["lr"] = normuon_lr * (current_lr / lr)
                 else:
                     pg["lr"] = current_lr
             if opt_adam is not None:

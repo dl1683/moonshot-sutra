@@ -1,0 +1,32 @@
+{
+    "name": "parallel_hybrid",
+    "description": "Probe: intra-layer parallel hybrid (P blocks) vs inter-layer hybrid (3to1) at ~46-47M. Tests Hymba-style mean combination with two kernel sizes.",
+    "variants": [
+        {
+            "tag": "parallel_k64",
+            "block_schedule": ["P","P","P","P","P","P","P","P","P"],
+            "conv_kernel_size": 64,
+            "norm_type": "rmsnorm"
+        },
+        {
+            "tag": "parallel_k4",
+            "block_schedule": ["P","P","P","P","P","P","P","P","P"],
+            "conv_kernel_size": 4,
+            "norm_type": "rmsnorm"
+        }
+    ],
+    "dim": 512,
+    "n_layers": 9,
+    "n_heads": 8,
+    "ff_dim": 1536,
+    "steps": 5000,
+    "eval_every": 500,
+    "batch_size": 16,
+    "grad_accum": 2,
+    "seq_len": 512,
+    "lr": 3e-4,
+    "min_lr": 1e-5,
+    "warmup": 200,
+    "use_top": false,
+    "top_K": 4
+}
