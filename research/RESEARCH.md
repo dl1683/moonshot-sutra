@@ -2422,25 +2422,39 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 
 **Top-K validation:**
 
-- **BiLD (COLING 2025):** K=8-50 actively helps LLM distillation by removing long-tail noise. Optimal K depends on task but K∈[8,50] consistently outperforms K=none. The teacher's opinion on rank 50+ tokens is noise for a smaller student.
-- **MultiLevelOT (AAAI 2025):** Uses K=50 for efficient Sinkhorn computation.
-- **Our K=64:** Slightly above the BiLD optimal range. Acceptable — retains ~95% of teacher signal (per §6.4.26) while filtering noise. Could test K=32 if 15K results are marginal.
+- **Peng et al. (ACL 2025):** Most comprehensive sweep — K∈{1,3,5,10,20,50,100} with top-p pre-filtering. **K=50 was best: 39.6% avg. K=100: 38.3%.** Even K=1 (hard teacher label) helped. Two-stage top-p→top-k achieves 4,000x storage reduction (~15TB for 100B tokens).
+- **BiLD (COLING 2025):** K=8-50 actively helps. LLM logit kurtosis is 2-3 orders of magnitude higher than vision models (Qwen-4B kurtosis: 46K-135K vs ResNet: 782-995). **Top-8 logits cover 99.5-99.998% of probability mass** in LLMs. K=8 optimal for task-tuning.
+- **MultiLevelOT (AAAI 2025):** Uses K=50 for cross-tokenizer OT. "Smaller k insufficiently captures full sentence structure; larger k introduces noise."
+- **⚠️ Sparse Logit Sampling (ACL 2025, Oral):** **CRITICAL WARNING — naive top-K truncation produces BIASED gradient estimates.** Mathematically proven that truncating to top-K and renormalizing gives biased teacher distribution estimates. Their importance-sampling alternative provides unbiased estimates with similar sparsity. Practical impact may be small (Peng et al. K=50 still works well) but worth noting for theoretical rigor.
+- **Our K=64:** Slightly above the Peng et al. optimal K=50. Acceptable. The bias warning is noted but practical results across multiple papers suggest K∈[32,64] works fine for pre-training KD.
 
 **Capacity ratio concern (the 1:19 problem):**
 
-- **Distillation Scaling Laws (ICML 2025):** Optimal teacher-student ratio is approximately 2.5x (teacher 2.5× student params). Performance degrades when ratio exceeds ~5-10x.
-- **Our ratio:** 90M:1.7B = 1:19, which is 7.6× beyond the empirically optimal 2.5x ratio.
-- **Implication:** We are operating far outside the "sweet spot" for KD. This predicts weaker KD benefits but does NOT predict zero benefit. The contingency (scaling student to 166M, ratio 1:8.8) brings us within the comfort zone.
-- **Cross-tokenizer alignment partially compensates:** Our 92.6% student vocab overlap means most of the student's representational capacity is covered. The teacher's knowledge on rare tokens (not in shared vocab) is lost, but these contribute least to student performance anyway.
+- **Distillation Scaling Laws (Busbridge et al., ICML 2025):** No fixed optimal ratio. Capacity gap follows a broken power law with U-shaped curve: student CE decreases to an optimum then increases with increasing teacher size. Students 143M-12.6B, teachers 198M-7.75B, up to 512B tokens. **Supervised learning always outperforms distillation given enough student compute/tokens** — the crossover scales with student size.
+- **Peng et al. (ACL 2025):** Explicit threshold — **"Pre-training distillation is effective when student reaches ~10% of teacher size."** Our 90M/1.7B = 5.3%, below this threshold. Also: "A larger teacher does not necessarily guarantee better results" — their 32B teacher didn't always beat 9B for same student.
+- **Our ratio:** 1:19 at 5.3%, below the 10% empirical threshold. This is a genuine concern, not just theoretical.
+- **Mitigations available:** (a) Scale student to 166M (ratio 1:8.8, above 10% threshold); (b) Multi-teacher distillation may compensate by providing diverse signal; (c) Top-K filtering becomes MORE important at extreme ratios (teacher long-tail is pure noise for small student).
+- **Cross-tokenizer alignment partially compensates:** Our 92.6% student vocab overlap means most of the student's representational capacity is covered.
+
+**Cross-tokenizer alignment methods (comprehensive survey):**
+
+- **DSKDv2/ETA (EMNLP 2024, updated 2025):** Exact Token Alignment — matches positions where previous tokens match, current tokens match, and teacher's predicted token exists in student vocab. **>90% of tokens exactly matched** across different tokenizers. Projector init: W_t→s = W_t · (W_s)+ (pseudo-inverse).
+- **DWA-KD (Feb 2026):** Dual-level: token-level via dual-space KL with **entropy weighting** (upweights tokens where student uncertain + teacher confident) + sequence-level via Soft-DTW. Outperforms DSKD by 1.5-2.0 ROUGE-L. **The entropy weighting concept could improve our byte-span bridge.**
+- **CDM (Feb 2025):** Coverage varies wildly by pair: Llama3→Gemma2: 85.5% seq/67.8% vocab; Llama3→OPT: 89.0% seq/34.5% vocab; Phi3→Qwen2: 31.5% seq/65.7% vocab. **Cross-tokenizer coverage is highly pair-dependent.**
+- **ALM/tokenkit (Mar 2025):** Byte-position matching — **closest published method to our byte-span bridge.** First pure distillation (not auxiliary) across fundamentally different tokenizers. Llama 3.2 3B → Qwen2 tokenizer: ALM 77.1 avg vs DSKD 75.8.
+- **Cross-Tokenizer Likelihood Scoring (Dec 2024):** Exploits recursive BPE structure for exact probability computation. Qwen2.5-Math-7B → Gemma2-2B: >2% GSM8K improvement. Also supports vocabulary trimming (151K → 16-64K tokens with up to 4% improvement + 12% memory reduction).
+- **MultiLevelOT (AAAI 2025):** OT-based, no explicit token mapping needed. Token + sequence level Sinkhorn. Reduces teacher-student gap by >71% on QED.
 
 **Synthesis for current ablation and 15K gate:**
 
 | Parameter | Setting | Confidence | Fallback |
 |-----------|---------|------------|----------|
-| Temperature | T=2.0 | HIGH (cross-tokenizer consensus) | T=1.0 only if logit KD shows zero benefit |
-| Top-K | K=64 | MEDIUM (slightly above BiLD optimal 8-50) | K=32 if marginal results |
-| Capacity ratio | 1:19 | LOW (far from optimal 2.5x) | Scale student to 166M if KD fails |
-| Alignment | ETA (14,822 shared tokens) | HIGH (92.6% coverage) | Byte-span pooling as backup |
+| Temperature | T=2.0 | HIGH (cross-tokenizer consensus, 6 papers) | T=1.0 only if logit KD shows zero benefit |
+| Top-K | K=64 | MEDIUM (K=50 optimal per Peng et al.; bias warning noted) | K=32 if marginal; importance sampling if bias matters |
+| Capacity ratio | 1:19 (5.3%) | LOW (below 10% threshold per Peng et al.) | Scale student to 166M if KD fails |
+| Alignment | ETA (14,822 shared tokens) | HIGH (92.6% coverage) | DWA-KD entropy weighting; ALM byte-position matching |
+
+**Key papers cited:** Peng et al. ACL 2025 (design space), Busbridge et al. ICML 2025 (scaling laws), Sparse Logit Sampling ACL 2025 Oral (bias warning), DWA-KD arXiv 2602.21669 (entropy weighting), ALM/tokenkit arXiv 2503.20083 (byte matching), CDM arXiv 2502.11104 (coverage data), Cross-Tokenizer Likelihood arXiv 2512.14954 (BPE recursion).
 
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
