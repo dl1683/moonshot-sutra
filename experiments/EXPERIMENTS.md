@@ -1,7 +1,105 @@
 # Experiments Summary
 
-Prior experiments are preserved in git history. The architecture is being redesigned from first principles via the T+L workflow. New experiments will be logged here as they are run.
+Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
-See `research/RESEARCH.md` for field research informing design.
-See `research/ARCHITECTURE.md` for the architecture reference (populated by T+L sessions).
-See `experiments/ledger.jsonl` for machine-readable experiment logs.
+---
+
+## Phase 5: KD Mechanism Validation (2026-03-26 → ongoing)
+
+### kd_15k_benchmark_gate [RUNNING]
+**Purpose:** Decisive test of scheduled logit KD at 1:19 ratio (90M:1.7B).
+**Mechanism:** Inverted-U alpha (0.10→0.60→0.10→0.0), rising tau (1.5→3.0), confidence gating. Logit-only, no rep surfaces.
+**What we'll learn:** Whether KD provides persistent BPT + benchmark lift at extreme capacity ratios.
+
+### kd_surface_ablation [DONE]
+**Purpose:** Test all KD surfaces (control vs rep-only vs logit-only vs combined) at flat alpha=1.0.
+**Key finding:** Multi-surface interference is real (IF peaked 2.14). Rep KD = head-start only, collapses during WSD (basin-incompatible). Logit KD harmful at flat alpha but basin-compatible. Combined → kurtosis spike (12.4).
+**What we learned:** Alpha scheduling is mandatory. Logit-only with inverted-U is the correct mechanism.
+
+### kd_first_probe [DONE]
+**Purpose:** Does KD provide ANY signal at 90M:1.7B ratio?
+**Key finding:** Rep KD (CKA+semantic) = transient head-start only. Gap: -0.059 (500) → -0.008 (3000). Control catches up.
+**What we learned:** Rep-level KD alone is insufficient. Need logit-level + scheduling.
+
+## Phase 4: Architecture Lock (2026-03-26)
+
+### probe_pgqa_100m_gate [DONE]
+**Purpose:** Last hybrid test. P-GQA full-dim hybrid vs pure transformer at 100M.
+**Key finding:** P-GQA +0.028 BPT (below +0.05 threshold). Kill rule triggered.
+**What we learned:** Architecture LOCKED as pure 24-layer transformer (Sutra-24A-90M). All hybrid variants exhausted.
+
+### probe_r7p_postfusion [DONE]
+**Purpose:** Post-fusion hybrid probes (24G all-hybrid + 6G+18A mixed) at 100M.
+**Key finding:** Stability concerns with gated blocks. Pure transformer remained strongest.
+
+### probe_r6_stabilize [DONE]
+**Purpose:** Stabilization variants (R6-F no-beta + R6-S softmax mixing) at 42M.
+**Key finding:** Both stabilized but didn't improve BPT over transformer baseline.
+
+## Phase 3: Architecture Search (2026-03-25 → 2026-03-26)
+
+### probe_100m_gate [DONE]
+**Purpose:** Scale-up test: 24x512 transformer vs HEMD-R5-G hybrid at 100M.
+**Key finding:** Transformer won. Hybrid added complexity without BPT gain at scale.
+
+### probe_r4_microprobe [DONE]
+**Purpose:** Kernel sweep (k4/k16/k64) for parallel hybrid.
+**Key finding:** k=4 slightly better than k=64 at intra-layer. But overall hybrid < transformer.
+
+### probe_parallel_hybrid [DONE]
+**Purpose:** Intra-layer parallel hybrid at 42M.
+**Key finding:** Marginal gains, not worth the complexity.
+
+### probe_trunk_choice [DONE]
+**Purpose:** Pure transformer vs pure conv vs inter-layer hybrid at 42M.
+**Key finding:** Pure transformer wins at 42M. Conv variants underperform.
+
+### probe_muon_vs_adamw [DONE]
+**Purpose:** Optimizer comparison (Muon vs AdamW vs AdamW-NorMuon) at 42M.
+**Key finding:** AdamW remains best at current scale.
+
+### probe_top_vs_ntp [DONE]
+**Purpose:** TOP auxiliary loss vs plain NTP at 42M.
+**Key finding:** NTP alone is sufficient. TOP adds overhead without benefit.
+
+### probe_dyt_vs_rmsnorm [DONE]
+**Purpose:** DyT vs RMSNorm normalization at 42M.
+**Key finding:** RMSNorm wins. DyT provides no kurtosis benefit at this scale.
+
+## Phase 2: Baseline + Data (2026-03-25)
+
+### miniplm_500w_full / miniplm_pilot_200w [DONE]
+**Purpose:** MiniPLM-style data scoring for O4 (data efficiency).
+**What we learned:** Shard quality varies. Per-source weights computed but data shaping probe not yet run.
+
+### probe_o4_data_shaping [QUEUED]
+**Purpose:** Test MiniPLM reweighted data vs uniform sampling.
+**Status:** Deferred — KD work took priority.
+
+## Phase 1: Baseline Exploration (2026-03-25)
+
+### probe_ngram_131k / probe_ngram_4m [DONE]
+**Purpose:** CPU n-gram memory as compression auxiliary.
+**Key finding:** 131K buckets saturated (100% occupancy). 4M better but collision still 86%.
+
+### probe_mtp_d1 [DONE]
+**Purpose:** Multi-Token Prediction (D=1) from EDSR baseline.
+**Key finding:** MTP HURTS at 98M scale. Control reached 5.1039 vs MTP 5.2328.
+
+### probe_halting_controller [DONE]
+**Purpose:** Differentiable 3-exit halting controller.
+**Key finding:** FALSIFIED. Control beats halting by +0.153 BPT. 21% throughput overhead.
+
+### expand_98m_to_200m [DONE]
+**Purpose:** Net2Wider expansion test.
+**Key finding:** Widening works mechanically but prior model had bugs.
+
+---
+
+**Dead Ends (prevent revisiting):**
+- Multi-Token Prediction at <100M scale (hurts BPT)
+- Learned halting at <100M (too much overhead)
+- Conv/hybrid architectures at 42M-100M (transformer wins consistently)
+- Flat alpha KD at 1:19 ratio (harmful without scheduling)
+- Rep-only KD (head-start only, not persistent)
+- Multi-surface KD at extreme ratios (interference)
