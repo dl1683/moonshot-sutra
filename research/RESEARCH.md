@@ -2621,7 +2621,7 @@ N(t) = NTP gradient signal strength (varies with training phase)
 
 **Validated:** Backwards compatibility confirmed. step_tau correctly wired. alpha_frac=0 correctly zeros KD loss. Schedule boundaries all correct. Config internally consistent. Schedule is local-step (1..15K), not global-step — intentional and correct.
 
-**Optimization noted:** Teacher forward pass still runs for steps 12001-15000 (alpha=0), wasting ~20% compute. Fix: add `if (sa_state + sa_semantic + sa_logit) > 0:` guard around teacher block.
+**Optimization note:** Guard `if (sa_state + sa_semantic + sa_logit) > 0:` already exists at line 4235. Teacher forward pass IS correctly skipped when alpha_frac=0 (steps 12001-15000). No compute waste.
 
 ### 6.4.33 Reverse KL / Mode-Seeking Divergences for Extreme-Ratio KD (2026-03-27)
 

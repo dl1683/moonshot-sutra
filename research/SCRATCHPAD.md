@@ -528,22 +528,82 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 1000 | **4.895** | 4.88-4.91 | -0.01 to +0.02 | α ≈ 0.25 (ramping). Very little KD signal yet. Should track control. |
 | 2000 | **4.824** | 4.79-4.84 | -0.03 to +0.02 | α approaching peak (0.60). First meaningful KD signal. |
 | 3000 | **4.680** | 4.63-4.71 | -0.05 to +0.03 | α at peak. KD should be active. This is the FIRST real test. |
-| 5000 | ~4.55 | 4.48-4.58 | -0.07 to +0.03 | Sustained peak α. If KD works, gap should be opening. |
-| 6000 | ~4.48 | 4.40-4.52 | ≤0 (STOP RULE) | **Non-positive required.** If positive → KD mechanism failed. ABORT. |
-| 7500 | ~4.38 | 4.30-4.42 | -0.08 to +0.04 | Still at peak α. Gap should be clear if mechanism works. |
-| 10000 | ~4.25 | 4.18-4.30 | ≤-0.02 (STOP RULE) | **Persistence evidence.** α starts tapering. KD advantage must hold. |
-| 12000 | ~4.15 | 4.10-4.20 | -0.05 to +0.02 | α→0. Entering pure NTP. Advantage should be "baked in." |
-| 15000 | ~4.00 | 3.96-4.02 | ≤-0.015 (PROOF) | **Persistence proof.** Must also show lm-eval lift. |
+| 4000 | **4.632** | — | — | **ACTUAL.** Slower than predicted (expected ~4.59). Plateau onset. |
+| 5000 | **4.612** | 4.55-4.63 | -0.06 to +0.02 | **ACTUAL control.** Was ~4.55 predicted, 0.062 worse. Deceleration confirmed. Kurtosis=10.1. |
+| 6000 | **4.616** | 4.55-4.63 | ≤0 (STOP RULE) | **ACTUAL.** Deep plateau. -0.003 from 5K. Kurtosis SPIKED to 41.7 (see analysis below). |
+| 7500 | ~4.52 | 4.45-4.54 | -0.07 to +0.02 | **REVISED up from 4.38.** Power-law decay model. |
+| 10000 | ~4.55 | 4.48-4.58 | ≤-0.02 (STOP RULE) | **RE-REVISED.** Still flat LR. α tapers. KD advantage must hold. |
+| 12000 | ~4.54 | 4.47-4.56 | -0.06 to +0.02 | **RE-REVISED.** Last flat-LR step. α→0. Pure NTP. |
+| 15000 | ~4.20 | 4.15-4.25 | ≤-0.015 (PROOF) | **RE-REVISED.** WSD decay 12K-15K drops ~0.34. lm-eval required. |
 
-**Scenarios:**
-1. **Mechanism WORKS (40% probability):** KD arm shows consistent -0.03 to -0.07 advantage from step 3K onward. Gap holds through taper and consolidation. lm-eval shows lift on at least 1 benchmark. This validates inverted-U + rising τ + confidence gating as THE fix for extreme-ratio KD.
-2. **Mechanism HELPS but FADES (30% probability):** KD arm shows -0.01 to -0.03 during peak phase but gap narrows during taper. Final gap ≈ 0 ± 0.01. Mechanism provides training signal but doesn't transfer permanent knowledge. Would suggest KD needs longer peak phase or higher α.
-3. **Mechanism FAILS (30% probability):** KD arm matches or trails control throughout. The 1:19 ratio is fundamentally too extreme for logit KD regardless of scheduling. Next: scale to 166M (1:8.8 ratio).
+**Scenarios and Decision Tree:**
+
+| Outcome | BPT Gap@15K | lm-eval lift? | Probability | Next Step |
+|---------|-------------|---------------|-------------|-----------|
+| **A: WORKS** | ≤-0.015 | YES (≥1 bench) | 35% | → RMFD with forward KL at 90M. Validated mechanism. |
+| **B: HELPS/FADES** | -0.01 to -0.005 | Maybe | 25% | → Try AMiD (α=-5) 3K probe at 90M. If no lift → scale to 166M. |
+| **C: NEUTRAL** | ±0.005 | No | 20% | → Scale to 166M directly (1:8.8 ratio). Forward KL may work at better ratio. |
+| **D: FAILS/HURTS** | >+0.005 | No | 20% | → Scale to 166M + try AMiD. If both fail → abandon KD at 1:10, focus on overtraining. |
+
+**Decision tree execution:**
+1. Finish both arms (control + KD) to step 15K
+2. Run lm-eval on both 15K checkpoints
+3. Compute BPT gap (eval BPT, not training BPT)
+4. Compare lm-eval scores across all 7 benchmarks
+5. Route to outcome A/B/C/D based on data
+6. Codex Tier 2 review (Scaling Expert + Architecture Theorist + Competitive Analyst) before ANY major decision
+7. Execute next step
+
+**For ALL outcomes:** The 90M checkpoint at 20K total steps is our most trained model. Use it as warm-start for whatever comes next (scaling, further KD, or overtraining).
 
 **Key monitoring signals:**
 - KD loss trajectory: should DECREASE during peak phase (student learning from teacher). If flat → no knowledge transfer.
 - Confidence gating activation: how many tokens get ×1.5 vs ×0.3? If mostly ×0.3 → teacher is mostly uncertain → wrong teacher.
 - Kurtosis during taper: should stay < 2× control (stable consolidation). Spike = basin instability.
+
+### 15K Gate Control Arm Curve Analysis (2026-03-27)
+
+**Actual control data (steps are relative to gate start, from 5K warm-start):**
+
+| Step | BPT | ΔBPT/1K | Kurtosis | Max Act | Phase |
+|------|-----|---------|----------|---------|-------|
+| 1000 | 4.895 | — | 3.2 | 51.5 | Stable LR (3e-4) |
+| 2000 | 4.824 | -0.071 | 4.0 | 56.2 | Stable LR |
+| 3000 | 4.680 | -0.144 | 5.2 | 72.5 | Stable LR (fast learning phase) |
+| 4000 | 4.632 | -0.048 | 7.2 | 87.9 | Decelerating |
+| 5000 | 4.612 | -0.020 | 10.1 | 107.4 | Plateau onset |
+| 6000 | 4.616 | +0.003 | 41.7 | 97.8 | **DEEP PLATEAU.** Kurtosis spike (see below). |
+
+**Learning rate profile:** Steps 1-6K: flat 3e-4 (=steps 5001-11000 absolute). WSD decay starts at step 12K.
+
+**Observations:**
+1. **BPT plateau is confirmed.** Step 5K→6K: +0.003 (essentially zero improvement). Improvement per 1K steps: -0.071, -0.144, -0.048, -0.020, +0.003. The model has SATURATED at flat 3e-4 LR. All further BPT improvement will come from WSD decay (steps 12K-15K).
+2. **Kurtosis trajectory NONLINEAR.** 3.2→4.0→5.2→7.2→10.1→**41.7**. The step 6K spike (4× from step 5K) is NOT consistent with prior linear growth. Most likely explanation: kurtosis_max takes the WORST layer. One specific layer is developing heavy-tailed activations during the plateau phase. Max_act DECREASED (107.4→97.8) so this isn't an outlier explosion — it's a distribution shape change in one layer.
+3. **KD stop rules remain relative.** The kurtosis stop rule is 2× control AT SAME STEP. So step 6K threshold for KD arm = 2 × 41.7 = 83.4. The absolute number doesn't matter — only the ratio.
+4. **Revised BPT extrapolation:** Flat LR phase (steps 6K-12K) will show minimal BPT improvement (~4.61 ± 0.01). WSD decay (12K-15K) will produce the consolidation drop. Estimated final: ~4.20-4.30.
+
+**Implication for KD arm:** The flat plateau from steps 5K-12K is EXACTLY where KD should matter most. If the teacher signal can break through the plateau where pure NTP cannot, this is the strongest possible evidence for KD's value. The "non-positive by 6K" stop rule is now relative to a control baseline of ~4.61, making the bar VERY low.
+
+**Implication:** The original predictions were too optimistic. Revised forward estimates now in prediction table above. This actually makes the KD arm's job EASIER — the control baseline is weaker than expected, so a smaller absolute improvement from KD represents a larger relative gain.
+
+**LR schedule (confirmed from code):** WSD = Warmup-Stable-Decay.
+- Steps 0-500: warmup (0 → 3e-4)
+- Steps 500-12000: flat 3e-4 (80% of 15K)
+- Steps 12000-15000: linear decay (3e-4 → 1e-5)
+
+**This changes everything about the extrapolation.** The flat-LR phase runs until step 12K. The -0.020/1K deceleration at step 5K is pure diminishing returns on the loss landscape at constant LR. Steps 12K-15K will see a massive BPT drop during WSD decay (as we observed in the 3K ablation).
+
+**Revised power-law extrapolation (flat LR only, steps 6K-12K):**
+Fitting BPT ≈ A + B/(step^γ) to steps 3K-5K data:
+- Step 6K: ~4.598 (improvement slowing to ~-0.014/1K)
+- Step 7.5K: ~4.578 (-0.013/1K)
+- Step 10K: ~4.555 (-0.009/1K)
+- Step 12K: ~4.545 (approaching plateau)
+
+**WSD decay phase (steps 12K-15K):** Based on prior 3K ablation data, WSD decay of similar magnitude (3e-4 → 1e-5) produced ~0.36 BPT drop in the control (4.858→4.498 in 1000 steps). Scaling: 3K steps of decay should give ~0.25-0.40 BPT drop.
+- Step 15K estimate: ~4.15-4.30
+
+**This means the control at step 15K will be much higher than the original prediction of 4.00.** Range: 4.15-4.30. The KD arm's stop rule of ≤-0.015 means it needs to reach ~4.13-4.28.
 
 ## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
 
@@ -574,6 +634,32 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 **Implication for RMFD:** The future multi-teacher system should use logit-based surfaces for all teachers (basin-compatible), with rep surfaces only as auxiliary signals during early training (stabilization phase, then off). This is exactly what the Ekalavya curriculum prescribes — rep early, logit sustained.
 
 **Connection to information geometry:** The NTP loss lives on the simplex of output distributions. Logit KD also lives on this simplex. Rep KD lives on a Grassmannian (the space of subspaces/representations). The WSD landscape changes on the simplex preserve logit KD's knowledge because they're moving within the same manifold. Rep KD's gains lie on a different manifold entirely — LR decay on the simplex has no obligation to preserve structure on the Grassmannian.
+
+### RMFD Design Revision Implications (2026-03-27)
+
+**The RMFD 4-surface design needs revision based on basin compatibility findings:**
+
+| Original Surface | Type | Basin-compatible? | Revision |
+|-----------------|------|------------------|----------|
+| Token surface (logit KD) | Output distribution | YES | **KEEP — primary surface** |
+| State surface (CKA at depth 8,16) | Grassmannian | NO | **DROP — or early-phase only** |
+| Semantic surface (pooled rep) | Grassmannian | NO | **DROP — or early-phase only** |
+| Exit surface (self-distillation) | Output distribution | YES | **KEEP — simplex-compatible** |
+
+**Committee member impact:**
+- **Qwen3-1.7B**: Logit KD ✓ (has LM head)
+- **LFM2.5-1.2B**: Logit KD ✓ (has LM head)
+- **Mamba2-780M**: Logit KD ✓ (has LM head)
+- **EmbeddingGemma-300M**: Logit KD ✗ (encoder, no LM head) — **CANNOT do basin-compatible KD**
+
+**Options for EmbeddingGemma:**
+1. Drop entirely from committee (simplest, saves 0.6GB VRAM)
+2. Use for early-phase state KD only (Phase 2), disable during WSD
+3. Replace with a small decoder model (e.g., SmolLM-135M)
+
+**Design question: should α be nonzero during WSD?** Current inverted-U zeros α at step 12K (when WSD starts). But basin compatibility says logit KD HELPS during WSD (same manifold). A small residual α (0.05-0.10) during steps 12K-15K might improve consolidation. **FLAG FOR CODEX REVIEW after 15K gate.**
+
+**Caveat:** All of this is derived from ONE experiment at ONE scale. Question all conclusions before acting.
 
 ---
 
