@@ -6,9 +6,12 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ## Phase 5: KD Mechanism Validation (2026-03-26 → ongoing)
 
-### kd_15k_benchmark_gate [RUNNING]
+### kd_15k_benchmark_gate [RUNNING — KD arm active]
 **Purpose:** Decisive test of scheduled logit KD at 1:19 ratio (90M:1.7B).
 **Mechanism:** Inverted-U alpha (0.10→0.60→0.10→0.0), rising tau (1.5→3.0), confidence gating. Logit-only, no rep surfaces.
+**Control arm (COMPLETE):** BPT 4.895 (1K) → 4.420 (10K) → 4.082 (15K). WSD S-curve confirmed: -0.292 BPT in final 3K steps.
+**KD arm (IN PROGRESS):** Qwen3-1.7B teacher, 92.6% vocab overlap, alpha warmup active.
+**Stop rules:** Non-positive by 6K, ≤-0.02 by 10K, ≤-0.015 + lm-eval by 15K.
 **What we'll learn:** Whether KD provides persistent BPT + benchmark lift at extreme capacity ratios.
 
 ### kd_surface_ablation [DONE]

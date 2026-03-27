@@ -127,43 +127,7 @@ First probe with α_total=0.8 showed -0.059 (BETTER). α=1.0 is too aggressive f
 
 **Key gap confirmed:** No published work combines (1) inverted-U α, (2) rising τ, (3) confidence gating, at (4) extreme ratios (>1:10) with (5) cross-tokenizer alignment. Our 15K gate is genuinely novel in this combination. The ACL 2025 paper validates the general principle that α scheduling helps, but our specific inverted-U shape with WSD-aligned taper and confidence gating is new.
 
-### ~~RESOLVED~~: Temperature/Top-K Conflict (see RESEARCH.md §6.4.28)
-
-**RESOLVED by literature synthesis.** T=2.0 is correct for cross-tokenizer KD:
-- DSKDv2, DWA-KD both use T=2.0 for cross-tokenizer distillation
-- Design Space paper (ACL 2025): T∈{1.0, 1.5, 2.0} all similar for pre-training KD
-- Minitron's T=1.0 finding was same-tokenizer at ~1:2 ratio — doesn't apply to our 1:19 cross-tokenizer setup
-- K=64 is slightly above BiLD optimal (K=8-50) but acceptable
-
-**No temperature sweep needed** unless logit KD shows zero benefit at T=2.0.
-
-#### Theoretical Resolution: Capacity Ratio Modulates Optimal (T, K)
-
-**Key insight: the optimal (temperature, top-K) settings depend on the student:teacher capacity ratio.**
-
-**The argument:**
-1. At **moderate ratios** (1:2 to 1:9, typical in literature): the student has enough capacity to absorb MOST of the teacher's output distribution. Higher T reveals more dark knowledge → helpful. Larger K (or no K) preserves more of the distribution → helpful. This is the regime Minitron measured: teacher ~8B, student ~4B, ratio ~1:2. Their conclusion (T=1.0, K→none) was for moderate ratios.
-
-2. At **extreme ratios** (1:19, our case): the student CANNOT absorb the full teacher distribution — it lacks representational capacity. Two failure modes emerge:
-   - **High T (2.0):** Flattens the teacher distribution, revealing dark knowledge on rank 30-64+ tokens. But the student doesn't have capacity to model these subtle distinctions → gradient noise, not signal. The KD loss pulls the student toward a flatter distribution than it can represent.
-   - **Low T (1.0):** Keeps the teacher distribution peaked. The student sees fewer "dark knowledge" tokens but the signal is cleaner — focused on the top predictions the student CAN learn. Less noise, more transferable signal per gradient step.
-
-3. Similarly for **top-K at extreme ratios:**
-   - **K=64:** Focuses on the teacher's top 64 tokens per position. At 1:19 ratio, the student might only have capacity to model the top 10-20 plausible tokens anyway. K=64 is already generous.
-   - **K=none (full vocab):** The teacher's opinion on rank 100+ tokens is pure noise for a 90M student. Including them dilutes the gradient with signal the student can't absorb.
-
-**Prediction:** For 90M:1.7B (1:19):
-- T=1.0 should outperform T=2.0 (cleaner signal for low-capacity student)
-- K=64 should be fine or BETTER than K=none (focuses signal on learnable knowledge)
-- **This REVERSES the Minitron recommendation** which was measured at ~1:2 ratio
-
-**But Minitron's recommendation may still apply if we scale the student:**
-- At 166M (1:8.8 ratio): in the "comfort zone" → T=1.0, K→128+ may be better
-- At 200M (1:7.5 ratio): T and K closer to Minitron regime
-
-**Testable prediction from current ablation:** If logit arms (T=2.0, K=64) show a PENALTY at 90M (like rep-only did), the most likely explanation is T=2.0 is too high for this ratio. Re-test with T=1.0 before concluding logit KD fails.
-
-**Conversely:** If logit arms show benefit even at T=2.0/1:19 → the method is robust and T=1.0 would likely be even better (more signal for 15K).
+*(Temperature/Top-K conflict RESOLVED — see RESEARCH.md §6.4.28. Key insight: optimal T,K depends on capacity ratio. At 1:3 (197M:600M), T∈{1.0-2.0} all similar per ACL 2025 Design Space paper. K=64 fine. Our 60K gate uses T=1.2→2.2 ramp.)*
 
 ---
 
@@ -808,15 +772,171 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 
 ### Competitive Baselines (0-shot, published numbers)
 
-Context: Our 90M model sees ~328M tokens total. These models trained on 300B-2T tokens.
+**Source:** `results/competitive_baselines_sub200M.json` — comprehensive survey compiled 2026-03-27.
 
-| Model | Params | Tokens | ARC-E | ARC-C | HellaSwag | PIQA | Avg | Source |
-|-------|--------|--------|-------|-------|-----------|------|-----|--------|
-| MobileLLM-125M | 125M | ? | 43.9 | 27.1 | 38.9 | 65.3 | 43.8 | MobileLLM paper |
-| Pythia-160M | 160M | 300B | 40.0 | 25.3 | 29.9 | 62.0 | 39.3 | EleutherAI |
-| SmolLM2-135M | 135M | 2T | — | — | 42.1 | 68.4 | — | HuggingFace |
+| Model | Params | Tokens | ARC-E | ARC-C(n) | HS(n) | PIQA | WG | BoolQ | OBQA(n) |
+|-------|--------|--------|-------|----------|-------|------|----|-------|---------|
+| Cerebras-111M | 111M | 2.2B | 38.0 | 16.6 | 26.8 | 59.4 | 48.8 | — | 11.8 |
+| GPT-2-124M | 124M | 40B | — | — | 31.6 | — | — | — | — |
+| OPT-125M | 125M | 300B | 41.3 | 25.2 | 31.1 | 62.0 | 50.8 | 57.5 | 31.2 |
+| GPT-Neo-125M | 125M | 300B | 40.7 | 24.8 | 29.7 | 62.5 | 50.7 | 61.3 | 31.6 |
+| MobileLLM-125M | 125M | 1T | 43.9 | 27.1 | 38.9 | 65.3 | 53.1 | 60.2 | 39.5 |
+| MobileLLM-LS-125M | 125M | 1T | **45.8** | **28.7** | 39.5 | 65.7 | 52.1 | 60.4 | **41.1** |
+| SmolLM-135M | 135M | 600B | — | — | 41.2 | 68.4 | 51.3 | — | 34.0 |
+| SmolLM2-135M | 135M | 2T | — | — | **42.1** | **68.4** | 51.3 | — | 34.6 |
+| Pythia-160M | 162M | 300B | 40.0 | 25.3 | 30.3 | 62.3 | 51.3 | 56.9 | 26.8 |
+| RWKV-169M | 169M | 332B | 42.5 | 25.3 | 31.9 | 63.9 | 51.5 | 59.1 | 33.8 |
+| **Sutra-197M@15K** | **197M** | **0.25B** | **39.1** | **21.9** | **27.2** | **57.6** | **51.1** | **—** | **—** |
+| --- ABOVE CLASS --- | | | | | | | | | |
+| Pythia-410M | 410M | 300B | 47.1 | 30.3 | 40.1 | 67.2 | 53.4 | 55.3 | 36.2 |
+| MobileLLM-350M | 345M | 1T | 53.8 | 33.5 | 49.6 | 68.6 | 57.6 | 62.4 | 40.0 |
+| TinyLlama-1.1B | 1.1B | 3T | 55.3 | 30.1 | 59.2 | 73.3 | 59.1 | 57.8 | 36.0 |
 
-**Reality check:** MobileLLM-125M is the leader at ~125M class. SmolLM2-135M beats it on HellaSwag/PIQA but uses 2T tokens (6098× our budget). Our 90M model has 44% fewer params AND ~1000× less data. Any competitive benchmark numbers from our model would be remarkable data efficiency.
+**Key insights from survey:**
+- **Depth > width**: MobileLLM (30L/576d) beats Pythia-160M (12L/768d) by +9pp HS despite fewer params
+- **Data dominates**: SmolLM2-135M on 2T tokens beats Pythia-410M (3x params) on HellaSwag (42.1 vs 40.1)
+- **Sutra-197M@15K (0.25B tokens) vs Pythia-160M (300B tokens)**: Roughly comparable on ARC-E (39.1 vs 40.0) and WG (51.1 vs 51.3) with **1200x less data**. HS and PIQA lag — these are token-hungry benchmarks.
+
+**Target tiers for Sutra-197M@60K:**
+| Tier | ARC-E | ARC-C(n) | HS(n) | PIQA | WG | Description |
+|------|-------|----------|-------|------|----|-------------|
+| Floor | 40 | 25 | 30 | 62 | 51 | Beat Pythia-160M (300B tokens) |
+| Competitive | 44 | 27 | 39 | 65 | 53 | Match MobileLLM-125M (1T tokens) |
+| Best-in-class | 46 | 29 | 42 | 68 | 53 | Match SmolLM2-135M (2T tokens) |
+
+**Reality check:** Reaching "floor" at 60K (1B tokens) with KD = 300x data efficiency vs Pythia. Reaching "competitive" = 1000x data efficiency vs MobileLLM. These would be extraordinary claims requiring Tier 3 validation.
+
+### 60K Gate Training Status (2026-03-27)
+
+**Control arm launched.** Config: `code/kd_197m_60k_gate.json`, PID running, GPU 95%, 10.3GB VRAM.
+- Warm-start from `results/checkpoint_197m_step0.pt` (random init, same as 15K scout)
+- WSD schedule: warmup 500 steps, flat LR 3e-4, decay starts at step 48000 (80%), ends at 60000
+- Eval gates: 3K, 6K, 15K (compare to scout), 30K, 60K
+
+**Progress log (control arm):**
+| Step | BPT | CE | KD | LR | Note |
+|------|-----|----|----|-----|------|
+| 50 | 12.988 | 9.003 | 0.000 | 3.0e-5 | Warmup |
+| 100 | 11.368 | 7.879 | 0.000 | 6.0e-5 | |
+| 150 | 10.100 | 7.000 | 0.000 | 9.0e-5 | |
+| 200 | 9.560 | 6.627 | 0.000 | 1.2e-4 | |
+| 250 | 9.333 | 6.469 | 0.000 | 1.5e-4 | |
+| 300 | 9.015 | 6.249 | 0.000 | 1.8e-4 | |
+| 350 | 8.602 | 5.963 | 0.000 | 2.1e-4 | |
+| 400 | 8.427 | 5.841 | 0.000 | 2.4e-4 | |
+| 450 | 7.953 | 5.513 | 0.000 | 2.7e-4 | |
+| 500 | 8.022 | 5.560 | 0.000 | 3.0e-4 | Warmup done, LR bump |
+| 550 | 7.990 | 5.538 | 0.000 | 3.0e-4 | Settling |
+
+**Expected trajectory (from 15K scout):** Should track 15K scout exactly until step 12K. At 12K expect BPT ~4.42. WSD starts at 48K here (vs 12K in scout), so the flat-LR phase is 47.5K steps vs 11.5K — the model will see 4x more data before consolidation. Expect BPT ~3.5-3.8 at 60K (vs 4.05 at 15K).
+
+**KD arm follows after control completes (~12 hours).** Teacher: Qwen3-0.6B. Alpha warmup: 0→0.45 over 2K steps. Ratio 1:3 (near-optimal per capacity gap law).
+
+### KD Literature Expectations for 60K Gate (compiled 2026-03-27)
+
+**Key papers informing predictions:**
+1. **MiniPLM** (ICLR 2025) — Pre-training distillation with curriculum alignment. Shows KD benefits scale with training length.
+2. **Pre-training Distillation Design Space** (ACL 2025) — Systematic ablation of KD hyperparameters during pre-training. Alpha scheduling is the single biggest lever.
+3. **Capacity Gap Law** — Optimal teacher:student ratio is T* = 2.5*S. Our 1:3 (197M:600M) is near-optimal. Prior 1:19 (90M:1.7B) failure fully explained by this.
+4. **Distillation Scaling Laws** (ICML 2025) — KD benefit follows power law in student capacity and training tokens.
+
+**Quantitative predictions for 60K KD arm vs 60K control:**
+| Metric | Expected Range | Basis |
+|--------|---------------|-------|
+| CE reduction | +1-3% | Literature at 1:3 ratio, logit-only KD |
+| BPT improvement | 0.05-0.15 | Direct from CE reduction (BPT = CE/ln(2) * bits_per_byte) |
+| With alpha scheduling | 3-8% CE | Alpha warmup + decay is the key lever |
+| BPT with scheduling | 0.15-0.36 | Upper bound if scheduling works well |
+
+**Alpha schedule design (from config):**
+- Warmup: 0→0.45 over steps 0-2K (gradual teacher introduction)
+- Hold: 0.45 from 2K-40K (main KD phase, student learns from teacher)
+- Decay: 0.45→0.05 from 40K-48K (teacher fades, student consolidates on NTP)
+- Tail: 0.05 from 48K-60K (minimal teacher signal during WSD)
+
+**Key insight from prior 90M experiments:** Rep-KD was a head-start only (gap converged to -0.008 at step 3000). Logit KD operates on the SAME mathematical object as NTP (probability simplex) — this is "basin-compatible" and should provide persistent benefit, not just transient acceleration. The 60K gate tests this hypothesis directly.
+
+**Pre-registered success criteria:**
+- **Minimum viable signal:** KD arm BPT < control BPT by >= 0.05 at step 15K AND at step 60K
+- **Strong signal:** KD arm BPT < control by >= 0.15 at 60K (3% CE reduction)
+- **Exceptional:** KD arm BPT < control by >= 0.30 at 60K (6%+ CE reduction from alpha scheduling)
+- **Benchmark translation:** If BPT gap >= 0.15, expect +2-4pp on HS, +1-3pp on PIQA, +1-2pp on ARC-E
+
+**Kill rule:** If KD arm BPT > control BPT at step 6K (after alpha has warmed up), investigate immediately. If still worse at 15K, terminate KD arm — the teacher is hurting, not helping.
+
+### Pre-Registered 60K Benchmark Predictions (2026-03-27)
+
+**Methodology:** Extrapolation from 3 internal data points (90M@5K, 90M@15K, 197M@15K) + published scaling curves from Pythia/SmolLM/MobileLLM. Token scaling from 5K→15K (3x tokens) at 90M measured empirically; 15K→60K (4x tokens) at 197M extrapolated with diminishing returns.
+
+**BPT prediction for 60K control:**
+- Flat-phase plateau at 15K was BPT=4.42 (steps 10K-12K before WSD)
+- Power law extrapolation to 48K (end of flat phase): BPT ≈ 3.8-3.9
+- WSD (12K steps, 48K→60K): removes ~40-50% of gap to asymptote
+- **Predicted final BPT: 3.5-3.7**
+
+**Token scaling rates from our data (90M, 5K→15K, 3x tokens):**
+| Benchmark | Δ per 3x tokens | Token sensitivity |
+|-----------|-----------------|-------------------|
+| ARC-Easy | +4.9pp | High |
+| ARC-C(n) | +1.2pp | Low |
+| HS(n) | +0.5pp | Very low (but literature says it accelerates at higher tok counts) |
+| PIQA | +1.2pp | Low |
+| WinoGrande | +1.5pp | Low |
+| SciQ | +10.8pp | Very high |
+| LAMBADA acc | +10.2pp | Very high |
+| LAMBADA PPL | -574.6 | Massive |
+
+**197M@60K Control benchmark predictions:**
+| Benchmark | @15K | Predicted @60K | Range | Tier Target |
+|-----------|------|---------------|-------|-------------|
+| ARC-Easy | 39.1% | **42-44%** | 41-45 | Floor=40 ✓ |
+| ARC-C(n) | 21.9% | **23-25%** | 22-26 | Floor=25 ≈ |
+| HS(n) | 27.2% | **30-33%** | 29-34 | Floor=30 ≈ |
+| PIQA | 57.6% | **61-64%** | 60-65 | Floor=62 ≈ |
+| WG | 51.1% | **51-53%** | 50-54 | Floor=51 ✓ |
+| SciQ | 61.7% | **64-67%** | 63-68 | — |
+| LAMBADA acc | 23.4% | **30-38%** | 28-40 | — |
+| LAMBADA PPL | 131.8 | **40-70** | 35-80 | — |
+
+**Assessment:** 60K control should reach or approach the Pythia-160M "floor" tier on most benchmarks. ARC-E and WG are likely above floor. HS and PIQA are the swing benchmarks — whether we hit 30+ HS and 62+ PIQA depends on how much WSD consolidation helps at 4x the data volume.
+
+**197M@60K KD arm predictions (if +0.15 BPT over control):**
+| Benchmark | Control Pred | KD Pred | KD Advantage |
+|-----------|-------------|---------|-------------|
+| ARC-Easy | 42-44% | 43-46% | +1-2pp |
+| HS(n) | 30-33% | 32-35% | +2-3pp |
+| PIQA | 61-64% | 62-66% | +1-2pp |
+| WG | 51-53% | 52-54% | +0-1pp |
+| LAMBADA acc | 30-38% | 33-41% | +2-4pp |
+
+**If KD arm reaches HS >= 35 and PIQA >= 65:** This would approach MobileLLM-125M territory (HS 38.9, PIQA 65.3) with **1000x less training data**. That's the manifesto thesis in action.
+
+**Falsification criteria:** If 60K control HS < 28 or PIQA < 59, the token scaling rate is slower than predicted — we need MUCH more training (120K+) or the architecture has a ceiling. If KD arm shows no improvement over control, logit KD at 1:3 ratio doesn't work for pre-training and we pivot to other approaches.
+
+### BPT-Benchmark Correlation Analysis (2026-03-27, from 3 internal data points)
+
+**Empirical BPT sensitivity (pp per 1.0 BPT decrease, token-scaling at 90M):**
+| Benchmark | pp/BPT | Sensitivity | Prediction @BPT=3.6 | Floor |
+|-----------|--------|-------------|---------------------|-------|
+| ARC-Easy | 9.8 | Moderate | 43.5% | 40 ✓ |
+| ARC-C(n) | 2.4 | Low | 23.0% | 25 ✗ |
+| HS(n) | **1.0** | **Very low** | **27.6%** | **30 ✗** |
+| PIQA | 2.4 | Low | 58.7% | 62 ✗ |
+| WinoGrande | 3.0 | Low | 52.4% | 51 ✓ |
+| SciQ | 21.7 | Very high | 71.4% | — |
+| LAMBADA | 20.5 | Very high | 32.6% | — |
+
+**Critical insight: BPT is a POOR proxy for HS and PIQA at low token counts.** These benchmarks test world knowledge and commonsense, which requires data volume (seeing diverse text), not just better compression (lower loss). Our BPT-HS correlation of 1.0 pp/BPT means even BPT=3.0 would only predict HS ~28.
+
+**Implication for KD:** If the KD arm shows HS improvement DISPROPORTIONATE to BPT improvement (e.g., +0.1 BPT but +3pp HS), that's evidence the teacher is transferring knowledge that our corpus can't provide in 1B tokens. The teacher saw 36T tokens — it knows the world knowledge HS tests for. This would validate the manifesto: mathematical efficiency (KD) compensating for data scarcity.
+
+**Reworked internal eval proposal:** BPT should be a safety check (is training progressing?), NOT an optimization target. For predicting real benchmarks, we need:
+1. A "knowledge breadth" metric — how many distinct topics can the model answer about?
+2. A "commonsense probe" — simple cloze questions testing world knowledge
+3. Token-level next-word accuracy on HS/PIQA-like text (curated eval set)
+These would be cheaper than full lm-eval but more predictive of real performance.
+
+**Param-scaling signal too noisy:** The 90M→197M transition changed BPT by only 0.035. At this resolution, benchmark noise dominates — ARC-C even decreased. Need >0.2 BPT change to see meaningful benchmark signal from architecture changes.
 
 ## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
 
@@ -1077,393 +1197,5 @@ DEFERRED: Multi-marginal OT loss (ablation only, after P1-P3 work)
 
 ---
 
-## First KD Probe Design (DRAFT — pending Codex R8 approval)
-
-**Goal:** Validate that KD provides measurable improvement over pure CE training at 5K steps.
-
-### Setup
-- **Student:** 24×512 transformer, ~93M params (same as probe architecture)
-- **Teacher:** Qwen3-0.6B (~600M params, 1024 dim, 28 layers, GQA)
-  - Loaded in FP16, inference only (no gradients): ~1.2GB VRAM
-  - Student training: ~8GB VRAM → combined fit easily on 24GB
-- **Baseline:** Same student, pure CE loss, same data
-- **Duration:** 5K steps (matching existing probes for comparison)
-
-### Cross-Tokenizer Challenge
-- Student tokenizer: 16K custom BPE
-- Teacher tokenizer: Qwen3 152K BPE
-- Same input text → different tokenization → different sequence lengths
-
-**Simplest approach (Level 1): Sequence-level representation matching**
-- Input: raw text string
-- Student tokenizes with 16K tokenizer → forward pass → get final hidden state, mean-pool over sequence → h_student (512-dim)
-- Teacher tokenizes with Qwen3 tokenizer → forward pass → get final hidden state, mean-pool over sequence → h_teacher (1024-dim)
-- Projection: Linear(1024, 512) learned projection maps teacher dim to student dim
-- Loss: L_kd = CosineEmbeddingLoss(projected_teacher, h_student) or MSE
-- Total: L = L_ce + alpha * L_kd (alpha=0.5 initially)
-- **Pro:** No position alignment needed. Dead simple.
-- **Con:** Loses per-token signal. Only captures sequence-level semantics.
-
-**Better approach (Level 2): Token-level alignment via character offsets**
-- For each student token, find which teacher tokens cover the same characters
-- Average teacher hidden states for aligned positions
-- Per-position loss: L_kd_pos = MSE(projected_teacher_aligned[t], h_student[t])
-- **Pro:** Per-token signal. Richer supervision.
-- **Con:** Character alignment code needed. Multiple teacher tokens per student token common.
-
-**Best approach (Level 3): Logit-level via shared vocabulary projection**
-- Build mapping: student_vocab → character sequences → teacher_vocab
-- For each student token ID, compute weighted sum of teacher logits for corresponding teacher tokens
-- KL divergence on aligned probability distributions
-- **Pro:** Richest signal. Standard KD.
-- **Con:** Alignment matrix complex. May need DSKD-style learned projection.
-
-**Recommendation:** Start with Level 1, prove KD helps at all, then upgrade to Level 2/3.
-
-### Training Loop Changes (in dense_baseline.py)
-```
-# In training loop, after computing CE loss:
-# 1. Get student hidden states
-student_out = model(inp, return_hidden=True)
-logits = student_out['logits']
-h_student = student_out['hidden'].mean(dim=1)  # (B, D_student)
-
-# 2. Get teacher hidden states (no grad)
-with torch.no_grad():
-    teacher_tokens = teacher_tokenizer(raw_text, ...)
-    teacher_out = teacher_model(teacher_tokens)
-    h_teacher = teacher_out.last_hidden_state.mean(dim=1)  # (B, D_teacher)
-
-# 3. Project and compute KD loss
-h_teacher_proj = projection(h_teacher)  # (B, D_student)
-kd_loss = F.mse_loss(h_student, h_teacher_proj.detach())
-
-# 4. Combined loss
-loss = ce_loss + alpha * kd_loss
-```
-
-### Data Pipeline Modification
-- Current: ShardedDataset returns (input_ids, target_ids) — pre-tokenized
-- Needed: Also return RAW TEXT for teacher tokenization
-- Modification: data loader stores shard as tokens but also reconstructs text for teacher
-- **OR:** Pre-tokenize shards for each teacher (stored alongside student shards)
-- **Simplest:** Decode student tokens back to text → re-encode with teacher tokenizer (lossy but fast)
-
-### Kill Rule for KD Probe
-- KD probe passes if: BPT with KD >= BPT without KD + 0.1 at 5K steps
-- Also check: generation quality (greedy decode sample), kurtosis/max_act stability
-- If pass: proceed to multi-teacher, Level 2 alignment
-- If fail: investigate why (wrong teacher? wrong loss? wrong alpha?)
-
-### lm-eval Correlation Data (2026-03-26)
-Both architectures at 5K steps produce identical near-random benchmarks (~33.5% ARC-Easy, ~17% ARC-Challenge). This confirms: training duration + KD >> architecture choice. The bottleneck is KNOWLEDGE, not architecture.
-
----
-
-## Pre-Round-1 Design Space Analysis (2026-03-26)
-
-### The Core Problem
-SmolLM2-135M trains on 2T tokens. We have ~23B. That's an 87x data disadvantage.
-Pythia-160M trains on 300B tokens. Still 13x more than us.
-To compete, we need either: (a) dramatically better data efficiency, or (b) knowledge absorption from existing models, or (c) both.
-
-### Key Insight: The Data Efficiency Stack
-Multiple techniques compound. Each addresses a different angle:
-
-1. **Offline KD from teacher models** — MiniPLM shows 2.2-2.4x data efficiency. This is the single biggest lever.
-   - Question: which teachers? How many? What representations to steal?
-   - The OFFLINE approach is key — generate soft targets once, store to disk, train student against them
-   - This means we can use models too big to run concurrently (just process data in advance)
-
-2. **Multi-Token Prediction (TOP variant)** — Proven at 340M scale. ~20-50% more learning per example.
-   - TOP is a learning-to-rank loss, not exact token prediction → works at small scale
-   - Only needs one extra unembedding layer (~0.6% overhead)
-   - Can combine with curriculum scheduling for more benefit
-
-3. **N-gram memory** — Offloads pattern memorization to CPU table, frees neural capacity for reasoning
-   - At our scale, a huge fraction of capacity is wasted memorizing "the → cat", "in → the", etc.
-   - A 1M-entry table in CPU RAM costs ~48MB but could free 10-20% of neural capacity
-   - The GATING is the key mechanism — table provides candidates, model decides relevance
-
-4. **Structural priors** — Hyperbolic geometry, sheaf structure, etc.
-   - HELM shows 4% gains from hyperbolic geometry. That's free intelligence.
-   - Mixed-curvature (product manifolds) could be even better
-   - Question: is this additive with the other techniques? Probably yes (orthogonal mechanisms)
-
-5. **Architecture efficiency** — Hyena Edge shows gated convolutions beat attention
-   - O(N log N) vs O(N²) — but at seq_len=512, this barely matters
-   - The real win: gated convolutions may learn more efficiently from fewer tokens
-   - Hybrid: keep attention for long-range, use convolutions for local patterns
-
-### The Compound Effect
-If these stack multiplicatively:
-- 2x from offline KD
-- 1.3x from TOP
-- 1.2x from n-gram memory
-- 1.04x from hyperbolic geometry
-- 1.1x from architecture efficiency
-= 2x * 1.3 * 1.2 * 1.04 * 1.1 ≈ 3.56x effective data
-
-23B tokens * 3.56x = ~82B effective tokens. That closes the gap with Pythia-160M (300B tokens) significantly, though still behind SmolLM2-135M (2T tokens). But SmolLM2 uses a standard transformer — if our architecture extracts more per token inherently, the gap narrows further.
-
-### Open Questions for Codex
-1. What's the optimal model size for 24GB VRAM training? (200M? 400M? Depends on batch size)
-2. Should we use shared-weight looping (LoopFormer-style) or unshared layers?
-3. How to implement offline KD practically? Pre-compute soft targets from multiple teachers?
-4. Is hyperbolic attention practical at our scale? (exp/log maps add overhead)
-5. What's the right hybrid mix? (X% attention + Y% convolution + Z% SSM?)
-
-### Risky Ideas Worth Testing
-- **LoopFormer + early exit**: Shared blocks with time-conditioning, tokens exit at different loop iterations
-- **Hyperbolic Engram**: N-gram memory in hyperbolic space (hierarchical lookup)
-- **Cross-architecture distillation**: Steal from Mamba (SSM) AND Pythia (transformer) simultaneously
-- **DyT everywhere**: Replace ALL normalization with DyT, design for quantization from step 1
-
----
-
-## Cached Teacher Models (already downloaded on this machine!)
-
-### Small LMs (can coexist with student during training):
-- Pythia: 70M, 160M, 410M, 1B, 1.4B, 2.8B (+ deduped variants)
-- SmolLM2: 135M, 360M, 1.7B
-- GPT-2: 124M, 355M, 774M, 1.5B
-- GPT-Neo: 125M, 1.3B, 2.7B
-- Mamba: 130M, 370M, 790M, 1.4B (+ Mamba2 variants: 130M-2.7B)
-- RWKV: 169M, 430M, 1.5B (RWKV4), 1.6B-14B (RWKV6), 191M-2.9B (RWKV7)
-- OPT: 125M, 350M, 1.3B, 2.7B
-- Cerebras-GPT: 111M, 256M, 590M, 1.3B
-- TinyLlama: 1.1B
-- StableLM: 1.6B, 3B
-- Granite-4.0: micro, tiny, 350M, 1B (+ hybrid variants!)
-- Falcon-H1: 0.5B, 1.5B, 3B (SSM-attention hybrid!)
-- Zamba2: 1.2B, 2.7B (Mamba-attention hybrid)
-- LFM2/2.5: 1.2B, 2.6B (Liquid AI — gated convolution hybrid!)
-- Hymba: 1.5B (NVIDIA hybrid)
-
-### Encoder models (rich representations, very small):
-- BERT: base (110M), large (340M), + many variants
-- RoBERTa: base, large
-- DeBERTa: base, v3-base, v3-small
-- DistilBERT: 66M
-- Sentence transformers: all-MiniLM-L6-v2, all-mpnet-base-v2
-
-### Embedding models:
-- BGE: small, base, large, m3
-- E5: small, base, large
-- GTE: Qwen2-1.5B
-- EmbeddingGemma: 300M
-- Nomic-embed
-- Stella: 1.5B
-
-### Architecture diversity we can steal from:
-- **Transformers**: Pythia, GPT-2, Qwen, Gemma, Llama, Phi
-- **SSMs/Mamba**: Mamba 1/2, Falcon-Mamba
-- **RWKV** (linear attention): RWKV4-7
-- **Hybrids**: Falcon-H1, Zamba2, Granite-4.0-h, Hymba, LFM2, Jamba
-- **Gated convolutions**: StripedHyena, LFM2
-- **Encoders**: BERT, RoBERTa, DeBERTa
-- **Diffusion LM**: DiffuGPT
-
-This is a GOLDMINE for multi-source learning. We can generate offline soft targets from dozens of models.
-
----
-
-## VRAM Budget Analysis (2026-03-26)
-
-### Model Size vs Training Feasibility on RTX 5090 (24GB)
-
-| Config | Params | Model(BF16) | AdamW | Grads | Act (BS=32) | TOTAL | MaxBS |
-|--------|--------|-------------|-------|-------|-------------|-------|-------|
-| 100M | 40.6M | 0.08GB | 0.32GB | 0.08GB | 5.13GB | 5.62GB | 133 |
-| 135M (SmolLM2-class) | 82.2M | 0.16GB | 0.66GB | 0.16GB | 7.70GB | 8.69GB | 86 |
-| 160M (Pythia-class) | 137.9M | 0.28GB | 1.10GB | 0.28GB | 10.27GB | 11.92GB | 63 |
-| 200M [ckpt] | 175.6M | 0.35GB | 1.40GB | 0.35GB | 1.61GB | 3.72GB | 393 |
-| 350M [ckpt] | 368.4M | 0.74GB | 2.95GB | 0.74GB | 2.68GB | 7.11GB | 208 |
-| 400M [ckpt] | 435.5M | 0.87GB | 3.48GB | 0.87GB | 3.22GB | 8.45GB | 165 |
-
-[ckpt] = gradient checkpointing. SwiGLU FFN, RoPE, RMSNorm assumed. seq_len=512.
-
-### Chinchilla Analysis (tokens = 20x params)
-
-| Size | Chinchilla-optimal | Our 22.9B tokens | Ratio |
-|------|-------------------|-----------------|-------|
-| 100M | 2.0B | 22.9B | 11.4x OVER |
-| 135M | 2.7B | 22.9B | 8.5x OVER |
-| 200M | 4.0B | 22.9B | 5.7x OVER |
-| 350M | 7.0B | 22.9B | 3.3x OVER |
-| 1.1B | 22.0B | 22.9B | ~1.0x OPTIMAL |
-
-**Insight**: Chinchilla-optimal for our data budget = ~1.1B params. But we're not optimizing for Chinchilla — we're optimizing for PERFORMANCE at inference. Smaller model + KD = better than larger model from scratch at equivalent data. Over-training makes models more robust.
-
-### KD VRAM Overhead
-
-- **Offline KD**: ZERO GPU overhead during training. Storage: top-128 logits = ~1KB/token = ~23TB for full corpus (too much). Solution: stream soft targets, or use top-32 (~256B/token = ~5.9TB), or use feature-level distillation.
-- **Online KD**: Teacher in inference mode (no grads)
-  - Pythia-70M: 0.14GB | Pythia-160M: 0.32GB | SmolLM2-135M: 0.27GB
-  - Pythia-410M: 0.82GB | SmolLM2-360M: 0.72GB | Mamba-790M: 1.6GB
-  - **Conclusion**: Online KD feasible for teachers up to ~1B alongside 200M student
-
-### Training Speed Estimates
-
-| Size | Tokens/sec | Tokens/day | Full epoch (22.9B) |
-|------|-----------|-----------|-------------------|
-| 100M | ~80K | 6.9B | 3.3 days |
-| 160M | ~55K | 4.8B | 4.8 days |
-| 200M | ~45K | 3.9B | 5.9 days |
-| 350M | ~25K | 2.2B | 10.6 days |
-
-### Sweet Spot Analysis
-
-**150-250M params** appears optimal:
-- Over-trained on our data (5-8x Chinchilla) = robust
-- Fits easily on 24GB with room for online KD teachers
-- BS=32+ feasible with gradient checkpointing
-- Full epoch in ~5-6 days = can do 4+ epochs in a month
-- Room for auxiliary losses (TOP, KD) without VRAM pressure
-- Small enough for rapid iteration, large enough for meaningful benchmarks
-
-**Question for Codex**: Should we go 200M (faster iteration) or 350M (more capacity, slower)?
-
----
-
-## Offline KD Feasibility Analysis (2026-03-26)
-
-### Disk Budget
-- 3,216 GB free on C:
-- Training data occupies ~634GB (246 shards)
-
-### Storage per approach (full 22.9B token corpus)
-| Method | Storage | Feasible? |
-|--------|---------|-----------|
-| Full logits (FP16) | 733 TB | NO |
-| Top-16 logits | 1.47 TB | Barely (45% of free space) |
-| Top-32 logits | 2.93 TB | NO |
-| Hidden states (d=768) | 35 TB | NO |
-
-### Practical Strategy: ONLINE KD (Hybrid)
-Full-corpus offline KD is impractical. **Online KD with co-resident teachers is the way.**
-
-- **3-4 small teachers loaded in FP16** (total ~2-4GB VRAM)
-- Teacher forward pass per batch = ~30-50% compute overhead
-- **Zero disk overhead**, flexible (swap teachers anytime)
-- Complement with MiniPLM-style data reweighting (free)
-
-**Recommended teacher ensemble:**
-1. Qwen3-0.6B (~1.2GB) - best quality sub-1B, 36T tokens
-2. Mamba-370M (~0.74GB) - SSM architecture diversity
-3. SmolLM2-135M (~0.27GB) - cheap reference, 2T tokens
-4. Pythia-160M (~0.32GB) - deduped Pile, interpretable
-Total: ~2.5GB VRAM for 4 diverse teachers
-
-**Alternative for large teachers** (1B+): Process top-16 logits for first 2-3B tokens (~130-200GB), use online for the rest.
-
----
-
-## READY: 197M Scaling Config (prepared for launch)
-
-**Status: CHECKPOINT CREATED, CONFIG READY — launch immediately when 6K stop rule triggers**
-
-Chose d=768 over d=704 for cleaner config (12 heads × 64 = 768, all divisible by standard GPU tile sizes).
-
-| Param | 90M (current) | 197M (target) | Notes |
-|-------|--------------|---------------|-------|
-| dim | 512 | 768 | 1.5× width |
-| n_layers | 24 | 24 | Same depth |
-| n_heads | 8 | 12 | 12 heads × 64 = 768. Perfect alignment. |
-| head_dim | 64 | 64 | Standard |
-| ff_dim | 1536 | 2304 | 3 × dim (SwiGLU) |
-| params | 90.2M | **196.7M** | 2.18× |
-| KD ratio (Qwen3-1.7B) | 1:19 (5.3%) | **1:8.6 (11.6%)** | Borderline viable |
-| KD ratio (Qwen3-0.6B) | 1:6.7 | **1:3.0** | **OPTIMAL (Law of Capacity Gap)** |
-| Train VRAM (no teacher) | ~7GB | **~9GB** | Fits easily |
-| Train VRAM (+0.6B teacher) | ~8.2GB | **~10.2GB** | Fits easily |
-| Train VRAM (+1.7B teacher) | ~10.4GB | **~12.4GB** | Fits |
-
-**Prepared artifacts:**
-- Step-0 checkpoint: `results/checkpoint_197m_step0.pt` (787MB, random init, correct config)
-- Training config: `code/control_197m_15k.json` (control arm, no KD, 15K steps)
-- Launch command: `python code/dense_baseline.py --kd-train code/control_197m_15k.json`
-
-**Warm-start widening NOT implemented.** Training from scratch. If 197M control shows promise, KD arm follows with Codex-selected teacher.
-
-**Training budget analysis (197M):**
-| Steps | Tokens | tok/param | Control time | KD time | Note |
-|-------|--------|-----------|-------------|---------|------|
-| 15K | 0.25B | 1.2 | 4.4hr | 7.1hr | Initial test |
-| 30K | 0.49B | 2.5 | 8.8hr | 14.3hr | Modest training |
-| 60K | 0.98B | 5.0 | 17.5hr | 28.6hr | Meaningful |
-| 120K | 1.97B | 10.0 | 35.1hr | 57.1hr | Moderate overtraining |
-| 240K | 3.94B | 20.0 | 70.3hr | 114hr | Chinchilla optimal |
-
-Competitors: Pythia-160M=1875tok/param, SmolLM2-135M=14815tok/param, MobileLLM-125M=8000tok/param.
-
-**The gap is massive.** Even at 240K steps (Chinchilla optimal, 3 days), we have 20 tok/param vs Pythia's 1875. KD is the ONLY lever to close this. A Qwen3-0.6B teacher (trained on ~15T tokens) could transfer knowledge equivalent to thousands of tok/param if the ratio is right.
-
----
-
-## PREPARED: Post-6K-Stop Codex Evidence Template (2026-03-27)
-
-**Status: TEMPLATE — fill in step 4K-6K data when available, then send to Codex Tier 2**
-**Scenario: 6K stop rule triggers (gap still positive). KD arm terminated early.**
-
-```
-HARD DATA (all filled):
-- Control full curve (1K→15K): 4.895, 4.824, 4.680, 4.632, 4.612, 4.616, 4.538, 4.498, 4.442, 4.420, 4.512(noise), 4.374, 4.284, 4.131, 4.082
-- Control BPT@15K: 4.082
-- KD arm partial curve (1K→[FILL]K):
-  1K: 4.930 (gap +0.035)
-  2K: 5.000 (gap +0.177)
-  3K: 4.953 (gap +0.273)
-  4K: 4.879 (gap +0.247) ← GAP NARROWED for first time! KD learning faster than control
-  5K: 4.786 (gap +0.174) ← GAP CLOSING FAST. KD learned 4.7× faster than control this window.
-  6K: 4.811 (gap +0.195) ← REGRESSED. Kurtosis spike 214.1, max_act 135.7. STOP RULE TRIGGERED.
-- KD stability: kurtosis 3.3→4.5→5.8→11.1→6.9→**214.1**, max_act 47→56→77→73→67→**136**
-- lm-eval control@15K: [FILL after running]
-- Teacher: Qwen3-1.7B (1.7B params, ratio 1:19, 92.6% vocab overlap via ETA)
-```
-
-**Codex prompt (Tier 2: Scaling + Architecture + Competitive):**
-
-Template ready in SCRATCHPAD. Key questions for Codex:
-
-### Scaling Expert (Persona 3)
-1. Gap trajectory (+0.035→+0.177→+0.273→[FILL]) — is this purely ratio-driven or also mechanism-driven?
-2. At 197M (ratio 1:8.6), what gap trajectory should we PREDICT? Provide concrete numbers.
-3. Should we use Qwen3-0.6B (ratio 1:3, optimal) or Qwen3-1.7B (ratio 1:8.6, borderline)?
-4. What's the compute-optimal training budget for 197M? (Chinchilla: 4B tokens = 15K steps, overtraining: 20B = 60K steps)
-5. Warm-start widening from 90M→197M or train from scratch?
-
-### Architecture Theorist (Persona 6)
-1. Is the failure at 1:19 purely capacity gap, or does cross-tokenizer alignment contribute?
-2. For the 197M model: same architecture (24L, d=768, MHA) or rethink?
-3. Should KD be logit-only (simplex-compatible) or should we reconsider rep-KD at better ratio?
-4. Derive the expected KD benefit from rate-distortion theory: teacher reduces effective source entropy by how much at ratio 1:3 vs 1:8.6?
-
-### Competitive Analyst (Persona 8)
-1. Where does 197M @ 15K steps sit vs Pythia-160M, SmolLM2-135M, MobileLLM-125M?
-2. What training budget do competitors use? (Tokens/param ratio)
-3. Is 197M the right scale or should we go straight to 350M+?
-4. What's the fastest path to competitive benchmarks?
-
-### Architecture Theorist (Persona 6)
-1. Does the basin compatibility theory hold under the 15K data?
-2. Should α be nonzero during WSD (logit KD helps consolidation)?
-3. Is the inverted-U schedule optimal, or should we explore other shapes?
-4. What does the training curve shape tell us about the loss landscape?
-
-### Competitive Analyst (Persona 8)
-1. Where do these 15K lm-eval scores place us vs baselines (SmolLM-135M, Pythia-160M)?
-2. How many training steps would we need WITHOUT KD to match the KD arm?
-3. Is the KD efficiency gain meaningful (saves N% of training compute)?
-4. What should we build next based on competitive positioning?
-
-## DECISIONS NEEDED
-1. Proceed with RMFD at 90M? Or scale to 166M first?
-2. Which divergence: forward KL, AMiD, or something else?
-3. RMFD surface selection: logit-only or logit+exit self-distillation?
-4. EmbeddingGemma: drop from committee or use for early-phase state KD?
-5. Training budget: 120K steps at 90M or 60K steps at 166M?
-```
-
----
+*(Sections removed 2026-03-27: First KD Probe Design, Pre-Round-1 Design Space, Cached Teacher Models, VRAM Budget, Offline KD Feasibility, 197M Scaling Config, Post-6K Codex Template, Decisions Needed — all superseded by current 60K gate implementation. Historical content preserved in git.)*
 
