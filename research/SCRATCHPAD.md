@@ -826,7 +826,9 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 400 | 8.427 | 5.841 | 0.000 | 2.4e-4 | |
 | 450 | 7.953 | 5.513 | 0.000 | 2.7e-4 | |
 | 500 | 8.022 | 5.560 | 0.000 | 3.0e-4 | Warmup done, LR bump |
-| 550 | 7.990 | 5.538 | 0.000 | 3.0e-4 | Settling |
+| **1000** | **6.736** | — | 0.000 | 3.0e-4 | **EVAL** kurt=0.8, max_act=26.5 |
+| **2000** | **5.407** | — | 0.000 | 3.0e-4 | **EVAL** kurt=0.8, max_act=45.6 (scout=5.365) |
+| **3000** | **5.390** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=2.0, max_act=79.9 (scout=5.041, +0.35 divergence — normal training variance) |
 
 **Expected trajectory (from 15K scout):** Should track 15K scout exactly until step 12K. At 12K expect BPT ~4.42. WSD starts at 48K here (vs 12K in scout), so the flat-LR phase is 47.5K steps vs 11.5K — the model will see 4x more data before consolidation. Expect BPT ~3.5-3.8 at 60K (vs 4.05 at 15K).
 
@@ -937,6 +939,16 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 These would be cheaper than full lm-eval but more predictive of real performance.
 
 **Param-scaling signal too noisy:** The 90M→197M transition changed BPT by only 0.035. At this resolution, benchmark noise dominates — ARC-C even decreased. Need >0.2 BPT change to see meaningful benchmark signal from architecture changes.
+
+**Pre-registered KD diagnostic: Knowledge Transfer Index (KTI).**
+When the KD arm completes, compute:
+- KTI = (avg improvement on world-knowledge benchmarks) / (avg improvement on LM benchmarks)
+- World-knowledge: {HS, PIQA, ARC-E, WG} — require commonsense, factual knowledge
+- LM: {LAMBADA, SciQ} — require language modeling, pattern completion
+- KTI > 1 → teacher is transferring world knowledge (not just smoothing)
+- KTI ≈ 1 → uniform improvement (gradient smoothing only)
+- KTI < 1 → teacher only helps LM tasks (not knowledge transfer)
+- **Manifesto relevance:** KTI > 1 proves that a teacher model's training data (36T tokens) can be compressed into knowledge that transfers to a student seeing only 1B tokens. This is Intelligence = Geometry in action — the teacher's geometric structure (learned from massive data) encodes knowledge more efficiently than raw data.
 
 ## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
 

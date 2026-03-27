@@ -28,20 +28,40 @@ Kill rule applied to all hybrid variants:
 ### Locked Student Spec
 
 ```text
-Student: Sutra-24A-90M
+Student: Sutra-24A-90M (original)
 Params: ~90.2M
 Depth: 24 layers
 Width: 512
 Heads: 8
 FFN: 1536 (SwiGLU)
+
+Student: Sutra-24A-197M (scaled, active as of 2026-03-27)
+Params: ~196.7M
+Depth: 24 layers
+Width: 768
+Heads: 12 (6 Q-heads, 3 KV-heads via GQA)
+Head dim: 64
+FFN: 2304 (SwiGLU)
+
+Shared config:
 Tokenizer: custom 16K BPE
 Context: 512
 Exits: layers 7, 15, 23 (0-indexed)
-Norm: RMSNorm
+Norm: SS-RMSNorm
 Activation: SwiGLU
 Optimizer: AdamW (lr=3e-4, betas=(0.9,0.95), wd=0.1)
 Precision: bf16 student, fp32 optimizer
+Block schedule: ['A'] * 24 (all attention)
 ```
+
+### lm-eval Benchmarks Summary
+
+| Checkpoint | BPT | ARC-E | ARC-C(n) | HS(n) | PIQA | WG | SciQ | LAMBADA |
+|------------|-----|-------|----------|-------|------|----|------|---------|
+| 90M@5K | 4.58 | 33.6 | 21.8 | 26.6 | 55.4 | 47.8 | 50.3 | 12.4 |
+| 90M@15K | 4.08 | 38.5 | 23.0 | 27.1 | 56.6 | 49.3 | 61.1 | 22.6 |
+| 197M@15K | 4.05 | 39.1 | 21.9 | 27.2 | 57.6 | 51.1 | 61.7 | 23.4 |
+| 197M@60K (pred) | 3.5-3.7 | 42-44 | 23-25 | 30-33 | 61-64 | 51-53 | 64-67 | 30-38 |
 
 ### lm-eval Benchmarks at 5K Steps (near-random baseline)
 
