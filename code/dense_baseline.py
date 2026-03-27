@@ -4232,7 +4232,7 @@ def train_kd(config_path):
                     # KD losses (representation + logit level)
                     kd_loss = torch.tensor(0.0, device=DEVICE)
 
-                    if has_kd:
+                    if has_kd and (sa_state + sa_semantic + sa_logit) > 0:
                         # Decode student tokens -> raw text for teacher tokenizers
                         texts = [student_tokenizer.decode(inp[b].tolist())
                                  for b in range(inp.size(0))]

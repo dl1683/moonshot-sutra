@@ -2580,6 +2580,18 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 
 **Decision 5:** Stop rules — by 6K: non-positive vs control; by 10K: ΔBPT ≤ -0.02; by 15K: ΔBPT ≤ -0.015 + lm-eval lift. Abort if kurtosis > 2× control or max_act > 1.15× control. If fail → scale to 166M (d=768, 24L, 12H, 1:8.8 ratio).
 
+### 6.4.32 Codex Correctness Engineer Audit: 15K Gate Mechanisms (2026-03-26)
+
+**Codex role:** Correctness Engineer (Tier 1). Reviewed alpha schedule, tau schedule, confidence gating code. **Verdict: CLEAN (zero HIGH, two MEDIUM).**
+
+**MEDIUM-1:** Off-by-one at step=1 — alpha_frac=0.1674 vs desired 0.167 (0.04%). Negligible; all other boundaries exact. Not fixing.
+
+**MEDIUM-2:** Confidence gating computes p_max over top-K (K=64) shared-vocab subset, not full teacher distribution. Overestimates teacher confidence. Thresholds (0.5/0.1) are semantically different from true teacher confidence. Acceptable for first gate — recalibrate if gating proves important.
+
+**Validated:** Backwards compatibility confirmed. step_tau correctly wired. alpha_frac=0 correctly zeros KD loss. Schedule boundaries all correct. Config internally consistent. Schedule is local-step (1..15K), not global-step — intentional and correct.
+
+**Optimization noted:** Teacher forward pass still runs for steps 12001-15000 (alpha=0), wasting ~20% compute. Fix: add `if (sa_state + sa_semantic + sa_logit) > 0:` guard around teacher block.
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
