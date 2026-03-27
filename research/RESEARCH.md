@@ -2512,6 +2512,18 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 - **Qwen3-0.6B (1:7 ratio, within comfort zone) might be a better primary teacher than Qwen3-1.7B (1:19)**
 - This is testable: add Qwen3-0.6B as a committee member and compare per-token signal quality
 
+**11. Curriculum Temperature for KD — CTKD (AAAI 2023, arXiv 2211.16231):**
+- Learnable temperature module with gradient reversal. Key insight: **constant T is suboptimal** for a growing student
+- Temperature should INCREASE as student progresses (easy→hard curriculum)
+- Adversarial training: temperature module tries to maximize distillation loss (increase difficulty)
+- Negligible computational overhead, plug-and-play with existing KD frameworks
+- **Directly validates our rising τ schedule and supports the inverted-U α concept**
+
+**12. WSD-α (alpha warmup for KD):**
+- Multiple sources reference starting α at 0 and linearly increasing during warmup phase
+- InDistill (2024) introduces explicit warmup stage for KD with curriculum-based layer-wise distillation
+- **Our inverted-U adds a TAPER phase during WSD decay — novel extension not seen in literature**
+
 **Synthesis — ranked by impact × feasibility for our 15K gate:**
 
 | Mitigation | Impact | Effort | When to Deploy |
@@ -2524,6 +2536,31 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 | Difficulty-aware curriculum | MEDIUM | MEDIUM | Phase 4 specialist bursts |
 | Speculative KD | HIGH | MEDIUM | Requires implementation work |
 | Flex-KD task-tangent | LOW | HIGH (Jacobians) | Not feasible during pre-training |
+
+### 6.4.30 Surface Ablation Results: 4-Arm KD at 90M (2026-03-26)
+
+**Setup:** 4-arm ablation from 5K warm-start, 3000 steps each, WSD schedule (decay at step 2400). Teacher: Qwen3-1.7B-Base (1:19 ratio). All KD arms use flat α=1.0 total.
+
+| Arm | Config | BPT@3K | Δ vs Control | Verdict |
+|-----|--------|--------|-------------|---------|
+| 1. Control | No KD | 4.498 | — | Baseline |
+| 2. Rep-only | CKA+semantic, α=1.0 | 4.516 | +0.018 (worse) | HEAD-START ONLY (3rd confirmation) |
+| 3. Logit-only | Cross-tok ETA, T=2.0, K=64, α=1.0 | 4.783 | +0.285 (MUCH worse) | ACTIVELY HARMFUL at flat α=1.0 |
+| 4. Rep+logit | state=0.3125,sem=0.1875,logit=0.5 | RUNNING | — | Pending |
+
+**Key findings:**
+
+**1. Rep KD = confirmed head-start, 3rd time.** Trajectory: +0.038→-0.002→-0.094→-0.130→+0.004→+0.018. Peaked at -0.130 BPT advantage mid-training, collapsed during WSD decay. Control consolidated 15x better during decay (-0.329 vs -0.022 BPT improvement). Kurtosis spiked 3.7→5.6 during decay. **Basin compatibility theory:** Rep KD's basin is optimized for CKA loss geometry, not NTP loss — shallower on the NTP surface, unstable during consolidation.
+
+**2. Logit KD = persistent penalty at flat α=1.0.** Constant ~+0.27 BPT penalty throughout stable-LR phase. KD loss oscillated 1.5-2.2 without convergence — student cannot represent 1.7B teacher distribution at 5.3% capacity. Gradient competition: KD loss magnitude (~2.0) comparable to CE (~3.7), creating destructive interference. **Not a surface failure — a mechanism failure.** α=1.0 from step 0 at 1:19 ratio overwhelms NTP learning.
+
+**3. The ablation answers "does flat α=1.0 work at 1:19?" — NO.** Neither surface works with static maximum alpha. The MECHANISM (alpha scheduling, temperature scheduling) matters more than the surface choice.
+
+**4. Inverted-U alpha schedule derived from evidence.** α should warm up (let NTP stabilize), peak mid-training (student ready to absorb), then taper during WSD decay (let NTP reconsolidate). Specific schedule: 0.2→0.7 over 2K steps, hold 0.7 for 8K, taper to 0.1 over 2K, hold 0 for 3K.
+
+**5. Crude heuristic principle (from user).** Making implicit mechanisms explicit, even crudely, yields orders-of-magnitude improvement. Flat α is an implicit "all-or-nothing" choice. Rising α is a crude explicit mechanism that creates a tunable lever. Even a bad schedule should beat flat α=1.0.
+
+**Still open:** Arm 4 tests surface orthogonality (do rep and logit interfere or complement?). Codex strategic review pending for 15K gate design.
 
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 

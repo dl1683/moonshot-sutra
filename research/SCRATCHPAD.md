@@ -342,16 +342,36 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
 
 **Arm 4 (rep+logit, total α=1.0: state=0.3125, sem=0.1875, logit=0.5):**
 - Rate-distortion theory predicts INTERFERENCE at extreme ratios (rep and logit compete for bits).
-- Predict: BPT between arm 2 and arm 3. If BPT < arm 3 → orthogonality (info-geo prediction wins).
-- If BPT > arm 2 AND > arm 3 → destructive interference, confirms extreme-ratio prediction.
+- α_logit=0.5 (half of arm 3's 1.0) → logit penalty should be ~halved
+- α_state=0.3125 + α_semantic=0.1875 = 0.5 (half of arm 2's 1.0) → rep effect also ~halved
+- If penalty scales linearly: logit contribution ~+0.143, rep contribution ~+0.009 → total ~+0.152 → BPT≈4.650
+- **Predict BPT@3K: 4.60-4.75 (between arm 2 and arm 3, much closer to arm 2)**
 
-**Decision matrix (at step 3000):**
-| Arm 3 vs Control | Arm 4 vs Arm 3 | Interpretation | 15K Action |
-|-------------------|----------------|----------------|------------|
-| ≤ -0.02 (better) | additive | Logit KD persistent, surfaces orthogonal | Run rep+logit at 15K |
-| ≤ -0.02 (better) | worse than arm 3 | Logit KD persistent, surfaces interfere | Run logit-only at 15K |
-| -0.01 to -0.02 | any | Weak signal, possibly head-start | Run logit-only at 15K, monitor carefully |
-| > -0.01 | any | Logit KD also transient at 90M | Re-test T=1.0/K=256, or scale student |
+**Orthogonality test (now using ACTUAL arm 1-3 data):**
+- Δ_rep = 4.498 - 4.516 = -0.018 (rep slightly worse)
+- Δ_logit = 4.498 - 4.783 = -0.285 (logit much worse)
+- Additive (both penalties stack): Δ_both = -0.303, BPT ≈ 4.801 (WORST — but unrealistic since α halved)
+- Linear α scaling (most likely): Δ_both ≈ -0.018/2 + -0.285/2 = -0.152, BPT ≈ 4.650
+- Synergistic (rep alignment helps logit): BPT < 4.650
+- Interfering (surfaces compete): BPT > 4.750
+
+**Step-by-step predictions for arm 4:**
+| Step | Control | Predicted Arm 4 | Predicted Δ | Rationale |
+|------|---------|-----------------|-------------|-----------|
+| 500  | 5.021   | 5.10-5.15       | +0.08-0.13  | Logit penalty ~halved from arm 3's +0.257 |
+| 1000 | 4.911   | 4.98-5.02       | +0.07-0.11  | Similar recovery trajectory |
+| 1500 | 4.830   | 4.90-4.95       | +0.07-0.12  | Logit penalty persists but muted |
+| 2000 | 4.827   | 4.88-4.94       | +0.05-0.11  | Plateau with partial rep acceleration |
+| 2500 | 4.684   | 4.73-4.78       | +0.05-0.10  | WSD starts, watch for rep collapse |
+| 3000 | 4.498   | 4.60-4.75       | +0.10-0.25  | CRITICAL: does combining mitigate or worsen? |
+
+**Decision matrix (REVISED with actual arms 1-3 data):**
+| Arm 4 BPT@3K | vs Control | vs Arm 2 (4.516) | vs Arm 3 (4.783) | Interpretation | 15K Action |
+|---------------|-----------|-------------------|-------------------|----------------|------------|
+| < 4.50 | BETTER | BETTER | BETTER | Synergy — surfaces complement. Remarkable. | Run rep+logit with inverted-U α at 15K |
+| 4.50-4.60 | +0.00-0.10 | Better | Better | Linear scaling — halving α halves penalty | Run logit with inverted-U α at 15K (surface doesn't matter much, mechanism does) |
+| 4.60-4.75 | +0.10-0.25 | Worse | Better | Expected — penalty from logit, mild rep help | Run logit with inverted-U α at 15K |
+| > 4.75 | > +0.25 | Worse | ~Same/Worse | Interference — combined is as bad or worse | Abandon rep, try logit-only with inverted-U α |
 
 **NEW: Extreme-ratio mitigations for Codex #274 review (from §6.4.29 research):**
 Regardless of which arm wins, the 15K gate should consider:
@@ -379,6 +399,41 @@ These are QUESTIONS FOR CODEX, not decisions. Present as options in the evidence
 **The meta-point for Codex #274:** Even if the ablation shows weak KD signal, there are 6 crude heuristics that could amplify whatever signal exists. The ablation tests the SURFACE (rep vs logit); these heuristics optimize the MECHANISM. Both matter. Recommend Codex pick the top 2-3 for the 15K gate.
 
 **Connection to manifesto:** This IS "Intelligence = Geometry" applied to the training process itself. We're not adding more parameters or data — we're adding STRUCTURE to how existing signal flows. The crude heuristic principle says even rough structure >> no structure.
+
+### Derived: Inverted-U Alpha Schedule for 15K Gate (2026-03-26)
+
+**First-principles derivation from ablation evidence:**
+
+The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent penalty, (2) WSD decay collapses whatever KD advantage existed. Both are symptoms of α being WRONG at different training phases:
+- Early: student geometry far from teacher → large noisy KD gradients → high α = destructive
+- Mid: student geometry established → KD gradients informative → high α = beneficial
+- Late (WSD decay): NTP must reconsolidate → KD pulls toward KD-optimal basin → high α = destructive again
+
+**Optimal shape = inverted U**, not monotonic ramp:
+```
+α(t):  0.2 ──ramp──> 0.7 ──hold──> 0.7 ──taper──> 0.1 ──hold──> 0.0
+       |    2K steps   |   8K steps   |    2K steps  |   3K steps |
+       0              2K             10K            12K          15K
+       [NTP stabilize] [KD peak zone] [decay onset]  [pure NTP]
+```
+
+**Why NOT ramp to 1.0?** At 1:19 ratio, student can never represent teacher distribution. KD loss oscillates 1.5-2.2 even at α=1.0 — there's no convergence to wait for. Capping at 0.7 limits gradient competition while still providing substantial dark knowledge signal.
+
+**Why taper during WSD decay?** Basin compatibility theory (confirmed in this ablation): the KD-optimal basin is SHALLOWER on the NTP surface. During consolidation (LR decay), NTP determines final quality. KD interference during consolidation = worse final BPT. Taper α alongside LR to let NTP reconsolidate.
+
+**Falsifiable predictions:**
+- Inverted-U at 15K should show BPT < control by ≥0.02 (persistence threshold)
+- No kurtosis spike during WSD decay (unlike arm 2's 3.7→5.6)
+- KD loss should DECREASE during peak zone (student absorbing knowledge)
+- If inverted-U STILL shows penalty → the issue is ratio, not schedule. Next: try Qwen3-0.6B (1:7)
+
+**Literature support:**
+- CTKD (AAAI 2023): constant T is suboptimal. Temperature should INCREASE as student progresses. Validates rising α/τ.
+- POCL (June 2025): rising τ at 15x ratio (our exact setup). Staged exposure improves convergence significantly.
+- InDistill (2024): explicit warmup stage for KD. α starts at 0, linearly increases.
+- **Our TAPER during WSD decay is NOVEL.** No paper we found tapers α alongside LR decay. This is our contribution from the basin compatibility finding.
+
+**Implementation cost:** TRIVIAL using phased training mode. 4 phases, each with different alpha.
 
 ---
 

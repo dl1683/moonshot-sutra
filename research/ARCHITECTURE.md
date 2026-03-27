@@ -91,10 +91,20 @@ PCGrad on three loss buckets: L_base, L_gen, L_aux. Auto-halve KD weights if gra
 - Phase 4: Steps 30K-95K — + specialist bursts + hard-bank
 - Phase 5: Steps 95K-120K — consolidation (decay KD weights)
 
-### First KD Probe (COMPLETED — 3000 steps, head-start only)
-1. Control: NTP + exits only → BPT 4.498
-2. Single-teacher: + Qwen3-1.7B state + semantic KD → BPT 4.550 (no advantage)
-*Original plan (arms 3-4) replaced by 4-arm surface ablation: control vs rep vs logit vs rep+logit*
+### KD Probes (COMPLETED — surface ablation conclusive for arms 1-3)
+
+**First probe (3K steps):** Single-teacher rep KD = head-start only. BPT 4.550 vs control 4.498.
+
+**4-arm surface ablation (3K steps from 5K warm-start, flat α=1.0):**
+
+| Arm | Config | BPT@3K | Δ vs Control | Verdict |
+|-----|--------|--------|-------------|---------|
+| 1. Control | No KD | 4.498 | — | Baseline |
+| 2. Rep-only | CKA+semantic, α=1.0 | 4.516 | +0.018 | HEAD-START ONLY (confirmed 3x) |
+| 3. Logit-only | Cross-tok ETA, T=2.0, α=1.0 | 4.783 | +0.285 | HARMFUL at flat α, 1:19 ratio |
+| 4. Rep+logit | Combined, total α=1.0 | RUNNING | — | Orthogonality test |
+
+**Conclusion:** Flat α=1.0 is the mechanism failure, not the surface choice. At 1:19 ratio (5.3% capacity), student cannot absorb teacher signal without α scheduling. Next: inverted-U α schedule at 15K, pending Codex approval.
 
 ---
 
