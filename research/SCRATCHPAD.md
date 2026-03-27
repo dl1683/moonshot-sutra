@@ -869,7 +869,8 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 41000 | 4.009 | — | 0.000 | 3.0e-4 | kurt=194.4, max_act=**426.3 (new high)**. BPT mild reversion. Kurtosis spike pattern: odd-K steps spike (37K,39K,41K), even-K normal (38K,40K). |
 | **42000** | **3.982** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=232.3 (YELLOW), max_act=368.3. Below predictions by 0.016. Kurtosis trending up but benign (BPT improving). |
 | **43000** | **3.963** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=127.0 (GREEN), max_act=367.1. Below predictions by 0.025. Three consecutive bests (40K, 42K, 43K). |
-| 44000 | 3.991 | — | 0.000 | 3.0e-4 | Oscillation reversion (+0.028). kurt=**369.3 (YELLOW, highest non-outlier)**. max_act=376.2. Above central by 0.013. Slope -11.4 mBPT/K. 48K pred: 3.926. |
+| 44000 | 3.991 | — | 0.000 | 3.0e-4 | Oscillation reversion (+0.028). kurt=**369.3 (YELLOW, highest non-outlier)**. max_act=376.2. |
+| **45000** | **3.958** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST + CHECKPOINT SAVED (2.36GB).** kurt=104.0 (GREEN). max_act=404.3. Below prediction by 0.011. Slope stable: -11.4 mBPT/K. 48K pred: 3.926. **WSD start in ~36 min.** |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -975,7 +976,7 @@ Odd-K/even-K pattern is NOISE (residual means: odd +0.002, even -0.012 — not s
 | 42K | 3.999 | 3.998 | 4.006 | **3.982 (-0.016)** |
 | 43K | 3.988 | 3.988 | 3.996 | **3.963 (-0.025)** |
 | 44K | 3.977 | 3.978 | 3.987 | **3.991 (+0.013)** |
-| 45K | 3.966 | 3.969 | 3.977 | — |
+| 45K | 3.966 | 3.969 | 3.977 | **3.958 (-0.011)** |
 | 46K | 3.955 | 3.959 | 3.968 | — |
 | 47K | 3.944 | 3.949 | 3.958 | — |
 | 48K | 3.933 | **3.940** | 3.949 | — |
