@@ -857,7 +857,8 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 29000 | 4.129 | — | 0.000 | 3.0e-4 | kurt=89.2, max_act=381.1. |
 | **30000** | **4.114** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=92.8, max_act=385.0. Flat-phase avg 20-30K: ~4.16 BPT. |
 | 31000 | 4.083 | — | 0.000 | 3.0e-4 | kurt=81.6, max_act=330.0. **New best BPT.** Kurtosis/act healthiest since 24K. |
-| 32000 | 4.132 | — | 0.000 | 3.0e-4 | kurt=110.9(!), max_act=351.1. BPT reverted — 31K drop was eval noise. Kurtosis spike: monitor. |
+| 32000 | 4.132 | — | 0.000 | 3.0e-4 | kurt=110.9(!), max_act=351.1. BPT reverted — kurtosis spike transient. |
+| 33000 | **4.075** | — | 0.000 | 3.0e-4 | kurt=99.8, max_act=308.5. **New best BPT.** Kurtosis spike resolved. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -893,6 +894,17 @@ Expected BPT at 60K gate milestones:
 - Keep tau capped at 2.2
 - **Relative stability gates**: yellow if KD kurtosis > 1.25x control, red if > 1.5x
 - **Hard gate on lm-eval** at 15K (HS/PIQA/ARC-E/WG), not BPT alone
+
+**Codex Pre-Training Audit (2026-03-27, KD arm):** PASS after fixes.
+- Alpha/tau schedules: CLEAN (verified numerically)
+- Cross-tokenizer KD: CLEAN (causal alignment correct, round-trip exact)
+- Teacher loading: CLEAN (Qwen3-0.6B-Base loads correctly in FP16)
+- Loss normalization: CLEAN
+- VRAM: CLEAN — real probe shows KD arm peaks at ~14.5GB (vs 24GB available)
+- Confidence gating: FIXED (was using truncated top-K slice, now uses full-distribution logsumexp)
+- Resume: FIXED (added named-checkpoint fallback)
+- Variant selector: FIXED (added --kd-variant flag)
+Launch command: `python code/dense_baseline.py --kd-train code/kd_197m_60k_gate.json --kd-variant kd_197m_06b_60k`
 
 ### KD Literature Expectations for 60K Gate (compiled 2026-03-27)
 
