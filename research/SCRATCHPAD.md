@@ -859,12 +859,19 @@ Expected BPT at 60K gate milestones:
 | 3K | ~5.0-5.4 | Scout 5.04 | 5.39 (+0.35, transient) |
 | 4K | ~4.8-4.9 | Scout 4.84 | **4.87 (+0.03, CONVERGED)** |
 | 6K | ~4.6-4.8 | Scout 4.69 | **4.645 (-0.045, AHEAD)** |
-| 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | — |
+| 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | **4.248 (-0.168, AHEAD)** |
 | 30K | ~4.0-4.2 | Still flat-LR | — |
-| 48K | ~3.8-4.0 | End of flat-LR, WSD starts | — |
-| 60K | **3.5-3.7** | Scout post-WSD 4.05 | — |
+| 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
+| 60K | **3.76-3.88** | Codex revised from 3.5-3.7 | — |
 
-**KD arm follows after control completes (~12 hours).** Teacher: Qwen3-0.6B. Alpha warmup: 0→0.45 over 2K steps. Ratio 1:3 (near-optimal per capacity gap law).
+**Codex Tier 2 Review (2026-03-27, step 20K):** Control is healthy, continue to 60K. Revised forecast: BPT ~3.82 central estimate at 60K. Control alone unlikely to beat Pythia-160M cleanly — ARC-E yes, HS/PIQA marginal. KD arm is the real test: does teacher knowledge transfer beyond what more training provides?
+
+**KD arm adjustments (Codex recommendation):**
+- Keep logit-only (no rep-KD)
+- **Cool alpha_max to 0.35-0.40** (from 0.45) — control already has heavy-tail activation profile
+- Keep tau capped at 2.2
+- **Relative stability gates**: yellow if KD kurtosis > 1.25x control, red if > 1.5x
+- **Hard gate on lm-eval** at 15K (HS/PIQA/ARC-E/WG), not BPT alone
 
 ### KD Literature Expectations for 60K Gate (compiled 2026-03-27)
 
