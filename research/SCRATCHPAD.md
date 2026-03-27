@@ -846,6 +846,16 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 18000 | 4.227 | — | 0.000 | 3.0e-4 | kurt=79.9, max_act=314.3. |
 | 19000 | 4.255 | — | 0.000 | 3.0e-4 | kurt=84.6, max_act=314.2. |
 | **20000** | **4.177** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=74.0, max_act=282.0. Rate ~0.014/1K. |
+| 21000 | 4.197 | — | 0.000 | 3.0e-4 | kurt=76.2, max_act=310.7. |
+| 22000 | 4.255 | — | 0.000 | 3.0e-4 | kurt=94.2, max_act=345.2. Oscillation. |
+| 23000 | 4.193 | — | 0.000 | 3.0e-4 | kurt=94.2, max_act=357.8. |
+| 24000 | 4.178 | — | 0.000 | 3.0e-4 | kurt=74.6, max_act=326.2. |
+| 25000 | 4.141 | — | 0.000 | 3.0e-4 | kurt=91.8, max_act=333.3. |
+| 26000 | 4.175 | — | 0.000 | 3.0e-4 | kurt=86.9, max_act=299.1. |
+| 27000 | 4.108 | — | 0.000 | 3.0e-4 | kurt=98.3, max_act=353.1. **New best.** |
+| 28000 | 4.149 | — | 0.000 | 3.0e-4 | kurt=93.7, max_act=368.2. |
+| 29000 | 4.129 | — | 0.000 | 3.0e-4 | kurt=89.2, max_act=381.1. |
+| **30000** | **4.114** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=92.8, max_act=385.0. Flat-phase avg 20-30K: ~4.16 BPT. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -860,7 +870,7 @@ Expected BPT at 60K gate milestones:
 | 4K | ~4.8-4.9 | Scout 4.84 | **4.87 (+0.03, CONVERGED)** |
 | 6K | ~4.6-4.8 | Scout 4.69 | **4.645 (-0.045, AHEAD)** |
 | 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | **4.248 (-0.168, AHEAD)** |
-| 30K | ~4.0-4.2 | Still flat-LR | — |
+| 30K | ~4.0-4.2 | Still flat-LR | **4.114 (on track)** |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
 | 60K | **3.76-3.88** | Codex revised from 3.5-3.7 | — |
 
