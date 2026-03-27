@@ -828,9 +828,26 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 500 | 8.022 | 5.560 | 0.000 | 3.0e-4 | Warmup done, LR bump |
 | **1000** | **6.736** | — | 0.000 | 3.0e-4 | **EVAL** kurt=0.8, max_act=26.5 |
 | **2000** | **5.407** | — | 0.000 | 3.0e-4 | **EVAL** kurt=0.8, max_act=45.6 (scout=5.365) |
-| **3000** | **5.390** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=2.0, max_act=79.9 (scout=5.041, +0.35 divergence — normal training variance) |
+| **3000** | **5.390** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=2.0, max_act=79.9 (scout=5.041, +0.35) |
+| **4000** | **4.865** | — | 0.000 | 3.0e-4 | **EVAL** kurt=7.2, max_act=106.3 (scout=4.839, +0.026) |
+| **5000** | **4.880** | — | 0.000 | 3.0e-4 | **EVAL** kurt=10.9, max_act=145.3 (scout=4.775, +0.105). Plateau entering. |
 
-**Expected trajectory (from 15K scout):** Should track 15K scout exactly until step 12K. At 12K expect BPT ~4.42. WSD starts at 48K here (vs 12K in scout), so the flat-LR phase is 47.5K steps vs 11.5K — the model will see 4x more data before consolidation. Expect BPT ~3.5-3.8 at 60K (vs 4.05 at 15K).
+**Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
+
+**CRITICAL: 15K comparison strategy.** At step 15K, the 60K gate is still in flat-LR phase (WSD doesn't start until 48K). The 15K scout had completed WSD by step 15K. Fair comparisons:
+- 60K gate at 15K → compare to scout **pre-WSD plateau at 11-12K (BPT ~4.42)**
+- 60K gate at 60K (post-WSD) → compare to scout at 15K (BPT 4.05)
+
+Expected BPT at 60K gate milestones:
+| Step | Expected BPT | Comparison | Status |
+|------|-------------|------------|--------|
+| 3K | ~5.0-5.4 | Scout 5.04 | 5.39 (+0.35, transient) |
+| 4K | ~4.8-4.9 | Scout 4.84 | **4.87 (+0.03, CONVERGED)** |
+| 6K | ~4.6-4.8 | Scout 4.69 | — |
+| 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | — |
+| 30K | ~4.0-4.2 | Still flat-LR | — |
+| 48K | ~3.8-4.0 | End of flat-LR, WSD starts | — |
+| 60K | **3.5-3.7** | Scout post-WSD 4.05 | — |
 
 **KD arm follows after control completes (~12 hours).** Teacher: Qwen3-0.6B. Alpha warmup: 0→0.45 over 2K steps. Ratio 1:3 (near-optimal per capacity gap law).
 
@@ -949,6 +966,41 @@ When the KD arm completes, compute:
 - KTI ≈ 1 → uniform improvement (gradient smoothing only)
 - KTI < 1 → teacher only helps LM tasks (not knowledge transfer)
 - **Manifesto relevance:** KTI > 1 proves that a teacher model's training data (36T tokens) can be compressed into knowledge that transfers to a student seeing only 1B tokens. This is Intelligence = Geometry in action — the teacher's geometric structure (learned from massive data) encodes knowledge more efficiently than raw data.
+
+## TEMPLATE: Codex Tier 2 Review at 60K Gate Step 15K (fill when data arrives)
+
+**Trigger:** Control arm reaches step 15K. Compare to 15K scout. Decide whether to continue to 60K or pivot.
+
+**Data to fill:**
+```
+CONTROL ARM (60K gate, no WSD until step 48K):
+- Eval trajectory: 1K=[6.736], 2K=[5.407], 3K=[5.390], 4K=[FILL], 5K=[FILL], 6K=[FILL],
+  7K=[FILL], 8K=[FILL], 9K=[FILL], 10K=[FILL], 11K=[FILL], 12K=[FILL],
+  13K=[FILL], 14K=[FILL], 15K=[FILL]
+- Kurtosis trend: 1K=[0.8], 2K=[0.8], 3K=[2.0], ... [FILL]
+- Max activation trend: 1K=[26.5], 2K=[45.6], 3K=[79.9], ... [FILL]
+
+15K SCOUT (completed, had WSD from step 12K):
+- Full trajectory: 1K=6.725, 2K=5.365, ..., 12K=4.416 (pre-WSD), 15K=4.047 (post-WSD)
+- lm-eval: ARC-E 39.1%, HS(n) 27.2%, PIQA 57.6%, WG 51.1%
+
+IMPORTANT: 60K gate at 15K is in FLAT-LR phase. Scout at 15K was POST-WSD.
+Fair comparison: 60K@15K vs scout@11-12K (pre-WSD, BPT ~4.42).
+```
+
+**Codex questions (Scaling Expert + Architecture Theorist + Competitive Analyst):**
+
+1. **Trajectory health:** Is the flat-phase learning curve on track? How does it compare to the power law prediction (BPT = 3.5 + 110.4 * step^(-0.515))?
+2. **Divergence analysis:** 60K gate was +0.35 BPT vs scout at 3K. Has the gap narrowed by 15K? What explains persistent divergence (data order, numerical non-determinism)?
+3. **Token scaling:** At 15K steps (0.25B tokens), what fraction of the model's capacity is utilized? What should we expect at 48K (flat-phase end)?
+4. **Benchmark predictions:** Given BPT at 15K, what lm-eval scores do we predict at 60K after WSD? Should we run lm-eval at 15K for cross-reference?
+5. **Continue/pivot:** Based on flat-phase trajectory, should we:
+   a. Continue to 60K (expected ~11 more hours of control + ~12 hours KD)?
+   b. Extend to 120K for more data (additional ~12 hours)?
+   c. Pivot to different approach (e.g., teacher pre-distillation, different KD method)?
+6. **KD arm setup:** Any adjustments needed for the KD arm alpha/tau schedule based on control trajectory?
+
+---
 
 ## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
 
