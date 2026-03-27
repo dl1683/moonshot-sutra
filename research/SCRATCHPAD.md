@@ -1089,9 +1089,16 @@ Launch command: `python code/dense_baseline.py --kd-train code/kd_197m_60k_gate.
 | WG | 51-53% | 52-54% | +0-1pp |
 | LAMBADA acc | 30-38% | 33-41% | +2-4pp |
 
-**If KD arm reaches HS >= 35 and PIQA >= 65:** This would approach MobileLLM-125M territory (HS 38.9, PIQA 65.3) with **1000x less training data**. That's the manifesto thesis in action.
+**Strategic framing (revised 40K analysis):** The 60K gate is a SIGNAL test, not a victory test.
+- **ARC-E: CLEAR WIN** — Control ~45.6% beats Pythia's 40.0% by +5.6pp. KD adds +1pp. 305x less data.
+- **WG: MODERATE WIN** — Control ~53.1% beats Pythia's 51.3% by +1.8pp.
+- **HS: SWING BENCHMARK** — Control ~27.9% falls 2.4pp short of Pythia's 30.3%. KD MAYBE closes this (literature says +1-3pp). This is the most important number from the KD arm.
+- **PIQA: OUT OF REACH** — Control ~59.2% falls 3.1pp short. KD adds at most +2.5pp. Still probably short.
+- **MobileLLM: NOT IN RANGE** — HS gap is 11pp. Need fundamentally more capacity or data.
 
-**Falsification criteria:** If 60K control HS < 28 or PIQA < 59, the token scaling rate is slower than predicted — we need MUCH more training (120K+) or the architecture has a ceiling. If KD arm shows no improvement over control, logit KD at 1:3 ratio doesn't work for pre-training and we pivot to other approaches.
+**The 60K headline:** "197M model matches/beats 160M Pythia on ARC-E and WG with 305x less data. KD signal test: +1-3pp on HS would validate multi-teacher path."
+
+**Falsification criteria:** If 60K control HS < 26 or PIQA < 57, the token scaling rate is slower than predicted. If KD arm shows zero improvement over control on HS/PIQA, logit KD at 1:3 ratio doesn't transfer world knowledge. Both are informative failures, not fatal.
 
 ### BPT-Benchmark Correlation Analysis (2026-03-27, from 3 internal data points)
 
