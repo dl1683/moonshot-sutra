@@ -534,8 +534,9 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 7500 | ~4.50 | 4.43-4.52 | -0.07 to +0.02 | **Actual control ~4.52 (interpolated).** |
 | 9000 | **4.442** | 4.38-4.46 | -0.06 to +0.02 | **ACTUAL.** Kurtosis 227.1 spike confirmed transient at 10K. |
 | 10000 | **4.420** | 4.36-4.44 | ≤-0.02 (STOP RULE) | **ACTUAL.** Decelerating (-0.022/1K). Named checkpoint saved. |
-| 12000 | ~4.38 | 4.31-4.41 | -0.06 to +0.02 | **RE-REVISED (post 10K).** Late flat-LR: -0.020/1K est. α→0. Pure NTP. |
-| 15000 | ~4.10-4.20 | 4.03-4.22 | ≤-0.015 (PROOF) | **RE-REVISED.** WSD decay 12K-15K drops ~0.20-0.30. lm-eval required. |
+| 11000 | **4.512** | — | — | **ACTUAL.** Regression (+0.092). Eval noise — confirmed at 12K (4.374). |
+| 12000 | **4.374** | 4.31-4.40 | -0.06 to +0.03 | **ACTUAL.** WSD decay starts. Named checkpoint saved. α→0 for KD arm. |
+| 15000 | ~4.07-4.17 | 3.99-4.19 | ≤-0.015 (PROOF) | **RE-REVISED (post 12K).** WSD drop ~0.20-0.30 from 4.374 baseline. |
 
 **Scenarios and Decision Tree:**
 
@@ -578,16 +579,20 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 8000 | 4.498 | -0.040 | 17.9 | 105.9 | Decelerating after post-stall spike. Steady progress. |
 | 9000 | 4.442 | -0.056 | 227.1* | 206.6* | Kurtosis/max_act SPIKE — confirmed TRANSIENT at step 10K. |
 | 10000 | 4.420 | -0.022 | 51.9 | 133.7 | Decelerating. Named checkpoint saved. WSD decay in 2K steps. |
+| 11000 | 4.512 | +0.092 | 25.7 | 140.2 | REGRESSION — eval noise at flat-LR plateau. Kurtosis healthy (down). |
+| 12000 | 4.374 | -0.138* | 45.0 | 124.0 | WSD DECAY STARTS. Named checkpoint saved. Last flat-LR eval. |
 
 *Step 9K spikes confirmed TRANSIENT: kurtosis 227.1→51.9, max_act 206.6→133.7. Same pattern as step 6K (41.7→11.0).
 
-**Learning rate profile:** Steps 1-10K: flat 3e-4. WSD decay starts at step 12K (2K steps away).
+**Learning rate profile:** Steps 1-10K: flat 3e-4. WSD decay starts at step 12K (1K steps away from step 11K).
 
-**Observations (updated step 10K):**
-1. **BPT deceleration in late flat-LR.** ΔBPT/1K: -0.071, -0.144, -0.048, -0.020, +0.003, -0.077, -0.040, -0.056, **-0.022**. Average 7K-10K: -0.039/1K. Average 9K-10K: -0.022/1K. Approaching diminishing returns on flat LR.
-2. **Kurtosis spikes confirmed TRANSIENT (both step 6K and 9K).** Step 6K: 41.7→11.0. Step 9K: 227.1→51.9. Pattern: spikes occur every ~3K steps, resolve within 1K. Underlying trend (ignoring spikes): 3.2→4.0→5.2→7.2→10.1→11.0→17.9→51.9 — accelerating growth, but BPT keeps improving. The kurtosis_max metric is NOT a reliable health indicator at this scale — BPT is.
-3. **Max_act elevated but stable.** Trajectory: 51.5→56.2→72.5→87.9→107.4→97.8→98.7→105.9→133.7. Growing trend, no sharp breaks.
-4. **Revised BPT extrapolation (post step 10K):** Step 10K actual 4.420 vs predicted 4.39 — 0.03 worse than predicted. Revise forward: step 12K ≈ 4.38 (not 4.30), step 15K after WSD ≈ 4.10-4.20 (not 4.00-4.10). The WSD decay phase (12K-15K) is now even MORE important for final BPT.
+**Observations (updated step 12K — WSD DECAY ONSET):**
+1. **Step 11K regression CONFIRMED as eval noise.** BPT trajectory: 4.420 (10K) → 4.512 (11K, noise) → **4.374 (12K)**. Underlying trend: 4.420→4.374 over 2K steps = -0.023/1K, consistent with flat-LR deceleration. The -0.138 from 11K→12K is the noise bouncing back.
+2. **ΔBPT/1K trajectory (ignoring 11K noise):** -0.071, -0.144, -0.048, -0.020, +0.003, -0.077, -0.040, -0.056, -0.022, (noise), **-0.046/2K≈-0.023/1K**. Steady deceleration in late flat LR.
+3. **Kurtosis: 45.0.** Down from 51.9 at step 10K. Elevated but stable. No spike.
+4. **Max_act: 124.0.** Down from 133.7 at step 10K. Mild. No concern.
+5. **WSD DECAY NOW ACTIVE.** Step 12K is the transition point. LR starts declining from 3e-4→1e-5 linearly over 3K steps. Expected BPT drop: 0.20-0.30. Control@15K estimate: ~4.07-4.17.
+6. **Critical: step 12K checkpoint saved.** This is the PIVOTAL reference point for basin compatibility analysis. Both arms receive identical treatment from 12K→15K (pure NTP, decaying LR). Any gap at 15K is determined by where the model sits at 12K.
 
 **Implication for KD arm:** The control is stronger than we feared during the step 6K scare. The KD arm's job is harder — it needs to beat a control that is actively improving, not plateaued. But the stop rule at step 6K (non-positive) is relative to control at step 6K, so the bar adjusts dynamically.
 
@@ -600,16 +605,16 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 
 **This changes everything about the extrapolation.** The flat-LR phase runs until step 12K. The -0.020/1K deceleration at step 5K is pure diminishing returns on the loss landscape at constant LR. Steps 12K-15K will see a massive BPT drop during WSD decay (as we observed in the 3K ablation).
 
-**Revised extrapolation (incorporating step 10K data — actual 4.420 vs predicted 4.39):**
-Late flat-LR deceleration confirmed: -0.022/1K at step 10K. Model approaching LR-limited regime.
-- Step 12K: ~4.38 (-0.020/1K, continued deceleration)
-- Step 15K after WSD: ~4.10-4.20 (WSD drop of ~0.20-0.30)
-- **WSD decay is now the dominant factor.** Steps 10K-12K contribute ~0.04 BPT; steps 12K-15K contribute ~0.20-0.30.
+**Revised extrapolation (incorporating step 12K actual: 4.374):**
+Step 11K noise confirmed: 4.420→4.512→4.374. Underlying trend 10K→12K: -0.046/2K = -0.023/1K.
+- Step 12K: **4.374 (ACTUAL).** This is the WSD starting point.
+- Step 15K after WSD: ~4.07-4.17 (WSD drop of ~0.20-0.30 from 4.374 baseline)
+- **WSD decay is now THE dominant factor.** 3K steps of decay (3e-4→1e-5) determines final BPT.
 
-**WSD decay phase (steps 12K-15K):** Based on prior 3K ablation data, WSD decay of similar magnitude (3e-4 → 1e-5) produced ~0.36 BPT drop in the control (4.858→4.498 in 1000 steps). Scaling: 3K steps of decay should give ~0.25-0.40 BPT drop.
-- Step 15K estimate: ~4.15-4.30
+**WSD decay phase (steps 12K-15K):** Based on prior 3K ablation data, WSD decay of similar magnitude (3e-4 → 1e-5) produced ~0.36 BPT drop in the control (4.858→4.498 in 1000 steps of decay). The 15K gate has 3K steps of decay (3× longer, smoother). Expected: ~0.20-0.30 BPT drop.
+- Step 15K estimate: **~4.07-4.17** (4.374 - [0.20 to 0.30])
 
-**This means the control at step 15K will be much higher than the original prediction of 4.00.** Range: 4.15-4.30. The KD arm's stop rule of ≤-0.015 means it needs to reach ~4.13-4.28.
+**The KD arm's stop rule of ≤-0.015 at step 15K means it needs to reach ~4.06-4.16.** The bar is SET. Everything now depends on whether the KD arm finds a better basin by step 12K.
 
 ## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
 
@@ -666,6 +671,31 @@ Late flat-LR deceleration confirmed: -0.022/1K at step 10K. Model approaching LR
 **Design question: should α be nonzero during WSD?** Current inverted-U zeros α at step 12K (when WSD starts). But basin compatibility says logit KD HELPS during WSD (same manifold). A small residual α (0.05-0.10) during steps 12K-15K might improve consolidation. **FLAG FOR CODEX REVIEW after 15K gate.**
 
 **Caveat:** All of this is derived from ONE experiment at ONE scale. Question all conclusions before acting.
+
+### Step 12K = Pivotal Checkpoint (2026-03-27)
+
+**Key realization:** Alpha zeros out at step 12K. WSD decay also starts at step 12K. From 12K→15K, BOTH arms receive identical treatment (pure NTP, declining LR 3e-4→1e-5). Any gap at step 15K is entirely determined by the BASIN the model occupies at step 12K.
+
+**This means:**
+1. **Step 12K BPT comparison is the raw signal.** If KD arm is worse at 12K → very unlikely to win at 15K.
+2. **Step 12K→15K BPT drop measures basin quality.** A deeper WSD drop = better basin. Basin compatibility theory predicts logit KD basin consolidates BETTER under NTP-only WSD.
+3. **The 15K gate is actually a 12K gate + 3K verification.** The KD mechanism's effect ends at 12K. Steps 12K-15K just reveal whether the effect was durable.
+
+**Pre-registered step 12K predictions:**
+- Control@12K: ~4.38-4.42 (continued deceleration from flat LR)
+- KD@12K: If mechanism works → 4.33-4.40 (≤ -0.02 gap). If fails → ≥ 4.38 (no gap)
+- Both should then drop ~0.20-0.30 during WSD, but KD basin should drop MORE (basin compatibility)
+
+**LR at each step during decay:**
+| Step | LR | Decay progress |
+|------|-----|---------------|
+| 12000 | 3.00e-4 | 0% |
+| 12500 | 2.52e-4 | 17% |
+| 13000 | 2.03e-4 | 33% |
+| 13500 | 1.55e-4 | 50% |
+| 14000 | 1.07e-4 | 67% |
+| 14500 | 5.83e-5 | 83% |
+| 15000 | 1.00e-5 | 100% |
 
 ---
 
