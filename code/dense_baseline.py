@@ -1778,6 +1778,15 @@ def compute_cross_tok_logit_kd(
     valid_mask = signed_diff.min(dim=2).values < 1e8  # (B, T_s)
     del signed_diff
 
+    # Pre-compute full-distribution confidence for gating (before shared-vocab extraction)
+    if confidence_gating:
+        t_full_max = teacher_logits.max(dim=-1).values  # (B, T_t)
+        t_full_lse = torch.logsumexp(teacher_logits.float(), dim=-1)  # (B, T_t)
+        aligned_full_max = t_full_max.gather(1, aligned_idx)  # (B, T_s)
+        aligned_full_lse = t_full_lse.gather(1, aligned_idx)  # (B, T_s)
+        full_p_max = torch.exp(aligned_full_max.float() - aligned_full_lse)  # (B, T_s)
+        del t_full_max, t_full_lse, aligned_full_max, aligned_full_lse
+
     # Step 2: Extract shared-vocab teacher logits at aligned positions
     t_shared_all = teacher_logits[:, :, shared_t_ids]  # (B, T_t, N_shared)
     gather_idx = aligned_idx.unsqueeze(-1).expand(-1, -1, N_shared)
@@ -1799,12 +1808,12 @@ def compute_cross_tok_logit_kd(
     s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
     # Per-token KL: sum over vocab dim, then average over valid positions
     per_token_kl = F.kl_div(s_log_probs, t_probs, reduction="none").sum(dim=-1)  # (B, T_s)
-    # Confidence gating: scale per-token KD by teacher confidence (raw, not softened)
+    # Confidence gating: scale per-token KD by teacher confidence over full distribution
     if confidence_gating:
-        t_raw_probs = F.softmax(topk_vals, dim=-1)  # raw (no temperature)
-        p_max = t_raw_probs.max(dim=-1).values       # (B, T_s)
-        conf_w = torch.where(p_max > 0.5, 1.5, torch.where(p_max < 0.1, 0.3, 1.0))
+        conf_w = torch.where(full_p_max > 0.5, 1.5,
+                             torch.where(full_p_max < 0.1, 0.3, 1.0))
         per_token_kl = per_token_kl * conf_w
+        del full_p_max
     per_token_kl = per_token_kl * valid_mask.float()  # zero out invalid positions
     n_valid = valid_mask.float().sum().clamp(min=1.0)
     kl = per_token_kl.sum() / n_valid  # per-token average
@@ -3973,7 +3982,7 @@ def run_ab_probe(config_path):
     print(f"{'='*60}")
 
 
-def train_kd(config_path):
+def train_kd(config_path, variant_filter=None):
     """Knowledge Distillation training with RMFD system.
 
     Loads student from warm-start checkpoint, loads teacher models,
@@ -4063,6 +4072,13 @@ def train_kd(config_path):
         print(f"  Saved {len(windows)} windows to {cache_path}")
 
     variants = cfg.get("variants", [cfg])
+    if variant_filter:
+        variants = [v for v in variants if v.get("tag", "") == variant_filter]
+        if not variants:
+            print(f"ERROR: No variant with tag '{variant_filter}' found in config.")
+            print(f"  Available tags: {[v.get('tag', '?') for v in cfg.get('variants', [cfg])]}")
+            return
+        print(f"  Variant filter: running only '{variant_filter}'")
     all_results = {}
     ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -4192,13 +4208,40 @@ def train_kd(config_path):
                 resume_step = rckpt.get("step", 0) - start_step
                 print(f"  RESUMED from rolling checkpoint at step {resume_step}")
             except Exception as e:
-                print(f"  WARNING: rolling checkpoint failed ({e}), re-initializing from init_from")
+                print(f"  WARNING: rolling checkpoint failed ({e}), trying named checkpoints...")
                 resume_step = 0
-                # Re-init model from base checkpoint to avoid half-loaded state
-                fresh_ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
-                fresh_key = "model_state_dict" if "model_state_dict" in fresh_ckpt else "model"
-                model.load_state_dict(fresh_ckpt[fresh_key])
-                del fresh_ckpt
+                # Fallback: scan for newest named checkpoint (tag_step*.pt)
+                named_ckpts = sorted(
+                    ckpt_dir.glob(f"{tag}_step*.pt"),
+                    key=lambda p: int(p.stem.split("step")[-1]),
+                    reverse=True)
+                fallback_loaded = False
+                for nckpt_path in named_ckpts:
+                    try:
+                        nckpt = torch.load(nckpt_path, weights_only=False, map_location=DEVICE)
+                        model.load_state_dict(nckpt["model_state_dict"])
+                        opt.load_state_dict(nckpt["optimizer_state_dict"])
+                        if "projectors" in nckpt and projectors:
+                            projectors.load_state_dict(nckpt["projectors"])
+                        if "scaler" in nckpt:
+                            scaler.load_state_dict(nckpt["scaler"])
+                        if "metrics" in nckpt:
+                            metrics_log = nckpt["metrics"]
+                        resume_step = nckpt.get("step", 0) - start_step
+                        print(f"  RESUMED from named checkpoint {nckpt_path.name} at step {resume_step}")
+                        del nckpt
+                        fallback_loaded = True
+                        break
+                    except Exception as e2:
+                        print(f"    Named checkpoint {nckpt_path.name} failed: {e2}")
+                        continue
+                if not fallback_loaded:
+                    print(f"  No valid checkpoint found, re-initializing from init_from")
+                    resume_step = 0
+                    fresh_ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
+                    fresh_key = "model_state_dict" if "model_state_dict" in fresh_ckpt else "model"
+                    model.load_state_dict(fresh_ckpt[fresh_key])
+                    del fresh_ckpt
                 opt = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=0.1)
                 scaler = torch.amp.GradScaler("cuda")
                 if projectors:
@@ -5046,6 +5089,8 @@ if __name__ == "__main__":
                         help="Run A/B probe from JSON config file")
     parser.add_argument("--kd-train", type=str, default=None,
                         help="Run RMFD KD training from JSON config file")
+    parser.add_argument("--kd-variant", type=str, default=None,
+                        help="Run only this variant tag from the KD config (skip others)")
     parser.add_argument("--kd-phased", type=str, default=None,
                         help="Run phase-aware RMFD production training from JSON config")
     args = parser.parse_args()
@@ -5060,7 +5105,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.kd_train:
-        train_kd(args.kd_train)
+        train_kd(args.kd_train, variant_filter=args.kd_variant)
         sys.exit(0)
 
     if args.ab_probe:
