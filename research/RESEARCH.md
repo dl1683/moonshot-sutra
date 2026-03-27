@@ -2623,6 +2623,31 @@ N(t) = NTP gradient signal strength (varies with training phase)
 
 **Optimization noted:** Teacher forward pass still runs for steps 12001-15000 (alpha=0), wasting ~20% compute. Fix: add `if (sa_state + sa_semantic + sa_logit) > 0:` guard around teacher block.
 
+### 6.4.33 Reverse KL / Mode-Seeking Divergences for Extreme-Ratio KD (2026-03-27)
+
+**Context:** Research on fallback divergences if forward KL + inverted-U fails at 1:19 ratio.
+
+**Core insight:** At extreme ratios (5.3% capacity), forward KL forces mode-covering — student spreads thin covering modes it cannot represent. Mode-seeking divergences (reverse KL, AMiD) let the student focus on what it CAN learn.
+
+**Ranked fallback options:**
+
+| Method | Evidence at extreme ratios | Composability | Implementation | Recommendation |
+|--------|--------------------------|---------------|----------------|----------------|
+| **AMiD (α=-5)** | 15:1 tested, +1.64 ROUGE-L over next best | Good (orthogonal to alpha schedule) | Moderate | **#1 FALLBACK** |
+| **ABKD (α-β div)** | 15:1 tested, beaten by AMiD | Good (drop-in) | Low | **#2 FALLBACK** |
+| **AKL** | 12.5:1 only | Good (per-token adaptive) | Low | #3 fallback |
+| MiniLLM | Strong results | **INCOMPATIBLE** with pre-training | High | NOT viable |
+
+**AMiD key details:** Alpha-divergence family with α=-5 (strongly mode-seeking), λ=0.1 (assistant closer to student). Composes with our inverted-U schedule naturally — AMiD controls divergence geometry, our schedule controls mixing weight. Tested at GPT-2 XL 1.5B → GPT-2 0.1B (~15:1 ratio, close to our 1:19).
+
+**Decision tree after 15K gate:**
+- If forward KL mechanism WORKS → proceed to RMFD with forward KL
+- If forward KL FAILS → try AMiD (α=-5) drop-in replacement, same schedule, 3K probe
+- If AMiD also FAILS → scale student to 166M (1:8.8 ratio) where forward KL is within comfort zone
+- Phased divergence (FKL early → AMiD late) is a longer-term option if simple switches fail
+
+**Sources:** AMiD (arXiv 2510.15982), ABKD (ICML 2025 Oral, arXiv 2505.04560), MiniLLM (ICLR 2024), AKL (COLING 2025), DKD (CVPR 2022).
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
