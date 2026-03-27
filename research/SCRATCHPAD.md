@@ -831,6 +831,11 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | **3000** | **5.390** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=2.0, max_act=79.9 (scout=5.041, +0.35) |
 | **4000** | **4.865** | — | 0.000 | 3.0e-4 | **EVAL** kurt=7.2, max_act=106.3 (scout=4.839, +0.026) |
 | **5000** | **4.880** | — | 0.000 | 3.0e-4 | **EVAL** kurt=10.9, max_act=145.3 (scout=4.775, +0.105). Plateau entering. |
+| **6000** | **4.645** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=27.1, max_act=230.5 (scout=4.69, **-0.045 AHEAD**). Plateau broken. |
+| **7000** | **4.591** | — | 0.000 | 3.0e-4 | **EVAL** kurt=25.6, max_act=180.7 (scout=4.615, **-0.025 AHEAD**). Steady descent. |
+| **8000** | **4.644** | — | 0.000 | 3.0e-4 | **EVAL** kurt=41.7, max_act=233.2 (scout=4.756, **-0.112 AHEAD**). Brief bump (scout bumped harder). |
+| **9000** | **4.456** | — | 0.000 | 3.0e-4 | **EVAL** kurt=41.7, max_act=228.6 (scout=4.501, **-0.045 AHEAD**). Strong recovery. |
+| **10000** | **4.463** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=43.4, max_act=259.6 (scout=4.439, +0.024). Plateau entering — matches scout 10-12K pattern. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -843,7 +848,7 @@ Expected BPT at 60K gate milestones:
 |------|-------------|------------|--------|
 | 3K | ~5.0-5.4 | Scout 5.04 | 5.39 (+0.35, transient) |
 | 4K | ~4.8-4.9 | Scout 4.84 | **4.87 (+0.03, CONVERGED)** |
-| 6K | ~4.6-4.8 | Scout 4.69 | — |
+| 6K | ~4.6-4.8 | Scout 4.69 | **4.645 (-0.045, AHEAD)** |
 | 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | — |
 | 30K | ~4.0-4.2 | Still flat-LR | — |
 | 48K | ~3.8-4.0 | End of flat-LR, WSD starts | — |
@@ -974,11 +979,11 @@ When the KD arm completes, compute:
 **Data to fill:**
 ```
 CONTROL ARM (60K gate, no WSD until step 48K):
-- Eval trajectory: 1K=[6.736], 2K=[5.407], 3K=[5.390], 4K=[FILL], 5K=[FILL], 6K=[FILL],
-  7K=[FILL], 8K=[FILL], 9K=[FILL], 10K=[FILL], 11K=[FILL], 12K=[FILL],
+- Eval trajectory: 1K=[6.736], 2K=[5.407], 3K=[5.390], 4K=[4.865], 5K=[4.880], 6K=[4.645],
+  7K=[4.591], 8K=[4.644], 9K=[4.456], 10K=[4.463], 11K=[FILL], 12K=[FILL],
   13K=[FILL], 14K=[FILL], 15K=[FILL]
-- Kurtosis trend: 1K=[0.8], 2K=[0.8], 3K=[2.0], ... [FILL]
-- Max activation trend: 1K=[26.5], 2K=[45.6], 3K=[79.9], ... [FILL]
+- Kurtosis trend: 1K=[0.8], 2K=[0.8], 3K=[2.0], 4K=[7.2], 5K=[10.9], 6K=[27.1], 7K=[25.6], 8K=[41.7], 9K=[41.7], 10K=[43.4], ... [FILL]
+- Max activation trend: 1K=[26.5], 2K=[45.6], 3K=[79.9], 4K=[106.3], 5K=[145.3], 6K=[230.5], 7K=[180.7], 8K=[233.2], 9K=[228.6], 10K=[259.6], ... [FILL]
 
 15K SCOUT (completed, had WSD from step 12K):
 - Full trajectory: 1K=6.725, 2K=5.365, ..., 12K=4.416 (pre-WSD), 15K=4.047 (post-WSD)
