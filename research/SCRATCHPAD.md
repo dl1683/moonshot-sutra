@@ -329,9 +329,14 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
   - Kurtosis 3.4, max_act 57.6 — healthy. Problem is NOT activation collapse. Problem is gradient allocation.
   - **Root cause hypothesis: flat α=1.0 + T=2.0 + extreme ratio = too much KD gradient noise in early training.**
   - **Crude heuristic diagnosis:** The implicit behavior (flat α=1.0 from step 0) is maximally harmful at initialization. The student barely knows NTP; asking it to simultaneously match a 1.7B teacher's flattened distribution is asking it to learn two things at once when it can barely do one. A rising α schedule would be a crude-but-directional fix.
-- Step 1000: CRITICAL. If gap narrows significantly (to <+0.10), recovery is happening. If stays >+0.20, logit KD may be fundamentally misaligned at this ratio.
-- Step 1500-2000: If arm 3 follows rep-only's 3-phase pattern (penalty→recovery→advantage), crossover should occur here. But the 6.8x larger initial penalty means recovery needs 6.8x more improvement.
-- Step 3000: ~~predict BPT ≤ 4.47~~ REVISED: predict BPT between 4.45-4.60 depending on recovery rate. Even partial recovery to control-level (4.50) would be informative.
+- **Step 1000: BPT=5.095. +0.184 (partial recovery from +0.257).** Gap narrowed 0.073 in 500 steps. KD loss flat at 1.84 — NOT declining. Student is not learning from teacher logits.
+- **Step 1500: BPT=5.102. +0.272 (GAP WIDENED BACK). RECOVERY STALLED AND REVERSED.**
+  - Went from +0.257→+0.184→+0.272. The apparent recovery at step 1000 was transient.
+  - KD loss at 2.07 — still oscillating ~1.7-2.1 with zero convergence.
+  - This is where rep-only was at -0.094 (BETTER than control). Logit-only is +0.272 (MUCH worse).
+  - **Interpretation: cross-tokenizer logit KD at α=1.0/T=2.0/1:19 is ACTIVELY HARMFUL.** Not just noise — it's pulling the student in the wrong direction. The gradient from KL(teacher||student) on a 92.6% shared vocabulary with causal alignment noise is destructive at this ratio.
+  - Kurtosis 4.1, max_act 59.1 — healthy. The damage is in learning, not in activations.
+- Step 2000-3000: Predict continued underperformance. Gap may narrow slightly during WSD decay if KD gradient weakens with LR, but recovery to control is unlikely.
 - **Kurtosis: 3.4 — CONFIRMED < 2x control (3.1×2=6.2). ✓ Logit KD is a safer signal for activations.**
 - **15K action regardless of step 3000 result:** The crude heuristic analysis identified rising α as TRIVIAL and HIGH impact. Recommend for 15K gate even if arm 3 result is disappointing — the flat α=1.0 is clearly suboptimal.
 
