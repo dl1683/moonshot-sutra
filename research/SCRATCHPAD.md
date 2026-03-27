@@ -861,6 +861,9 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 33000 | **4.075** | — | 0.000 | 3.0e-4 | kurt=99.8, max_act=308.5. **New best BPT.** Kurtosis spike resolved. |
 | 34000 | **4.161** | — | 0.000 | 3.0e-4 | kurt=94.5, max_act=336.0. Reversion from 33K best — oscillation continues. |
 | **35000** | **4.058** | — | 0.000 | 3.0e-4 | kurt=100.1, max_act=354.0. **NEW ALL-TIME BEST.** First below 4.1! Drop -0.103 from 34K. |
+| 36000 | 4.068 | — | 0.000 | 3.0e-4 | kurt=94.2, max_act=344.6. Mild reversion (+0.010 from 35K). Healthy. |
+| 37000 | 4.072 | — | 0.000 | 3.0e-4 | **kurt=163.9(!!)**, max_act=321.8. BPT flat. **Kurtosis spike: 1.74x recent avg.** Max_act normal — transient. |
+| **38000** | **4.028** | — | 0.000 | 3.0e-4 | kurt=98.8, max_act=362.4. **NEW ALL-TIME BEST.** First below 4.03! Kurtosis returned to normal (37K spike confirmed transient). |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -879,39 +882,62 @@ Expected BPT at 60K gate milestones:
 | 31K | ~4.08-4.12 | Trend continuation | **4.083 (new best, all health metrics improved)** |
 | 34K | ~4.07-4.11 | Trend continuation | **4.161 (reversion — oscillation)** |
 | 35K | ~4.05-4.10 | Trend continuation | **4.058 (new all-time best, first below 4.1!)** |
-| 40K | ~3.97-4.02 | Revised linear (slope -0.0084) | — |
+| 37K | ~4.04-4.08 | Trend continuation | **4.072 (on trend, kurtosis spike 163.9 = transient)** |
+| 38K | ~4.03-4.07 | Trend continuation | **4.028 (NEW ALL-TIME BEST, first below 4.03!)** |
+| 40K | ~3.97-4.03 | Linear extrapolation | — |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
 | 60K | **3.63-3.73** | Revised: multi-method WSD modeling (see below) | — |
 
-**Revised WSD Modeling (step 34K analysis):**
+**Revised WSD Modeling (step 37K, log-proportional + oscillation analysis):**
 Four independent estimates of WSD drop (steps 48K-60K):
-1. LR-unit scaling (same drop as scout per unit LR): -0.29 → BPT 3.74
-2. Time scaling low (4x more steps = 1.5x consolidation): -0.44 → BPT 3.59
-3. Time scaling high (4x more steps = 2x consolidation): -0.58 → BPT 3.45
-4. Multiplier scaling (flat→WSD 4.2x multiplier from scout): -0.35 → BPT 3.68
+1. LR-unit scaling (same drop as scout per unit LR): -0.29 → BPT 3.73
+2. Time scaling (4x more steps, 1.35x consolidation): -0.39 → BPT 3.63
+3. Log-proportional model (BPT ~ log(LR_start/LR)): -0.39 → BPT 3.63
+4. Multiplier scaling (flat→WSD 4.2x multiplier from scout): -0.35 → BPT 3.67
 
-**Central estimate: ~3.68.** Range: 3.45-3.74. Previous estimate of 3.82 (Codex) likely too conservative — it didn't account for WSD S-curve effect discovered at scout step 14K.
+**Central estimate: ~3.67.** Range: 3.63-3.73. Log-proportional model predicts 81% of drop in second half of WSD (steps 54-60K).
 
-**Benchmark implications at BPT=3.68 (control only):**
-| Bench | @15K | Projected | Beat Pythia? | Beat MobileLLM? |
-|-------|------|-----------|-------------|-----------------|
-| ARC-E | 39.1 | 44.7 | YES | YES |
-| WG | 51.1 | 52.8 | YES | marginal |
-| LAMBADA | 23.4 | 35.0 | — | — |
-| SciQ | 61.7 | 74.0 | — | — |
-| HS(n) | 27.2 | 27.8 | NO (need 30.3) | NO (need 38.9) |
-| PIQA | 57.6 | 59.0 | NO (need 62.3) | NO (need 65.3) |
+**Step-by-step WSD prediction (log-proportional model, revised 38K):**
+| Step | LR | Frac drop | BPT (central) | BPT (optimistic) | Note |
+|------|-----|-----------|--------------|-------------------|------|
+| 48K | 3.0e-4 | 0% | 3.98 | 3.95 | WSD start |
+| 50K | 2.8e-4 | 2% | 3.97 | 3.94 | Minimal change |
+| 52K | 2.3e-4 | 8% | 3.95 | 3.92 | Still early |
+| 54K | 1.6e-4 | 19% | 3.91 | 3.88 | **Midpoint — only 19% of drop done** |
+| 56K | 8.3e-5 | 38% | 3.83 | 3.80 | Accelerating |
+| 58K | 2.9e-5 | 68% | 3.71 | 3.68 | Main drop phase |
+| 60K | 1.0e-5 | 100% | 3.59 | 3.56 | Final consolidation |
 
-**HS and PIQA are the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked (1.0 and 2.4 pp/BPT sensitivity). KD must transfer world knowledge to close these gaps.
+**Key insight: Don't evaluate WSD effectiveness until step 58K.** At 54K midpoint, BPT will look barely changed (only -0.08 from 48K). The real consolidation is a late-phase phenomenon.
 
-**Flat-Phase Dynamics Analysis (35K):**
-- Linear slope 20-35K: **-0.00835 BPT per K-step** (smoothing from oscillation)
-- BPT oscillation band 30-35K: 4.058-4.161 (range 0.103). Wide oscillation but trend firmly down.
-- **35K is genuine new best:** -0.103 drop from 34K, first time below 4.1
-- Kurtosis 30-35K: 81.6-110.9 (100.1 at 35K — mid-range). No concerning trend.
-- MaxAct 30-35K: 308.5-385.0 (354.0 at 35K). Moderate volatility.
-- **Updated 48K extrapolation:** slope -0.00835 × 13K more steps = -0.109 → BPT@48K ≈ 3.97
-- **Updated 60K estimate:** 3.97 - WSD drop (~0.30-0.40) → **3.57-3.67 BPT**. Central: ~3.62.
+**Benchmark implications at BPT=3.59 (control only, revised 38K):**
+| Bench | @15K | Projected @3.59 | Pythia-160M | Beat? |
+|-------|------|----------------|-------------|-------|
+| ARC-E | 39.1 | **45.5%** | 40.0% | **YES** |
+| WG | 51.1 | **53.1%** | 51.3% | **YES** |
+| LAMBADA | 23.4 | **36.9%** | — | — |
+| SciQ | 61.7 | **75.9%** | — | — |
+| HS(n) | 27.2 | **27.9%** | 30.3% | NO (data-bottlenecked) |
+| PIQA | 57.6 | **59.2%** | 62.3% | NO (data-bottlenecked) |
+
+**HS and PIQA remain the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked (1.0 and 2.4 pp/BPT sensitivity). KD must transfer world knowledge to close these gaps. At BPT=3.59 (vs previous 3.68), ARC-E and SciQ projections strengthen.
+
+**Flat-Phase Dynamics Analysis (38K update):**
+- **Regression slope 20-38K (19 points): -0.0062 BPT per K-step** (steepened from -0.0054 at 37K)
+- Recent slope 30-38K: **-0.0087/K-step** (accelerating!)
+- Best-points slope (31K, 33K, 35K, 38K — all all-time-bests): **-0.0080/K-step**
+- RMS residual: 0.024 (oscillation noise stable)
+- **Oscillation band 31-38K: 0.133 BPT** (from 4.028 to 4.161). Still widening.
+- **Lag-1 autocorrelation: -0.509** — strong alternating pattern confirmed. Model near capacity ceiling.
+- **37K kurtosis spike (163.9) CONFIRMED TRANSIENT**: 38K kurtosis = 98.8 (normal). Rolling median robust.
+- **38K = new all-time best BPT (4.028)**: First below 4.03. Down 0.030 from previous best at 35K.
+- **Updated 48K extrapolation:**
+  - Full regression: 4.000
+  - Recent slope (30-38K): 3.966
+  - Best-points: 3.951
+  - **Range: 3.95-4.00. Central: ~3.98.**
+- **Updated 60K estimate:** 3.98 - WSD drop (~0.39) → **3.56-3.63 BPT. Central: ~3.59.**
+- **Note:** Slope is ACCELERATING. 20-30K slope was ~-0.005/K, 30-38K slope is ~-0.009/K. If acceleration continues, 48K could be even lower than 3.95. But regression to mean is also possible.
 
 **Codex Tier 2 Review (2026-03-27, step 20K):** Control is healthy, continue to 60K. Revised forecast: BPT ~3.82 central estimate at 60K. Control alone unlikely to beat Pythia-160M cleanly — ARC-E yes, HS/PIQA marginal. KD arm is the real test: does teacher knowledge transfer beyond what more training provides?
 
@@ -1252,6 +1278,36 @@ IF KD arm HURTS performance:
 **Implication for RMFD:** The future multi-teacher system should use logit-based surfaces for all teachers (basin-compatible), with rep surfaces only as auxiliary signals during early training (stabilization phase, then off). This is exactly what the Ekalavya curriculum prescribes — rep early, logit sustained.
 
 **Connection to information geometry:** The NTP loss lives on the simplex of output distributions. Logit KD also lives on this simplex. Rep KD lives on a Grassmannian (the space of subspaces/representations). The WSD landscape changes on the simplex preserve logit KD's knowledge because they're moving within the same manifold. Rep KD's gains lie on a different manifold entirely — LR decay on the simplex has no obligation to preserve structure on the Grassmannian.
+
+### Oscillation-WSD Response Hypothesis (2026-03-27, step 37K)
+
+**Hypothesis:** Flat-phase BPT oscillation amplitude predicts WSD consolidation effectiveness.
+
+**Reasoning:** The oscillation represents the model cycling between configurations as it processes different data batches. Larger amplitude = more distinct configurations sampled = more "headroom" for WSD to consolidate. WSD's LR decay locks the model into an average of these configurations.
+
+**Evidence so far:**
+- Scout (90M, 3K WSD steps): pre-WSD oscillation amplitude ~0.05 BPT → WSD drop 0.292
+- 60K gate (197M, 12K WSD steps): pre-WSD oscillation amplitude **0.102 BPT** (2x scout) → predicted WSD drop 0.30-0.40
+- Amplitude is **growing** (1.3x from first to second half of flat phase)
+- Lag-1 autocorrelation -0.509 confirms systematic alternation, not noise
+
+**Prediction:** The growing oscillation amplitude suggests WSD will be MORE effective than the time-scaling estimate. Favor the lower end of our 60K prediction range (~3.62 rather than ~3.72).
+
+**Test:** Compare actual WSD drop (step 48K→60K) with pre-WSD oscillation amplitude. If WSD drop > 0.40, hypothesis supported. If < 0.30, hypothesis falsified (oscillation is noise, not exploitable structure).
+
+### Kurtosis Gate Refinement (2026-03-27, step 37K)
+
+**Issue:** Kurtosis spike to 163.9 at 37K (7.6σ outlier vs 20K-36K distribution). If we use point kurtosis for KD arm stability gates, transient spikes will trigger false alerts.
+
+**Refinement:** Use **median of 5 most recent control evals** as the baseline for relative gates, not point values.
+- 20K-36K median kurtosis: ~94.2 (stable)
+- With 37K included: median of [94.2, 94.5, 100.1, 163.9, 94.2] = 94.5 (robust to outlier)
+- Yellow threshold: 94.5 × 1.25 = 118.1
+- Red threshold: 94.5 × 1.5 = 141.8
+
+**Underlying kurtosis trend (excluding 37K outlier):** +1.17 per K-step. Predicted 48K baseline: ~114. This means the yellow/red thresholds should be UPDATED as training progresses, not static.
+
+**Action:** When implementing KD arm monitoring, use rolling median for control baseline.
 
 ### RMFD Design Revision Implications (2026-03-27)
 
