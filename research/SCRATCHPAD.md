@@ -537,7 +537,8 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 11000 | **4.512** | — | — | **ACTUAL.** Regression (+0.092). Eval noise — confirmed at 12K (4.374). |
 | 12000 | **4.374** | 4.31-4.40 | -0.06 to +0.03 | **ACTUAL.** WSD decay starts. Named checkpoint saved. α→0 for KD arm. |
 | 13000 | **4.284** | 4.22-4.31 | -0.06 to +0.03 | **ACTUAL.** 33% WSD. -0.090/1K. Kurtosis spike 257.7 (TRANSIENT). |
-| 15000 | ~4.08-4.15 | 3.99-4.17 | ≤-0.015 (PROOF) | **RE-REVISED (post 13K).** WSD delivering -0.090/1K, decelerating. |
+| 14000 | **4.1314** | 4.07-4.15 | -0.06 to +0.02 | **ACTUAL.** 67% WSD. -0.152/1K (ACCELERATING! 1.69× the 12-13K rate). Kurtosis 442.8 (periodic spike). |
+| 15000 | **4.0820** | ≤4.067 | ≤-0.015 (PROOF) | **ACTUAL. CONTROL COMPLETE.** KD arm STARTED. KD needs ≤4.067 at 15K for proof. |
 
 **Scenarios and Decision Tree:**
 
@@ -595,8 +596,9 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 4. **Max_act: 124.0.** Down from 133.7 at step 10K. Mild. No concern.
 5. **WSD DECAY DELIVERING.** Step 12K→13K: -0.090 BPT (vs -0.023/1K at flat LR). That's 4× improvement rate. LR at 13K: 2.03e-4 (33% through decay). WSD providing massive consolidation as expected.
 6. **Step 13K kurtosis spike (257.7):** Same pattern as steps 6K (41.7) and 9K (227.1). Spikes every ~3K steps, BPT improves simultaneously. Kurtosis_max is pure noise at this scale.
-7. **Revised control@15K: ~4.08-4.15.** Steps 13K-14K: LR 2.03e-4→1.07e-4, ~-0.06 to -0.08 BPT. Steps 14K-15K: LR 1.07e-4→1e-5, ~-0.03 to -0.05 BPT. Total remaining WSD drop: ~0.10-0.13 from 4.284 = **4.08-4.15**.
-8. **Critical: step 12K checkpoint saved.** This is the PIVOTAL reference point for basin compatibility analysis. Both arms receive identical treatment from 12K→15K (pure NTP, decaying LR). Any gap at 15K is determined by where the model sits at 12K.
+7. **Step 14K: BPT=4.1314 (WSD S-CURVE CONFIRMED).** Drop 13K→14K: -0.152 (1.69× the 12K→13K rate of -0.090). Efficiency went from 357 to 981 BPT/LR. The constant-efficiency deceleration model was WRONG — WSD efficiency increases during decay because the optimizer settles into sharper basins at lower LR. Kurtosis 442.8 (periodic spike, 4th in the ~3K cadence).
+8. **Revised control@15K: ~4.03-4.10.** If efficiency stays at 981: drop = -0.057 → 4.074. If efficiency increases: 4.03-4.05. Conservative: 4.09. **Central estimate ~4.07.**
+9. **Critical: step 12K checkpoint saved.** This is the PIVOTAL reference point for basin compatibility analysis. Both arms receive identical treatment from 12K→15K (pure NTP, decaying LR). Any gap at 15K is determined by where the model sits at 12K.
 
 **Implication for KD arm:** The control is stronger than we feared during the step 6K scare. The KD arm's job is harder — it needs to beat a control that is actively improving, not plateaued. But the stop rule at step 6K (non-positive) is relative to control at step 6K, so the bar adjusts dynamically.
 
@@ -611,14 +613,34 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 
 **Revised extrapolation (incorporating step 13K actual: 4.284, WSD delivering):**
 WSD decay active and delivering. Step 12K→13K: -0.090 BPT in 1K steps (4× the flat-LR rate).
-- Step 12K: 4.374 → Step 13K: **4.284 (ACTUAL).** First 1K of WSD: -0.090.
-- Step 14K: ~4.20-4.22 (WSD decelerating as LR approaches mid-range)
-- Step 15K: ~4.06-4.15 (final consolidation, diminishing returns near LR=1e-5)
-- **Total WSD drop: ~0.22-0.31 from 4.374.** First 1K gave -0.090; remaining 2K should give -0.13 to -0.22.
 
-**WSD deceleration pattern:** LR at 13K=2.03e-4 (33%), at 14K≈1.07e-4 (67%), at 15K=1e-5 (100%). Each subsequent 1K of decay produces less improvement as the gradient noise floor approaches.
+**S-curve model (efficiency INCREASES during WSD — confirmed at step 14K):**
+- 12K→13K: avg LR = 2.52e-4 → drop = -0.090 → efficiency = 357 BPT/LR
+- 13K→14K: avg LR = 1.55e-4 → drop = **-0.152 (ACTUAL)** → efficiency = **981 BPT/LR** (2.75× increase!)
+- The constant-efficiency model predicted -0.055 at 14K; actual was -0.152. WSD is an S-curve, not linear.
+- 14K→15K: avg LR = 5.85e-5. If efficiency stays at 981: drop = -0.057 → BPT@15K ≈ 4.074
+- If efficiency continues increasing: drop ≈ -0.08 to -0.10 → BPT@15K ≈ 4.03-4.05
+- Conservative (efficiency reverts toward mean ~670): drop = -0.039 → BPT@15K ≈ 4.09
+- **BPT@15K range: 4.03-4.10.** Central estimate ~4.07.
 
-**The KD arm needs ≤4.05-4.14 (depending on where control lands) for the -0.015 persistence proof.**
+**WSD S-curve dynamics:** The LR decay doesn't just reduce gradient noise — it enables the optimizer to "settle" into a sharper basin. Each subsequent LR reduction is MORE productive per unit LR because the loss landscape curvature is better aligned with the reduced step size. This is the well-known WSD effect: the last 20% of training produces outsized improvements.
+
+**CONTROL FINAL: 4.0820. KD arm needs ≤4.067 for -0.015 persistence proof.**
+
+## KD Arm Tracking (2026-03-27, started after control completion)
+
+**Setup:** Same 5K warm-start, 15K steps. Qwen3-1.7B teacher (92.6% vocab overlap, 3.4GB VRAM). Inverted-U alpha (0.10→0.60→0.10→0.0), rising tau (1.5→3.0), confidence gating ON. VRAM: ~18GB total.
+
+**Stop Rules (from config):**
+- Non-positive by 6K: KD BPT must be < control BPT at step 6K (4.616). **First decisive check.**
+- Evidence by 10K: KD gap ≤ -0.02 vs control (need KD ≤ 4.400)
+- Proof by 15K: KD gap ≤ -0.015 vs control (need KD ≤ 4.067) + lm-eval lift
+- Abort: kurtosis > 2× control or max_act > 1.15× control
+
+**KD Arm Data:**
+| Step | KD BPT | Control BPT | Gap | KD Loss | Alpha | Notes |
+|------|--------|-------------|-----|---------|-------|-------|
+| 50 | 5.4496 | — | — | 0.3349 | 0.19 | First data. Alpha warmup active. |
 
 ## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
 
