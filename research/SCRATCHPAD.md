@@ -531,10 +531,11 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 4000 | **4.632** | — | — | **ACTUAL.** Slower than predicted (expected ~4.59). Plateau onset. |
 | 5000 | **4.612** | 4.55-4.63 | -0.06 to +0.02 | **ACTUAL control.** Was ~4.55 predicted, 0.062 worse. Deceleration confirmed. Kurtosis=10.1. |
 | 6000 | **4.616** | 4.55-4.63 | ≤0 (STOP RULE) | **ACTUAL.** Deep plateau. -0.003 from 5K. Kurtosis SPIKED to 41.7 (see analysis below). |
-| 7500 | ~4.50 | 4.43-4.52 | -0.07 to +0.02 | **RE-REVISED.** Plateau was transient. Control resumed -0.077/1K. |
-| 10000 | ~4.43 | 4.36-4.46 | ≤-0.02 (STOP RULE) | **RE-REVISED (post step 7K).** Plateau was transient. α tapers. |
-| 12000 | ~4.36 | 4.29-4.39 | -0.06 to +0.02 | **RE-REVISED.** Last flat-LR step. α→0. Pure NTP. |
-| 15000 | ~4.05 | 3.98-4.12 | ≤-0.015 (PROOF) | **RE-REVISED.** WSD decay 12K-15K drops ~0.31. lm-eval required. |
+| 7500 | ~4.50 | 4.43-4.52 | -0.07 to +0.02 | **Actual control ~4.52 (interpolated).** |
+| 9000 | **4.442** | 4.38-4.46 | -0.06 to +0.02 | **ACTUAL.** Control improving -0.048/1K avg (7K-9K). Kurtosis 227.1 spike (likely transient). |
+| 10000 | ~4.39 | 4.33-4.42 | ≤-0.02 (STOP RULE) | **RE-REVISED (post step 9K).** -0.048/1K avg continuing. Named checkpoint. |
+| 12000 | ~4.30 | 4.23-4.33 | -0.06 to +0.02 | **RE-REVISED.** Last flat-LR step. α→0. Pure NTP. |
+| 15000 | ~4.00-4.10 | 3.93-4.12 | ≤-0.015 (PROOF) | **RE-REVISED.** WSD decay 12K-15K drops ~0.25-0.35. lm-eval required. |
 
 **Scenarios and Decision Tree:**
 
@@ -575,14 +576,17 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 6000 | 4.616 | +0.003 | 41.7 | 97.8 | Apparent plateau. Kurtosis spike TRANSIENT (see below). |
 | 7000 | 4.538 | -0.077 | 11.0 | 98.7 | Plateau broken. Resumed learning. |
 | 8000 | 4.498 | -0.040 | 17.9 | 105.9 | Decelerating after post-stall spike. Steady progress. |
+| 9000 | 4.442 | -0.056 | 227.1* | 206.6* | Good BPT progress. Kurtosis/max_act SPIKE — likely transient (BPT improving). |
 
-**Learning rate profile:** Steps 1-8K: flat 3e-4. WSD decay starts at step 12K.
+*Step 9K kurtosis/max_act spike: second transient event (cf. step 6K: 41.7→11.0 at 7K). BPT improved -0.056, ruling out training collapse. The `kurtosis_max` metric (single worst layer, 4 eval batches) is inherently high-variance. Wait for step 10K to confirm transience.
+
+**Learning rate profile:** Steps 1-9K: flat 3e-4. WSD decay starts at step 12K.
 
 **Observations:**
-1. **BPT plateau was TRANSIENT (step 5K-6K only).** Improvement per 1K steps: -0.071, -0.144, -0.048, -0.020, +0.003, **-0.077**. Step 7K resumed learning at a rate similar to steps 3K-4K. The "deep plateau" at steps 5K-6K was a TEMPORARY stall, not saturation.
-2. **Kurtosis spike was TRANSIENT.** 3.2→4.0→5.2→7.2→10.1→41.7→**11.0**. The 41.7 at step 6K was an eval batch effect (random test data hit a pathological layer configuration). Step 7K kurtosis is back to the prior trend line (~11 ≈ 10.1 + 1 per 1K steps). **Implication: ignore the step 6K kurtosis anomaly for all predictions.**
-3. **Max_act stable.** 107.4→97.8→98.7. No concerning growth.
-4. **Revised BPT extrapolation:** Learning rate is STILL flat 3e-4. The model found a new gradient direction after the brief stall. Average improvement over steps 3K-7K: -0.035/1K steps. Extrapolation: step 10K ≈ 4.43, step 12K ≈ 4.36, step 15K (after WSD) ≈ 4.00-4.10. This is MUCH closer to the original optimistic predictions.
+1. **BPT plateau was TRANSIENT (step 5K-6K only).** Improvement per 1K steps: -0.071, -0.144, -0.048, -0.020, +0.003, -0.077, -0.040, **-0.056**. Resumed strong learning. Average over steps 7K-9K: -0.048/1K.
+2. **Kurtosis spikes are TRANSIENT.** Two spikes so far: step 6K (41.7→11.0 at 7K) and step 9K (227.1 — pending 10K confirmation). Both occurred while BPT was improving, ruling out training collapse. The `kurtosis_max` metric takes the WORST single layer across 4 eval batches — inherently noisy. Underlying trend (ignoring spikes): 3.2→4.0→5.2→7.2→10.1→11.0→17.9 — roughly 1.5-1.8× per 1K steps.
+3. **Max_act: first co-spike.** Step 6K showed kurtosis spike WITHOUT max_act spike (97.8, down from 107.4). Step 9K shows BOTH spiking (kurtosis 227.1, max_act 206.6). This could indicate a single layer developing extreme activations. Need step 10K to confirm.
+4. **Revised BPT extrapolation (post step 9K):** Average ΔBPT/1K over steps 7K-9K: -0.048. Extrapolation: step 10K ≈ 4.39, step 12K ≈ 4.30, step 15K (after WSD) ≈ 4.00-4.10. Consistent with prior estimates.
 
 **Implication for KD arm:** The control is stronger than we feared during the step 6K scare. The KD arm's job is harder — it needs to beat a control that is actively improving, not plateaued. But the stop rule at step 6K (non-positive) is relative to control at step 6K, so the bar adjusts dynamically.
 
@@ -595,12 +599,11 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 
 **This changes everything about the extrapolation.** The flat-LR phase runs until step 12K. The -0.020/1K deceleration at step 5K is pure diminishing returns on the loss landscape at constant LR. Steps 12K-15K will see a massive BPT drop during WSD decay (as we observed in the 3K ablation).
 
-**Revised extrapolation (incorporating step 7K data — plateau was transient):**
-Average ΔBPT/1K over steps 3K-7K = -0.035. But decelerating. Conservative estimate:
-- Step 7.5K: ~4.52 (-0.018/500)
-- Step 10K: ~4.43 (decelerating to ~-0.030/1K)
-- Step 12K: ~4.36 (-0.035/1K average holds)
-- Step 15K after WSD: ~4.00-4.10 (WSD drop of ~0.26-0.36)
+**Revised extrapolation (incorporating step 9K data):**
+Average ΔBPT/1K over steps 7K-9K = -0.048. Improved from step 8K's -0.040. Estimate:
+- Step 10K: ~4.39 (-0.05/1K)
+- Step 12K: ~4.30 (decelerating to ~-0.045/1K)
+- Step 15K after WSD: ~4.00-4.10 (WSD drop of ~0.25-0.35)
 
 **WSD decay phase (steps 12K-15K):** Based on prior 3K ablation data, WSD decay of similar magnitude (3e-4 → 1e-5) produced ~0.36 BPT drop in the control (4.858→4.498 in 1000 steps). Scaling: 3K steps of decay should give ~0.25-0.40 BPT drop.
 - Step 15K estimate: ~4.15-4.30
@@ -1133,10 +1136,10 @@ If we need to scale from 90M → 166M, the best config is:
 |-------|--------------|---------------|-------|
 | dim | 512 | 704 | √(166/90) × 512 ≈ 695, rounded to 704 (divisible by 64) |
 | n_layers | 24 | 24 | Same depth (enables warm-start widening) |
-| n_heads | 8 | 8 | Keep 8, head_dim 88 (or 11 heads × 64) |
-| head_dim | 64 | 88 | 704/8 = 88 |
+| n_heads | 8 | 11 | 11 heads × 64 = 704. head_dim=64 is GPU-optimal (not 8×88). |
+| head_dim | 64 | 64 | Standard. 88 (704/8) works but non-pow2 hurts GPU throughput. |
 | ff_dim | 1536 | 2112 | 3 × dim |
-| params | 90.2M | 166.2M | 1.84× |
+| params | 90.2M | ~166M | 1.84× |
 | KD ratio | 1:19 (5.3%) | 1:10 (9.8%) | At threshold for effective KD |
 | Train VRAM | ~7GB | ~10GB | Plenty of room for teacher (~2GB) |
 
