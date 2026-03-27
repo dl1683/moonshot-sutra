@@ -115,6 +115,18 @@ First probe with α_total=0.8 showed -0.059 (BETTER). α=1.0 is too aggressive f
 - **15K proof gate:** >0.015 BPT at 15K + at least one lm-eval lift = persistent KD.
 - **Contingency if all surfaces fail:** scale student to 166-200M (Codex says 90M 1:19 ratio is below KD comfort zone).
 
+### New Literature (2025-2026, found during arm 4 monitoring)
+
+**Cross-Tokenizer KD advances:**
+- **Universal Cross-Tokenizer Distillation via Approximate Likelihood Matching** (NeurIPS 2025, arxiv 2503.20083): Principled cross-tokenizer distillation without shared-vocab mapping. Tested at Qwen 7B → Gemma 2B (~3.5:1 ratio). Not tested at extreme ratios.
+- **Cross-Tokenizer Likelihood Scoring** (arxiv 2512.14954): Exploits BPE recursive structure for exact cross-tokenizer KL divergence. +4% on evaluated tasks, 12% memory reduction for Qwen2.5-1.5B. Only moderate ratios tested.
+- **CTPD: Cross-Tokenizer Preference Distillation** (Jan 2026, arxiv 2601.11865): First cross-tokenizer preference distillation. Qwen 7B → Llama 1B (1:7 ratio).
+
+**Alpha scheduling for KD pretraining:**
+- **Pre-training Distillation for LLMs** (ACL 2025 Long, aclanthology 2025.acl-long.181): Uses warmup-stable-decay alpha schedule for KD loss weight. Confirms varying α over training outperforms constant α. No extreme ratios tested.
+
+**Key gap confirmed:** No published work combines (1) inverted-U α, (2) rising τ, (3) confidence gating, at (4) extreme ratios (>1:10) with (5) cross-tokenizer alignment. Our 15K gate is genuinely novel in this combination. The ACL 2025 paper validates the general principle that α scheduling helps, but our specific inverted-U shape with WSD-aligned taper and confidence gating is new.
+
 ### ~~RESOLVED~~: Temperature/Top-K Conflict (see RESEARCH.md §6.4.28)
 
 **RESOLVED by literature synthesis.** T=2.0 is correct for cross-tokenizer KD:
@@ -273,6 +285,55 @@ Derived from §7.2 (Information Geometry) in RESEARCH.md:
 
 **Prediction 3: Kurtosis Divergence.** Rep KD caused 3.67x kurtosis at 3K. Logit KD operates on output distributions, not internal representations — should produce LESS kurtosis divergence than rep KD. If logit-only kurtosis < 2x control → logit KD is a safer signal.
 
+### Orthogonality Analysis: Step 1000 Data (INTERFERENCE CONFIRMED)
+
+**Test at step 1000 (with alpha-corrected linear scaling):**
+- Δ_rep = 4.911 - 4.909 = +0.002 (rep slightly better)
+- Δ_logit = 4.911 - 5.095 = -0.184 (logit much worse)
+- Δ_both_actual = 4.911 - 5.039 = -0.128
+
+**Naive additive (full α):** Δ_both = +0.002 + (-0.184) = -0.182. Actual -0.128 < |-0.182| → LESS bad than additive.
+
+**Alpha-corrected linear (α halved in arm 4):** Expected = 0.5×(+0.002) + 0.5×(-0.184) = -0.091. Actual -0.128 → **41% WORSE than linear prediction** (0.128/0.091 = 1.41).
+
+**Verdict: INTERFERENCE.** The two surfaces compete for the same parameter budget at 1:19 ratio. Adding rep KD to logit KD doesn't help — it actively makes the logit penalty worse by ~41%. The student can barely absorb ONE KD surface at this ratio; asking it to absorb two is destructive.
+
+**Rate-distortion interpretation:** At capacity R (90M params), the student can minimize distortion on ONE KD surface or the NTP loss, but not multiple simultaneously. Adding a second surface splits the gradient between competing objectives, each of which individually fails to converge (logit KD loss never drops; CKA converges but doesn't help BPT). The joint optimization is strictly worse than either alone.
+
+**Implication for 15K gate:** CONFIRMS logit-only (no rep KD). The 15K config already uses logit-only. The question is whether MECHANISM improvements (α schedule, τ schedule, confidence gating) can rescue the logit signal — not whether to combine surfaces.
+
+**Implication for RMFD (future):** Multi-surface KD at extreme ratios needs TEMPORAL separation (one surface at a time), not spatial combination (both surfaces simultaneously). A curriculum approach — rep KD early for stabilization, then switch to logit KD for knowledge transfer — might avoid the interference. This is testable as a future experiment.
+
+**NEW: Interference is EMERGENT (step 500 vs 1000):**
+- Step 500 orthogonality: α-corrected linear prediction = 0.5×(+0.038) + 0.5×(+0.257) = +0.148. Actual = +0.147. **Interference factor: 0.99 — PERFECT ADDITIVITY.**
+- Step 1000 orthogonality: α-corrected linear prediction = 0.5×(-0.002) + 0.5×(+0.184) = +0.091. Actual = +0.128. **Interference factor: 1.41 — 41% WORSE.**
+- Step 1500 orthogonality: α-corrected linear prediction = 0.5×(-0.094) + 0.5×(+0.271) = +0.089. Actual = +0.110. **Interference factor: 1.24 — 24% WORSE (declining from 1.41).**
+- Step 2000 orthogonality: α-corrected linear prediction = 0.5×(-0.130) + 0.5×(+0.272) = +0.071. Actual = +0.152. **Interference factor: 2.14 — MASSIVE SPIKE.**
+- Step 2500 orthogonality: α-corrected linear prediction = 0.5×(+0.004) + 0.5×(+0.327) = +0.166. Actual = +0.210. **Interference factor: 1.26 — WSD reduced IF from 2.14.**
+- Step 3000 orthogonality: α-corrected linear prediction = 0.5×(+0.018) + 0.5×(+0.285) = +0.151. Actual = +0.153. **Interference factor: 1.01 — PERFECT ADDITIVITY restored at low LR.**
+- **Full interference trajectory: 0.99 → 1.41 → 1.24 → 2.14 → 1.26 → 1.01.** Full cycle: additive → interference → plateau spike → WSD mitigation → additivity restored.
+- **Absolute gap trajectory: +0.147 → +0.128 → +0.110 → +0.152 → +0.210 → +0.153.** Peaked during WSD onset (step 2500), then narrowed during deep WSD.
+- **Step 2000 regression:** Arm 4 BPT went from 4.940 (step 1500) to 4.979 (step 2000) — WORSE despite 500 more steps. Control was flat (4.830→4.827). Rep-only improved (-0.039). Only arm 4 regressed.
+- **Step 2500 kurtosis spike:** 4.5 → 5.8 (now ABOVE control's 5.0). Same WSD instability pattern as arm 2.
+- **Step 3000 kurtosis ALARM:** 12.4 — nearly 2.5× control (5.0), 2× logit-only (6.6). Combined surfaces create severe activation concentration during deep WSD despite reasonable BPT. Would likely diverge in longer training.
+- **Arm 4 deep WSD recovery (2500→3000): -0.242 (-4.9%) vs control -0.185 (-4.0%).** Combined arm recovers MORE than control during deep WSD — logit component drives this (matching arm 3 pattern). But the absolute gap of +0.153 means the recovery isn't enough to catch up.
+- **Interpretation:** At step 500, the surfaces operate on nearly disjoint parameter subsets (rep KD pulls shape, logit KD pulls output distribution, minimal overlap). By step 1000, gradient updates have entangled the parameters — both surfaces now modify overlapping weights, creating destructive interference. This is a CAPACITY SATURATION effect: the 90M student has enough "free" capacity at step 500 to accommodate both surfaces, but as training progresses and the model's parameter budget gets committed to specific features, the surfaces start competing for the same weights.
+- **Temporal separation corollary:** If interference grows over time, the optimal strategy is SHORT-DURATION multi-surface exposure: use both surfaces for ~500 steps (while additive), then commit to one surface for the remainder. This is the exact structure of the Ekalavya curriculum (Phase 1: stabilization with rep, Phase 2+: logit-only for knowledge).
+
+**Interference trajectory model (REVISED with step 2000 — prior model FALSIFIED):**
+- Full trajectory: 0.99 (step 500) → 1.41 (step 1000) → 1.24 (step 1500) → **2.14 (step 2000)**
+- **Prior model (declining-interference) was WRONG.** Step 2000 shows interference doubles when training enters plateau.
+- **Revised model: Interference is ANTI-CORRELATED with NTP learning rate.**
+  - Phase 1 (steps 0-500): Fresh parameters, surfaces non-overlapping → additive (IF≈1.0)
+  - Phase 2 (steps 500-1000): Surfaces entangle → initial interference peak (IF≈1.4)
+  - Phase 3 (steps 1000-1500): Partial disentanglement → temporary decline (IF≈1.2)
+  - **Phase 4 (steps 1500-2000): PLATEAU AMPLIFICATION.** Control barely improves (-0.003), NTP gradient signal weakest → KD surfaces dominate gradient, compete freely → interference spikes to 2.14.
+  - Phase 5 prediction (steps 2400-3000, WSD decay): LR drops → ALL gradients weaken equally → interference may persist since it's a ratio, not an absolute magnitude
+- **Key insight:** Interference factor measures RELATIVE gradient competition, not absolute. When NTP signal weakens at plateau, the KD surfaces fill the vacuum and compete with each other. The model can't learn from NTP (plateau) AND can't learn from KD (interference). It regresses.
+- **Revised implication for RMFD:** Multi-surface KD is TOXIC during plateau regions. MUST be paired with alpha scheduling that reduces KD weight when NTP signal weakens. The inverted-U schedule (alpha peaks in high-LR region, zeros during WSD) is even more important than we thought.
+- **Step 2500 prediction:** WSD decay begins at step 2400. Two competing effects: (a) LR drop reduces gradient magnitudes equally → interference ratio unchanged, (b) arm 3 (logit-only) historically shows 23% MORE WSD recovery than control → logit component may benefit. Predict IF drops to ~1.5 (partial WSD mitigation) with BPT 4.83-4.88. Arm 4 BPT still worse than control.
+- **Step 3000 prediction:** WSD nearly complete. LR ~1e-5. All gradients tiny. Arm 3 typically shows dramatic WSD recovery. Predict IF drops to ~1.1-1.3, BPT 4.62-4.70. Arm 4 lands in 4.60-4.75 range (per decision matrix: expected interference row).
+
 ---
 
 ## Student Scaling Contingency (if 90M fails KD) (2026-03-26)
@@ -359,13 +420,19 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
 | Step | Control | Predicted Arm 4 | Predicted Δ | **Actual** | **Actual Δ** | Match? |
 |------|---------|-----------------|-------------|------------|--------------|--------|
 | 500  | 5.021   | 5.10-5.15       | +0.08-0.13  | **5.169**  | **+0.147**   | SLIGHTLY ABOVE — logit penalty worse than halved |
-| 1000 | 4.911   | 4.98-5.02       | +0.07-0.11  |            |              | |
-| 1500 | 4.830   | 4.90-4.95       | +0.07-0.12  |            |              | |
-| 2000 | 4.827   | 4.88-4.94       | +0.05-0.11  |            |              | |
-| 2500 | 4.684   | 4.73-4.78       | +0.05-0.10  |            |              | |
-| 3000 | 4.498   | 4.60-4.75       | +0.10-0.25  |            |              | CRITICAL |
+| 1000 | 4.911   | 4.98-5.02       | +0.07-0.11  | **5.039**  | **+0.128**   | ABOVE — penalty recovery stalled, logit dominates |
+| 1500 | 4.830   | 4.90-4.95       | +0.07-0.12  | **4.940**  | **+0.110**   | ✓ IN RANGE. Interference: 1.24 (declining from 1.41) |
+| 2000 | 4.827   | 4.88-4.94       | +0.05-0.11  | **4.979**  | **+0.152**   | ✗ ABOVE RANGE. Regression! IF=2.14. Plateau amplifies interference. |
+| 2500 | 4.684   | 4.73-4.78       | +0.05-0.10  | **4.893**  | **+0.210**   | ✗ ABOVE RANGE. IF=1.26 (WSD helped IF), but gap widened. Kurtosis 5.8 (above ctrl 5.0). |
+| 3000 | 4.498   | 4.60-4.75       | +0.10-0.25  | **4.651**  | **+0.153**   | ✓ IN RANGE. IF=1.01 (additivity restored at low LR). Kurtosis 12.4 (ALARMING). Decision: logit-only inverted-U at 15K. |
 
 **Arm 4 @500 Analysis:** Actual Δ=+0.147 vs predicted +0.08-0.13. Logit penalty is NOT halved — it's +0.147 vs arm 3's +0.257 at step 500, so ~57% of full logit penalty (predicted ~50%). The rep surface ISN'T fully compensating. However, kurtosis=2.5 is remarkably LOW (control=3.1, arm 2=3.2, arm 3=3.4 at step 500) — the combination is stabilizing activations even if not helping BPT. Max_act=50.4 also healthy. This suggests rep KD IS doing something (stabilization) even though it doesn't translate to BPT benefit. Key question: will stabilization translate to better WSD consolidation?
+
+**Arm 4 @1500 Analysis:** Actual BPT=4.940, Δ=+0.110 vs control 4.830. Predicted range +0.07-0.12 → ✓ WITHIN. Penalty narrowing accelerating: -0.019/500 steps (500→1000) → -0.018/500 steps (1000→1500). Kurtosis=3.9 — LOWER than control (4.9). This is remarkable: the combined arm has HEALTHIER activations than control, despite worse BPT. Max_act=57.1 stable. Orthogonality test: α-corrected linear predicts +0.089, actual +0.110. Interference factor 1.24 (declining from 1.41 at step 1000). **Interpretation:** As training progresses, the surfaces are partially disentangling — the initial entanglement peak has passed. But interference persists above additive (24% excess penalty). The declining trend suggests that by step 2000-2500, interference may approach linear (especially as WSD decay reduces gradient magnitudes).
+
+**Arm 4 @2000 Analysis:** Actual BPT=4.979, Δ=+0.152 vs control 4.827. **REGRESSION from step 1500 (4.940).** This is arm 4 getting WORSE despite 500 more steps. Control was flat (4.830→4.827). Rep-only improved (-0.039). Only arm 4 regressed. Kurtosis 4.5 (up from 3.9), max_act 60.1 (up from 57.1). Orthogonality: α-corrected linear predicts +0.071 (the lowest yet due to rep-only's improving delta), actual +0.152. **IF=2.14 — HIGHEST interference in the entire run.** Prior model (declining IF) was WRONG. Root cause: the training plateau (control barely moved -0.003 over 500 steps) creates a vacuum where NTP gradient signal is weakest, and the two KD surfaces fill this vacuum and compete with each other freely. The model can't learn NTP (plateau) AND can't learn from KD (interference). Net result: regression. **This strongly validates the inverted-U alpha schedule for 15K gate** — alpha must decrease when NTP signal weakens.
+
+**Arm 4 @1000 Analysis:** Actual Δ=+0.128 vs predicted +0.07-0.11. Penalty narrowed only -0.019 in 500 steps. For comparison: arm 2 recovered -0.040 (from +0.038 to -0.002); arm 3 recovered -0.073 (from +0.257 to +0.184, then reversed). Arm 4 is recovering SLOWER than either individual arm. More critically, kurtosis rose from 2.5→3.4 and max_act from 50.4→57.9 — the step-500 stabilization advantage is GONE. This means the rep surface's stabilization effect was transient (first ~500 steps only). The combined arm now tracks as a ~50% amplitude version of arm 3's logit penalty, with the rep surface contributing almost nothing beyond initial stabilization. **Prediction revision for 1500:** penalty will plateau like arm 3 did, probably in range +0.10 to +0.15. The rep surface won't produce the crossover (arm 2's -0.094 at 1500) because the logit penalty dominates.
 
 **Decision matrix (REVISED with actual arms 1-3 data):**
 | Arm 4 BPT@3K | vs Control | vs Arm 2 (4.516) | vs Arm 3 (4.783) | Interpretation | 15K Action |
@@ -429,6 +496,19 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 - KD loss should DECREASE during peak zone (student absorbing knowledge)
 - If inverted-U STILL shows penalty → the issue is ratio, not schedule. Next: try Qwen3-0.6B (1:7)
 
+**WSD consolidation rates (deep WSD: steps 2500-3000, all arms):**
+- Control: 4.684 → 4.498 = -0.185 (3.97%) — baseline consolidation
+- Arm 2 (rep): 4.688 → 4.516 = -0.172 (3.67%) — LESS consolidation (rep features resist NTP reconsolidation)
+- Arm 3 (logit): 5.011 → 4.783 = -0.228 (4.55%) — MORE consolidation, **23% better than control**
+- **Key: logit KD recovers 23% MORE during deep WSD than control.** The flat-α=1.0 penalty is NOT permanent feature corruption — it's gradient competition during constant-LR that WSD partially undoes. This means the 15K gate's clean WSD window (α=0 during decay) should recover even more of the penalty.
+- **Arm 2 pre-WSD stagnation (steps 2000→2500):** Control improved -0.144, rep improved only -0.010. **15× consolidation gap.** Rep KD's mid-training advantage evaporates immediately when training dynamics shift.
+
+**Critical asymmetry in arm 2 vs arm 3 during WSD decay:**
+- **Arm 2 (rep-only):** LOST advantage during WSD. BPT went from -0.130 (step 2000) to +0.018 (step 3000). Rep KD's benefit EVAPORATED during consolidation.
+- **Arm 3 (logit-only):** RECOVERED during WSD. BPT went from +0.327 (step 2500) to +0.285 (step 3000). Logit KD's penalty SHRANK during consolidation.
+- **Interpretation:** Rep KD creates basin structure that conflicts with NTP's optimal basin (α on different surface). Logit KD adds knowledge that's COMPATIBLE with NTP consolidation (same surface — output distribution). WSD decay exposes this: it drives the model toward the NTP-optimal basin, which destroys rep alignment but preserves logit knowledge.
+- **The inverted-U schedule EXPLOITS this asymmetry:** High α during peak transfers maximum logit knowledge; zero α during decay allows clean NTP consolidation that PRESERVES the transferred knowledge. If we used rep KD instead, the WSD decay would destroy whatever was gained.
+
 **Literature support:**
 - CTKD (AAAI 2023): constant T is suboptimal. Temperature should INCREASE as student progresses. Validates rising α/τ.
 - POCL (June 2025): rising τ at 15x ratio (our exact setup). Staged exposure improves convergence significantly.
@@ -436,6 +516,34 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 - **Our TAPER during WSD decay is NOVEL.** No paper we found tapers α alongside LR decay. This is our contribution from the basin compatibility finding.
 
 **Implementation cost:** TRIVIAL using phased training mode. 4 phases, each with different alpha.
+
+### Pre-Registered Predictions for 15K Gate (2026-03-26)
+
+**Config:** Logit-only, α peak=0.60 inverted-U, τ=1.5→3.0, confidence gating ON. From 5K warm-start. Eval every 1K steps.
+
+**15K Gate Checkpoint Predictions:**
+
+| Step | Control BPT (est) | KD Arm Predicted | Predicted Δ | Rationale |
+|------|-------------------|-----------------|-------------|-----------|
+| 1000 | ~4.91 | 4.90-4.93 | -0.01 to +0.02 | α ≈ 0.25 (ramping). Very little KD signal yet. Should track control. |
+| 2000 | ~4.83 | 4.80-4.85 | -0.03 to +0.02 | α approaching peak (0.60). First meaningful KD signal. |
+| 3000 | ~4.73 | 4.68-4.76 | -0.05 to +0.03 | α at peak. KD should be active. This is the FIRST real test. |
+| 5000 | ~4.55 | 4.48-4.58 | -0.07 to +0.03 | Sustained peak α. If KD works, gap should be opening. |
+| 6000 | ~4.48 | 4.40-4.52 | ≤0 (STOP RULE) | **Non-positive required.** If positive → KD mechanism failed. ABORT. |
+| 7500 | ~4.38 | 4.30-4.42 | -0.08 to +0.04 | Still at peak α. Gap should be clear if mechanism works. |
+| 10000 | ~4.25 | 4.18-4.30 | ≤-0.02 (STOP RULE) | **Persistence evidence.** α starts tapering. KD advantage must hold. |
+| 12000 | ~4.15 | 4.10-4.20 | -0.05 to +0.02 | α→0. Entering pure NTP. Advantage should be "baked in." |
+| 15000 | ~4.00 | 3.96-4.02 | ≤-0.015 (PROOF) | **Persistence proof.** Must also show lm-eval lift. |
+
+**Scenarios:**
+1. **Mechanism WORKS (40% probability):** KD arm shows consistent -0.03 to -0.07 advantage from step 3K onward. Gap holds through taper and consolidation. lm-eval shows lift on at least 1 benchmark. This validates inverted-U + rising τ + confidence gating as THE fix for extreme-ratio KD.
+2. **Mechanism HELPS but FADES (30% probability):** KD arm shows -0.01 to -0.03 during peak phase but gap narrows during taper. Final gap ≈ 0 ± 0.01. Mechanism provides training signal but doesn't transfer permanent knowledge. Would suggest KD needs longer peak phase or higher α.
+3. **Mechanism FAILS (30% probability):** KD arm matches or trails control throughout. The 1:19 ratio is fundamentally too extreme for logit KD regardless of scheduling. Next: scale to 166M (1:8.8 ratio).
+
+**Key monitoring signals:**
+- KD loss trajectory: should DECREASE during peak phase (student learning from teacher). If flat → no knowledge transfer.
+- Confidence gating activation: how many tokens get ×1.5 vs ×0.3? If mostly ×0.3 → teacher is mostly uncertain → wrong teacher.
+- Kurtosis during taper: should stay < 2× control (stable consolidation). Spike = basin instability.
 
 ---
 

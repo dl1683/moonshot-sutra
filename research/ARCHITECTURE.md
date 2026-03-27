@@ -102,7 +102,7 @@ PCGrad on three loss buckets: L_base, L_gen, L_aux. Auto-halve KD weights if gra
 | 1. Control | No KD | 4.498 | — | Baseline |
 | 2. Rep-only | CKA+semantic, α=1.0 | 4.516 | +0.018 | HEAD-START ONLY (confirmed 3x) |
 | 3. Logit-only | Cross-tok ETA, T=2.0, α=1.0 | 4.783 | +0.285 | HARMFUL at flat α, 1:19 ratio |
-| 4. Rep+logit | Combined, total α=1.0 | RUNNING | — | Orthogonality test |
+| 4. Rep+logit | Combined, total α=1.0 | 4.651 | +0.153 | INTERFERENCE — IF peaked 2.14 at plateau, kurtosis=12.4. Multi-surface toxic at extreme ratios. |
 
 **Conclusion:** Flat α=1.0 is the mechanism failure, not the surface choice. At 1:19 ratio (5.3% capacity), student cannot absorb teacher signal without α scheduling. Next: inverted-U α schedule at 15K, pending Codex approval.
 

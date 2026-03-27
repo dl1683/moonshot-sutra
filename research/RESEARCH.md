@@ -2546,7 +2546,7 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 | 1. Control | No KD | 4.498 | — | Baseline |
 | 2. Rep-only | CKA+semantic, α=1.0 | 4.516 | +0.018 (worse) | HEAD-START ONLY (3rd confirmation) |
 | 3. Logit-only | Cross-tok ETA, T=2.0, K=64, α=1.0 | 4.783 | +0.285 (MUCH worse) | ACTIVELY HARMFUL at flat α=1.0 |
-| 4. Rep+logit | state=0.3125,sem=0.1875,logit=0.5 | RUNNING | — | Pending |
+| 4. Rep+logit | state=0.3125,sem=0.1875,logit=0.5 | 4.651 | +0.153 (worse) | INTERFERENCE — multi-surface toxic at extreme ratios |
 
 **Key findings:**
 
@@ -2560,7 +2560,7 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 
 **5. Crude heuristic principle (from user).** Making implicit mechanisms explicit, even crudely, yields orders-of-magnitude improvement. Flat α is an implicit "all-or-nothing" choice. Rising α is a crude explicit mechanism that creates a tunable lever. Even a bad schedule should beat flat α=1.0.
 
-**Still open:** Arm 4 tests surface orthogonality (do rep and logit interfere or complement?). Codex strategic review pending for 15K gate design.
+**6. Multi-surface interference at extreme ratios is DYNAMIC, not static.** Interference factor (IF) trajectory across 3000 steps: 0.99→1.41→1.24→2.14→1.26→1.01. Key phases: (a) Step 500: additive (surfaces on disjoint parameters), (b) Step 1000: peak initial interference (surfaces entangled), (c) Step 1500: partial disentanglement, (d) Step 2000: PLATEAU AMPLIFICATION — NTP signal weakest, KD surfaces fill vacuum and compete freely (IF=2.14, arm 4 regresses from 4.940→4.979), (e) Step 2500: WSD decay mitigates (IF=1.26), (f) Step 3000: low LR restores additivity (IF=1.01). Kurtosis trajectory: 2.5→3.4→3.9→4.5→5.8→**12.4** (2.5× control at step 3000). Multi-surface KD creates severe activation instability during consolidation. **Conclusion: multi-surface KD at extreme ratios is toxic. Use temporal separation (one surface at a time) or single surface. Logit-only with inverted-U α confirmed for 15K gate.**
 
 ### 6.4.31 Codex Strategic Review: 15K Gate Design (2026-03-26)
 

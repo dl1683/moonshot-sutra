@@ -1,0 +1,472 @@
+{
+  "probe": "kd_surface_ablation",
+  "config": {
+    "_comment": "Codex-mandated 4-arm surface ablation: control vs rep vs logit vs rep+logit. Total KD weight normalized to 1.0 per arm for fair comparison (tests surface TYPE, not amount).",
+    "name": "kd_surface_ablation",
+    "init_from": "results/checkpoints_probe_pgqa_100m_gate/transformer_24x512_step5000.pt",
+    "total_steps": 3000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 0.0003,
+    "min_lr": 1e-05,
+    "warmup": 200,
+    "eval_every": 500,
+    "seq_len": 512,
+    "n_spans": 16,
+    "logit_temperature": 2.0,
+    "logit_top_k": 64,
+    "variants": [
+      {
+        "tag": "control_ntp_only",
+        "teachers": [],
+        "alpha_state": 0.0,
+        "alpha_semantic": 0.0,
+        "alpha_logit": 0.0
+      },
+      {
+        "tag": "rep_only_cka",
+        "_note": "state:semantic = 5:3 ratio, total=1.0",
+        "teachers": [
+          {
+            "name": "Qwen/Qwen3-1.7B-Base",
+            "surfaces": [
+              "state",
+              "semantic"
+            ]
+          }
+        ],
+        "alpha_state": 0.625,
+        "alpha_semantic": 0.375,
+        "alpha_logit": 0.0
+      },
+      {
+        "tag": "logit_only_eta",
+        "_note": "logit only, total=1.0",
+        "teachers": [
+          {
+            "name": "Qwen/Qwen3-1.7B-Base",
+            "surfaces": [
+              "logit"
+            ]
+          }
+        ],
+        "alpha_state": 0.0,
+        "alpha_semantic": 0.0,
+        "alpha_logit": 1.0
+      },
+      {
+        "tag": "rep_plus_logit",
+        "_note": "rep:logit = 50:50, within rep state:semantic = 5:3, total=1.0",
+        "teachers": [
+          {
+            "name": "Qwen/Qwen3-1.7B-Base",
+            "surfaces": [
+              "state",
+              "semantic",
+              "logit"
+            ]
+          }
+        ],
+        "alpha_state": 0.3125,
+        "alpha_semantic": 0.1875,
+        "alpha_logit": 0.5
+      }
+    ]
+  },
+  "results": {
+    "control_ntp_only": {
+      "params": 90244659,
+      "teachers": [],
+      "alpha_state": 0.0,
+      "alpha_semantic": 0.0,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "control_ntp_only",
+          "bpt": 5.0211,
+          "avg_kurtosis": 0.65,
+          "max_kurtosis": 3.12,
+          "max_activation": 50.45,
+          "teachers": [],
+          "bpt_exit_7": 5.5897,
+          "bpt_exit_15": 5.9255
+        },
+        {
+          "step": 1000,
+          "tag": "control_ntp_only",
+          "bpt": 4.9105,
+          "avg_kurtosis": 0.74,
+          "max_kurtosis": 3.89,
+          "max_activation": 56.0,
+          "teachers": [],
+          "bpt_exit_7": 5.5164,
+          "bpt_exit_15": 5.4789
+        },
+        {
+          "step": 1500,
+          "tag": "control_ntp_only",
+          "bpt": 4.8303,
+          "avg_kurtosis": 0.94,
+          "max_kurtosis": 4.94,
+          "max_activation": 79.86,
+          "teachers": [],
+          "bpt_exit_7": 5.455,
+          "bpt_exit_15": 5.2215
+        },
+        {
+          "step": 2000,
+          "tag": "control_ntp_only",
+          "bpt": 4.8273,
+          "avg_kurtosis": 1.08,
+          "max_kurtosis": 5.36,
+          "max_activation": 81.37,
+          "teachers": [],
+          "bpt_exit_7": 5.432,
+          "bpt_exit_15": 5.1175
+        },
+        {
+          "step": 2500,
+          "tag": "control_ntp_only",
+          "bpt": 4.6838,
+          "avg_kurtosis": 1.25,
+          "max_kurtosis": 5.04,
+          "max_activation": 68.43,
+          "teachers": [],
+          "bpt_exit_7": 5.2606,
+          "bpt_exit_15": 4.9023
+        },
+        {
+          "step": 3000,
+          "tag": "control_ntp_only",
+          "bpt": 4.4984,
+          "avg_kurtosis": 1.41,
+          "max_kurtosis": 5.03,
+          "max_activation": 76.63,
+          "teachers": [],
+          "bpt_exit_7": 5.1251,
+          "bpt_exit_15": 4.7438
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is that it is a form of life.\nThe word \u2018language\u2019 is used to describe the meaning of the word \u2018language\u2019.\nThe word \u2018language\u2019 is used to describe the meaning of the word \u2018language\u2019.\nThe word \u2018language\u2019 is used to describe the meaning of the word"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is a very different one.\nThe world is a different one. The world is a different one. The world is a different one. The world is a different one. The world is a different one. The world is a different one. The world is a different one. The world is a different"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "rep_only_cka": {
+      "params": 90244659,
+      "teachers": [
+        "Qwen/Qwen3-1.7B-Base"
+      ],
+      "alpha_state": 0.625,
+      "alpha_semantic": 0.375,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "rep_only_cka",
+          "bpt": 5.0591,
+          "avg_kurtosis": 0.74,
+          "max_kurtosis": 3.25,
+          "max_activation": 58.61,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.6207,
+          "bpt_exit_15": 5.9588
+        },
+        {
+          "step": 1000,
+          "tag": "rep_only_cka",
+          "bpt": 4.9085,
+          "avg_kurtosis": 0.89,
+          "max_kurtosis": 4.03,
+          "max_activation": 64.39,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.5375,
+          "bpt_exit_15": 5.4654
+        },
+        {
+          "step": 1500,
+          "tag": "rep_only_cka",
+          "bpt": 4.7363,
+          "avg_kurtosis": 1.04,
+          "max_kurtosis": 4.29,
+          "max_activation": 62.87,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.3169,
+          "bpt_exit_15": 5.0999
+        },
+        {
+          "step": 2000,
+          "tag": "rep_only_cka",
+          "bpt": 4.6977,
+          "avg_kurtosis": 0.89,
+          "max_kurtosis": 3.7,
+          "max_activation": 56.21,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.3136,
+          "bpt_exit_15": 4.9931
+        },
+        {
+          "step": 2500,
+          "tag": "rep_only_cka",
+          "bpt": 4.688,
+          "avg_kurtosis": 1.21,
+          "max_kurtosis": 5.56,
+          "max_activation": 70.21,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.2948,
+          "bpt_exit_15": 4.9204
+        },
+        {
+          "step": 3000,
+          "tag": "rep_only_cka",
+          "bpt": 4.5162,
+          "avg_kurtosis": 1.25,
+          "max_kurtosis": 4.52,
+          "max_activation": 60.95,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.1308,
+          "bpt_exit_15": 4.7542
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is that it is not a matter of the nature of the universe.\nThe meaning of life is not a matter of the nature of the universe. It is a matter of the nature of the universe. It is a matter of the nature of the universe. It is a matter of the nature of the universe. It is"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is not only a single one but a single one.\n\nThe world is not a single one, but a single one. The world is not a single one. The world is not a single one. The world is not a single one.\n\nThe world is not a single one. The"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "logit_only_eta": {
+      "params": 90244659,
+      "teachers": [
+        "Qwen/Qwen3-1.7B-Base"
+      ],
+      "alpha_state": 0.0,
+      "alpha_semantic": 0.0,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "logit_only_eta",
+          "bpt": 5.2783,
+          "avg_kurtosis": 0.63,
+          "max_kurtosis": 3.44,
+          "max_activation": 57.62,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.6209,
+          "bpt_exit_15": 6.104
+        },
+        {
+          "step": 1000,
+          "tag": "logit_only_eta",
+          "bpt": 5.0945,
+          "avg_kurtosis": 0.79,
+          "max_kurtosis": 4.3,
+          "max_activation": 54.77,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.4741,
+          "bpt_exit_15": 5.5414
+        },
+        {
+          "step": 1500,
+          "tag": "logit_only_eta",
+          "bpt": 5.1017,
+          "avg_kurtosis": 0.67,
+          "max_kurtosis": 4.11,
+          "max_activation": 59.14,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.4787,
+          "bpt_exit_15": 5.3321
+        },
+        {
+          "step": 2000,
+          "tag": "logit_only_eta",
+          "bpt": 5.0997,
+          "avg_kurtosis": 0.93,
+          "max_kurtosis": 5.28,
+          "max_activation": 69.4,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.5388,
+          "bpt_exit_15": 5.2209
+        },
+        {
+          "step": 2500,
+          "tag": "logit_only_eta",
+          "bpt": 5.0111,
+          "avg_kurtosis": 1.18,
+          "max_kurtosis": 5.37,
+          "max_activation": 77.5,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.3891,
+          "bpt_exit_15": 5.0312
+        },
+        {
+          "step": 3000,
+          "tag": "logit_only_eta",
+          "bpt": 4.783,
+          "avg_kurtosis": 1.36,
+          "max_kurtosis": 6.62,
+          "max_activation": 65.9,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.22,
+          "bpt_exit_15": 4.8293
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is the meaning of the word \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\" or \"life\""
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world is not a mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere mere"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    },
+    "rep_plus_logit": {
+      "params": 90244659,
+      "teachers": [
+        "Qwen/Qwen3-1.7B-Base"
+      ],
+      "alpha_state": 0.3125,
+      "alpha_semantic": 0.1875,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "rep_plus_logit",
+          "bpt": 5.1685,
+          "avg_kurtosis": 0.49,
+          "max_kurtosis": 2.5,
+          "max_activation": 50.41,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.6181,
+          "bpt_exit_15": 5.9939
+        },
+        {
+          "step": 1000,
+          "tag": "rep_plus_logit",
+          "bpt": 5.0391,
+          "avg_kurtosis": 0.71,
+          "max_kurtosis": 3.41,
+          "max_activation": 57.9,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.5459,
+          "bpt_exit_15": 5.5452
+        },
+        {
+          "step": 1500,
+          "tag": "rep_plus_logit",
+          "bpt": 4.9402,
+          "avg_kurtosis": 0.85,
+          "max_kurtosis": 3.93,
+          "max_activation": 57.11,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.4639,
+          "bpt_exit_15": 5.2807
+        },
+        {
+          "step": 2000,
+          "tag": "rep_plus_logit",
+          "bpt": 4.9792,
+          "avg_kurtosis": 1.24,
+          "max_kurtosis": 4.47,
+          "max_activation": 60.12,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.5428,
+          "bpt_exit_15": 5.1658
+        },
+        {
+          "step": 2500,
+          "tag": "rep_plus_logit",
+          "bpt": 4.8934,
+          "avg_kurtosis": 1.08,
+          "max_kurtosis": 5.8,
+          "max_activation": 65.8,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.4061,
+          "bpt_exit_15": 5.0383
+        },
+        {
+          "step": 3000,
+          "tag": "rep_plus_logit",
+          "bpt": 4.6512,
+          "avg_kurtosis": 1.46,
+          "max_kurtosis": 12.4,
+          "max_activation": 64.55,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 5.1944,
+          "bpt_exit_15": 4.8125
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is that it is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a person who is a"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the\nmajority of the city is the most important. The city is\nthe most important city in the world. The city is the most\ndistinctly populated city in the world. The city is the most\ndistinctly populated city in the world. The city is the most\n"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n                                                                "
+        }
+      ]
+    }
+  }
+}
