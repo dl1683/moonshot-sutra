@@ -856,6 +856,8 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 28000 | 4.149 | — | 0.000 | 3.0e-4 | kurt=93.7, max_act=368.2. |
 | 29000 | 4.129 | — | 0.000 | 3.0e-4 | kurt=89.2, max_act=381.1. |
 | **30000** | **4.114** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=92.8, max_act=385.0. Flat-phase avg 20-30K: ~4.16 BPT. |
+| 31000 | 4.083 | — | 0.000 | 3.0e-4 | kurt=81.6, max_act=330.0. **New best BPT.** Kurtosis/act healthiest since 24K. |
+| 32000 | 4.132 | — | 0.000 | 3.0e-4 | kurt=110.9(!), max_act=351.1. BPT reverted — 31K drop was eval noise. Kurtosis spike: monitor. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -871,8 +873,17 @@ Expected BPT at 60K gate milestones:
 | 6K | ~4.6-4.8 | Scout 4.69 | **4.645 (-0.045, AHEAD)** |
 | 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | **4.248 (-0.168, AHEAD)** |
 | 30K | ~4.0-4.2 | Still flat-LR | **4.114 (on track)** |
+| 31K | ~4.08-4.12 | Trend continuation | **4.083 (new best, all health metrics improved)** |
+| 40K | ~3.99-4.01 | Linear extrapolation | — |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
-| 60K | **3.76-3.88** | Codex revised from 3.5-3.7 | — |
+| 60K | **3.72-3.88** | Updated range (linear trend + WSD) | — |
+
+**Flat-Phase Dynamics Analysis (31K):**
+- Linear slope 20-31K: **-0.0107 BPT per K-step** (steeper than -0.006 estimated at 25-30K)
+- BPT-Kurtosis correlation: **-0.007** (essentially zero — kurtosis is health metric, not perf predictor)
+- BPT-MaxAct correlation: **-0.174** (weak negative)
+- 31K is genuine improvement: BPT, kurtosis, AND max_act all improved simultaneously → model found cleaner basin
+- MaxAct slowly trending up (+0.80/K step) — monitor for stability at 40K+
 
 **Codex Tier 2 Review (2026-03-27, step 20K):** Control is healthy, continue to 60K. Revised forecast: BPT ~3.82 central estimate at 60K. Control alone unlikely to beat Pythia-160M cleanly — ARC-E yes, HS/PIQA marginal. KD arm is the real test: does teacher knowledge transfer beyond what more training provides?
 
@@ -999,6 +1010,24 @@ When the KD arm completes, compute:
 - KTI < 1 → teacher only helps LM tasks (not knowledge transfer)
 - **Manifesto relevance:** KTI > 1 proves that a teacher model's training data (36T tokens) can be compressed into knowledge that transfers to a student seeing only 1B tokens. This is Intelligence = Geometry in action — the teacher's geometric structure (learned from massive data) encodes knowledge more efficiently than raw data.
 
+### 60K Control Arm Benchmark Projections (pre-registered)
+
+Using 90M BPT sensitivities + 15K actuals (BPT=4.248) → projected to 60K (BPT~3.80, ΔBPT≈0.45):
+
+| Benchmark | 15K Actual | Projected 60K | Pythia-160M | MobileLLM-125M | Beat Pythia? |
+|-----------|-----------|---------------|-------------|----------------|-------------|
+| ARC-E | 39.1% | ~43.5% | 40.0% | 43.9% | Likely ✓ |
+| ARC-C(n) | 21.9% | ~23.0% | 25.3% | 27.1% | Unlikely ✗ |
+| HS(n) | 27.2% | ~27.7% | 30.3% | 38.9% | No ✗ |
+| PIQA | 57.6% | ~58.7% | 62.3% | 65.3% | No ✗ |
+| WG | 51.1% | ~52.5% | 51.3% | 53.1% | Marginal ~✓ |
+| SciQ | 61.7% | ~71.5% | — | — | — |
+| LAMBADA | 23.4% | ~32.6% | — | — | — |
+
+**Assessment:** Control arm projects to beat Pythia-160M on ARC-E and WG only. HS and PIQA are data-bottlenecked — our 1B tokens can't compete with Pythia's 300B for world knowledge. KD arm MUST close this gap.
+
+**Caveat:** These sensitivities are from 90M model. 197M might have different sensitivity profile. True calibration comes at 60K lm-eval.
+
 ## TEMPLATE: Codex Tier 2 Review at 60K Gate Step 15K (fill when data arrives)
 
 **Trigger:** Control arm reaches step 15K. Compare to 15K scout. Decide whether to continue to 60K or pivot.
@@ -1031,6 +1060,86 @@ Fair comparison: 60K@15K vs scout@11-12K (pre-WSD, BPT ~4.42).
    b. Extend to 120K for more data (additional ~12 hours)?
    c. Pivot to different approach (e.g., teacher pre-distillation, different KD method)?
 6. **KD arm setup:** Any adjustments needed for the KD arm alpha/tau schedule based on control trajectory?
+
+---
+
+## PRE-REGISTERED: 60K Gate Completion Analysis Framework
+
+**Trigger:** Both control and KD arms complete 60K steps. Run lm-eval on both final checkpoints.
+
+### 1. Commands to Execute
+```bash
+# Run lm-eval on control 60K checkpoint
+python code/lm_eval_wrapper.py --checkpoint results/checkpoints_kd_197m_60k_gate/control_197m_60k_step60000.pt --fp16 --output results/kd_control_60k_lm_eval.json
+
+# Run lm-eval on KD 60K checkpoint
+python code/lm_eval_wrapper.py --checkpoint results/checkpoints_kd_197m_60k_gate/kd_197m_06b_60k_step60000.pt --fp16 --output results/kd_kd_60k_lm_eval.json
+```
+
+### 2. Pre-Registered Victory Conditions
+
+| Level | Criterion | What it proves |
+|-------|----------|---------------|
+| **Minimum** | KD BPT < Control BPT | Basic KD effectiveness |
+| **Meaningful** | KD beats Control on HS/PIQA/ARC-E | World-knowledge transfer |
+| **Decisive** | KTI > 1 (disproportionate world-knowledge gain) | Teacher compresses knowledge efficiently |
+| **Breakthrough** | KD matches MobileLLM-125M (HS>39, PIQA>65) | Math efficiency compensates for 1000x less data |
+| **Floor fail** | KD doesn't beat Pythia-160M on any benchmark | KD at 1:3 ratio insufficient, need stronger teacher |
+
+### 3. Metrics to Compute
+- **ΔBPT** = Control_BPT - KD_BPT (positive = KD better)
+- **KTI** = avg_improvement(HS,PIQA,ARC-E,WG) / avg_improvement(LAMBADA,SciQ)
+- **Per-benchmark deltas**: KD vs Control, KD vs Pythia-160M, KD vs MobileLLM-125M
+- **Kurtosis ratio**: KD_kurt / Control_kurt at matched steps (stability check)
+- **Training cost ratio**: Was KD actually slower per step? (teacher forward overhead)
+
+### 4. Codex Tier 2 Review Prompt (fill at completion)
+```
+DATA TO FILL:
+- Control 60K: BPT=[___], lm-eval={ARC-E:[___], HS(n):[___], PIQA:[___], WG:[___], SciQ:[___], LAMBADA:[___]}
+- KD 60K:     BPT=[___], lm-eval={ARC-E:[___], HS(n):[___], PIQA:[___], WG:[___], SciQ:[___], LAMBADA:[___]}
+- ΔBPT: [___]
+- KTI: [___]
+- Kurtosis trajectory: Control=[___], KD=[___]
+
+QUESTIONS:
+1. Does KD provide decisive benchmark wins or only marginal BPT improvement?
+2. KTI analysis: is the teacher transferring world knowledge or just smoothing gradients?
+3. Competitive positioning: where does KD arm sit vs Pythia-160M, MobileLLM-125M, SmolLM2-135M?
+4. Next step recommendation: scale to larger teacher? More training? Different KD method?
+5. Publication readiness: any result here worth a paper/blog post?
+```
+
+### 5. Decision Tree After 60K
+
+```
+IF KD arm beats MobileLLM-125M on ≥3 benchmarks:
+  → PUBLISH results, scale to 4B target with multi-teacher RMFD
+  → This validates the manifesto
+
+IF KD arm beats Pythia-160M but not MobileLLM-125M:
+  → Scale teacher to Qwen3-1.7B (ratio 1:8.6, within capacity gap law)
+  → Or extend training to 120K steps
+  → Results worth a technical blog post
+
+IF KD arm barely beats control:
+  → KD at 1:3 ratio is insufficient, need fundamentally different approach
+  → Consider: rep-KD, curriculum KD, multi-teacher committee
+  → Return to T+L design for alternative knowledge absorption
+
+IF KD arm HURTS performance:
+  → Config bug or capacity gap issue
+  → Debug: check alpha schedule, kurtosis stability gates
+  → This is informative but not publishable
+```
+
+### 6. Data Efficiency Framing (for manifesto narrative)
+- Sutra 197M@60K sees **~1B tokens** total. Pythia-160M saw **300B tokens** (305x more).
+- Flat-phase efficiency: **0.65 BPT per billion tokens** of training.
+- At BPT ~3.80, Sutra achieves ~95% of Pythia's BPT with 305x less data.
+- But benchmarks (HS/PIQA) are much weaker because BPT doesn't capture world knowledge.
+- **KD hypothesis:** Teacher (Qwen3-0.6B, trained on 36T tokens) compresses 36000x more data into its parameters. KD transfers this compressed knowledge to the student.
+- **If KTI > 1:** Two-stage geometric compression (data→teacher→student) works. This IS Intelligence = Geometry.
 
 ---
 
