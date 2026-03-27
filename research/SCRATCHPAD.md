@@ -863,7 +863,8 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | **35000** | **4.058** | — | 0.000 | 3.0e-4 | kurt=100.1, max_act=354.0. **NEW ALL-TIME BEST.** First below 4.1! Drop -0.103 from 34K. |
 | 36000 | 4.068 | — | 0.000 | 3.0e-4 | kurt=94.2, max_act=344.6. Mild reversion (+0.010 from 35K). Healthy. |
 | 37000 | 4.072 | — | 0.000 | 3.0e-4 | **kurt=163.9(!!)**, max_act=321.8. BPT flat. **Kurtosis spike: 1.74x recent avg.** Max_act normal — transient. |
-| **38000** | **4.028** | — | 0.000 | 3.0e-4 | kurt=98.8, max_act=362.4. **NEW ALL-TIME BEST.** First below 4.03! Kurtosis returned to normal (37K spike confirmed transient). |
+| **38000** | **4.028** | — | 0.000 | 3.0e-4 | kurt=98.8, max_act=362.4. **NEW ALL-TIME BEST.** First below 4.03! Kurtosis returned to normal. |
+| 39000 | 4.038 | — | 0.000 | 3.0e-4 | **kurt=1007.4(!!!)**, max_act=374.8. BPT mild reversion (normal oscillation). **Kurtosis EXPLOSION: 11x avg.** Max_act normal — outlier features forming, not runaway activation. Second spike in 3 evals. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -884,6 +885,7 @@ Expected BPT at 60K gate milestones:
 | 35K | ~4.05-4.10 | Trend continuation | **4.058 (new all-time best, first below 4.1!)** |
 | 37K | ~4.04-4.08 | Trend continuation | **4.072 (on trend, kurtosis spike 163.9 = transient)** |
 | 38K | ~4.03-4.07 | Trend continuation | **4.028 (NEW ALL-TIME BEST, first below 4.03!)** |
+| 39K | ~4.02-4.06 | Trend continuation | **4.038 (normal BPT, but kurtosis 1007.4!!)** |
 | 40K | ~3.97-4.03 | Linear extrapolation | — |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
 | 60K | **3.63-3.73** | Revised: multi-method WSD modeling (see below) | — |
@@ -1003,6 +1005,8 @@ Launch command: `python code/dense_baseline.py --kd-train code/kd_197m_60k_gate.
 - **Implication:** KD should help most with general language patterns, commonsense (HS, PIQA), and factual text. Numeric/quantitative tasks (parts of ARC, SciQ) may get less KD benefit.
 
 **Key insight from prior 90M experiments:** Rep-KD was a head-start only (gap converged to -0.008 at step 3000). Logit KD operates on the SAME mathematical object as NTP (probability simplex) — this is "basin-compatible" and should provide persistent benefit, not just transient acceleration. The 60K gate tests this hypothesis directly.
+
+**Information-theoretic KD budget (38K analysis):** At alpha=0.40, 60K steps, 1B tokens, 93% cross-tokenizer overlap: effective KD info ~0.1 GB = 0.1x teacher model size. KD is a **10:1 compression** — the student sees only the teacher's response to OUR data, not its full knowledge. Whether this 10% encodes world knowledge (KTI > 1) or surface patterns (KTI <= 1) is the central question. If KTI > 1: structured geometric information from teacher > raw data at 10:1 ratio. This IS Intelligence = Geometry.
 
 **Pre-registered success criteria:**
 - **Minimum viable signal:** KD arm BPT < control BPT by >= 0.05 at step 15K AND at step 60K
@@ -1295,19 +1299,40 @@ IF KD arm HURTS performance:
 
 **Test:** Compare actual WSD drop (step 48K→60K) with pre-WSD oscillation amplitude. If WSD drop > 0.40, hypothesis supported. If < 0.30, hypothesis falsified (oscillation is noise, not exploitable structure).
 
-### Kurtosis Gate Refinement (2026-03-27, step 37K)
+### Kurtosis Spike Analysis (2026-03-27, steps 37K-39K)
 
-**Issue:** Kurtosis spike to 163.9 at 37K (7.6σ outlier vs 20K-36K distribution). If we use point kurtosis for KD arm stability gates, transient spikes will trigger false alerts.
+**Timeline:**
+| Step | Kurtosis | Max Act | Note |
+|------|----------|---------|------|
+| 35K | 100.1 | 354.0 | Normal |
+| 36K | 94.2 | 344.6 | Normal |
+| 37K | **163.9** | 321.8 | Spike #1 (1.8x avg) |
+| 38K | 98.8 | 362.4 | Resolution |
+| 39K | **1007.4** | 374.8 | Spike #2 (11x avg!) |
 
-**Refinement:** Use **median of 5 most recent control evals** as the baseline for relative gates, not point values.
-- 20K-36K median kurtosis: ~94.2 (stable)
-- With 37K included: median of [94.2, 94.5, 100.1, 163.9, 94.2] = 94.5 (robust to outlier)
-- Yellow threshold: 94.5 × 1.25 = 118.1
-- Red threshold: 94.5 × 1.5 = 141.8
+**Pattern:** Not transient noise — spikes are INCREASING (163→1007, 6x growth). Max_act is normal throughout — this is distribution shape, not magnitude.
 
-**Underlying kurtosis trend (excluding 37K outlier):** +1.17 per K-step. Predicted 48K baseline: ~114. This means the yellow/red thresholds should be UPDATED as training progresses, not static.
+**Diagnosis: Emerging outlier features.** Classic LLM.int8() pattern (Dettmers et al.): specific hidden dimensions develop extreme-valued activations while most dimensions remain small. The "outlier" dimensions are probably in later layers (layers 20-24) and carry global context information.
 
-**Action:** When implementing KD arm monitoring, use rolling median for control baseline.
+**Risk assessment:**
+- Training stability: **LOW risk** — BPT is healthy (4.028-4.038), optimizer handles outliers
+- WSD consolidation: **MEDIUM risk** — outlier features interact with LR decay; if the outlier dimensions are load-bearing, WSD must preserve them
+- Quantization: **HIGH risk** — outlier features break INT4/INT8 dynamic range
+- KD arm stability gates: **REDESIGN NEEDED** — original gates (1.25x/1.5x control) are meaningless if control kurtosis swings 90→1007
+
+**Gate redesign for KD arm:**
+- Instead of relative to control kurtosis (which is unstable), use **absolute thresholds**:
+  - Green: kurtosis < 200 (normal for 197M at this training stage)
+  - Yellow: 200-500 (elevated, investigate if persistent)
+  - Red: > 500 (severe outlier features, check per-layer kurtosis)
+- AND: monitor kurtosis VARIANCE (std of last 5 evals). If variance > 100, the model is unstable regardless of mean.
+- **Track per-layer kurtosis at eval checkpoints** to identify which layer(s) are developing outliers.
+
+**40K eval is critical:** If kurtosis returns to ~100 (like 38K did after 37K), this is intermittent and manageable. If kurtosis stays >200, we have a persistent issue that may affect WSD effectiveness.
+
+**Historical context:** The 32K spike to 110.9 resolved immediately. The 37K spike to 163.9 resolved at 38K (98.8). But 39K spiked to 1007.4 — much larger. If 40K resolves, the pattern is: increasingly severe transient spikes that always resolve, suggesting the model is near a phase transition boundary and occasionally crossing it during eval.
+
+**Methodological caveat:** `kurtosis_max` = MAX across 24 layers, computed from only 40K subsampled activations (4 batches × 10K subsample). This makes the estimate inherently noisy at the tails. A few extreme activations in the random subsample can inflate kurtosis enormously. The 1007.4 is likely ONE layer with a noisy subsample, not a systemic issue. **BPT is the primary health metric, and it's stable.** Kurtosis is a secondary signal for quantization readiness and long-term stability, not an immediate training concern.
 
 ### RMFD Design Revision Implications (2026-03-27)
 
