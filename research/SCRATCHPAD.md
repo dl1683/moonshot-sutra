@@ -860,6 +860,7 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 32000 | 4.132 | — | 0.000 | 3.0e-4 | kurt=110.9(!), max_act=351.1. BPT reverted — kurtosis spike transient. |
 | 33000 | **4.075** | — | 0.000 | 3.0e-4 | kurt=99.8, max_act=308.5. **New best BPT.** Kurtosis spike resolved. |
 | 34000 | **4.161** | — | 0.000 | 3.0e-4 | kurt=94.5, max_act=336.0. Reversion from 33K best — oscillation continues. |
+| **35000** | **4.058** | — | 0.000 | 3.0e-4 | kurt=100.1, max_act=354.0. **NEW ALL-TIME BEST.** First below 4.1! Drop -0.103 from 34K. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -877,7 +878,8 @@ Expected BPT at 60K gate milestones:
 | 30K | ~4.0-4.2 | Still flat-LR | **4.114 (on track)** |
 | 31K | ~4.08-4.12 | Trend continuation | **4.083 (new best, all health metrics improved)** |
 | 34K | ~4.07-4.11 | Trend continuation | **4.161 (reversion — oscillation)** |
-| 40K | ~3.99-4.01 | Linear extrapolation | — |
+| 35K | ~4.05-4.10 | Trend continuation | **4.058 (new all-time best, first below 4.1!)** |
+| 40K | ~3.97-4.02 | Revised linear (slope -0.0084) | — |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
 | 60K | **3.63-3.73** | Revised: multi-method WSD modeling (see below) | — |
 
@@ -902,13 +904,14 @@ Four independent estimates of WSD drop (steps 48K-60K):
 
 **HS and PIQA are the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked (1.0 and 2.4 pp/BPT sensitivity). KD must transfer world knowledge to close these gaps.
 
-**Flat-Phase Dynamics Analysis (34K):**
-- Linear slope 20-34K: **-0.0097 BPT per K-step** (flattening slightly from -0.0107 at 31K — diminishing returns)
-- BPT oscillation band 30-34K: 4.075-4.161 (range 0.086). Training is noisy but trending down.
-- Kurtosis 30-34K: 81.6-110.9 (settled mid-range at 94.5). No concerning trend.
-- MaxAct 30-34K: 308.5-385.0. Moderate volatility, slowly trending up.
-- **Updated 48K extrapolation:** slope -0.0097 × 14K more steps = -0.136 → BPT@48K ≈ 4.025 (flat-phase end)
-- **Updated 60K estimate:** 4.025 - WSD drop (~0.25-0.35) → **3.68-3.78 BPT**. Central: ~3.73.
+**Flat-Phase Dynamics Analysis (35K):**
+- Linear slope 20-35K: **-0.00835 BPT per K-step** (smoothing from oscillation)
+- BPT oscillation band 30-35K: 4.058-4.161 (range 0.103). Wide oscillation but trend firmly down.
+- **35K is genuine new best:** -0.103 drop from 34K, first time below 4.1
+- Kurtosis 30-35K: 81.6-110.9 (100.1 at 35K — mid-range). No concerning trend.
+- MaxAct 30-35K: 308.5-385.0 (354.0 at 35K). Moderate volatility.
+- **Updated 48K extrapolation:** slope -0.00835 × 13K more steps = -0.109 → BPT@48K ≈ 3.97
+- **Updated 60K estimate:** 3.97 - WSD drop (~0.30-0.40) → **3.57-3.67 BPT**. Central: ~3.62.
 
 **Codex Tier 2 Review (2026-03-27, step 20K):** Control is healthy, continue to 60K. Revised forecast: BPT ~3.82 central estimate at 60K. Control alone unlikely to beat Pythia-160M cleanly — ARC-E yes, HS/PIQA marginal. KD arm is the real test: does teacher knowledge transfer beyond what more training provides?
 
@@ -946,11 +949,32 @@ Launch command: `python code/dense_baseline.py --kd-train code/kd_197m_60k_gate.
 | With alpha scheduling | 3-8% CE | Alpha warmup + decay is the key lever |
 | BPT with scheduling | 0.15-0.36 | Upper bound if scheduling works well |
 
-**Alpha schedule design (from config):**
-- Warmup: 0→0.45 over steps 0-2K (gradual teacher introduction)
-- Hold: 0.45 from 2K-40K (main KD phase, student learns from teacher)
-- Decay: 0.45→0.05 from 40K-48K (teacher fades, student consolidates on NTP)
+**Alpha schedule design (from config, alpha_max revised 0.45→0.40):**
+- Warmup: 0→0.40 over steps 0-2K (gradual teacher introduction)
+- Hold: 0.40 from 2K-40K (main KD phase, student learns from teacher)
+- Decay: 0.40→0.05 from 40K-48K (teacher fades, student consolidates on NTP)
 - Tail: 0.05 from 48K-60K (minimal teacher signal during WSD)
+
+**Pre-registered KD arm gap trajectory (2026-03-27, step 34K):**
+| Step | Alpha | Gap range | Rationale |
+|------|-------|-----------|-----------|
+| 1K | 0.20 | -0.01 to +0.03 | Alpha ramping, minimal signal |
+| 2K | 0.40 | -0.01 to +0.03 | Warmup complete, first real signal |
+| 3K | 0.40 | -0.05 to +0.05 | KD active — this is where 90M failed (+0.273) |
+| 6K | 0.40 | -0.05 to +0.05 | **Key gate:** gap > +0.05 = kill rule |
+| 15K | 0.40 | -0.10 to +0.02 | Main KD absorption phase |
+| 30K | 0.40 | -0.15 to +0.01 | Sustained KD benefit (if working) |
+| 45K | 0.18 | -0.20 to +0.00 | Alpha decaying, max accumulated benefit |
+| 60K | 0.05 | -0.20 to +0.02 | WSD consolidation with minimal teacher |
+
+**Why these are more optimistic than 90M predictions:** Ratio 1:3 (near-optimal) vs 1:19. Alpha 0.40 (conservative) vs 1.0. Student 197M has 2x capacity. Teacher 0.6B provides focused signal. Literature (MiniPLM, capacity gap law) supports KD working at these ratios.
+
+**Cross-tokenizer quality analysis (2026-03-27):**
+- 14,822 shared tokens = 92.6% of student vocab
+- Non-shared: mostly rare subword fragments + special tokens
+- English text: 89-100% of tokens are shared (depends on numeric content)
+- **Numbers are the gap:** tokens like `18`, `25`, `2023` are often non-shared because our 16K BPE merges digits differently. This means dates/quantities won't get KD signal.
+- **Implication:** KD should help most with general language patterns, commonsense (HS, PIQA), and factual text. Numeric/quantitative tasks (parts of ARC, SciQ) may get less KD benefit.
 
 **Key insight from prior 90M experiments:** Rep-KD was a head-start only (gap converged to -0.008 at step 3000). Logit KD operates on the SAME mathematical object as NTP (probability simplex) — this is "basin-compatible" and should provide persistent benefit, not just transient acceleration. The 60K gate tests this hypothesis directly.
 
