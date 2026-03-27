@@ -859,6 +859,7 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 31000 | 4.083 | — | 0.000 | 3.0e-4 | kurt=81.6, max_act=330.0. **New best BPT.** Kurtosis/act healthiest since 24K. |
 | 32000 | 4.132 | — | 0.000 | 3.0e-4 | kurt=110.9(!), max_act=351.1. BPT reverted — kurtosis spike transient. |
 | 33000 | **4.075** | — | 0.000 | 3.0e-4 | kurt=99.8, max_act=308.5. **New best BPT.** Kurtosis spike resolved. |
+| 34000 | **4.161** | — | 0.000 | 3.0e-4 | kurt=94.5, max_act=336.0. Reversion from 33K best — oscillation continues. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -875,16 +876,39 @@ Expected BPT at 60K gate milestones:
 | 15K | ~4.3-4.5 | Scout pre-WSD 4.42 | **4.248 (-0.168, AHEAD)** |
 | 30K | ~4.0-4.2 | Still flat-LR | **4.114 (on track)** |
 | 31K | ~4.08-4.12 | Trend continuation | **4.083 (new best, all health metrics improved)** |
+| 34K | ~4.07-4.11 | Trend continuation | **4.161 (reversion — oscillation)** |
 | 40K | ~3.99-4.01 | Linear extrapolation | — |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
-| 60K | **3.72-3.88** | Updated range (linear trend + WSD) | — |
+| 60K | **3.63-3.73** | Revised: multi-method WSD modeling (see below) | — |
 
-**Flat-Phase Dynamics Analysis (31K):**
-- Linear slope 20-31K: **-0.0107 BPT per K-step** (steeper than -0.006 estimated at 25-30K)
-- BPT-Kurtosis correlation: **-0.007** (essentially zero — kurtosis is health metric, not perf predictor)
-- BPT-MaxAct correlation: **-0.174** (weak negative)
-- 31K is genuine improvement: BPT, kurtosis, AND max_act all improved simultaneously → model found cleaner basin
-- MaxAct slowly trending up (+0.80/K step) — monitor for stability at 40K+
+**Revised WSD Modeling (step 34K analysis):**
+Four independent estimates of WSD drop (steps 48K-60K):
+1. LR-unit scaling (same drop as scout per unit LR): -0.29 → BPT 3.74
+2. Time scaling low (4x more steps = 1.5x consolidation): -0.44 → BPT 3.59
+3. Time scaling high (4x more steps = 2x consolidation): -0.58 → BPT 3.45
+4. Multiplier scaling (flat→WSD 4.2x multiplier from scout): -0.35 → BPT 3.68
+
+**Central estimate: ~3.68.** Range: 3.45-3.74. Previous estimate of 3.82 (Codex) likely too conservative — it didn't account for WSD S-curve effect discovered at scout step 14K.
+
+**Benchmark implications at BPT=3.68 (control only):**
+| Bench | @15K | Projected | Beat Pythia? | Beat MobileLLM? |
+|-------|------|-----------|-------------|-----------------|
+| ARC-E | 39.1 | 44.7 | YES | YES |
+| WG | 51.1 | 52.8 | YES | marginal |
+| LAMBADA | 23.4 | 35.0 | — | — |
+| SciQ | 61.7 | 74.0 | — | — |
+| HS(n) | 27.2 | 27.8 | NO (need 30.3) | NO (need 38.9) |
+| PIQA | 57.6 | 59.0 | NO (need 62.3) | NO (need 65.3) |
+
+**HS and PIQA are the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked (1.0 and 2.4 pp/BPT sensitivity). KD must transfer world knowledge to close these gaps.
+
+**Flat-Phase Dynamics Analysis (34K):**
+- Linear slope 20-34K: **-0.0097 BPT per K-step** (flattening slightly from -0.0107 at 31K — diminishing returns)
+- BPT oscillation band 30-34K: 4.075-4.161 (range 0.086). Training is noisy but trending down.
+- Kurtosis 30-34K: 81.6-110.9 (settled mid-range at 94.5). No concerning trend.
+- MaxAct 30-34K: 308.5-385.0. Moderate volatility, slowly trending up.
+- **Updated 48K extrapolation:** slope -0.0097 × 14K more steps = -0.136 → BPT@48K ≈ 4.025 (flat-phase end)
+- **Updated 60K estimate:** 4.025 - WSD drop (~0.25-0.35) → **3.68-3.78 BPT**. Central: ~3.73.
 
 **Codex Tier 2 Review (2026-03-27, step 20K):** Control is healthy, continue to 60K. Revised forecast: BPT ~3.82 central estimate at 60K. Control alone unlikely to beat Pythia-160M cleanly — ARC-E yes, HS/PIQA marginal. KD arm is the real test: does teacher knowledge transfer beyond what more training provides?
 
@@ -937,6 +961,26 @@ Launch command: `python code/dense_baseline.py --kd-train code/kd_197m_60k_gate.
 - **Benchmark translation:** If BPT gap >= 0.15, expect +2-4pp on HS, +1-3pp on PIQA, +1-2pp on ARC-E
 
 **Kill rule:** If KD arm BPT > control BPT at step 6K (after alpha has warmed up), investigate immediately. If still worse at 15K, terminate KD arm — the teacher is hurting, not helping.
+
+### Background Research Ingestion (2026-03-27, from 3 parallel research agents)
+
+**1. BPT-Benchmark Correlation (external calibration data):**
+- Cerebras-GPT series provides reference: loss→benchmark curves follow sigmoid (ARC-E, PIQA), linear (HS), and power-law (LAMBADA) models
+- **LAMBADA is the best lightweight proxy** for overall model quality at low compute — cheapest to eval, highest BPT sensitivity (20.5 pp/BPT)
+- **Critical caveat: same-loss-different-downstream.** Two models at identical loss can differ 5-10pp on benchmarks. Architecture, data mix, and tokenizer all matter beyond raw BPT. Our 16K vocab gives us fewer tokens per context window (1.4KB vs Pythia's 7.2KB at same seq_len) — this hurts knowledge-intensive benchmarks even at matched BPT.
+
+**2. KD Gains at 200M Scale (literature calibration):**
+- **MiniPLM at 200M:** +1.4pts avg with 1.8B teacher (1:9 ratio). Our 1:3 is BETTER ratio.
+- **MobileLLM 125M:** Found KD HURT at 125M. But their setup was different (layer-wise mimic, not logit KD).
+- **Capacity gap law confirmed:** Optimal teacher:student ratio T* = 2.5*S. Our 197M:600M = 1:3.0, very close to optimal 1:2.5.
+- **Realistic expectation: 0-2% CE improvement from logit KD alone.** With alpha scheduling: 3-5%. Our inverted-U schedule is designed to capture the upper end.
+- **ICLR 2026 multi-teacher KD paper:** Validates that RMFD-style multi-teacher approach (3+ diverse teachers) outperforms single-teacher at all scales. Future direction confirmed.
+
+**3. Competitive Landscape (Jan-Mar 2026):**
+- **No new sub-200M models published.** SmolLM2-135M (HF, Oct 2025) remains strongest in class.
+- **NEW COMPETITOR: Gemma 3 270M** — Google, only ~100M non-embedding transformer params but trained on 6T tokens (6000x our budget). This is the "brute force data" baseline we're competing against.
+- **Gemma 3 270M scores** (where available): Strong on HS and commonsense. Exact sub-200M benchmarks TBD — agent found model card but benchmarks are for larger variants.
+- **Our narrative strengthens:** If KD arm approaches Gemma 3 270M with 1000x less training data, that's the manifesto thesis proven directly. Even matching Pythia-160M with 305x less data is a strong data-efficiency story.
 
 ### Pre-Registered 60K Benchmark Predictions (2026-03-27)
 
