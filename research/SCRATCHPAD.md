@@ -865,7 +865,8 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 37000 | 4.072 | — | 0.000 | 3.0e-4 | **kurt=163.9(!!)**, max_act=321.8. BPT flat. **Kurtosis spike: 1.74x recent avg.** Max_act normal — transient. |
 | **38000** | **4.028** | — | 0.000 | 3.0e-4 | kurt=98.8, max_act=362.4. **NEW ALL-TIME BEST.** First below 4.03! Kurtosis returned to normal. |
 | 39000 | 4.038 | — | 0.000 | 3.0e-4 | **kurt=1007.4(!!!)**, max_act=374.8. BPT mild reversion. Kurtosis spike: 11x avg (transient — 40K resolved). |
-| **40000** | **3.993** | — | 0.000 | 3.0e-4 | kurt=85.2, max_act=351.0. **FIRST TIME BELOW 4.0!!!** Kurtosis normalized. -0.045 from 39K, -0.035 below previous best (38K). |
+| **40000** | **3.993** | — | 0.000 | 3.0e-4 | kurt=85.2, max_act=351.0. **FIRST TIME BELOW 4.0!!!** Kurtosis normalized. |
+| 41000 | 4.009 | — | 0.000 | 3.0e-4 | kurt=194.4, max_act=**426.3 (new high)**. BPT mild reversion. Kurtosis spike pattern: odd-K steps spike (37K,39K,41K), even-K normal (38K,40K). |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -902,7 +903,8 @@ Four independent estimates of WSD drop (steps 48K-60K):
 
 **Central estimate: ~3.67.** Range: 3.63-3.73. Log-proportional model predicts 81% of drop in second half of WSD (steps 54-60K).
 
-**Step-by-step WSD prediction (log-proportional model, revised 40K):**
+**Step-by-step WSD prediction (log-proportional BPT model × LINEAR LR decay, revised 40K):**
+**Note:** WSD uses `get_lr_wsd()` = LINEAR decay from 3e-4→1e-5 over last 20% of training. NOT cosine. But log-proportional BPT model makes the shape similar regardless:
 | Step | LR | Frac drop | BPT (central) | BPT (optimistic) | Note |
 |------|-----|-----------|--------------|-------------------|------|
 | 48K | 3.0e-4 | 0% | 3.95 | 3.93 | WSD start |
@@ -926,6 +928,18 @@ Four independent estimates of WSD drop (steps 48K-60K):
 | PIQA | 57.6 | **59.2%** | 62.3% | NO (data-bottlenecked) |
 
 **HS and PIQA remain the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked. KD must transfer world knowledge to close these gaps.
+
+**Data efficiency framing (for manifesto narrative):**
+| Model | Params | Tokens | Tok/param | HS | ARC-E | Data ratio |
+|-------|--------|--------|-----------|-----|-------|------------|
+| Sutra control | 197M | 1B | 5 | ~28% | ~46% | 1x (baseline) |
+| Sutra KD | 197M | 1B | 5 | ~30% | ~47% | 1x + teacher |
+| Pythia-160M | 160M | 300B | 1875 | 30.3% | 40.0% | 300x more |
+| SmolLM2-135M | 135M | 600B | 4444 | 42.1% | — | 600x more |
+
+**Defensible claim:** "Sutra reaches 92% of Pythia's HellaSwag with 300x less training data."
+**If KD works:** "Sutra MATCHES Pythia's HellaSwag with 300x less data + single teacher model."
+**Strongest claim:** "Sutra BEATS Pythia on ARC-Easy (+5.6pp) with 300x less data."
 
 **Flat-Phase Dynamics Analysis (38K update):**
 - **Regression slope 20-38K (19 points): -0.0062 BPT per K-step** (steepened from -0.0054 at 37K)
