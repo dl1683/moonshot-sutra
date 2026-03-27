@@ -1122,3 +1122,81 @@ Total: ~2.5GB VRAM for 4 diverse teachers
 
 ---
 
+## PREPARED: Post-15K-Gate Codex Evidence Template (2026-03-27)
+
+**Status: TEMPLATE — fill in blanks when gate completes, then send to Codex Tier 2**
+
+```
+[FILL] Control BPT@15K: ___
+[FILL] KD BPT@15K: ___
+[FILL] BPT Gap: ___
+[FILL] Control kurtosis@15K: ___
+[FILL] KD kurtosis@15K: ___
+[FILL] lm-eval control: ARC-E=___, ARC-C=___, HS=___, WG=___, PIQA=___, SciQ=___, LAMBADA=___
+[FILL] lm-eval KD: ARC-E=___, ARC-C=___, HS=___, WG=___, PIQA=___, SciQ=___, LAMBADA=___
+```
+
+**Codex prompt (Tier 2: Scaling Expert + Architecture Theorist + Competitive Analyst):**
+
+```
+MANDATORY FIRST STEP: Read CLAUDE.md in this repository root. [standard preamble...]
+
+ACTUAL TASK: Review the 15K benchmark gate results as a panel of three concurrent reviewers.
+
+## DATA
+
+### Training Curves (BPT at eval checkpoints)
+Control: [FILL full curve 1K→15K]
+KD arm: [FILL full curve 1K→15K]
+Gap: [FILL gap at each checkpoint]
+
+### Stability Metrics
+Control kurtosis: [FILL trajectory]
+KD kurtosis: [FILL trajectory]
+Max activations: [FILL]
+
+### lm-eval Benchmarks (step 15K)
+[FILL table: benchmark × (control, KD, delta)]
+
+### Key Findings from Surface Ablation (prior experiment)
+- Rep-only KD: head-start only, basin-incompatible (Grassmannian vs simplex)
+- Logit-only KD: harmful at flat α=1.0, but basin-compatible
+- Multi-surface: interference factor peaked at 2.14 during plateau
+- Basin compatibility theory: logit surfaces survive WSD, rep surfaces don't
+
+### 15K Gate Mechanism
+- Inverted-U alpha: 0.10→0.60→0.10→0.0 (warmup 2K, peak 2K-10K, taper 10K-12K, zero 12K-15K)
+- Rising tau: 1.5→3.0 over 10K steps
+- Confidence gating: scale by teacher p_max (×1.5 if >0.5, ×0.3 if <0.1)
+- Cross-tokenizer: DSKDv2-style ETA on 14,822 shared tokens (92.6%)
+
+## QUESTIONS FOR EACH REVIEWER
+
+### Scaling Expert (Persona 3)
+1. Does the BPT gap SCALE or SHRINK with more training steps? What's the trend?
+2. If we scale from 90M→166M (1:19→1:10 ratio), how much should we expect KD benefit to improve?
+3. What's the compute-optimal training schedule for the 166M model with KD?
+4. Is the kurtosis trajectory concerning for scaling?
+
+### Architecture Theorist (Persona 6)
+1. Does the basin compatibility theory hold under the 15K data?
+2. Should α be nonzero during WSD (logit KD helps consolidation)?
+3. Is the inverted-U schedule optimal, or should we explore other shapes?
+4. What does the training curve shape tell us about the loss landscape?
+
+### Competitive Analyst (Persona 8)
+1. Where do these 15K lm-eval scores place us vs baselines (SmolLM-135M, Pythia-160M)?
+2. How many training steps would we need WITHOUT KD to match the KD arm?
+3. Is the KD efficiency gain meaningful (saves N% of training compute)?
+4. What should we build next based on competitive positioning?
+
+## DECISIONS NEEDED
+1. Proceed with RMFD at 90M? Or scale to 166M first?
+2. Which divergence: forward KL, AMiD, or something else?
+3. RMFD surface selection: logit-only or logit+exit self-distillation?
+4. EmbeddingGemma: drop from committee or use for early-phase state KD?
+5. Training budget: 120K steps at 90M or 60K steps at 166M?
+```
+
+---
+
