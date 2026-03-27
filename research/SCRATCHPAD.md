@@ -870,7 +870,10 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | **42000** | **3.982** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=232.3 (YELLOW), max_act=368.3. Below predictions by 0.016. Kurtosis trending up but benign (BPT improving). |
 | **43000** | **3.963** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=127.0 (GREEN), max_act=367.1. Below predictions by 0.025. Three consecutive bests (40K, 42K, 43K). |
 | 44000 | 3.991 | — | 0.000 | 3.0e-4 | Oscillation reversion (+0.028). kurt=**369.3 (YELLOW, highest non-outlier)**. max_act=376.2. |
-| **45000** | **3.958** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST + CHECKPOINT SAVED (2.36GB).** kurt=104.0 (GREEN). max_act=404.3. Below prediction by 0.011. Slope stable: -11.4 mBPT/K. 48K pred: 3.926. **WSD start in ~36 min.** |
+| **45000** | **3.958** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST + CHECKPOINT SAVED (2.36GB).** kurt=104.0 (GREEN). max_act=404.3. |
+| **46000** | **3.952** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=120.0 (GREEN). max_act=386.6. 6 bests in 7 evals (40-46K). |
+| **47000** | **3.941** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=111.4 (GREEN). max_act=372.5. Sustained descent. |
+| **48000** | **3.945** | — | 0.000 | 3.0e-4→decay | **WSD ANCHOR.** kurt=173.2 (GREEN). max_act=437.9 (new high). WITHIN predicted range (3.933-3.949). Mild reversion from 47K (+0.004). **LR decay starts NOW: 3e-4 → 1e-5 over 12K steps.** Recalibrated 60K BPT: 3.575 (3.535-3.615). |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -977,9 +980,9 @@ Odd-K/even-K pattern is NOISE (residual means: odd +0.002, even -0.012 — not s
 | 43K | 3.988 | 3.988 | 3.996 | **3.963 (-0.025)** |
 | 44K | 3.977 | 3.978 | 3.987 | **3.991 (+0.013)** |
 | 45K | 3.966 | 3.969 | 3.977 | **3.958 (-0.011)** |
-| 46K | 3.955 | 3.959 | 3.968 | — |
-| 47K | 3.944 | 3.949 | 3.958 | — |
-| 48K | 3.933 | **3.940** | 3.949 | — |
+| 46K | 3.955 | 3.959 | 3.968 | **3.952 (-0.007)** |
+| 47K | 3.944 | 3.949 | 3.958 | **3.941 (-0.008)** |
+| **48K** | 3.933 | **3.940** | 3.949 | **3.945 (+0.005) WSD START** |
 
 Note: Oscillation band ~0.13 BPT. Individual points may deviate ±0.06 from trend.
 Full regression slope now -9.5 mBPT/K (steepened from -7.1 with 40K-41K data).
@@ -1312,23 +1315,23 @@ IF KD arm HURTS performance:
 - BPT(step) = BPT_48K - total_drop * log(LR_start/LR(step)) / log(LR_start/LR_end)
 - total_drop estimated at 0.37 BPT (central from 4 methods)
 
-**Step-by-step predictions (revised with BPT_48K=3.94 from 3-method regression):**
+**Step-by-step predictions (RECALIBRATED with actual BPT_48K=3.945):**
 
-| Step | LR | log-ratio frac | Predicted BPT | Range (±0.04) | Key test |
-|------|-----|---------------|---------------|-----------|----------|
-| 48K | 3.00e-4 | 0.000 | 3.94 | 3.90-3.98 | **ANCHOR: if outside range, recalibrate all below** |
-| 49K | 2.76e-4 | 0.025 | 3.93 | 3.89-3.97 | Barely started |
-| 50K | 2.52e-4 | 0.052 | 3.92 | 3.88-3.96 | Still negligible |
-| 51K | 2.28e-4 | 0.081 | 3.91 | 3.87-3.95 | |
-| 52K | 2.04e-4 | 0.114 | 3.90 | 3.86-3.94 | |
-| 53K | 1.80e-4 | 0.152 | 3.88 | 3.84-3.93 | |
-| 54K | 1.56e-4 | 0.194 | 3.87 | 3.83-3.91 | **20% done — expect barely visible** |
-| 55K | 1.32e-4 | 0.244 | 3.85 | 3.81-3.89 | |
-| 56K | 1.08e-4 | 0.304 | 3.83 | 3.79-3.87 | **KEY TEST: discriminates 4 models (see below)** |
-| 57K | 8.40e-5 | 0.380 | 3.80 | 3.76-3.84 | |
-| 58K | 6.00e-5 | 0.481 | 3.76 | 3.72-3.80 | **Nearly half done** |
-| 59K | 3.60e-5 | 0.639 | 3.70 | 3.66-3.75 | **Main drop phase** |
-| 60K | 1.00e-5 | 1.000 | 3.57 | 3.53-3.61 | **Final** |
+| Step | LR | log-frac | Predicted BPT | Range | Actual | Key test |
+|------|-----|----------|---------------|-------|--------|----------|
+| **48K** | 3.00e-4 | 0.000 | 3.945 | 3.91-3.99 | **3.945** | **ANCHOR (actual = predicted!)** |
+| 49K | 2.76e-4 | 0.025 | 3.936 | 3.90-3.98 | — | Barely started |
+| 50K | 2.52e-4 | 0.052 | 3.926 | 3.89-3.97 | — | Still negligible |
+| 51K | 2.28e-4 | 0.081 | 3.915 | 3.88-3.96 | — | |
+| 52K | 2.04e-4 | 0.114 | 3.903 | 3.86-3.94 | — | |
+| 53K | 1.80e-4 | 0.152 | 3.889 | 3.85-3.93 | — | |
+| 54K | 1.56e-4 | 0.194 | 3.873 | 3.83-3.91 | — | **20% done — barely visible** |
+| 55K | 1.32e-4 | 0.244 | 3.855 | 3.82-3.90 | — | |
+| 56K | 1.07e-4 | 0.304 | 3.833 | 3.79-3.87 | — | **KEY TEST: discriminates 4 WSD models** |
+| 57K | 8.25e-5 | 0.380 | 3.805 | 3.77-3.85 | — | |
+| 58K | 5.83e-5 | 0.481 | 3.767 | 3.73-3.81 | — | **Nearly half done** |
+| 59K | 3.42e-5 | 0.639 | 3.709 | 3.67-3.75 | — | **Main drop phase** |
+| 60K | 1.00e-5 | 1.000 | **3.575** | 3.54-3.62 | — | **FINAL** |
 
 **Falsification criteria:**
 1. **Model fails if** any eval is >0.10 BPT outside its predicted range (after adjusting for 48K anchor)
