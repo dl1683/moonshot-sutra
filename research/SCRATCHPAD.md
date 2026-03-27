@@ -841,6 +841,11 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | **13000** | **4.399** | — | 0.000 | 3.0e-4 | **EVAL** kurt=60.4, max_act=288.1. Brief flat. (scout post-WSD 4.230 — unfair compare) |
 | **14000** | **4.280** | — | 0.000 | 3.0e-4 | **EVAL** kurt=68.8, max_act=299.3. Plateau broken -0.119! |
 | **15000** | **4.248** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=88.0, max_act=369.5. **GATE: -0.168 ahead of scout pre-WSD.** |
+| 16000 | 4.286 | — | 0.000 | 3.0e-4 | kurt=76.3, max_act=296.9. Minor oscillation. |
+| 17000 | 4.234 | — | 0.000 | 3.0e-4 | kurt=87.8, max_act=295.9. |
+| 18000 | 4.227 | — | 0.000 | 3.0e-4 | kurt=79.9, max_act=314.3. |
+| 19000 | 4.255 | — | 0.000 | 3.0e-4 | kurt=84.6, max_act=314.2. |
+| **20000** | **4.177** | — | 0.000 | 3.0e-4 | **EVAL+CKPT** kurt=74.0, max_act=282.0. Rate ~0.014/1K. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
