@@ -760,6 +760,25 @@ WSD decay active and delivering. Step 12K→13K: -0.090 BPT in 1K steps (4× the
 - For 6K stop rule: need BPT < 4.616. Current trajectory: 5.000 - (4K × control_rate) = 5.000 - 0.208 = 4.792. Won't pass unless KD arm improves faster than control.
 - **Trajectory matches flat-alpha pattern but with lower amplitude** (gap +0.177 vs +0.273 at comparable phase).
 
+### 197M Control Scout Training (2026-03-27, from scratch)
+
+Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e-5.
+
+| Step | Eval BPT | Kurtosis | Max Act | Notes |
+|------|----------|----------|---------|-------|
+| 1000 | 6.725 | 0.7 | 29.1 | Healthy early descent |
+| 2000 | 5.365 | 0.9 | 52.0 | Rapid descent, stable |
+| 3000 | 5.041 | 4.3 | 98.9 | Kurtosis rising |
+| 4000 | 4.839 | 11.4 | 150.8 | Kurtosis elevated |
+| 5000 | 4.775 | 14.9 | 147.3 | BPT flattening (delta only -0.064) |
+
+**Kurtosis note:** 14.9 at 5K is elevated but max_act decreased (150→147). No blowup. Kill threshold: kurtosis > 50 OR max_act > 500.
+**BPT trajectory:** Flattening expected during flat LR phase. WSD decay starts at step 12K (80%), which will provide final consolidation push. 90M went from 4.577@5K to 4.082@15K (-0.495 over WSD). Expect similar ~0.5 BPT drop from 4.78→~4.3 after WSD.
+
+**Compare to 90M trajectory:** 90M@5K (warm-started) was BPT=4.577. 197M@3K (from scratch) is 5.04. Larger model takes more steps but has 2.2x capacity. Expect crossover around 5-7K.
+
+**Codex Tier 2 predictions for 197M@15K:** HS 30-32, PIQA 60-62, ARC-E 38-40. These targets require BPT ~3.5 at 15K.
+
 ### Competitive Baselines (0-shot, published numbers)
 
 Context: Our 90M model sees ~328M tokens total. These models trained on 300B-2T tokens.

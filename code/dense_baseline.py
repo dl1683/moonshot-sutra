@@ -4176,6 +4176,11 @@ def train_kd(config_path):
         if rolling_path.exists():
             try:
                 rckpt = torch.load(rolling_path, weights_only=False, map_location=DEVICE)
+                # Verify tag matches to prevent cross-variant contamination
+                saved_tag = rckpt.get("kd_config", {}).get("tag", tag)
+                if saved_tag != tag:
+                    raise ValueError(f"Rolling checkpoint tag '{saved_tag}' != current '{tag}'")
+                # Load all state — if any fails, except block re-inits from scratch
                 model.load_state_dict(rckpt["model_state_dict"])
                 opt.load_state_dict(rckpt["optimizer_state_dict"])
                 if "projectors" in rckpt and projectors:
@@ -4187,8 +4192,21 @@ def train_kd(config_path):
                 resume_step = rckpt.get("step", 0) - start_step
                 print(f"  RESUMED from rolling checkpoint at step {resume_step}")
             except Exception as e:
-                print(f"  WARNING: rolling checkpoint corrupted ({e}), starting fresh")
+                print(f"  WARNING: rolling checkpoint failed ({e}), re-initializing from init_from")
                 resume_step = 0
+                # Re-init model from base checkpoint to avoid half-loaded state
+                fresh_ckpt = torch.load(init_checkpoint, weights_only=False, map_location=DEVICE)
+                fresh_key = "model_state_dict" if "model_state_dict" in fresh_ckpt else "model"
+                model.load_state_dict(fresh_ckpt[fresh_key])
+                del fresh_ckpt
+                opt = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=0.1)
+                scaler = torch.amp.GradScaler("cuda")
+                if projectors:
+                    for p in projectors.parameters():
+                        if p.dim() > 1:
+                            torch.nn.init.xavier_uniform_(p)
+                        else:
+                            torch.nn.init.zeros_(p)
 
         print(f"  Starting training from step {resume_step + 1}...\n")
 
@@ -4474,11 +4492,12 @@ def train_kd(config_path):
             "generations": generations,
         }
 
-        # Final checkpoint
+        # Final checkpoint (full resume state)
         torch.save({
             "step": start_step + total_steps,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": opt.state_dict(),
+            "scaler": scaler.state_dict(),
             "projectors": projectors.state_dict(),
             "config": stu_cfg,
             "kd_config": variant,
