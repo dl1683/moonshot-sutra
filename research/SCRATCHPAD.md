@@ -573,9 +573,10 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 4000 | 4.632 | -0.048 | 7.2 | 87.9 | Decelerating |
 | 5000 | 4.612 | -0.020 | 10.1 | 107.4 | Plateau onset |
 | 6000 | 4.616 | +0.003 | 41.7 | 97.8 | Apparent plateau. Kurtosis spike TRANSIENT (see below). |
-| 7000 | 4.538 | -0.077 | 11.0 | 98.7 | **PLATEAU BROKEN.** Resumed learning. Kurtosis back to normal. |
+| 7000 | 4.538 | -0.077 | 11.0 | 98.7 | Plateau broken. Resumed learning. |
+| 8000 | 4.498 | -0.040 | 17.9 | 105.9 | Decelerating after post-stall spike. Steady progress. |
 
-**Learning rate profile:** Steps 1-7K: flat 3e-4 (=steps 5001-12000 absolute). WSD decay starts at step 12K.
+**Learning rate profile:** Steps 1-8K: flat 3e-4. WSD decay starts at step 12K.
 
 **Observations:**
 1. **BPT plateau was TRANSIENT (step 5K-6K only).** Improvement per 1K steps: -0.071, -0.144, -0.048, -0.020, +0.003, **-0.077**. Step 7K resumed learning at a rate similar to steps 3K-4K. The "deep plateau" at steps 5K-6K was a TEMPORARY stall, not saturation.
@@ -1119,6 +1120,34 @@ Full-corpus offline KD is impractical. **Online KD with co-resident teachers is 
 Total: ~2.5GB VRAM for 4 diverse teachers
 
 **Alternative for large teachers** (1B+): Process top-16 logits for first 2-3B tokens (~130-200GB), use online for the rest.
+
+---
+
+## Pre-Computed: 166M Scaling Config (for fallback path)
+
+**Status: CONFIG ONLY — implementation pending 15K gate results + Codex decision**
+
+If we need to scale from 90M → 166M, the best config is:
+
+| Param | 90M (current) | 166M (target) | Notes |
+|-------|--------------|---------------|-------|
+| dim | 512 | 704 | √(166/90) × 512 ≈ 695, rounded to 704 (divisible by 64) |
+| n_layers | 24 | 24 | Same depth (enables warm-start widening) |
+| n_heads | 8 | 8 | Keep 8, head_dim 88 (or 11 heads × 64) |
+| head_dim | 64 | 88 | 704/8 = 88 |
+| ff_dim | 1536 | 2112 | 3 × dim |
+| params | 90.2M | 166.2M | 1.84× |
+| KD ratio | 1:19 (5.3%) | 1:10 (9.8%) | At threshold for effective KD |
+| Train VRAM | ~7GB | ~10GB | Plenty of room for teacher (~2GB) |
+
+**Warm-start widening path:**
+1. Copy 512-dim weights into first 512 dims of 704-dim matrices
+2. Zero-pad remaining 192 dimensions
+3. Scale output projections by 512/704 to preserve function initially
+4. Random init new attention heads (if adding heads)
+5. Need Net2Wider implementation — check if current code supports this
+
+**Alternative: d=768, 197M** — cleaner config (12 heads × 64) but exceeds 166M target by 30M. Ratio 1:9 (11.6%) — well above KD threshold. VRAM ~10.5GB.
 
 ---
 
