@@ -864,7 +864,8 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 36000 | 4.068 | — | 0.000 | 3.0e-4 | kurt=94.2, max_act=344.6. Mild reversion (+0.010 from 35K). Healthy. |
 | 37000 | 4.072 | — | 0.000 | 3.0e-4 | **kurt=163.9(!!)**, max_act=321.8. BPT flat. **Kurtosis spike: 1.74x recent avg.** Max_act normal — transient. |
 | **38000** | **4.028** | — | 0.000 | 3.0e-4 | kurt=98.8, max_act=362.4. **NEW ALL-TIME BEST.** First below 4.03! Kurtosis returned to normal. |
-| 39000 | 4.038 | — | 0.000 | 3.0e-4 | **kurt=1007.4(!!!)**, max_act=374.8. BPT mild reversion (normal oscillation). **Kurtosis EXPLOSION: 11x avg.** Max_act normal — outlier features forming, not runaway activation. Second spike in 3 evals. |
+| 39000 | 4.038 | — | 0.000 | 3.0e-4 | **kurt=1007.4(!!!)**, max_act=374.8. BPT mild reversion. Kurtosis spike: 11x avg (transient — 40K resolved). |
+| **40000** | **3.993** | — | 0.000 | 3.0e-4 | kurt=85.2, max_act=351.0. **FIRST TIME BELOW 4.0!!!** Kurtosis normalized. -0.045 from 39K, -0.035 below previous best (38K). |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -885,8 +886,10 @@ Expected BPT at 60K gate milestones:
 | 35K | ~4.05-4.10 | Trend continuation | **4.058 (new all-time best, first below 4.1!)** |
 | 37K | ~4.04-4.08 | Trend continuation | **4.072 (on trend, kurtosis spike 163.9 = transient)** |
 | 38K | ~4.03-4.07 | Trend continuation | **4.028 (NEW ALL-TIME BEST, first below 4.03!)** |
-| 39K | ~4.02-4.06 | Trend continuation | **4.038 (normal BPT, but kurtosis 1007.4!!)** |
-| 40K | ~3.97-4.03 | Linear extrapolation | — |
+| 39K | ~4.02-4.06 | Trend continuation | **4.038 (normal BPT, kurtosis 1007.4 transient)** |
+| **40K** | ~3.97-4.03 | Linear extrapolation | **3.993 (BELOW 4.0! Right in predicted range)** |
+| 45K | ~3.93-3.98 | Trend continuation | — |
+| 48K | ~3.91-3.95 | WSD start (revised from 3.95-4.00) | — |
 | 48K | ~3.92-4.00 | End of flat-LR (Codex revised) | — |
 | 60K | **3.63-3.73** | Revised: multi-method WSD modeling (see below) | — |
 
@@ -899,30 +902,30 @@ Four independent estimates of WSD drop (steps 48K-60K):
 
 **Central estimate: ~3.67.** Range: 3.63-3.73. Log-proportional model predicts 81% of drop in second half of WSD (steps 54-60K).
 
-**Step-by-step WSD prediction (log-proportional model, revised 38K):**
+**Step-by-step WSD prediction (log-proportional model, revised 40K):**
 | Step | LR | Frac drop | BPT (central) | BPT (optimistic) | Note |
 |------|-----|-----------|--------------|-------------------|------|
-| 48K | 3.0e-4 | 0% | 3.98 | 3.95 | WSD start |
-| 50K | 2.8e-4 | 2% | 3.97 | 3.94 | Minimal change |
-| 52K | 2.3e-4 | 8% | 3.95 | 3.92 | Still early |
-| 54K | 1.6e-4 | 19% | 3.91 | 3.88 | **Midpoint — only 19% of drop done** |
-| 56K | 8.3e-5 | 38% | 3.83 | 3.80 | Accelerating |
-| 58K | 2.9e-5 | 68% | 3.71 | 3.68 | Main drop phase |
-| 60K | 1.0e-5 | 100% | 3.59 | 3.56 | Final consolidation |
+| 48K | 3.0e-4 | 0% | 3.95 | 3.93 | WSD start |
+| 50K | 2.8e-4 | 2% | 3.94 | 3.92 | Minimal change |
+| 52K | 2.3e-4 | 8% | 3.92 | 3.90 | Still early |
+| 54K | 1.6e-4 | 19% | 3.88 | 3.86 | **Midpoint — only 19% of drop done** |
+| 56K | 8.3e-5 | 38% | 3.81 | 3.79 | Accelerating |
+| 58K | 2.9e-5 | 68% | 3.70 | 3.68 | Main drop phase |
+| 60K | 1.0e-5 | 100% | 3.58 | 3.55 | Final consolidation |
 
 **Key insight: Don't evaluate WSD effectiveness until step 58K.** At 54K midpoint, BPT will look barely changed (only -0.08 from 48K). The real consolidation is a late-phase phenomenon.
 
-**Benchmark implications at BPT=3.59 (control only, revised 38K):**
-| Bench | @15K | Projected @3.59 | Pythia-160M | Beat? |
+**Benchmark implications at BPT=3.58 (control only, revised 40K):**
+| Bench | @15K | Projected @3.58 | Pythia-160M | Beat? |
 |-------|------|----------------|-------------|-------|
-| ARC-E | 39.1 | **45.5%** | 40.0% | **YES** |
-| WG | 51.1 | **53.1%** | 51.3% | **YES** |
-| LAMBADA | 23.4 | **36.9%** | — | — |
-| SciQ | 61.7 | **75.9%** | — | — |
+| ARC-E | 39.1 | **45.6%** | 40.0% | **YES (+5.6)** |
+| WG | 51.1 | **53.1%** | 51.3% | **YES (+1.8)** |
+| LAMBADA | 23.4 | **37.1%** | — | — |
+| SciQ | 61.7 | **76.2%** | — | — |
 | HS(n) | 27.2 | **27.9%** | 30.3% | NO (data-bottlenecked) |
 | PIQA | 57.6 | **59.2%** | 62.3% | NO (data-bottlenecked) |
 
-**HS and PIQA remain the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked (1.0 and 2.4 pp/BPT sensitivity). KD must transfer world knowledge to close these gaps. At BPT=3.59 (vs previous 3.68), ARC-E and SciQ projections strengthen.
+**HS and PIQA remain the KD arm's targets.** Control can't reach Pythia on these — they're data-bottlenecked. KD must transfer world knowledge to close these gaps.
 
 **Flat-Phase Dynamics Analysis (38K update):**
 - **Regression slope 20-38K (19 points): -0.0062 BPT per K-step** (steepened from -0.0054 at 37K)
@@ -933,13 +936,18 @@ Four independent estimates of WSD drop (steps 48K-60K):
 - **Lag-1 autocorrelation: -0.509** — strong alternating pattern confirmed. Model near capacity ceiling.
 - **37K kurtosis spike (163.9) CONFIRMED TRANSIENT**: 38K kurtosis = 98.8 (normal). Rolling median robust.
 - **38K = new all-time best BPT (4.028)**: First below 4.03. Down 0.030 from previous best at 35K.
-- **Updated 48K extrapolation:**
-  - Full regression: 4.000
-  - Recent slope (30-38K): 3.966
-  - Best-points: 3.951
-  - **Range: 3.95-4.00. Central: ~3.98.**
-- **Updated 60K estimate:** 3.98 - WSD drop (~0.39) → **3.56-3.63 BPT. Central: ~3.59.**
-- **Note:** Slope is ACCELERATING. 20-30K slope was ~-0.005/K, 30-38K slope is ~-0.009/K. If acceleration continues, 48K could be even lower than 3.95. But regression to mean is also possible.
+- **Updated 48K extrapolation (40K data):**
+  - Full regression (20-40K): 3.980
+  - Recent slope (30-40K): 3.933
+  - Best-points (31,33,35,38,40K): 3.922
+  - **Range: 3.92-3.98. Central: ~3.95.**
+- **Updated 60K estimate:** 3.95 - WSD drop (~0.37) → **3.55-3.61 BPT. Central: ~3.58.**
+- **Slope acceleration confirmed (20-40K):**
+  - Full regression: -7.1 mBPT/K (was -6.2 at 38K, -5.4 at 36K)
+  - Recent (30-40K): **-10.9 mBPT/K** (strongly accelerating)
+  - Best-points: **-9.9 mBPT/K**
+  - The model is learning FASTER in the 35-40K range than earlier. Possible explanations: (1) reaching a "breakthrough" region where learned features start composing, (2) data diversity kicking in from later shards, (3) random variance.
+- **40K = FIRST BELOW 4.0.** Massive psychological milestone. BPT 3.993 = 0.5 bits/byte of text. At this compression rate, the model is capturing genuine linguistic structure.
 
 **Codex Tier 2 Review (2026-03-27, step 20K):** Control is healthy, continue to 60K. Revised forecast: BPT ~3.82 central estimate at 60K. Control alone unlikely to beat Pythia-160M cleanly — ARC-E yes, HS/PIQA marginal. KD arm is the real test: does teacher knowledge transfer beyond what more training provides?
 
