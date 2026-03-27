@@ -2648,6 +2648,41 @@ N(t) = NTP gradient signal strength (varies with training phase)
 
 **Sources:** AMiD (arXiv 2510.15982), ABKD (ICML 2025 Oral, arXiv 2505.04560), MiniLLM (ICLR 2024), AKL (COLING 2025), DKD (CVPR 2022).
 
+### 6.4.34 Law of Capacity Gap + Extreme-Ratio KD Techniques (2026-03-27)
+
+**Context:** Comprehensive survey of extreme-ratio KD (>1:10) techniques, triggered by +0.177 BPT gap at step 2K of 15K gate (1:19 ratio).
+
+**Key finding — Law of Capacity Gap (arXiv 2311.07052):**
+- Optimal teacher:student ratio ≈ **1:2.5** (student = 40% of teacher capacity)
+- Student scale ≈ 0.40 × Teacher scale for maximum KD benefit
+- At 1:19 (5.3%), we're far below the threshold — vanilla forward KL expected to FAIL
+
+**What works at extreme ratios (>1:10):**
+
+| Technique | Ratio tested | Result | Key |
+|-----------|-------------|--------|-----|
+| TinyLLM multi-teacher | 1:12 (250M from 3B) | **Outperformed teachers** | Multi-teacher curriculum essential |
+| TinyLLM extreme | 1:37 (80M from 3B) | +15.69% over baseline | Still helps with right technique |
+| DeepSeek-R1-Distill | 1:95 (7B from 671B) | 92.8% MATH-500 | Massive teacher, reasoning transfer |
+| TAID intermediate | Large gaps | Dynamic interpolated teachers | Progressive difficulty |
+| TCS coordinate | Large gaps | Works even student>teacher | Feature-space alignment, not logit matching |
+| DFPT-KD dual-forward | Various | Adapts to student capacity | Prompt-based adaptation |
+
+**Critical insights:**
+1. **Standard forward KL alone fails at >1:10** — confirmed by multiple papers (2024-2025)
+2. **Multi-teacher is mandatory** at extreme ratios — single teacher insufficient
+3. **No evidence of "delayed recovery"** — KD either helps early or fails silently
+4. **Intermediate teacher scaffolding** bridges capacity gaps (progressive from easy→hard teachers)
+5. **Feature-space methods (TCS)** work across architecture types without compatible tokenizers
+
+**Implications for Sutra:**
+- Current 15K gate (1:19, single teacher, forward KL) is in the "expected to fail" regime
+- 166M scaling (1:8.8) brings ratio into viable range but still above 1:2.5 optimal
+- RMFD multi-teacher approach (1:19 but 4 teachers) may work per TinyLLM findings
+- TCS-style feature alignment could bypass cross-tokenizer issues entirely
+
+**Sources:** Law of Capacity Gap (arXiv 2311.07052), TinyLLM (arXiv 2402.04616), TAID (arXiv 2603.15166), TCS (arXiv 2412.09388), DFPT-KD (arXiv 2506.18244), DeepSeek-R1 (HuggingFace model card).
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.
@@ -2790,3 +2825,78 @@ From combining the three fundamental domains, several novel mechanisms emerge th
 ```
 
 **Implementation order:** (1) Ambiguity-aware scheduling on top of 4 buckets → must beat static multi_3family at equal teacher FLOPs. (2) GW routing for specialist state-surface with stop-grad routing. (3) WB consensus only if bucket is large enough and simple averaging is measurably lossy. (4) Defer Fisher routing. (5) Kill full MMOT as mainline.
+
+### 8. Codex Tier 2 Review: Post-6K Stop (2026-03-27)
+
+**Source:** Codex GPT-o4-mini-high, panel of 3 (Scaling Expert, Architecture Theorist, Competitive Analyst).
+
+**Context:** 15K benchmark gate at 90M. KD arm (logit-only, inverted-U alpha, rising tau 1.5→3.0, Qwen3-1.7B teacher at 1:19 ratio) stopped at step 6K per pre-registered stop rule (gap +0.195, kurtosis spike 214.1). Control arm completed 15K at BPT 4.082.
+
+**Verdict:** 6K stop was correct. "KD is dead" is wrong — mechanism was partially validated (4K-5K recovery at 4.7x control rate) but ratio-blocked. Gap peaked at 3K (+0.273), closed to +0.174 at 5K, then regressed at 6K (kurtosis spike).
+
+#### 8.1 Scale-Up Decisions (Codex-Approved)
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Scale | **197M** | Near-optimal ratio with 0.6B teacher. Do not stay at 90M or jump to 350M+ |
+| Teacher | **Qwen3-0.6B** | 1:3 ratio (optimal zone). 1.7B only later as specialist after positive 15K signal |
+| Budget | **60K steps** | 15K is a scout, 30K is awkward, 60K is first budget that can change competitive placement |
+| KD mechanism | **Logit-only ETA + confidence gating** | Same family, cooler schedule |
+| Warm-start | **Scratch** (or Net2Wider if parity-tested) | Currently running from scratch |
+| Rep-KD | **No sustained rep** | At most tiny primer alpha_rep=0.03-0.05, layers 8/16, first 1K-2K only, then hard-off |
+
+#### 8.2 Revised Alpha/Tau Schedule (197M + 0.6B, 15K gate)
+
+**Alpha:** 0.00→0.15 (0-500), 0.15→0.45 (500-2K), hold 0.45 (2K-10K), 0.45→0.10 (10K-12K), **keep 0.05 through 12K-15K** (do NOT zero during WSD — maintaining thin KD regularization).
+
+**Tau:** 1.2→1.6 (0-2K), 1.6→2.2 (2K-8K), hold 2.2. Lower than 90M's 1.5→3.0 because 1:3 ratio doesn't need aggressive softening.
+
+**Alpha calibration:** Start at alpha_max=0.45, with 0.40 sidecar comparison. Do not test higher first.
+
+#### 8.3 Scaling Expert KD Gap Predictions (197M + 0.6B vs 197M control)
+
+| Step | Predicted Gap |
+|------|--------------|
+| 1K | -0.02 |
+| 2K | -0.05 |
+| 3K | -0.07 |
+| 4K | -0.09 |
+| 5K | -0.10 |
+| 6K | -0.10 to -0.12 |
+| 10K | -0.09 to -0.11 |
+| 15K | -0.07 to -0.10 |
+
+Note: negative = KD better. Convergence expected: KD advantage persists but narrows slightly in WSD phase.
+
+#### 8.4 Competitive Forecasts (197M control)
+
+| Steps | HellaSwag | PIQA | ARC-E | ARC-C | WinoGrande |
+|-------|-----------|------|-------|-------|------------|
+| 15K | 30-32 | 60-62 | 38-40 | 21-24 | 50-52 |
+| 30K | 33-36 | 62-64 | 40-43 | 24-26 | 51-53 |
+| 60K | 37-40 | 64-66 | 42-45 | 26-28 | 52-54 |
+
+Floor bar (Pythia-160M): ARC-E≥40, ARC-C≥25, HS≥30, PIQA≥62, WG≥51.
+Competitive bar (MobileLLM): ARC-E≥44, ARC-C≥27, HS≥39, PIQA≥65, WG≥53.
+
+#### 8.5 Failure Decomposition (90M KD)
+
+~80% capacity gap (1:19 ratio), ~20% tokenizer friction. Forward KL fails beyond 1:10 ratio (confirmed by literature and our data). The inverted-U + rising tau mechanism WAS validated by the 4K-5K recovery phase (4.7x control learning rate). The failure is ratio-specific, not mechanism-specific.
+
+#### 8.6 Tok/Param Correction
+
+24K steps at 197M = 2.0 tok/param, NOT Pythia-level. Matching Pythia-160M at 1875 tok/param requires ~22.5M steps. Even 60K steps = ~5.0 tok/param = 375x less than Pythia. KD is the ONLY lever to compensate for this data deficit.
+
+#### 8.7 lm-eval Results (Sutra-24A-90M Control@15K, BPT 4.082)
+
+| Benchmark | 5K | 15K | Pythia-160M | Gap |
+|-----------|------|------|-------------|-----|
+| ARC-E (acc) | 33.6% | 38.5% | 40.0% | -1.5pp |
+| ARC-C (norm) | 21.8% | 23.0% | 25.3% | -2.3pp |
+| HellaSwag (norm) | 26.6% | 27.1% | 30.3% | -3.2pp |
+| WinoGrande | 47.8% | 49.3% | 51.3% | -2.0pp |
+| PIQA (acc) | 55.4% | 56.6% | 62.3% | -5.7pp |
+| SciQ (acc) | 50.3% | 61.1% | — | — |
+| LAMBADA (acc) | 12.4% | 22.6% | — | — |
+
+ARC-E 38.5% with 90M params within 1.5pp of Pythia-160M (40.0%) using 1200x less data. HellaSwag barely moved (+0.5%) despite BPT 4.6→4.08 — BPT does NOT predict commonsense reasoning. SciQ and LAMBADA showed massive gains (+10.8%, +10.2%).

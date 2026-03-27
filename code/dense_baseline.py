@@ -4187,6 +4187,7 @@ def train_kd(config_path):
                 ds = v_alpha_schedule.get("decay_start_step", int(total_steps * 0.67))
                 ef = v_alpha_schedule.get("decay_end_frac", 0.0)
                 zs = v_alpha_schedule.get("zero_start_step", total_steps)
+                tf = v_alpha_schedule.get("tail_frac", 0.0)
                 if step <= ws:
                     alpha_frac = sf + (1.0 - sf) * (step / ws)
                 elif step <= ds:
@@ -4194,7 +4195,7 @@ def train_kd(config_path):
                 elif step <= zs:
                     alpha_frac = 1.0 - (1.0 - ef) * ((step - ds) / max(zs - ds, 1))
                 else:
-                    alpha_frac = 0.0
+                    alpha_frac = tf
                 sa_state = v_alpha_state * alpha_frac
                 sa_semantic = v_alpha_semantic * alpha_frac
                 sa_logit = v_alpha_logit * alpha_frac

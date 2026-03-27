@@ -1,0 +1,53 @@
+{
+    "_comment": "60K benchmark gate: 197M control vs KD with Qwen3-0.6B (ratio 1:3). Codex Tier 2 approved. Alpha schedule: cooler inverted-U (max 0.45) with 0.05 tail through WSD. Tau 1.2->2.2. Hard eval gates at 3K/6K/15K/30K/60K.",
+    "_codex_approval": "Tier 2 Review 2026-03-27. Scaling Expert + Architecture Theorist + Competitive Analyst panel.",
+    "name": "kd_197m_60k_gate",
+    "init_from": "results/checkpoint_197m_step0.pt",
+    "total_steps": 60000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 3e-4,
+    "min_lr": 1e-5,
+    "warmup": 500,
+    "eval_every": 1000,
+    "seq_len": 512,
+    "n_spans": 16,
+    "logit_temperature": 2.0,
+    "logit_top_k": 64,
+    "save_at": [3000, 6000, 10000, 15000, 20000, 30000, 45000, 60000],
+    "variants": [
+        {
+            "tag": "control_197m_60k",
+            "teachers": [],
+            "alpha_state": 0.0,
+            "alpha_semantic": 0.0,
+            "alpha_logit": 0.0
+        },
+        {
+            "tag": "kd_197m_06b_60k",
+            "teachers": [
+                {"name": "Qwen/Qwen3-0.6B-Base", "surfaces": ["logit"]}
+            ],
+            "alpha_state": 0.0,
+            "alpha_semantic": 0.0,
+            "alpha_logit": 0.45,
+            "confidence_gating": true,
+            "alpha_schedule": {
+                "warmup_steps": 2000,
+                "start_frac": 0.0,
+                "decay_start_step": 40000,
+                "decay_end_frac": 0.111,
+                "zero_start_step": 48000,
+                "tail_frac": 0.111
+            },
+            "tau_schedule": {
+                "start": 1.2,
+                "end": 2.2,
+                "ramp_steps": 20000
+            },
+            "_alpha_schedule_explained": "0->0.45 over 0-2K (warmup), hold 0.45 from 2K-40K, decay 0.45->0.05 from 40K-48K, hold 0.05 tail through WSD 48K-60K",
+            "_tau_schedule_explained": "1.2->2.2 over 0-20K, then hold 2.2. Lower start than 90M (was 1.5) since 1:3 ratio doesn't need aggressive softening",
+            "_rationale": "Codex Tier 2: alpha_max=0.45 (cooler than 90M 0.60), 0.05 WSD tail (don't zero), tau capped at 2.2 (was 3.0). Ratio 1:3 near-optimal per Law of Capacity Gap."
+        }
+    ]
+}

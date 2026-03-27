@@ -1,0 +1,591 @@
+{
+  "metadata": {
+    "purpose": "Competitive baselines for sub-200M parameter language models",
+    "compiled": "2026-03-27",
+    "context": "Sutra-24A-90M -> 197M scaling target positioning",
+    "notes": [
+      "All benchmarks 0-shot unless noted otherwise",
+      "Numbers from MobileLLM paper (ICML 2024), HuggingFace model cards, LitGPT issue #848, Cerebras-GPT paper",
+      "Some LAMBADA/SciQ numbers unavailable from published sources - marked null",
+      "acc_norm used where available (standard for HellaSwag, ARC); acc used for others"
+    ]
+  },
+
+  "models": {
+    "Pythia-160M": {
+      "params_M": 162,
+      "non_embedding_params_M": 85,
+      "architecture": {
+        "type": "GPT-NeoX (transformer decoder)",
+        "layers": 12,
+        "hidden_dim": 768,
+        "heads": 12,
+        "head_dim": 64,
+        "ffn_dim": 3072,
+        "vocab_size": 50304,
+        "context_len": 2048,
+        "activation": "GELU",
+        "positional": "Rotary"
+      },
+      "training": {
+        "tokens_B": 300,
+        "dataset": "The Pile (825 GiB, non-deduplicated)",
+        "steps": 143000,
+        "batch_size_tokens": "2M",
+        "hardware": "not disclosed (EleutherAI cluster)",
+        "lr": 6e-4
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 40.0,
+        "ARC-Challenge_acc": 25.3,
+        "ARC-Challenge_acc_norm": 25.3,
+        "HellaSwag_acc": 28.4,
+        "HellaSwag_acc_norm": 30.3,
+        "PIQA_acc": 62.3,
+        "PIQA_acc_norm": 61.9,
+        "WinoGrande_acc": 51.3,
+        "BoolQ_acc": 56.9,
+        "OBQA_acc": 15.0,
+        "OBQA_acc_norm": 26.8,
+        "LAMBADA_acc": null,
+        "SciQ_acc": null
+      },
+      "sources": [
+        "MobileLLM paper Table 3 (ARC-e 40.0, ARC-c 25.3, HellaSwag 29.9, PIQA 62.0, WG 50.9)",
+        "LitGPT issue #848 lm-eval (HellaSwag 28.38/30.27, PIQA 62.30/61.92, WG 51.30, BoolQ 56.88, OBQA 15.0/26.8)",
+        "Note: MobileLLM and lm-eval numbers differ slightly due to eval harness version differences"
+      ]
+    },
+
+    "GPT-2-124M": {
+      "params_M": 124,
+      "architecture": {
+        "type": "GPT-2 (transformer decoder)",
+        "layers": 12,
+        "hidden_dim": 768,
+        "heads": 12,
+        "head_dim": 64,
+        "ffn_dim": 3072,
+        "vocab_size": 50257,
+        "context_len": 1024,
+        "activation": "GELU",
+        "positional": "Learned"
+      },
+      "training": {
+        "tokens_B": 40,
+        "dataset": "WebText (40GB, ~8M web pages)",
+        "hardware": "256 TPU v3 cores",
+        "notes": "Released 2019, significantly undertrained by modern standards"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": null,
+        "ARC-Challenge_acc": null,
+        "HellaSwag_acc": 29.4,
+        "HellaSwag_acc_norm": 31.6,
+        "PIQA_acc": null,
+        "WinoGrande_acc": null,
+        "LAMBADA_acc": 45.99,
+        "LAMBADA_ppl": 35.13,
+        "SciQ_acc": null
+      },
+      "sources": [
+        "HuggingFace model card openai-community/gpt2 (LAMBADA acc 45.99, ppl 35.13)",
+        "Karpathy llm.c discussion (HellaSwag 29.4-29.9%)",
+        "Note: GPT-2 was trained on only 40B tokens; modern reproductions on more data score higher"
+      ]
+    },
+
+    "OPT-125M": {
+      "params_M": 125,
+      "architecture": {
+        "type": "OPT (transformer decoder)",
+        "layers": 12,
+        "hidden_dim": 768,
+        "heads": 12,
+        "head_dim": 64,
+        "ffn_dim": 3072,
+        "vocab_size": 50272,
+        "context_len": 2048,
+        "activation": "ReLU",
+        "positional": "Learned"
+      },
+      "training": {
+        "tokens_B": 300,
+        "dataset": "The Pile + BookCorpus + CCNews + others (180B tokens effective)",
+        "hardware": "992 A100 80G GPUs",
+        "notes": "Meta, 2022"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 41.3,
+        "ARC-Challenge_acc": 25.2,
+        "HellaSwag_acc_norm": 31.1,
+        "PIQA_acc": 62.0,
+        "WinoGrande_acc": 50.8,
+        "BoolQ_acc": 57.5,
+        "SIQA_acc": 41.9,
+        "OBQA_acc": 31.2,
+        "LAMBADA_acc": null,
+        "SciQ_acc": null
+      },
+      "sources": ["MobileLLM paper Table 3"]
+    },
+
+    "GPT-Neo-125M": {
+      "params_M": 125,
+      "architecture": {
+        "type": "GPT-Neo (transformer decoder)",
+        "layers": 12,
+        "hidden_dim": 768,
+        "heads": 12,
+        "ffn_dim": 3072,
+        "vocab_size": 50257,
+        "context_len": 2048,
+        "positional": "Local + Global attention alternating"
+      },
+      "training": {
+        "tokens_B": 300,
+        "dataset": "The Pile"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 40.7,
+        "ARC-Challenge_acc": 24.8,
+        "HellaSwag_acc_norm": 29.7,
+        "PIQA_acc": 62.5,
+        "WinoGrande_acc": 50.7,
+        "BoolQ_acc": 61.3,
+        "SIQA_acc": 41.9,
+        "OBQA_acc": 31.6,
+        "LAMBADA_acc": null,
+        "SciQ_acc": null
+      },
+      "sources": ["MobileLLM paper Table 3"]
+    },
+
+    "MobileLLM-125M": {
+      "params_M": 125,
+      "architecture": {
+        "type": "LLaMA-style (deep+thin transformer decoder)",
+        "layers": 30,
+        "hidden_dim": 576,
+        "heads": 9,
+        "kv_heads": 3,
+        "head_dim": 64,
+        "ffn_type": "SwiGLU",
+        "vocab_size": 32000,
+        "context_len": 2048,
+        "embedding_sharing": true,
+        "GQA": true
+      },
+      "training": {
+        "tokens_T": 1.0,
+        "tokens_B": 1000,
+        "dataset": "Not disclosed (Meta internal)",
+        "steps": 480000,
+        "hardware": "32 A100 80G GPUs",
+        "training_time": "~3 days",
+        "lr": 2e-3,
+        "notes": "ICML 2024. Key insight: depth > width for sub-1B models"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 43.9,
+        "ARC-Challenge_acc": 27.1,
+        "HellaSwag_acc_norm": 38.9,
+        "PIQA_acc": 65.3,
+        "WinoGrande_acc": 53.1,
+        "BoolQ_acc": 60.2,
+        "SIQA_acc": 42.4,
+        "OBQA_acc": 39.5,
+        "LAMBADA_acc": null,
+        "SciQ_acc": null,
+        "avg_8bench": 46.3
+      },
+      "sources": ["MobileLLM paper (arXiv:2402.14905) Table 3"]
+    },
+
+    "MobileLLM-LS-125M": {
+      "params_M": 125,
+      "architecture": {
+        "type": "MobileLLM + Layer Sharing (LS)",
+        "layers": 30,
+        "hidden_dim": 576,
+        "heads": 9,
+        "kv_heads": 3,
+        "head_dim": 64,
+        "notes": "Same as MobileLLM-125M with immediate block-wise weight sharing"
+      },
+      "training": {
+        "tokens_T": 1.0,
+        "tokens_B": 1000,
+        "dataset": "Not disclosed (Meta internal)",
+        "hardware": "32 A100 80G GPUs"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 45.8,
+        "ARC-Challenge_acc": 28.7,
+        "HellaSwag_acc_norm": 39.5,
+        "PIQA_acc": 65.7,
+        "WinoGrande_acc": 52.1,
+        "BoolQ_acc": 60.4,
+        "SIQA_acc": 42.9,
+        "OBQA_acc": 41.1,
+        "avg_8bench": 47.0
+      },
+      "sources": ["MobileLLM paper Table 3"]
+    },
+
+    "RWKV-169M": {
+      "params_M": 169,
+      "architecture": {
+        "type": "RWKV-4 (linear attention RNN)",
+        "layers": 12,
+        "hidden_dim": 768,
+        "context_len": "unlimited (RNN)",
+        "notes": "Pure RNN architecture, O(1) inference memory"
+      },
+      "training": {
+        "tokens_B": 332,
+        "dataset": "The Pile"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 42.5,
+        "ARC-Challenge_acc": 25.3,
+        "HellaSwag_acc_norm": 31.9,
+        "PIQA_acc": 63.9,
+        "WinoGrande_acc": 51.5,
+        "BoolQ_acc": 59.1,
+        "SIQA_acc": 40.7,
+        "OBQA_acc": 33.8,
+        "LAMBADA_acc": 33.0,
+        "avg_8bench": 43.6
+      },
+      "sources": [
+        "MobileLLM paper Table 3 (ARC/HellaSwag/PIQA/WG/BoolQ/SIQA/OBQA)",
+        "HuggingFace model card (LAMBADA 32.99)"
+      ]
+    },
+
+    "Cerebras-GPT-111M": {
+      "params_M": 111,
+      "architecture": {
+        "type": "GPT-3-style (transformer decoder)",
+        "layers": 10,
+        "hidden_dim": 768,
+        "heads": 12,
+        "head_dim": 64,
+        "ffn_dim": 3072,
+        "vocab_size": 50257,
+        "context_len": 2048,
+        "positional": "Learned"
+      },
+      "training": {
+        "tokens_B": 2.2,
+        "dataset": "The Pile",
+        "steps": 9037,
+        "training_FLOPs": "2.6e18",
+        "hardware": "Cerebras CS-2 wafer-scale",
+        "notes": "Chinchilla-optimal: 20 tokens/param. SEVERELY undertrained compared to others."
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 38.0,
+        "ARC-Challenge_acc": 16.6,
+        "HellaSwag_acc_norm": 26.8,
+        "PIQA_acc": 59.4,
+        "WinoGrande_acc": 48.8,
+        "LAMBADA_acc": 19.4,
+        "OBQA_acc": 11.8,
+        "avg_downstream": 31.5
+      },
+      "benchmarks_5shot": {
+        "ARC-Easy_acc": 40.6,
+        "ARC-Challenge_acc": 18.9,
+        "HellaSwag_acc_norm": 28.2,
+        "PIQA_acc": 60.6,
+        "WinoGrande_acc": 50.5,
+        "LAMBADA_acc": 18.6,
+        "OBQA_acc": 14.8
+      },
+      "sources": ["Cerebras-GPT paper (arXiv:2304.03208)", "HuggingFace model card cerebras/Cerebras-GPT-111M"]
+    },
+
+    "Cerebras-GPT-256M": {
+      "params_M": 256,
+      "architecture": {
+        "type": "GPT-3-style (transformer decoder)",
+        "layers": 14,
+        "hidden_dim": 1088,
+        "heads": 17,
+        "head_dim": 64,
+        "ffn_dim": 4352,
+        "context_len": 2048
+      },
+      "training": {
+        "tokens_B": 5.1,
+        "dataset": "The Pile",
+        "notes": "Chinchilla-optimal: 20 tokens/param"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 41.0,
+        "ARC-Challenge_acc": 17.0,
+        "HellaSwag_acc_norm": 27.4,
+        "PIQA_acc": 61.3,
+        "WinoGrande_acc": 51.1,
+        "LAMBADA_acc": 29.3,
+        "OBQA_acc": 15.8
+      },
+      "sources": ["Cerebras-GPT paper (arXiv:2304.03208)"]
+    },
+
+    "SmolLM-135M": {
+      "params_M": 135,
+      "architecture": {
+        "type": "LLaMA-style (deep+thin transformer decoder)",
+        "layers": 30,
+        "hidden_dim": 576,
+        "heads": 9,
+        "kv_heads": 3,
+        "head_dim": 64,
+        "intermediate_size": 1536,
+        "vocab_size": 49152,
+        "context_len": 2048,
+        "GQA": true,
+        "embedding_tying": true
+      },
+      "training": {
+        "tokens_B": 600,
+        "dataset": "Cosmo-Corpus (Cosmopedia v2 28B + Python-Edu 4B + FineWeb-Edu 220B)",
+        "steps": 600000,
+        "hardware": "64 H100 GPUs",
+        "framework": "nanotron"
+      },
+      "benchmarks_0shot": {
+        "ARC_avg": 42.4,
+        "HellaSwag_acc_norm": 41.2,
+        "PIQA_acc": 68.4,
+        "WinoGrande_acc": 51.3,
+        "MMLU_cloze": 30.2,
+        "CommonsenseQA": 32.7,
+        "TriviaQA": 4.3,
+        "OBQA": 34.0,
+        "GSM8K_5shot": 1.0
+      },
+      "sources": ["HuggingFace SmolLM2-135M model card (comparison column)", "HuggingFace blog/smollm"]
+    },
+
+    "SmolLM2-135M": {
+      "params_M": 135,
+      "architecture": {
+        "type": "LLaMA-style (deep+thin transformer decoder with GQA)",
+        "layers": 30,
+        "hidden_dim": 576,
+        "heads": 9,
+        "kv_heads": 3,
+        "head_dim": 64,
+        "intermediate_size": 1536,
+        "vocab_size": 49152,
+        "context_len": 8192,
+        "GQA": true,
+        "embedding_tying": true,
+        "notes": "Same arch as SmolLM-135M but longer context and more training data"
+      },
+      "training": {
+        "tokens_T": 2.0,
+        "tokens_B": 2000,
+        "dataset": "FineWeb-Edu + DCLM + The Stack + proprietary filtered datasets",
+        "hardware": "64 H100 GPUs",
+        "framework": "nanotron",
+        "precision": "bfloat16"
+      },
+      "benchmarks_0shot": {
+        "ARC_avg": 43.9,
+        "HellaSwag_acc_norm": 42.1,
+        "PIQA_acc": 68.4,
+        "WinoGrande_acc": 51.3,
+        "MMLU_cloze": 31.5,
+        "CommonsenseQA": 33.9,
+        "TriviaQA": 4.1,
+        "OBQA": 34.6,
+        "GSM8K_5shot": 1.4
+      },
+      "sources": ["HuggingFace SmolLM2-135M model card", "SmolLM2 paper arXiv:2502.02737"]
+    },
+
+    "Pythia-70M": {
+      "params_M": 70,
+      "non_embedding_params_M": 19,
+      "architecture": {
+        "type": "GPT-NeoX (transformer decoder)",
+        "layers": 6,
+        "hidden_dim": 512,
+        "heads": 8,
+        "head_dim": 64,
+        "vocab_size": 50304,
+        "context_len": 2048,
+        "lr": 1e-3
+      },
+      "training": {
+        "tokens_B": 300,
+        "dataset": "The Pile"
+      },
+      "benchmarks_0shot_lmeval": {
+        "HellaSwag_acc": 26.6,
+        "HellaSwag_acc_norm": 27.5,
+        "PIQA_acc": 59.5,
+        "PIQA_acc_norm": 59.1,
+        "WinoGrande_acc": 52.7,
+        "BoolQ_acc": 52.3,
+        "OBQA_acc": 12.8,
+        "OBQA_acc_norm": 24.8
+      },
+      "benchmarks_openllm_leaderboard": {
+        "ARC_25shot": 21.59,
+        "HellaSwag_10shot": 27.29,
+        "MMLU_5shot": 25.9,
+        "TruthfulQA_0shot": 47.06,
+        "WinoGrande_5shot": 51.46,
+        "GSM8K_5shot": 0.3,
+        "average": 25.28
+      },
+      "sources": ["LitGPT issue #848", "HuggingFace pythia-70m Open LLM Leaderboard"]
+    },
+
+    "Pythia-410M": {
+      "params_M": 410,
+      "non_embedding_params_M": 302,
+      "architecture": {
+        "type": "GPT-NeoX (transformer decoder)",
+        "layers": 24,
+        "hidden_dim": 1024,
+        "heads": 16,
+        "head_dim": 64,
+        "context_len": 2048,
+        "lr": 3e-4
+      },
+      "training": {
+        "tokens_B": 300,
+        "dataset": "The Pile"
+      },
+      "benchmarks_0shot_lmeval": {
+        "HellaSwag_acc": 33.7,
+        "HellaSwag_acc_norm": 40.6,
+        "PIQA_acc": 66.9,
+        "PIQA_acc_norm": 66.9,
+        "WinoGrande_acc": 53.8,
+        "BoolQ_acc": 60.9,
+        "OBQA_acc": 18.0,
+        "OBQA_acc_norm": 29.4
+      },
+      "benchmarks_mobilellm_paper": {
+        "ARC-Easy_acc": 47.1,
+        "ARC-Challenge_acc": 30.3,
+        "HellaSwag_acc_norm": 40.1,
+        "PIQA_acc": 67.2,
+        "WinoGrande_acc": 53.4,
+        "BoolQ_acc": 55.3,
+        "SIQA_acc": 43.1,
+        "OBQA_acc": 36.2,
+        "avg_8bench": 46.6
+      },
+      "sources": ["MobileLLM paper Table 3", "LitGPT issue #848"]
+    },
+
+    "TinyLlama-1.1B": {
+      "params_M": 1100,
+      "architecture": {
+        "type": "LLaMA-2-style (transformer decoder)",
+        "layers": 22,
+        "hidden_dim": 2048,
+        "heads": 32,
+        "head_dim": 64,
+        "ffn_dim": 5632,
+        "vocab_size": 32000,
+        "context_len": 2048,
+        "GQA": true,
+        "activation": "SwiGLU",
+        "positional": "RoPE"
+      },
+      "training": {
+        "tokens_T": 3.0,
+        "tokens_B": 3000,
+        "dataset": "SlimPajama-627B + StarCoderData",
+        "hardware": "16 A100-40G GPUs",
+        "training_time": "90 days"
+      },
+      "benchmarks_0shot": {
+        "ARC-Easy_acc": 55.25,
+        "ARC-Challenge_acc": 30.12,
+        "HellaSwag_acc_norm": 59.20,
+        "PIQA_acc": 73.29,
+        "WinoGrande_acc": 59.12,
+        "BoolQ_acc": 57.83,
+        "OBQA_acc": 36.00,
+        "avg_7bench": 52.99
+      },
+      "benchmarks_openllm_leaderboard": {
+        "ARC_25shot_norm": 33.87,
+        "HellaSwag_10shot_norm": 60.31,
+        "MMLU_5shot": 26.04,
+        "TruthfulQA_0shot": 37.32,
+        "WinoGrande_5shot": 59.51,
+        "GSM8K_5shot": 1.44,
+        "average": 36.42
+      },
+      "sources": ["TinyLlama EVAL.md", "HuggingFace TinyLlama-1.1B model card"]
+    }
+  },
+
+  "summary_table_0shot": {
+    "description": "Head-to-head comparison on key benchmarks (0-shot). All numbers are accuracy percentages. Best sub-200M in bold.",
+    "note": "HellaSwag uses acc_norm where available. ARC-Easy/Challenge use acc. PIQA uses acc.",
+    "columns": ["Model", "Params", "Tokens", "ARC-E", "ARC-C", "HellaSwag", "PIQA", "WinoGrande", "LAMBADA", "BoolQ", "OBQA"],
+    "rows": [
+      {"model": "Cerebras-GPT-111M",   "params": "111M", "tokens": "2.2B",    "ARC-E": 38.0, "ARC-C": 16.6, "HellaSwag": 26.8, "PIQA": 59.4, "WinoGrande": 48.8, "LAMBADA": 19.4, "BoolQ": null, "OBQA": 11.8},
+      {"model": "GPT-2-124M",          "params": "124M", "tokens": "~40B",    "ARC-E": null,  "ARC-C": null,  "HellaSwag": 31.6, "PIQA": null,  "WinoGrande": null,  "LAMBADA": 46.0, "BoolQ": null, "OBQA": null},
+      {"model": "OPT-125M",            "params": "125M", "tokens": "300B",    "ARC-E": 41.3, "ARC-C": 25.2, "HellaSwag": 31.1, "PIQA": 62.0, "WinoGrande": 50.8, "LAMBADA": null,  "BoolQ": 57.5, "OBQA": 31.2},
+      {"model": "GPT-Neo-125M",        "params": "125M", "tokens": "300B",    "ARC-E": 40.7, "ARC-C": 24.8, "HellaSwag": 29.7, "PIQA": 62.5, "WinoGrande": 50.7, "LAMBADA": null,  "BoolQ": 61.3, "OBQA": 31.6},
+      {"model": "MobileLLM-125M",      "params": "125M", "tokens": "1T",      "ARC-E": 43.9, "ARC-C": 27.1, "HellaSwag": 38.9, "PIQA": 65.3, "WinoGrande": 53.1, "LAMBADA": null,  "BoolQ": 60.2, "OBQA": 39.5},
+      {"model": "MobileLLM-LS-125M",   "params": "125M", "tokens": "1T",      "ARC-E": 45.8, "ARC-C": 28.7, "HellaSwag": 39.5, "PIQA": 65.7, "WinoGrande": 52.1, "LAMBADA": null,  "BoolQ": 60.4, "OBQA": 41.1},
+      {"model": "SmolLM-135M",         "params": "135M", "tokens": "600B",    "ARC-E": null,  "ARC-C": null,  "HellaSwag": 41.2, "PIQA": 68.4, "WinoGrande": 51.3, "LAMBADA": null,  "BoolQ": null, "OBQA": 34.0},
+      {"model": "SmolLM2-135M",        "params": "135M", "tokens": "2T",      "ARC-E": null,  "ARC-C": null,  "HellaSwag": 42.1, "PIQA": 68.4, "WinoGrande": 51.3, "LAMBADA": null,  "BoolQ": null, "OBQA": 34.6},
+      {"model": "Pythia-160M",         "params": "162M", "tokens": "300B",    "ARC-E": 40.0, "ARC-C": 25.3, "HellaSwag": 30.3, "PIQA": 62.3, "WinoGrande": 51.3, "LAMBADA": null,  "BoolQ": 56.9, "OBQA": 26.8},
+      {"model": "RWKV-169M",           "params": "169M", "tokens": "332B",    "ARC-E": 42.5, "ARC-C": 25.3, "HellaSwag": 31.9, "PIQA": 63.9, "WinoGrande": 51.5, "LAMBADA": 33.0, "BoolQ": 59.1, "OBQA": 33.8},
+      {"model": "--- REFERENCE ---",   "params": "---",  "tokens": "---",     "ARC-E": "---", "ARC-C": "---", "HellaSwag": "---", "PIQA": "---", "WinoGrande": "---", "LAMBADA": "---", "BoolQ": "---", "OBQA": "---"},
+      {"model": "Pythia-410M",         "params": "410M", "tokens": "300B",    "ARC-E": 47.1, "ARC-C": 30.3, "HellaSwag": 40.1, "PIQA": 67.2, "WinoGrande": 53.4, "LAMBADA": null,  "BoolQ": 55.3, "OBQA": 36.2},
+      {"model": "MobileLLM-350M",      "params": "345M", "tokens": "1T",      "ARC-E": 53.8, "ARC-C": 33.5, "HellaSwag": 49.6, "PIQA": 68.6, "WinoGrande": 57.6, "LAMBADA": null,  "BoolQ": 62.4, "OBQA": 40.0},
+      {"model": "TinyLlama-1.1B",      "params": "1.1B", "tokens": "3T",      "ARC-E": 55.3, "ARC-C": 30.1, "HellaSwag": 59.2, "PIQA": 73.3, "WinoGrande": 59.1, "LAMBADA": null,  "BoolQ": 57.8, "OBQA": 36.0}
+    ]
+  },
+
+  "key_insights": {
+    "best_sub200M_overall": "SmolLM2-135M (HellaSwag 42.1, PIQA 68.4) and MobileLLM-LS-125M (ARC-E 45.8, ARC-C 28.7) are the two strongest sub-200M models",
+    "training_data_matters": "SmolLM2 on 2T tokens >> Pythia on 300B tokens. SmolLM2 with 135M params beats Pythia-410M on HellaSwag (42.1 vs 40.1)",
+    "depth_matters": "MobileLLM (30 layers, 576d) dramatically outperforms same-param models with fewer layers (e.g., Pythia-160M: 12 layers, 768d). +9pp on HellaSwag.",
+    "sutra_architecture_comparison": "Sutra-24A-90M (24 layers, 512d) is between Pythia-70M (6L/512d) and Pythia-160M (12L/768d) in capacity. 197M target would be comparable to MobileLLM-125M in param count but needs 10x more training data.",
+    "target_benchmarks_for_197M": {
+      "floor_must_beat": {
+        "ARC-Easy": 40.0,
+        "ARC-Challenge": 25.0,
+        "HellaSwag": 30.0,
+        "PIQA": 62.0,
+        "WinoGrande": 51.0,
+        "notes": "Pythia-160M level. Must exceed this or the model is not competitive."
+      },
+      "target_competitive": {
+        "ARC-Easy": 44.0,
+        "ARC-Challenge": 27.0,
+        "HellaSwag": 39.0,
+        "PIQA": 65.0,
+        "WinoGrande": 53.0,
+        "notes": "MobileLLM-125M level. This would be impressive given less training data."
+      },
+      "target_best_in_class": {
+        "ARC-Easy": 46.0,
+        "ARC-Challenge": 29.0,
+        "HellaSwag": 42.0,
+        "PIQA": 68.0,
+        "WinoGrande": 53.0,
+        "notes": "SmolLM2-135M / MobileLLM-LS level. Best-in-class for sub-200M."
+      }
+    },
+    "critical_caveat": "SmolLM2 trained on 2T tokens (15x Pythia), MobileLLM on 1T tokens (3.3x Pythia). Sutra's KD approach aims to compensate for less raw training data by absorbing knowledge from teacher models."
+  }
+}

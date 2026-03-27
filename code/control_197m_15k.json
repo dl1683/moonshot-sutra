@@ -1,0 +1,25 @@
+{
+    "_comment": "197M control arm: from-scratch training at 2.2x scale. Establishes baseline for 197M before KD. Teacher ratio at this scale: 1:8.6 (in comfort zone). Same WSD schedule as 90M gate.",
+    "_context": "90M KD at 1:19 ratio failed (gap +0.273@3K, accelerating). Scaling to 197M brings ratio to 1:8.6 per Law of Capacity Gap research (§6.4.34).",
+    "name": "control_197m_15k",
+    "init_from": "results/checkpoint_197m_step0.pt",
+    "total_steps": 15000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 3e-4,
+    "min_lr": 1e-5,
+    "warmup": 500,
+    "eval_every": 1000,
+    "seq_len": 512,
+    "n_spans": 16,
+    "save_at": [3000, 5000, 7500, 10000, 12000, 15000],
+    "variants": [
+        {
+            "tag": "control_197m_15k",
+            "teachers": [],
+            "alpha_state": 0.0,
+            "alpha_semantic": 0.0,
+            "alpha_logit": 0.0
+        }
+    ]
+}
