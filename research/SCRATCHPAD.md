@@ -867,7 +867,9 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | 39000 | 4.038 | — | 0.000 | 3.0e-4 | **kurt=1007.4(!!!)**, max_act=374.8. BPT mild reversion. Kurtosis spike: 11x avg (transient — 40K resolved). |
 | **40000** | **3.993** | — | 0.000 | 3.0e-4 | kurt=85.2, max_act=351.0. **FIRST TIME BELOW 4.0!!!** Kurtosis normalized. |
 | 41000 | 4.009 | — | 0.000 | 3.0e-4 | kurt=194.4, max_act=**426.3 (new high)**. BPT mild reversion. Kurtosis spike pattern: odd-K steps spike (37K,39K,41K), even-K normal (38K,40K). |
-| **42000** | **3.982** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=232.3 (YELLOW), max_act=368.3. Below all 3 predictions by 0.016. Slope steepening: -11.4 mBPT/K. |
+| **42000** | **3.982** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=232.3 (YELLOW), max_act=368.3. Below predictions by 0.016. Kurtosis trending up but benign (BPT improving). |
+| **43000** | **3.963** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=127.0 (GREEN), max_act=367.1. Below predictions by 0.025. Three consecutive bests (40K, 42K, 43K). |
+| 44000 | 3.991 | — | 0.000 | 3.0e-4 | Oscillation reversion (+0.028). kurt=**369.3 (YELLOW, highest non-outlier)**. max_act=376.2. Above central by 0.013. Slope -11.4 mBPT/K. 48K pred: 3.926. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -971,8 +973,8 @@ Odd-K/even-K pattern is NOISE (residual means: odd +0.002, even -0.012 — not s
 | Step | Optimistic (30-41K) | Central (3-method avg) | Conservative (20-41K) | Actual |
 |------|---------------------|------------------------|----------------------|--------|
 | 42K | 3.999 | 3.998 | 4.006 | **3.982 (-0.016)** |
-| 43K | 3.988 | 3.988 | 3.996 | — |
-| 44K | 3.977 | 3.978 | 3.987 | — |
+| 43K | 3.988 | 3.988 | 3.996 | **3.963 (-0.025)** |
+| 44K | 3.977 | 3.978 | 3.987 | **3.991 (+0.013)** |
 | 45K | 3.966 | 3.969 | 3.977 | — |
 | 46K | 3.955 | 3.959 | 3.968 | — |
 | 47K | 3.944 | 3.949 | 3.958 | — |
