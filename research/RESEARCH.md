@@ -2562,6 +2562,24 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 
 **Still open:** Arm 4 tests surface orthogonality (do rep and logit interfere or complement?). Codex strategic review pending for 15K gate design.
 
+### 6.4.31 Codex Strategic Review: 15K Gate Design (2026-03-26)
+
+**Codex role:** Scaling Expert + Architecture Theorist. Reviewed full ablation evidence and proposed 15K gate design.
+
+**Decision 1:** Test mechanism fixes (α schedule + τ schedule + confidence gating), NOT teacher swap. Keep Qwen3-1.7B. Answer one clean question: can repaired token-level KD persist at 90M?
+
+**Decision 2:** Logit-only surface. Rep KD failed persistence 3 times. No rep surface in primary arm.
+
+**Decision 3:** Lower peak α than proposed (0.60, not 0.70). Logit KD's penalty was much larger than rep KD's — logit arm should run cooler.
+- α: 0.10→0.60 over 0-2K steps, hold 0.60 for 2K-10K, taper 0.60→0.10 over 10K-12K, then 0.0 for 12K-15K
+- τ: 1.5→3.0 linearly by 10K, then hold
+- K=64, ETA alignment, forward KL
+- Confidence gating: ×1.5 if teacher p_max>0.5, ×0.3 if p_max<0.1, else ×1.0
+
+**Decision 4:** No AMiD/reverse KL in first gate. Fallback if scheduled forward-KL is stable but still flat.
+
+**Decision 5:** Stop rules — by 6K: non-positive vs control; by 10K: ΔBPT ≤ -0.02; by 15K: ΔBPT ≤ -0.015 + lm-eval lift. Abort if kurtosis > 2× control or max_act > 1.15× control. If fail → scale to 166M (d=768, 24L, 12H, 1:8.8 ratio).
+
 ### 7. Fundamentals-First: Mathematical Structures for Knowledge Routing (2026-03-26)
 
 **Methodology note:** These are NOT "X applied to KD" papers. These are the FUNDAMENTAL mathematical structures themselves, studied on their own terms, with connections to our KD system derived from first principles. Per user directive: study the domain deeply, then derive applications — don't search for pre-existing intersections.

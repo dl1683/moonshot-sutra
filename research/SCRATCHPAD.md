@@ -356,14 +356,16 @@ Based on control trajectory (this ablation): BPT 5.02→4.91→4.83→4.83→4.6
 - Interfering (surfaces compete): BPT > 4.750
 
 **Step-by-step predictions for arm 4:**
-| Step | Control | Predicted Arm 4 | Predicted Δ | Rationale |
-|------|---------|-----------------|-------------|-----------|
-| 500  | 5.021   | 5.10-5.15       | +0.08-0.13  | Logit penalty ~halved from arm 3's +0.257 |
-| 1000 | 4.911   | 4.98-5.02       | +0.07-0.11  | Similar recovery trajectory |
-| 1500 | 4.830   | 4.90-4.95       | +0.07-0.12  | Logit penalty persists but muted |
-| 2000 | 4.827   | 4.88-4.94       | +0.05-0.11  | Plateau with partial rep acceleration |
-| 2500 | 4.684   | 4.73-4.78       | +0.05-0.10  | WSD starts, watch for rep collapse |
-| 3000 | 4.498   | 4.60-4.75       | +0.10-0.25  | CRITICAL: does combining mitigate or worsen? |
+| Step | Control | Predicted Arm 4 | Predicted Δ | **Actual** | **Actual Δ** | Match? |
+|------|---------|-----------------|-------------|------------|--------------|--------|
+| 500  | 5.021   | 5.10-5.15       | +0.08-0.13  | **5.169**  | **+0.147**   | SLIGHTLY ABOVE — logit penalty worse than halved |
+| 1000 | 4.911   | 4.98-5.02       | +0.07-0.11  |            |              | |
+| 1500 | 4.830   | 4.90-4.95       | +0.07-0.12  |            |              | |
+| 2000 | 4.827   | 4.88-4.94       | +0.05-0.11  |            |              | |
+| 2500 | 4.684   | 4.73-4.78       | +0.05-0.10  |            |              | |
+| 3000 | 4.498   | 4.60-4.75       | +0.10-0.25  |            |              | CRITICAL |
+
+**Arm 4 @500 Analysis:** Actual Δ=+0.147 vs predicted +0.08-0.13. Logit penalty is NOT halved — it's +0.147 vs arm 3's +0.257 at step 500, so ~57% of full logit penalty (predicted ~50%). The rep surface ISN'T fully compensating. However, kurtosis=2.5 is remarkably LOW (control=3.1, arm 2=3.2, arm 3=3.4 at step 500) — the combination is stabilizing activations even if not helping BPT. Max_act=50.4 also healthy. This suggests rep KD IS doing something (stabilization) even though it doesn't translate to BPT benefit. Key question: will stabilization translate to better WSD consolidation?
 
 **Decision matrix (REVISED with actual arms 1-3 data):**
 | Arm 4 BPT@3K | vs Control | vs Arm 2 (4.516) | vs Arm 3 (4.783) | Interpretation | 15K Action |

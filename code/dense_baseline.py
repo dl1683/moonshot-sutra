@@ -1721,6 +1721,7 @@ def compute_cross_tok_logit_kd(
     shared_t_ids,       # (N_shared,) — teacher vocab indices for shared tokens
     temperature=2.0,
     top_k=64,
+    confidence_gating=False,
 ):
     """Cross-tokenizer logit-level KD via vocabulary overlap (DSKDv2 ETA).
 
@@ -1798,6 +1799,12 @@ def compute_cross_tok_logit_kd(
     s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
     # Per-token KL: sum over vocab dim, then average over valid positions
     per_token_kl = F.kl_div(s_log_probs, t_probs, reduction="none").sum(dim=-1)  # (B, T_s)
+    # Confidence gating: scale per-token KD by teacher confidence (raw, not softened)
+    if confidence_gating:
+        t_raw_probs = F.softmax(topk_vals, dim=-1)  # raw (no temperature)
+        p_max = t_raw_probs.max(dim=-1).values       # (B, T_s)
+        conf_w = torch.where(p_max > 0.5, 1.5, torch.where(p_max < 0.1, 0.3, 1.0))
+        per_token_kl = per_token_kl * conf_w
     per_token_kl = per_token_kl * valid_mask.float()  # zero out invalid positions
     n_valid = valid_mask.float().sum().clamp(min=1.0)
     kl = per_token_kl.sum() / n_valid  # per-token average
@@ -4066,11 +4073,19 @@ def train_kd(config_path):
         v_alpha_state = variant.get("alpha_state", alpha_state_default)
         v_alpha_semantic = variant.get("alpha_semantic", alpha_semantic_default)
         v_alpha_logit = variant.get("alpha_logit", alpha_logit_default)
+        v_alpha_schedule = variant.get("alpha_schedule", None)
+        v_confidence_gating = variant.get("confidence_gating", False)
+        v_tau_schedule = variant.get("tau_schedule", None)
 
         print(f"\n{'='*60}")
         print(f"KD VARIANT: {tag}")
         print(f"  Teachers: {[t['name'] for t in v_teachers_cfg] if v_teachers_cfg else 'NONE (control)'}")
         print(f"  alpha_state={v_alpha_state}, alpha_semantic={v_alpha_semantic}, alpha_logit={v_alpha_logit}")
+        if v_alpha_schedule:
+            print(f"  Alpha schedule: warmup={v_alpha_schedule.get('warmup_steps', 2000)}, "
+                  f"start_frac={v_alpha_schedule.get('start_frac', 0.2)}, "
+                  f"decay_start={v_alpha_schedule.get('decay_start_step', int(total_steps * 0.67))}, "
+                  f"zero_start={v_alpha_schedule.get('zero_start_step', total_steps)}")
 
         # ---- Load student from checkpoint (CPU first to avoid VRAM spike) ----
         init_ckpt = torch.load(init_checkpoint, weights_only=False, map_location="cpu")
@@ -4165,6 +4180,38 @@ def train_kd(config_path):
                 else:
                     pg["lr"] = current_lr
 
+            # ---- Alpha schedule (inverted-U or custom) ----
+            if v_alpha_schedule:
+                ws = v_alpha_schedule.get("warmup_steps", 2000)
+                sf = v_alpha_schedule.get("start_frac", 0.2)
+                ds = v_alpha_schedule.get("decay_start_step", int(total_steps * 0.67))
+                ef = v_alpha_schedule.get("decay_end_frac", 0.0)
+                zs = v_alpha_schedule.get("zero_start_step", total_steps)
+                if step <= ws:
+                    alpha_frac = sf + (1.0 - sf) * (step / ws)
+                elif step <= ds:
+                    alpha_frac = 1.0
+                elif step <= zs:
+                    alpha_frac = 1.0 - (1.0 - ef) * ((step - ds) / max(zs - ds, 1))
+                else:
+                    alpha_frac = 0.0
+                sa_state = v_alpha_state * alpha_frac
+                sa_semantic = v_alpha_semantic * alpha_frac
+                sa_logit = v_alpha_logit * alpha_frac
+            else:
+                sa_state = v_alpha_state
+                sa_semantic = v_alpha_semantic
+                sa_logit = v_alpha_logit
+
+            # ---- Tau schedule (rising temperature for logit KD) ----
+            if v_tau_schedule:
+                tau_start = v_tau_schedule.get("start", 1.5)
+                tau_end = v_tau_schedule.get("end", 3.0)
+                tau_ramp = v_tau_schedule.get("ramp_steps", int(total_steps * 0.67))
+                step_tau = tau_start + (tau_end - tau_start) * min(step / tau_ramp, 1.0)
+            else:
+                step_tau = logit_temperature
+
             opt.zero_grad()
             step_ce = 0.0
             step_kd = 0.0
@@ -4236,7 +4283,7 @@ def train_kd(config_path):
                                     teacher_mask=t_out["attention_mask"],
                                     projector=proj, n_spans=n_spans,
                                 )
-                                kd_loss = kd_loss + (v_alpha_state / max(n_state_teachers, 1)) * s_kd
+                                kd_loss = kd_loss + (sa_state / max(n_state_teachers, 1)) * s_kd
 
                             # Semantic KD: relational Gram matrix loss
                             if "semantic" in teacher.surfaces:
@@ -4250,7 +4297,7 @@ def train_kd(config_path):
                                     teacher_mask=t_out["attention_mask"],
                                     projector=proj,
                                 )
-                                kd_loss = kd_loss + (v_alpha_semantic / max(n_sem_teachers, 1)) * sem_kd
+                                kd_loss = kd_loss + (sa_semantic / max(n_sem_teachers, 1)) * sem_kd
 
                             # Logit-level KD: cross-tokenizer via shared vocabulary
                             if "logit" in teacher.surfaces and teacher.name in teacher_vocab_overlaps:
@@ -4266,10 +4313,11 @@ def train_kd(config_path):
                                     teacher_mask=t_out["attention_mask"],
                                     shared_s_ids=s_ids,
                                     shared_t_ids=t_ids,
-                                    temperature=logit_temperature,
+                                    temperature=step_tau,
                                     top_k=logit_top_k,
+                                    confidence_gating=v_confidence_gating,
                                 )
-                                kd_loss = kd_loss + (v_alpha_logit / max(n_logit_teachers, 1)) * logit_kd
+                                kd_loss = kd_loss + (sa_logit / max(n_logit_teachers, 1)) * logit_kd
 
                     total_loss = (base_loss + kd_loss) / grad_accum
 
@@ -4303,6 +4351,8 @@ def train_kd(config_path):
                 bpt = avg_ce / math.log(2)
                 msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
                        f"KD={avg_kd:.4f} LR={current_lr:.2e}")
+                if v_alpha_schedule:
+                    msg += f" aF={alpha_frac:.2f}"
                 print(msg, flush=True)
                 with open(log_file, "a") as f:
                     f.write(msg + "\n")
