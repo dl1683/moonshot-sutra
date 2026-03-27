@@ -531,10 +531,10 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 4000 | **4.632** | — | — | **ACTUAL.** Slower than predicted (expected ~4.59). Plateau onset. |
 | 5000 | **4.612** | 4.55-4.63 | -0.06 to +0.02 | **ACTUAL control.** Was ~4.55 predicted, 0.062 worse. Deceleration confirmed. Kurtosis=10.1. |
 | 6000 | **4.616** | 4.55-4.63 | ≤0 (STOP RULE) | **ACTUAL.** Deep plateau. -0.003 from 5K. Kurtosis SPIKED to 41.7 (see analysis below). |
-| 7500 | ~4.52 | 4.45-4.54 | -0.07 to +0.02 | **REVISED up from 4.38.** Power-law decay model. |
-| 10000 | ~4.55 | 4.48-4.58 | ≤-0.02 (STOP RULE) | **RE-REVISED.** Still flat LR. α tapers. KD advantage must hold. |
-| 12000 | ~4.54 | 4.47-4.56 | -0.06 to +0.02 | **RE-REVISED.** Last flat-LR step. α→0. Pure NTP. |
-| 15000 | ~4.20 | 4.15-4.25 | ≤-0.015 (PROOF) | **RE-REVISED.** WSD decay 12K-15K drops ~0.34. lm-eval required. |
+| 7500 | ~4.50 | 4.43-4.52 | -0.07 to +0.02 | **RE-REVISED.** Plateau was transient. Control resumed -0.077/1K. |
+| 10000 | ~4.43 | 4.36-4.46 | ≤-0.02 (STOP RULE) | **RE-REVISED (post step 7K).** Plateau was transient. α tapers. |
+| 12000 | ~4.36 | 4.29-4.39 | -0.06 to +0.02 | **RE-REVISED.** Last flat-LR step. α→0. Pure NTP. |
+| 15000 | ~4.05 | 3.98-4.12 | ≤-0.015 (PROOF) | **RE-REVISED.** WSD decay 12K-15K drops ~0.31. lm-eval required. |
 
 **Scenarios and Decision Tree:**
 
@@ -572,17 +572,18 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 | 3000 | 4.680 | -0.144 | 5.2 | 72.5 | Stable LR (fast learning phase) |
 | 4000 | 4.632 | -0.048 | 7.2 | 87.9 | Decelerating |
 | 5000 | 4.612 | -0.020 | 10.1 | 107.4 | Plateau onset |
-| 6000 | 4.616 | +0.003 | 41.7 | 97.8 | **DEEP PLATEAU.** Kurtosis spike (see below). |
+| 6000 | 4.616 | +0.003 | 41.7 | 97.8 | Apparent plateau. Kurtosis spike TRANSIENT (see below). |
+| 7000 | 4.538 | -0.077 | 11.0 | 98.7 | **PLATEAU BROKEN.** Resumed learning. Kurtosis back to normal. |
 
-**Learning rate profile:** Steps 1-6K: flat 3e-4 (=steps 5001-11000 absolute). WSD decay starts at step 12K.
+**Learning rate profile:** Steps 1-7K: flat 3e-4 (=steps 5001-12000 absolute). WSD decay starts at step 12K.
 
 **Observations:**
-1. **BPT plateau is confirmed.** Step 5K→6K: +0.003 (essentially zero improvement). Improvement per 1K steps: -0.071, -0.144, -0.048, -0.020, +0.003. The model has SATURATED at flat 3e-4 LR. All further BPT improvement will come from WSD decay (steps 12K-15K).
-2. **Kurtosis trajectory NONLINEAR.** 3.2→4.0→5.2→7.2→10.1→**41.7**. The step 6K spike (4× from step 5K) is NOT consistent with prior linear growth. Most likely explanation: kurtosis_max takes the WORST layer. One specific layer is developing heavy-tailed activations during the plateau phase. Max_act DECREASED (107.4→97.8) so this isn't an outlier explosion — it's a distribution shape change in one layer.
-3. **KD stop rules remain relative.** The kurtosis stop rule is 2× control AT SAME STEP. So step 6K threshold for KD arm = 2 × 41.7 = 83.4. The absolute number doesn't matter — only the ratio.
-4. **Revised BPT extrapolation:** Flat LR phase (steps 6K-12K) will show minimal BPT improvement (~4.61 ± 0.01). WSD decay (12K-15K) will produce the consolidation drop. Estimated final: ~4.20-4.30.
+1. **BPT plateau was TRANSIENT (step 5K-6K only).** Improvement per 1K steps: -0.071, -0.144, -0.048, -0.020, +0.003, **-0.077**. Step 7K resumed learning at a rate similar to steps 3K-4K. The "deep plateau" at steps 5K-6K was a TEMPORARY stall, not saturation.
+2. **Kurtosis spike was TRANSIENT.** 3.2→4.0→5.2→7.2→10.1→41.7→**11.0**. The 41.7 at step 6K was an eval batch effect (random test data hit a pathological layer configuration). Step 7K kurtosis is back to the prior trend line (~11 ≈ 10.1 + 1 per 1K steps). **Implication: ignore the step 6K kurtosis anomaly for all predictions.**
+3. **Max_act stable.** 107.4→97.8→98.7. No concerning growth.
+4. **Revised BPT extrapolation:** Learning rate is STILL flat 3e-4. The model found a new gradient direction after the brief stall. Average improvement over steps 3K-7K: -0.035/1K steps. Extrapolation: step 10K ≈ 4.43, step 12K ≈ 4.36, step 15K (after WSD) ≈ 4.00-4.10. This is MUCH closer to the original optimistic predictions.
 
-**Implication for KD arm:** The flat plateau from steps 5K-12K is EXACTLY where KD should matter most. If the teacher signal can break through the plateau where pure NTP cannot, this is the strongest possible evidence for KD's value. The "non-positive by 6K" stop rule is now relative to a control baseline of ~4.61, making the bar VERY low.
+**Implication for KD arm:** The control is stronger than we feared during the step 6K scare. The KD arm's job is harder — it needs to beat a control that is actively improving, not plateaued. But the stop rule at step 6K (non-positive) is relative to control at step 6K, so the bar adjusts dynamically.
 
 **Implication:** The original predictions were too optimistic. Revised forward estimates now in prediction table above. This actually makes the KD arm's job EASIER — the control baseline is weaker than expected, so a smaller absolute improvement from KD represents a larger relative gain.
 
@@ -593,12 +594,12 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 
 **This changes everything about the extrapolation.** The flat-LR phase runs until step 12K. The -0.020/1K deceleration at step 5K is pure diminishing returns on the loss landscape at constant LR. Steps 12K-15K will see a massive BPT drop during WSD decay (as we observed in the 3K ablation).
 
-**Revised power-law extrapolation (flat LR only, steps 6K-12K):**
-Fitting BPT ≈ A + B/(step^γ) to steps 3K-5K data:
-- Step 6K: ~4.598 (improvement slowing to ~-0.014/1K)
-- Step 7.5K: ~4.578 (-0.013/1K)
-- Step 10K: ~4.555 (-0.009/1K)
-- Step 12K: ~4.545 (approaching plateau)
+**Revised extrapolation (incorporating step 7K data — plateau was transient):**
+Average ΔBPT/1K over steps 3K-7K = -0.035. But decelerating. Conservative estimate:
+- Step 7.5K: ~4.52 (-0.018/500)
+- Step 10K: ~4.43 (decelerating to ~-0.030/1K)
+- Step 12K: ~4.36 (-0.035/1K average holds)
+- Step 15K after WSD: ~4.00-4.10 (WSD drop of ~0.26-0.36)
 
 **WSD decay phase (steps 12K-15K):** Based on prior 3K ablation data, WSD decay of similar magnitude (3e-4 → 1e-5) produced ~0.36 BPT drop in the control (4.858→4.498 in 1000 steps). Scaling: 3K steps of decay should give ~0.25-0.40 BPT drop.
 - Step 15K estimate: ~4.15-4.30
