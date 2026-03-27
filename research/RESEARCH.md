@@ -2562,6 +2562,37 @@ The §6.4.26/§6.4.27 conflict — T=2.0 vs T=1.0 — is now resolved by literat
 
 **6. Multi-surface interference at extreme ratios is DYNAMIC, not static.** Interference factor (IF) trajectory across 3000 steps: 0.99→1.41→1.24→2.14→1.26→1.01. Key phases: (a) Step 500: additive (surfaces on disjoint parameters), (b) Step 1000: peak initial interference (surfaces entangled), (c) Step 1500: partial disentanglement, (d) Step 2000: PLATEAU AMPLIFICATION — NTP signal weakest, KD surfaces fill vacuum and compete freely (IF=2.14, arm 4 regresses from 4.940→4.979), (e) Step 2500: WSD decay mitigates (IF=1.26), (f) Step 3000: low LR restores additivity (IF=1.01). Kurtosis trajectory: 2.5→3.4→3.9→4.5→5.8→**12.4** (2.5× control at step 3000). Multi-surface KD creates severe activation instability during consolidation. **Conclusion: multi-surface KD at extreme ratios is toxic. Use temporal separation (one surface at a time) or single surface. Logit-only with inverted-U α confirmed for 15K gate.**
 
+### 6.4.30a Interference Dynamics Model: Multi-Surface KD at Extreme Ratios (2026-03-27)
+
+**Novel finding from the 4-arm ablation.** The interference factor (IF) between simultaneously applied KD surfaces is NOT a constant — it follows a characteristic trajectory driven by the interaction between NTP gradient strength and surface overlap:
+
+```
+IF(t) ≈ 1 + k × S(t) × C(t) / N(t)
+
+S(t) = surface overlap in parameter space (grows then saturates)
+C(t) = capacity utilization (grows monotonically)
+N(t) = NTP gradient signal strength (varies with training phase)
+```
+
+**Observed trajectory (90M student, 1.7B teacher, 3000 steps, rep+logit surfaces):**
+
+| Step | IF | Phase | Mechanism |
+|------|-----|-------|-----------|
+| 500 | 0.99 | Additive | Surfaces on disjoint parameters, low C(t) |
+| 1000 | 1.41 | Peak entanglement | S(t) growing, parameters shared |
+| 1500 | 1.24 | Partial disentanglement | S(t) saturated, model adjusting |
+| 2000 | **2.14** | **Plateau amplification** | N(t) at minimum (control flat), KD surfaces dominate |
+| 2500 | 1.26 | WSD mitigation | LR decay reduces all gradients |
+| 3000 | 1.01 | Additivity restored | Very low LR, gradients negligible |
+
+**The key insight: IF spikes when NTP gradient signal weakens.** During training plateaus (step 2000: control improved only -0.003 in 500 steps), the NTP gradient is nearly zero. Without NTP to arbitrate, the two KD surfaces compete freely for the same parameters, producing maximal interference. This is mathematically analogous to noise amplification in degenerate systems — when the primary signal (NTP) vanishes, secondary signals (KD surfaces) become the dominant force and their conflicts are maximally expressed.
+
+**Practical implications:**
+1. **Never combine multiple KD surfaces during training plateaus.** If alpha scheduling is used, alpha should decrease (not increase) when NTP progress stalls.
+2. **The inverted-U schedule is correct not just for WSD alignment but for plateau robustness.** The taper ensures KD fades before the model enters consolidation plateaus.
+3. **Temporal separation > spatial combination.** For multi-surface KD (future RMFD), use one surface at a time with explicit switching, not simultaneous application.
+4. **Kurtosis as instability detector.** Combined-surface kurtosis (12.4) was 2.5× control — a clear early warning of basin instability. Monitor kurtosis to detect destructive interference before BPT degrades.
+
 ### 6.4.31 Codex Strategic Review: 15K Gate Design (2026-03-26)
 
 **Codex role:** Scaling Expert + Architecture Theorist. Reviewed full ablation evidence and proposed 15K gate design.

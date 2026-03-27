@@ -525,9 +525,9 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 
 | Step | Control BPT (est) | KD Arm Predicted | Predicted Δ | Rationale |
 |------|-------------------|-----------------|-------------|-----------|
-| 1000 | ~4.91 | 4.90-4.93 | -0.01 to +0.02 | α ≈ 0.25 (ramping). Very little KD signal yet. Should track control. |
-| 2000 | ~4.83 | 4.80-4.85 | -0.03 to +0.02 | α approaching peak (0.60). First meaningful KD signal. |
-| 3000 | ~4.73 | 4.68-4.76 | -0.05 to +0.03 | α at peak. KD should be active. This is the FIRST real test. |
+| 1000 | **4.895** | 4.88-4.91 | -0.01 to +0.02 | α ≈ 0.25 (ramping). Very little KD signal yet. Should track control. |
+| 2000 | **4.824** | 4.79-4.84 | -0.03 to +0.02 | α approaching peak (0.60). First meaningful KD signal. |
+| 3000 | **4.680** | 4.63-4.71 | -0.05 to +0.03 | α at peak. KD should be active. This is the FIRST real test. |
 | 5000 | ~4.55 | 4.48-4.58 | -0.07 to +0.03 | Sustained peak α. If KD works, gap should be opening. |
 | 6000 | ~4.48 | 4.40-4.52 | ≤0 (STOP RULE) | **Non-positive required.** If positive → KD mechanism failed. ABORT. |
 | 7500 | ~4.38 | 4.30-4.42 | -0.08 to +0.04 | Still at peak α. Gap should be clear if mechanism works. |
@@ -544,6 +544,36 @@ The 3K ablation proved two things: (1) flat α=1.0 from step 0 causes persistent
 - KD loss trajectory: should DECREASE during peak phase (student learning from teacher). If flat → no knowledge transfer.
 - Confidence gating activation: how many tokens get ×1.5 vs ×0.3? If mostly ×0.3 → teacher is mostly uncertain → wrong teacher.
 - Kurtosis during taper: should stay < 2× control (stable consolidation). Spike = basin instability.
+
+## Basin Compatibility Theory: Why Logit > Rep During WSD (2026-03-27)
+
+**Status: HYPOTHESIS — derived from ablation data, not yet tested independently**
+
+**The asymmetry:** Rep KD advantage collapses during WSD (-0.130 → +0.018), while logit KD penalty SHRINKS during WSD (+0.327 → +0.285, -12.8%). Why?
+
+**Surface compatibility hypothesis:** KD surfaces that operate on the SAME mathematical object as NTP are "basin-compatible" — they push the model toward minima that also look good under NTP. Surfaces that operate on DIFFERENT objects create basins that may be locally attractive but globally misaligned with NTP's landscape.
+
+| Surface | Mathematical object | Same as NTP? | Basin compatible? |
+|---------|-------------------|-------------|-------------------|
+| NTP (cross-entropy) | Output logit distribution | — | Reference |
+| Logit KD (forward KL) | Output logit distribution | YES | YES — both optimize output distribution |
+| CKA (rep KD) | Pairwise representation similarity | NO | NO — optimizes internal geometry, not output |
+| Semantic relational | Teacher-student correlation | NO | NO — optimizes latent relationships |
+
+**Prediction from theory:**
+- Basin-compatible surfaces (logit KD) → advantages survive LR decay
+- Basin-incompatible surfaces (rep KD) → advantages evaporate during LR decay
+- Mixed surfaces → interference during stable LR, instability during WSD
+
+**Evidence:**
+1. Rep KD peaks at -0.130 during stable LR, collapses to +0.018 after WSD ✓
+2. Logit KD shows 23% MORE deep WSD recovery than control ✓
+3. Combined (rep+logit) kurtosis spikes to 12.4 during WSD (2.5× control) ✓
+4. Combined IF returns to 1.01 at very low LR (surfaces decouple when gradients vanish) ✓
+
+**Implication for RMFD:** The future multi-teacher system should use logit-based surfaces for all teachers (basin-compatible), with rep surfaces only as auxiliary signals during early training (stabilization phase, then off). This is exactly what the Ekalavya curriculum prescribes — rep early, logit sustained.
+
+**Connection to information geometry:** The NTP loss lives on the simplex of output distributions. Logit KD also lives on this simplex. Rep KD lives on a Grassmannian (the space of subspaces/representations). The WSD landscape changes on the simplex preserve logit KD's knowledge because they're moving within the same manifold. Rep KD's gains lie on a different manifold entirely — LR decay on the simplex has no obligation to preserve structure on the Grassmannian.
 
 ---
 
