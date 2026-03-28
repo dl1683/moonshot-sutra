@@ -1569,6 +1569,126 @@ PonderLM-2 (CRITICAL RESULT):
 
 **Sutra relevance:** Falcon-H1's 62.5% MLP allocation is nearly identical to our current 60.6% FFN. But Falcon succeeds where we fail because: (1) their branches are SSM heads (stateful, not projected) and attention heads (standard), not projected dual-branch; (2) outputs are concatenated with a shared output projection, not averaged; (3) at 0.5B+ they have enough capacity. At our 100M scale, the question remains: is 60% too much for FFN when the novel mechanism gets only 17%?
 
+#### 6.4.12 Cross-Architecture KD: Retrieval-Aware Distillation (Feb 2026) — arXiv:2602.11374
+
+**Transformer-to-SSM hybrid distillation via identifying retrieval-critical attention heads.**
+
+- Only 2% of attention heads carry >95% of retrieval-critical information (identified via ablation on synthetic tasks).
+- Preserves only those heads while converting remaining components to SSM/recurrent.
+- 5-6x more memory-efficient than comparable hybrids. 8x reduction in SSM state dimension.
+
+**Sutra relevance:** Demonstrates cross-architecture distillation is practical. The insight that a tiny fraction of heads carry retrieval information could inform which knowledge to extract from transformer vs SSM teachers.
+
+#### 6.4.13 Zebra-Llama: Efficient Transformer-SSM Hybrid via ILD (NeurIPS 2025) — arXiv:2505.17272
+
+**Cross-architecture distillation from Transformer to SSM-hybrid using Intermediate Layer Distillation.**
+
+- Mamba2 + Multi-head Latent Attention in "zebra" interleaved pattern.
+- SMART: sensitivity-based layer selection for which Transformer layers to replace.
+- ILD aligns hybrid internal representations with original Transformer teacher.
+- Achieves Transformer-level accuracy with near-SSM efficiency using only 7-11B training tokens.
+
+**Sutra relevance:** Cross-architecture KD with modest data. ILD + sensitivity-based selection directly applicable.
+
+#### 6.4.14 CAB: Attention Bridge for Transformer-to-Mamba Distillation (Oct 2025) — arXiv:2510.19266
+
+**Lightweight attention bridge module for cross-architecture intermediate-layer knowledge flow.**
+
+- Token-level supervision enabling intermediate-layer knowledge flow between structurally different architectures.
+- Flexible layer-wise alignment accommodating architectural discrepancies.
+- Outperforms standard cross-architecture distillation methods across vision and language.
+
+**Sutra relevance:** Attention bridge concept applicable to distilling from LFM2.5 hybrid teacher into our transformer student.
+
+#### 6.4.15 PerSyn: Router-Guided Multi-Teacher Distillation (Oct 2025) — arXiv:2510.10925
+
+**"Route then Generate" — query-level router assigns each prompt to its optimal teacher.**
+
+- Router jointly considers student learnability AND teacher response quality.
+- Key insight: "stronger models are not always optimal teachers."
+- Superior or comparable to all baselines across instruct tuning and math reasoning.
+
+**Sutra relevance:** Per-sample routing directly applicable to Ekalavya's teacher committee. Route by content type: Qwen3 for reasoning, LFM2.5 for efficiency, EmbeddingGemma for semantics.
+
+#### 6.4.16 MTKD-RL: Multi-Teacher KD with Reinforcement Learning (AAAI 2025) — arXiv:2502.18510
+
+**RL agent dynamically selects teacher weights based on state (losses, features, divergence).**
+
+- RL agent observes state = teacher performance + teacher-student gaps.
+- Outputs continuous teacher weights, updated via reward signals from student improvement.
+- State-of-the-art on classification, detection, and segmentation.
+
+**Sutra relevance:** More sophisticated than static routing. RL-based weighting adapts to training dynamics.
+
+#### 6.4.17 Axiomatic Multi-Scale Teacher Weighting (Jan 2026) — arXiv:2601.17910
+
+**Operator-agnostic framework: token-level, task-level, and context-level weighting.**
+
+- Hierarchical composition via product-structure normalization.
+- Provides convergence guarantees and perturbation robustness analysis.
+- Three scales: per-token, per-task, per-context.
+
+**Sutra relevance:** Multi-scale (token/task/context) hierarchy is exactly what Ekalavya needs. Weight teachers at token granularity.
+
+#### 6.4.18 MultiLevelOT: Cross-Tokenizer KD via Optimal Transport (AAAI 2025 Oral) — arXiv:2412.14528
+
+**Token-level + sequence-level alignment via joint OT optimization.**
+
+- Token-level: OT joint optimization across all tokens in a sequence.
+- Sequence-level: Sinkhorn distance approximating Wasserstein distance.
+- Outperforms SOTA cross-tokenizer KD. Robust across families, architectures, sizes.
+- Code: github.com/2018cx/Multi-Level-OT
+
+**Sutra relevance:** More principled than CKA-based span matching for cross-tokenizer logit KD. OT-based alignment could replace Byte-Span Bridge for logit-level distillation.
+
+#### 6.4.19 ALM: Approximate Likelihood Matching (NeurIPS 2025) — arXiv:2503.20083
+
+**First method for distillation across fundamentally different tokenizers (e.g., subword to byte-level).**
+
+- Principled likelihood-matching objective.
+- Enables cross-tokenizer ensembling, tokenizer transfer, and hypernetwork training.
+- Works across subword-to-byte, specialized-to-general, and cross-family.
+
+**Sutra relevance:** Handles the most extreme tokenizer mismatches. Could enable distillation from ANY model regardless of tokenization scheme.
+
+#### 6.4.20 Flex-KD: Functional Geometry Distillation (Jul 2025) — arXiv:2507.10155
+
+**Architecture-agnostic, parameter-free: transfers "functional geometry" not raw representations.**
+
+- Identifies dominant directional contributions instead of preserving full features.
+- Outperforms existing distillation under severe teacher-student dimension mismatch.
+
+**Sutra relevance:** Critical when teacher dims (Qwen3 2048d, LFM2.5 varies) don't match student (768d). Functional geometry avoids the projection bottleneck.
+
+#### 6.4.21 Gradient Conflict Resolution: GCond (Sep 2025) — arXiv:2509.07252
+
+**Gradient accumulation + adaptive arbitration. Builds on PCGrad.**
+
+- Addresses "tragic triad": conflicting directions + magnitude differences + high curvature.
+- 2x speedup over PCGrad while maintaining optimization quality.
+- Works with AdamW and Lion/LARS.
+
+**Sutra relevance:** Direct upgrade to PCGrad for multi-teacher gradient conflicts. More stable for 4 diverse teachers.
+
+#### 6.4.22 Sparse Logit Sampling for Offline KD (ACL 2025 Oral) — arXiv:2503.16870
+
+**Importance-weighted random sampling of logits — unbiased unlike Top-K.**
+
+- <10% overhead vs cross-entropy training, competitive with full distillation.
+- Preserves gradient in expectation. Random sampling > Top-K truncation.
+- Applicable to 300M-3B models.
+
+**Sutra relevance:** Critical for VRAM. Storing full logits for 4 teachers is prohibitive. Importance-weighted random sampling dramatically reduces storage while being unbiased. Should replace Top-K everywhere.
+
+#### 6.4.23 Layer Selection "Doesn't Matter Much" (IJCNLP-AACL 2025) — arXiv:2502.04499
+
+**Even "nonsensical" matching strategies (reverse matching) produce good student performance.**
+
+- Vanilla forward matching works well in most setups.
+- Teacher layer angles from student perspective explain why diverse strategies converge.
+
+**Sutra relevance:** Don't over-engineer multi-depth matching. Simple uniform or forward matching likely sufficient. Focus engineering effort elsewhere.
+
 ---
 
 ### 6.5 Data Efficiency

@@ -6,6 +6,69 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## EKALAVYA PROTOCOL: Research Synthesis for T+L Design (2026-03-27)
+
+**Status: COMPILING — research findings from 20+ papers, to be injected into T+L R2.**
+
+### Key Design Principles Emerging from Literature
+
+**1. Routing > Averaging (DECISIVE)**
+- Knowledge Purification (arXiv:2602.01064): performance DECLINES as teacher count increases without purification. +5% with routing vs naive multi-teacher.
+- PerSyn (arXiv:2510.10925): "stronger models are not always optimal teachers." Per-sample routing outperforms uniform weighting.
+- MTKD-RL (arXiv:2502.18510): RL-based dynamic weighting adapts to training dynamics. State = teacher-student gap.
+- Axiomatic framework (arXiv:2601.17910): multi-scale routing at token/task/context levels simultaneously.
+- **CONCLUSION: Route to ONE best teacher per sample, or weight adaptively. NEVER naive-average all teachers.**
+
+**2. Cross-Tokenizer Is SOLVED (Multiple Approaches)**
+- MultiLevelOT (AAAI 2025 Oral): OT-based token+sequence alignment. Code available.
+- ALM (NeurIPS 2025): likelihood matching, works subword-to-byte.
+- DSKDv2 (arXiv:2504.11426): Exact Token Alignment + dual-space projection.
+- DWA-KD (arXiv:2602.21669): entropy-based token weighting + Dynamic Time Warping.
+- **CONCLUSION: Byte-Span Bridge is ONE option, not the only one. OT-based methods may be more principled. Try multiple.**
+
+**3. Functional Geometry > Raw Representations**
+- Flex-KD (arXiv:2507.10155): transfer functional geometry, not raw features. Works under severe dim mismatch.
+- Layer selection "doesn't matter much" (arXiv:2502.04499): simple forward matching is fine.
+- CKA remains strong for intermediate matching (IJCAI 2024, BMVC 2022).
+- **CONCLUSION: Don't over-engineer layer matching. Focus on WHAT to transfer (functional properties), not WHERE.**
+
+**4. Gradient Conflicts Are the Central Challenge**
+- GCond (arXiv:2509.07252): accumulation + adaptive arbitration, 2x speedup vs PCGrad.
+- Nash-MTL: Nash bargaining for fair multi-objective optimization.
+- FAMO: fast adaptive, avoids computing all task gradients.
+- Sparse training (arXiv:2411.18615): dedicate parameter subsets to different teachers.
+- **CONCLUSION: Need principled gradient conflict resolution. GCond or Nash-MTL, not just PCGrad. Consider parameter partitioning.**
+
+**5. Offline-First for VRAM Savings**
+- Sparse logit sampling (ACL 2025 Oral): importance-weighted random > Top-K. <10% overhead.
+- MiniPLM: completely offline via difference sampling. 2.2x compute reduction.
+- NeMo-Aligner: production-grade pipeline with Top-K=100 compression.
+- **CONCLUSION: For 4 teachers on 24GB GPU, offline pre-computed logits may be MANDATORY. Importance-weighted random sampling is unbiased and efficient.**
+
+**6. Cross-Architecture KD Is Practical (VALIDATED)**
+- Zebra-Llama: Transformer→SSM hybrid via ILD, 7-11B tokens sufficient.
+- CAB: Attention bridge for Transformer→Mamba intermediate-layer flow.
+- Retrieval-Aware: only 2% of attention heads carry retrieval info — selective extraction.
+- Task-Agnostic Multi-Teacher (NeurIPS 2025): information-theoretic framework handles architectural diversity.
+- **CONCLUSION: Cross-architecture KD works. The Ekalavya vision is validated by literature. Now design the specific system.**
+
+### Open Questions for T+L Round 2
+1. Should we use online (all teachers loaded) or offline (pre-computed logits) or hybrid?
+2. Which routing mechanism: learned router, RL-based, or round-robin with monitoring?
+3. What's the right gradient conflict strategy for 4 diverse teachers on one GPU?
+4. Should we use OT-based cross-tokenizer (MultiLevelOT) or keep Byte-Span Bridge?
+5. What cross-domain principles (biology, physics, neuroscience) could inform novel mechanisms?
+
+### Cross-Domain Research (PENDING — agent still running)
+- Biology: immune system multi-signal integration
+- Neuroscience: multi-sensory fusion mechanisms
+- Physics: statistical mechanics of coupled ensembles
+- Economics: heterogeneous expert aggregation
+- Ecology: niche partitioning
+- Network science: distributed consensus
+
+---
+
 ## META-PROCESS ANALYSIS: What Are We Learning About How We Learn? (2026-03-26)
 
 **Status: ACTIVE — update at every checkpoint, every experiment**
