@@ -874,8 +874,14 @@ Config: d=768, 24L, 12H, ff=2304, SwiGLU, RMSNorm. 197M params. WSD LR 3e-4→1e
 | **46000** | **3.952** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=120.0 (GREEN). max_act=386.6. 6 bests in 7 evals (40-46K). |
 | **47000** | **3.941** | — | 0.000 | 3.0e-4 | **NEW ALL-TIME BEST.** kurt=111.4 (GREEN). max_act=372.5. Sustained descent. |
 | **48000** | **3.945** | — | 0.000 | 3.0e-4→decay | **WSD ANCHOR.** kurt=173.2 (GREEN). max_act=437.9. WITHIN predicted range. **LR decay starts.** |
-| **49000** | **3.897** | — | 0.000 | 2.76e-4 | **MASSIVE WSD DROP (-0.048 in 1K steps!!)** kurt=1663.2 (RED). 5.3x log-prop prediction. |
-| **50000** | **3.845** | — | 0.000 | 2.52e-4 | **LOG-PROPORTIONAL MODEL FALSIFIED.** kurt=562.0 (RED). Cumulative WSD drop: 0.100 BPT in 2K steps (27% of predicted 0.37 total). Drop NOT decelerating (49->50K = -0.053 > 48->49K = -0.048). WSD is front-loaded. Revised 60K estimate: **3.40-3.50** (was 3.575). |
+| 49000 | 3.897 | — | 0.000 | 2.76e-4 | WSD DROP -0.048. kurt=1663 RED. |
+| 50000 | 3.845 | — | 0.000 | 2.52e-4 | WSD DROP -0.100 cumulative. kurt=562 RED. |
+| 51000 | 3.813 | — | 0.000 | 2.28e-4 | WSD DROP -0.132 cumul. kurt=3254 RED (extreme spike, transient). |
+| 52000 | 3.813 | — | 0.000 | 2.04e-4 | Plateau (=51K). kurt=80 GREEN. |
+| 53000 | 3.779 | — | 0.000 | 1.80e-4 | WSD DROP -0.166 cumul. kurt=715 RED. |
+| **54000** | **3.721** | — | 0.000 | 1.56e-4 | **60% of total WSD drop at 50% time point.** kurt=88 GREEN. |
+| 55000 | 3.729 | — | 0.000 | 1.32e-4 | Mild reversion. kurt=3357 RED (extreme). |
+| **56000** | **3.703** | — | 0.000 | 1.07e-4 | **56K TEST: LINEAR model confirmed (3.703 vs 3.70 predicted). Log-prop WRONG (predicted 3.83).** kurt=647. 65% of drop in 67% of time. Revised 60K: **3.59-3.67**. |
 
 **Expected trajectory (from 15K scout):** Should track scout approximately (divergence at 3K = +0.35 BPT, normal training variance). WSD starts at 48K here (vs 12K in scout).
 
@@ -1324,16 +1330,16 @@ IF KD arm HURTS performance:
 | **48K** | 3.00e-4 | 0.000 | 3.945 | 3.91-3.99 | **3.945** | **ANCHOR (actual = predicted!)** |
 | 49K | 2.76e-4 | 0.025 | 3.936 | 3.90-3.98 | **3.897 (-0.039!)** | **5.3x predicted drop! kurt=1663 RED** |
 | 50K | 2.52e-4 | 0.052 | 3.926 | 3.89-3.97 | **3.845 (-0.081!)** | **27% of total drop in 17% of time! Log-prop FALSIFIED** |
-| 51K | 2.28e-4 | 0.081 | 3.915 | 3.88-3.96 | — | |
-| 52K | 2.04e-4 | 0.114 | 3.903 | 3.86-3.94 | — | |
-| 53K | 1.80e-4 | 0.152 | 3.889 | 3.85-3.93 | — | |
-| 54K | 1.56e-4 | 0.194 | 3.873 | 3.83-3.91 | — | **20% done — barely visible** |
-| 55K | 1.32e-4 | 0.244 | 3.855 | 3.82-3.90 | — | |
-| 56K | 1.07e-4 | 0.304 | 3.833 | 3.79-3.87 | — | **KEY TEST: discriminates 4 WSD models** |
+| 51K | 2.28e-4 | 0.081 | 3.915 | 3.88-3.96 | **3.813 (-0.102)** | kurt=3254 RED. 36% of drop done. |
+| 52K | 2.04e-4 | 0.114 | 3.903 | 3.86-3.94 | **3.813 (-0.090)** | kurt=80 GREEN. Plateau (same as 51K). |
+| 53K | 1.80e-4 | 0.152 | 3.889 | 3.85-3.93 | **3.779 (-0.110)** | kurt=715 RED. 45% of drop. |
+| 54K | 1.56e-4 | 0.194 | 3.873 | 3.83-3.91 | **3.721 (-0.152)** | kurt=88 GREEN. **60% of drop in 50% of time!** |
+| 55K | 1.32e-4 | 0.244 | 3.855 | 3.82-3.90 | **3.729 (-0.126)** | kurt=3357 RED. Mild reversion. |
+| 56K | 1.07e-4 | 0.304 | 3.833 | 3.79-3.87 | **3.703 (-0.130)** | **56K TEST: actual=3.703 matches LINEAR (3.70), not log-prop (3.83)** |
 | 57K | 8.25e-5 | 0.380 | 3.805 | 3.77-3.85 | — | |
-| 58K | 5.83e-5 | 0.481 | 3.767 | 3.73-3.81 | — | **Nearly half done** |
-| 59K | 3.42e-5 | 0.639 | 3.709 | 3.67-3.75 | — | **Main drop phase** |
-| 60K | 1.00e-5 | 1.000 | **3.575** | 3.54-3.62 | — | **FINAL** |
+| 58K | 5.83e-5 | 0.481 | 3.767 | 3.73-3.81 | — | |
+| 59K | 3.42e-5 | 0.639 | 3.709 | 3.67-3.75 | — | |
+| 60K | 1.00e-5 | 1.000 | ~~3.575~~ **3.63** | 3.59-3.67 | — | **Revised: linear WSD model, moderate decel** |
 
 **Falsification criteria:**
 1. **Model fails if** any eval is >0.10 BPT outside its predicted range (after adjusting for 48K anchor)
