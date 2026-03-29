@@ -59,13 +59,557 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 4. Should we use OT-based cross-tokenizer (MultiLevelOT) or keep Byte-Span Bridge?
 5. What cross-domain principles (biology, physics, neuroscience) could inform novel mechanisms?
 
-### Cross-Domain Research (PENDING — agent still running)
-- Biology: immune system multi-signal integration
-- Neuroscience: multi-sensory fusion mechanisms
-- Physics: statistical mechanics of coupled ensembles
-- Economics: heterogeneous expert aggregation
-- Ecology: niche partitioning
-- Network science: distributed consensus
+### Cross-Domain Research — COMPLETED (2026-03-29)
+
+**6 domains surveyed, 18 concrete hypotheses, 5 converging meta-principles.**
+
+#### 5 Universal Meta-Principles (convergent across ALL domains)
+
+**P1: Signal Quality Gating (Universal)** — Every domain has HARD gating (not soft weighting). Teachers that are unhelpful for a token must be EXCLUDED (zero gradient), not merely downweighted. Dual criteria: positive (compatible?) AND negative (destructive?).
+- Sources: thymic selection (immunology), thalamic gating (neuroscience), expert selection > weighting (economics), competitive exclusion (ecology), Byzantine fault tolerance (networks)
+
+**P2: Bottleneck Compression Forces Common Code** — Force ALL teacher signals through a shared low-dim bottleneck BEFORE routing. The bottleneck (e.g., 32-64 dims vs 768-2048 teacher dims) forces discovery of universal structure across architecturally different teachers.
+- Sources: 50 cytokines through 4 JAK x 7 STAT (immunology), superior colliculus convergence (neuroscience), RG coarse-graining (physics), consensual representation in federated learning (networks)
+
+**P3: Inverse Effectiveness** — The biggest multi-source integration gains come where individual signals are WEAKEST. Weight teacher contributions INVERSELY to student competence. Tokens where student is strong get minimal teacher signal; where struggling, maximum signal.
+- Sources: superadditive near-threshold integration (neuroscience), wisdom-of-crowds for uncertain predictions (economics), niche partitioning under scarcity (ecology)
+
+**P4: Partial Consensus is Natural** — Don't require all 4 teachers to agree. The natural state is 2-3 teachers forming a coherent core per token, with 1-2 providing orthogonal signal. Router should FIND the coherent core and IGNORE outliers per-token.
+- Sources: partial synchronization in Kuramoto model (physics), spatial/temporal coincidence (neuroscience), expert selection (economics), niche partitioning (ecology), Byzantine tolerance (networks)
+
+**P5: Temporal Staging and Curriculum** — Not all integration happens at once. Phase 1 (high T): all teachers on, soft equal weighting, student develops basic representations. Phase 2 (cooling): compatibility measured, niches discovered, routing differentiates. Phase 3 (low T): hard gating, teachers committed to niches, strong KD pressure.
+- Sources: positive before negative selection (immunology), detection before sampling mode (neuroscience), HGT requires compatible background first (biology), high T exploration before low T commitment (physics)
+
+#### Top Hypotheses by Domain (HIGH priority only)
+
+**Immunology:**
+- **I-1: JAK-STAT Bottleneck Router** — Project ALL teacher reps into shared 32-64 dim space via learned projections before routing. Forces cross-teacher compression into common code. Different from per-teacher projectors because it forces cross-teacher compression.
+- **I-2: Dual Selection** — Two filters per teacher signal: (1) positive = compatible with student state? (2) negative = would it overwrite existing knowledge? Only signals passing BOTH contribute.
+
+**Neuroscience:**
+- **N-1: Inverse Effectiveness Weighting** — `alpha_t(x) = softmax(-student_loss(x) / temperature)`. Opposite of confidence-based weighting. Biggest help where student is weakest.
+- **N-2: Hard Gating by Content Type** — Binary on/off per teacher per content domain (like thalamic TRN). Early training = "detection mode" (all on, discover niches). Late = "sampling mode" (hard gates).
+
+**Physics:**
+- **P-2: Free Energy Formulation** — `F = sum_t alpha_t * KD_loss_t - T * H(routing)`. Anneal routing entropy T over training: high T early (explore all teachers), low T late (commit to best per content).
+
+**Economics:**
+- **E-1: Log Pooling** — Average teacher LOGITS (not probabilities). Theoretically optimal under external Bayesianity. Weights based on marginal information gain with diversity regularizer.
+- **E-2: Selection Before Weighting** — Binary include/exclude gate per teacher per content type BEFORE soft weights. Excluding bad experts > optimally weighting all.
+
+**Ecology:**
+- **EC-1: Niche Partitioning** — Discover teacher specialization domains from DATA (lowest loss per domain), then enforce hard boundaries. Overlapping niches → competitive exclusion (use only the better teacher).
+- **EC-3: Quorum Sensing** — Teacher agreement threshold: strong KD when ≥N teachers agree, weak KD below threshold. Threshold adapts: early = require 2/4, late = require 3/4.
+
+**Networks:**
+- **D-1: Consensual Representation Space** — Regularize teacher projections into shared space via contrastive loss. Not just cross-tokenizer alignment (byte spans) but cross-ARCHITECTURE alignment.
+
+---
+
+## Physics Mechanisms for Multi-Teacher KD Design (2026-03-27, expanded 2026-03-29)
+
+**Status: DEEP RESEARCH COMPLETE — 5 mechanisms with actionable math, expanded with additional papers and implementation detail. Ready for T+L injection.**
+
+This section maps five physics frameworks to concrete multi-teacher KD mechanisms with implementable math. These are NOT vague metaphors — each has a specific mathematical formulation and a mapping to our Ekalavya system. Each mechanism includes: (a) the physics, (b) the mapping to multi-teacher KD, (c) mathematical formulation for implementation, (d) ML papers using or validating this analogy.
+
+---
+
+### PM-1: Renormalization Group / Successive Refinement
+
+#### (a) The Physics
+
+The renormalization group (RG) is a coarse-graining procedure from statistical physics. Starting from microscopic ("UV") degrees of freedom, irrelevant details are integrated out at each scale, leaving only "relevant operators" that control macroscopic ("IR") behavior. The key properties:
+
+- **Directionality**: RG flow has a direction — UV to IR. Fine-grained to coarse. Local to global.
+- **Universality**: Different microscopic models can flow to the SAME fixed point. Systems with completely different microscopic physics share identical critical exponents and macroscopic behavior if they belong to the same universality class.
+- **Fixed points**: The flow terminates at fixed points where the system is scale-invariant. These fixed points classify all possible macroscopic behaviors.
+- **Relevant vs irrelevant operators**: At each scale, some variables matter (relevant — grow under RG flow) and some don't (irrelevant — shrink under RG flow). The art of RG is identifying which is which.
+
+**Information-theoretic formulation of RG (Koch-Janusz & Ringel 2018, Nature Physics):** The optimal RG transformation at each scale maximizes mutual information between the coarse-grained variables and the environment (long-range degrees of freedom) while discarding short-range fluctuations. This is equivalent to a rate-distortion problem: compress the representation while preserving the information that matters at the next scale up.
+
+**Connection to successive refinement (Equitz-Cover 1991, Rimoldi 1994):** In information theory, a source is "successively refinable" if multi-resolution coding achieves the same rate-distortion as single-shot coding at each level. The condition: the optimal reconstructions at different resolutions form a Markov chain X → X_hat_1 → X_hat_2 → ... This is the SAME structure as RG flow — each coarser representation is a sufficient statistic of the finer one for predicting the environment.
+
+**Universality classes in DNNs (Berman et al. 2025, arXiv:2510.25553; Ghavasieh 2025, arXiv:2512.00168):** Recent work derives universality classes and scaling laws for deep networks directly from RG theory. The key finding: MLPs and CNNs belong to DIFFERENT universality classes (mean-field vs directed percolation respectively). The activation function controls which universality class. Four effective couplings characterize the dynamics, yielding a Landau description of static exponents. This has a direct implication for multi-teacher KD: teachers from different architecture families (transformer, SSM, CNN) may belong to different universality classes, meaning their intermediate representations are fundamentally incompatible while their output distributions converge.
+
+#### (b) Mapping to Multi-Teacher KD
+
+1. **Multi-depth matching = multi-scale RG**. Teacher signals at different depths correspond to different RG scales:
+   - Early layers (depth 8) = UV / fine-grained / local syntax & morphology
+   - Mid layers (depth 16) = mesoscale / phrase-level semantics
+   - Final layers (depth 24) = IR / coarse-grained / global discourse & reasoning
+   This is not a metaphor — the information content genuinely transitions from local to global features as depth increases, just as RG integrates out local fluctuations.
+
+2. **Temporal scheduling = RG flow direction**. The RG flow direction (UV → IR) maps to a temporal curriculum:
+   - **Early training**: match state surfaces (layers 8, 16) — fine-grained structural alignment
+   - **Late training**: match logit/semantic surfaces (layer 24) — coarse semantic alignment
+   This is thermodynamically natural: teach the student local structure first (which is simpler, lower entropy), then build global understanding on top of it. Matches our observation that rep-KD provides a "head-start" on structure.
+
+3. **Universality = cross-architecture equivalence**. The universality principle predicts: different teacher architectures (transformer, SSM, hybrid) that have learned the same task should produce equivalent "IR" representations even if their "UV" representations differ wildly. This justifies:
+   - **Logit-surface consensus**: at the output level (deepest IR), all good teachers should agree regardless of architecture
+   - **State-surface divergence**: at intermediate layers (UV/meso), teachers will disagree based on their architecture — and that's expected, not a bug
+   - **Routing by scale**: use architecture-diverse teachers for state matching (where diversity is informative) but trust consensus for logit matching (where universality predicts agreement)
+
+4. **Successive refinability test for teacher layering**. If teacher representations at depths {8, 16, 24} form a Markov chain (I(H_8; X | H_16) ≈ 0), then multi-depth matching is information-theoretically justified — each deeper surface is a sufficient statistic of the shallower one. If NOT, there is unique information at intermediate depths that the student should capture directly. This is a testable prediction before committing to multi-depth KD.
+
+#### (c) Mathematical Formulation
+
+**Scale-dependent KD loss mirroring RG flow:**
+
+```
+L_RG(t) = sum_{k in scales} w_k(t) * L_surface_k
+
+where scales = {UV=depth_8, meso=depth_16, IR=depth_24}
+
+w_k(t) schedule (RG-inspired):
+  w_UV(t)   = w0_UV * exp(-t / tau_UV)       # UV signal decays — local structure learned early
+  w_meso(t) = w0_meso * bell(t, t_peak, sigma) # meso peaks mid-training
+  w_IR(t)   = w0_IR * (1 - exp(-t / tau_IR))   # IR signal grows — semantic matching later
+
+Constraint: sum_k w_k(t) = 1 for all t (renormalization condition)
+
+Concrete values (to be tuned):
+  tau_UV   = 0.2 * total_steps   # UV decays in first 20% of training
+  t_peak   = 0.4 * total_steps   # meso peaks at 40%
+  sigma    = 0.15 * total_steps  # meso active from ~25% to ~55%
+  tau_IR   = 0.3 * total_steps   # IR saturates by ~60% of training
+```
+
+The exponential decay of UV weights and growth of IR weights mirrors the RG flow where irrelevant (fine-grained) operators decay and relevant (coarse) operators dominate. The constraint that weights sum to 1 is literally a renormalization condition — total "signal budget" is conserved, just redistributed across scales.
+
+**Per-teacher universality test (implementable diagnostic):**
+```
+For each byte span s, each pair of teachers (i,j):
+  U_ij(s) = CKA(teacher_i_final_layer(s), teacher_j_final_layer(s))
+
+If U_ij(s) >> U_ij_intermediate(s), universality holds at the IR level.
+High-universality spans: use barycenter consensus (all teachers agree).
+Low-universality spans: route to best teacher (teachers disagree even at IR — task is architecture-sensitive).
+```
+
+**Successive refinability test (information-theoretic, run once on validation set):**
+```python
+# For each teacher, extract hidden states at depths 8, 16, 24
+# Compute conditional mutual information:
+#   I(H_8; X | H_16)  — does depth-8 contain info about input not in depth-16?
+#   I(H_16; X | H_24) — does depth-16 contain info not in depth-24?
+# Approximate via CKA residuals or MINE estimator.
+# If both are small: teacher is successively refinable → multi-depth matching safe.
+# If large: unique info at intermediate depths → must match those directly.
+```
+
+#### (d) Key Papers
+
+- Mehta & Schwab 2014 (arXiv:1410.3831): exact RG↔deep learning mapping via RBMs
+- Li & Wang 2019 (arXiv:1906.05212): "Is Deep Learning a Renormalization Group Flow?" — nuanced answer: powerful analogy but NNs can learn more general transforms
+- Koch-Janusz & Ringel 2018 (Nature Physics): mutual information and RG — information-theoretic derivation of optimal RG
+- Berman et al. 2025 (arXiv:2510.25553): RG universality classes + scaling laws for DNNs
+- Ghavasieh 2025 (arXiv:2512.00168): "Tuning Universality in DNNs" — activation functions select universality class, four coupling constants control dynamics
+- AAAI 2025 Student Abstract: RG framework for scale-invariant feature learning
+- Equitz & Cover 1991 (IEEE TIT): successive refinement of information — Markov chain condition
+- Rimoldi 1994 (IEEE TIT): characterization of achievable rates for successive refinement
+- Universal Scaling Laws (Phys. Rev. Research 2025, arXiv:2307.02284): MLPs = mean-field class, CNNs = directed percolation class
+- Beny 2013 (arXiv:1301.3124): deep learning and the renormalization group
+
+---
+
+### PM-2: Spin Glass Frustration / Teacher Disagreement
+
+**The physics:**
+In a spin glass (e.g., Edwards-Anderson model), each spin interacts with its neighbors through random couplings J_ij that can be positive (ferromagnetic, "want to align") or negative (antiferromagnetic, "want to anti-align"). When a loop of spins has an odd number of negative couplings, no spin configuration can satisfy all interactions simultaneously — this is **frustration**.
+
+Key properties:
+- **Frustration**: the defining feature. The system CANNOT reach a single ground state that satisfies all constraints. Instead there are many metastable states with similar energy.
+- **Replica Symmetry Breaking (Parisi 1979)**: the space of solutions is not a single basin but a hierarchical tree of basins within basins ("ultrametric" structure). Parisi solved the mean-field spin glass (Sherrington-Kirkpatrick model) by breaking replica symmetry — allowing different "replicas" of the system to explore different parts of solution space.
+- **Edwards-Anderson order parameter**: q_EA = (1/N) sum_i <s_i>_t^2, where <s_i>_t is the time-average of spin i. Measures "how frozen" each spin is. In a ferromagnet, q_EA = 1 (all spins frozen in one direction). In a paramagnet, q_EA = 0 (all spins fluctuating). In a spin glass, 0 < q_EA < 1 (some spins frozen, some not).
+- **Overlap distribution P(q)**: For two replicas alpha and beta, the overlap q_ab = (1/N) sum_i s_i^alpha * s_i^beta measures how similar two solutions are. In a simple system, P(q) is a delta function (one solution). In a spin glass, P(q) is broad and structured (many diverse solutions). The shape of P(q) reveals the solution landscape.
+
+Recent work (arXiv:2407.20724, Jul 2024) directly applies spin glass theory to analyze neural network loss landscapes, using random walks in parameter space and hierarchical clustering to reveal Parisi-like RSB structure in trained DNNs.
+
+**Mapping to multi-teacher KD:**
+
+1. **Teacher disagreement = frustration**. When 4 teachers give conflicting signals on a byte span, the student faces a frustrated landscape — no single representation satisfies all teacher constraints simultaneously. This is EXACTLY the spin glass problem: the student's hidden state is the "spin," and each teacher's signal is a "coupling" that tries to pull it in a different direction.
+
+2. **Frustration is INFORMATION, not noise**. In physics, frustrated systems have rich structure — the PATTERN of frustration reveals the topology of the energy landscape. Similarly, the pattern of teacher disagreement reveals:
+   - **Ambiguous spans**: genuinely hard tokens where reasonable models disagree (all teachers uncertain)
+   - **Architecture-sensitive spans**: tokens where architecture choice matters (e.g., SSM better at long-range, transformer better at local syntax)
+   - **Capacity-sensitive spans**: tokens where larger teachers agree but smaller ones diverge (knowledge that requires more capacity)
+
+3. **Parisi-like hierarchical solution**: instead of forcing the student to find ONE representation that satisfies all teachers (impossible under frustration), allow the student to explore multiple basins. This maps to:
+   - Using different exit depths for different teachers (the student's representation at depth 8 might align with Mamba, while depth 16 aligns with Qwen)
+   - The exit surfaces in our architecture (depths 8, 16, 24) are literally different "replicas" that can explore different parts of solution space
+
+**Mathematical formulation:**
+
+Define a span-level teacher agreement diagnostic (analogous to the Edwards-Anderson order parameter):
+
+```
+For each byte span s, define:
+  p_i(s) = softmax(teacher_i_logits(s) / T)   for teacher i in {1,...,K}
+
+Edwards-Anderson KD order parameter:
+  q_EA(s) = (1/K) * sum_i || p_i(s) - p_bar(s) ||^2
+  where p_bar(s) = (1/K) * sum_i p_i(s)  (mean teacher distribution)
+
+Interpretation:
+  q_EA(s) ≈ 0: all teachers agree (ferromagnetic) → use consensus/barycenter
+  q_EA(s) >> 0: teachers disagree (frustrated) → route to best or partition
+
+Overlap distribution (Parisi-style):
+  For each pair (i,j), compute q_ij(s) = p_i(s) . p_j(s) / (||p_i|| * ||p_j||)
+  The distribution P(q) over all spans and pairs reveals:
+    - Delta peak at q≈1: universal agreement (use any teacher)
+    - Bimodal: two camps of teachers (route by camp)
+    - Broad/flat: genuine ambiguity (downweight KD, trust NTP)
+```
+
+**Frustration-aware routing rule:**
+```
+For each span s:
+  If q_EA(s) < theta_consensus:
+    Use Wasserstein barycenter of all teachers (PM-3 below)
+    Full KD weight alpha
+  Elif q_EA(s) < theta_frustrated:
+    Route to teacher with lowest cross-entropy with student
+    Reduced KD weight alpha * (1 - q_EA(s)/q_max)
+  Else (highly frustrated):
+    Suppress KD entirely, use NTP only
+    alpha = 0 (teacher signal is noise here)
+```
+
+This naturally implements the insight that "when teachers disagree violently, the student should trust its own learning" — the spin glass analogy tells you that highly frustrated regions have no meaningful ground state to distill.
+
+**Pairwise overlap for architecture clustering:**
+```
+Q_ij = E_s[q_ij(s)]  (average pairwise overlap between teachers i and j)
+
+If Q forms a block-diagonal structure:
+  Teachers naturally cluster into "camps" (like RSB basins)
+  Within-camp consensus is strong → average within camps
+  Between-camp disagreement is structural → route between camps
+```
+
+**Key papers:**
+- Edwards & Anderson 1975: spin glass order parameter
+- Parisi 1979: replica symmetry breaking solution
+- Sherrington & Kirkpatrick 1975: mean-field spin glass model
+- Mezard, Parisi, Virasoro 1987: "Spin Glass Theory and Beyond" (canonical reference)
+- Barra et al. 2018 (arXiv:1803.06442): RSB in bipartite spin glasses and neural networks
+- Agoritsas et al. 2023 (arXiv:2111.12997): replica symmetry breaking in dense neural networks
+- Shao et al. 2024 (arXiv:2407.20724): exploring loss landscapes through spin glass theory
+- ICLR 2023 "Agree to Disagree": ensemble diversity through controlled disagreement
+
+---
+
+### PM-3: Wasserstein Barycenter Under Noisy/Conflicting Teachers
+
+**The physics:**
+In optimal transport (OT) theory, the Wasserstein distance W_p measures the minimum "work" to transport one probability distribution into another. The Wasserstein barycenter of K distributions {mu_1, ..., mu_K} with weights {w_1, ..., w_K} is the distribution that minimizes:
+
+```
+bar(mu) = argmin_nu sum_{i=1}^{K} w_i * W_2^2(nu, mu_i)
+```
+
+This is the "center of mass" in the space of probability distributions equipped with the Wasserstein metric. Crucially, this is NOT the arithmetic mean of distributions — the barycenter respects the geometry of probability space.
+
+Key properties:
+- **Geometry-respecting averaging**: Unlike KL-based averaging (which mode-averages, creating probability mass between modes), the Wasserstein barycenter transports mass optimally. For multimodal distributions, it preserves modes instead of blurring them.
+- **NP-hard in general**: Computing exact W2 barycenters is NP-hard (Altschuler et al. 2022).
+- **Entropic regularization makes it tractable**: Adding an entropy penalty transforms the problem into one solvable by Sinkhorn iterations in O(n^2/epsilon^2). The doubly-regularized formulation (Chizat et al., arXiv:2303.11844, published 2025 in Foundations of Computational Mathematics) provides smooth densities, strong stability under perturbation of marginals, and convergence at rate n^{-1/2}.
+- **Robust barycenters**: Standard barycenters are sensitive to outliers. Robust variants (arXiv:2603.07563, Mar 2026) downweight contaminated/outlier distributions, exactly what we need when one teacher is wrong on a specific span.
+
+**Mapping to multi-teacher KD:**
+
+1. **Teacher consensus as barycenter**. When multiple teachers agree on a span, their "consensus distribution" should be the Wasserstein barycenter of their output distributions — not their arithmetic mean. The arithmetic mean of two peaked distributions at different locations creates a bimodal mess. The Wasserstein barycenter creates a single peaked distribution at the "center" while preserving sharpness.
+
+2. **Robust barycenters for noisy teachers**. Some teachers will be wrong on specific spans (Mamba might struggle with local syntax, Qwen might struggle with very long-range dependencies). The robust barycenter naturally downweights outlier teacher distributions, providing automatic "soft routing" even without an explicit router.
+
+3. **Connection to our existing OT infrastructure**. We already identified OT as a cross-tokenizer alignment tool (MultiLevelOT, SinKD). The barycenter extends OT from pairwise alignment (teacher→student) to multi-way consensus (teachers→consensus→student).
+
+**Mathematical formulation for Ekalavya:**
+
+```
+Given K teacher logit distributions on span s:
+  p_i(s) = softmax(z_i(s) / T)  for i in {1,...,K}
+
+Step 1: Compute entropic Wasserstein barycenter
+  bar(p)(s) = argmin_q sum_{i=1}^{K} w_i * OT_epsilon(q, p_i(s))
+  where OT_epsilon(q, p) = min_{gamma in Pi(q,p)} <gamma, C> + epsilon * H(gamma)
+  C = cost matrix (e.g., C_jk = ||e_j - e_k||^2 for embedding vectors e)
+  H(gamma) = -sum gamma log gamma (entropic regularization)
+
+Solved via Sinkhorn iterations:
+  Initialize: u_i = 1/V (uniform), for each teacher i
+  Repeat N_iter times:
+    For each teacher i:
+      v_i = p_i / (K_epsilon^T * u_i)    # K_epsilon = exp(-C/epsilon)
+      u_i = bar(p) / (K_epsilon * v_i)
+    bar(p) = prod_i (K_epsilon * v_i)^{w_i}  # geometric weighted average of marginals
+
+Step 2: Adaptive weights from frustration diagnostic (PM-2)
+  If q_EA(s) < theta_consensus:
+    w_i = 1/K  (equal weights — teachers agree)
+  Else:
+    w_i proportional to exp(-H(p_i(s)))  # weight by teacher confidence
+    (more confident teachers get higher weight — but bounded by robust penalty)
+
+Step 3: Robust trimming
+  Compute per-teacher transport cost: c_i(s) = OT_epsilon(bar(p)(s), p_i(s))
+  If c_i(s) > median(c_1,...,c_K) + 2*MAD:
+    Set w_i = 0, re-normalize remaining weights
+    (teacher i is an outlier on this span — exclude from consensus)
+
+Step 4: KD loss
+  L_bary(s) = KL(student(s) || bar(p)(s))  # student matches consensus, not individual teachers
+```
+
+**Practical approximation for 24GB GPU budget:**
+
+Full Sinkhorn on V=16K vocabulary per span is expensive. Approximations:
+1. **Top-K truncation**: Only compute barycenter over top-K=100 tokens from union of all teachers' top predictions. Most probability mass is concentrated there.
+2. **Pre-computed offline**: For offline logit storage, compute barycenters once during preprocessing, not during training.
+3. **1D Wasserstein**: For sorted logit vectors, 1D Wasserstein has a closed-form solution (just sort and average quantiles). Much cheaper than full OT.
+
+```
+1D Wasserstein barycenter (closed-form):
+  Sort each teacher's logit vector: z_i_sorted
+  bar(z)_sorted = sum_i w_i * z_i_sorted  (weighted average of quantile functions)
+  Unsort using average permutation
+```
+
+This is O(V log V) instead of O(V^2) for full Sinkhorn — feasible in the training loop.
+
+**Key papers:**
+- Agueh & Carlier 2011 (SIAM): Barycenters in the Wasserstein Space (foundational)
+- Cuturi & Doucet 2014 (ICML): Fast Computation of Wasserstein Barycenters (Sinkhorn)
+- Chizat et al. 2023/2025 (arXiv:2303.11844, FoCM): Doubly Regularized Entropic WB
+- Robust WB (arXiv:2603.07563, Mar 2026): robustness to outlier distributions
+- SinKD 2024 (arXiv:2402.17110): Sinkhorn distance for KD (pairwise, not barycenter)
+- MultiLevelOT 2024 (arXiv:2412.14528, AAAI 2025): OT for cross-tokenizer KD
+
+---
+
+### PM-4: Phase Transitions and Critical Phenomena in Multi-Teacher Training
+
+**The physics:**
+At a phase transition, a system undergoes a qualitative change in behavior. Key concepts:
+- **First-order transitions**: discontinuous jump in order parameter (like ice→water). Latent heat. Coexistence of phases. Hysteresis.
+- **Second-order (continuous) transitions**: order parameter changes continuously but its derivative diverges. Power-law correlations. Critical slowing down. Universality classes.
+- **Critical slowing down**: Near a phase transition, the system's relaxation time diverges — it takes infinitely long to equilibrate. The system becomes "indecisive" between phases.
+- **Symmetry breaking**: above the critical temperature, the system is symmetric (paramagnetic — spins point randomly). Below, symmetry breaks (ferromagnetic — spins align). The symmetry-broken phase has lower entropy but more structure.
+
+Grokking is now understood as a bona fide phase transition in learning:
+- **First-order interpretation** (ICLR 2024, arXiv:2310.03789): grokking maps to a first-order phase transition between competing basins (memorization vs generalization). The transition involves coexistence of both phases and a sharp jump.
+- **Singular learning theory** (arXiv:2603.01192, Mar 2026): grokking is a phase transition between competing basins in the loss landscape, analyzed via RLCT (real log canonical threshold) transitions.
+- **Rate-distortion framing** (ScienceDirect 2025): complexity rises during memorization, then DROPS sharply as the network discovers a simpler generalizing pattern. The phase transition is the complexity collapse.
+
+**Critical finding for Ekalavya** (arXiv:2511.04760, Nov 2025): KD from a grokked model can INDUCE and ACCELERATE grokking in a student, even when the student's data is BELOW the critical threshold for spontaneous grokking. KD removes the phase transition barrier without extra data. This is the most direct evidence that KD can trigger qualitative learning transitions, not just quantitative speedups.
+
+**Mapping to multi-teacher KD:**
+
+1. **KD as phase-transition catalyst**. The student's learning dynamics may have phase transitions — sudden jumps in capability when the right combination of teacher signals aligns. Multi-teacher KD provides more "directions" of information, making it more likely to trigger a transition. Single-teacher KD provides a rank-1 perturbation; multi-teacher provides a higher-rank perturbation of the loss landscape.
+
+2. **Critical slowing down as a diagnostic**. Near a phase transition, the system responds sluggishly. Detectable as:
+   - Loss plateau followed by sudden drop
+   - Increasing autocorrelation in gradient directions
+   - Diverging variance of per-batch losses
+   If detected, this is a signal to NOT change KD parameters — the student is near a transition and perturbation could push it to the wrong phase.
+
+3. **Symmetry breaking via teacher diversity**. Multiple diverse teachers (transformer + SSM + hybrid + encoder) break different symmetries in the student's loss landscape. A single teacher might leave certain symmetries intact (the student finds a solution that matches the teacher but ignores structure the teacher doesn't signal). Multiple diverse teachers break more symmetries, constraining the student to a more structured solution.
+
+**Mathematical formulation:**
+
+Phase transition detection during training:
+```
+Monitor these order-parameter-like quantities at each eval checkpoint:
+
+1. Loss variance (susceptibility analog):
+   chi(t) = Var_batches[L(t)]
+   At a phase transition, chi diverges (critical fluctuations).
+   Practical: if chi(t) > 3 * chi(t-1), we may be near a transition.
+
+2. Gradient autocorrelation (correlation length analog):
+   C(t, delta) = cos_sim(g(t), g(t-delta))
+   where g(t) = gradient at step t
+   At a phase transition, C decays more slowly (critical slowing down).
+   Practical: if mean C(t, 100) > 0.5, the system is "slowing down."
+
+3. Representation rank (order parameter):
+   r(t) = effective_rank(H(t))
+   where H(t) = hidden states at some depth, effective_rank = exp(entropy of singular values)
+   Phase transition: sudden JUMP in effective rank = qualitative change in representation structure.
+
+4. KD loss landscape curvature:
+   kappa(t) = || d^2 L_KD / d theta^2 ||  (Hessian spectral norm of KD loss)
+   At a phase transition, the Hessian has near-zero eigenvalues (flat directions).
+   Practical: monitor top-5 eigenvalues via Lanczos. If smallest drops below 1e-6, approaching transition.
+```
+
+Phase-transition-aware KD scheduling:
+```
+If chi(t) > 3 * chi(t-1):  # near phase transition
+  Freeze KD weights for next N steps
+  Reduce learning rate by 0.5x (don't push through — let the transition complete)
+  Log: "possible phase transition at step t"
+
+If effective_rank jumps > 20% in one eval:  # transition happened
+  Increase KD weight (the student's new representation may be more receptive)
+  Re-evaluate per-teacher q_EA — the frustration landscape changed
+```
+
+**Key papers:**
+- Power et al. 2022 (NeurIPS): "Grokking: Generalization Beyond Overfitting on Small Algorithmic Datasets"
+- Liu et al. 2024 (ICLR): "Grokking as a First Order Phase Transition in Two Layer Networks"
+- Levi et al. 2026 (arXiv:2603.01192): "Grokking as a Phase Transition between Competing Basins" (SLT)
+- Huang et al. 2025 (arXiv:2511.04760): "When Data Falls Short: Grokking Below the Critical Threshold" (KD induces grokking)
+- Gromov 2025 (ScienceDirect): "The complexity dynamics of grokking" (rate-distortion phase transition)
+- Levi et al. 2026 (arXiv:2603.24746): "Grokking as a Falsifiable Finite-Size Transition"
+
+---
+
+### PM-5: Free Energy, Temperature, and Thermodynamic KD
+
+**The physics:**
+A system in thermal equilibrium minimizes the Helmholtz free energy:
+
+```
+F = E - T*S = <H> - T * S(rho)
+```
+
+where E = internal energy (how well the system "fits" constraints), S = entropy (how many microstates are available), T = temperature (controls the E-S tradeoff). At high T, entropy dominates (system explores widely). At low T, energy dominates (system locks into lowest-energy state).
+
+The Boltzmann distribution rho(x) = exp(-H(x)/T) / Z minimizes F for a given Hamiltonian H. This is not a coincidence — the KL divergence between any distribution q and the Boltzmann distribution p_T decomposes as:
+
+```
+KL(q || p_T) = (1/T) * [E_q[H] - T*S(q)] - F(T)/T = (1/T) * [F_q - F(T)]
+```
+
+So minimizing KL(q || p_T) is EXACTLY minimizing the free energy of q. The connection to KD is immediate: the soft-label loss KL(student || teacher/T) IS a free energy minimization, with the teacher's logits playing the role of the Hamiltonian and T playing the role of temperature.
+
+Connections:
+- **Hinton et al. 2015 KD**: the temperature parameter in softmax(z/T) literally IS the statistical physics temperature. This was noted by Hinton but never deeply exploited.
+- **Variational inference**: minimizing KL(q || p) is variational free energy minimization. The ELBO (Evidence Lower BOund) = -F_q. KD is a specific case of variational inference where the "posterior" is the teacher's distribution.
+- **Simulated annealing**: start at high T (broad exploration), gradually cool to low T (sharp exploitation). Applied to KD: start with high temperature (smooth teacher distributions, easy to match) and anneal to low temperature (sharp teacher distributions, harder but more informative).
+
+**Mapping to multi-teacher KD:**
+
+1. **Per-teacher temperature = per-teacher free energy landscape**. Each teacher defines a different "Hamiltonian" (logit landscape). The temperature controls how much of each teacher's landscape the student explores:
+   - High T for teacher i: student sees teacher i's broad distributional structure (which tokens are roughly similar)
+   - Low T for teacher i: student sees teacher i's sharp preferences (exactly which token is best)
+   - Different teachers may need different temperatures — a confident teacher (Qwen3-1.7B on English) needs low T, while an uncertain teacher (Mamba on long-range) benefits from high T.
+
+2. **Annealing as curriculum**. Start hot, cool gradually:
+   - Phase 1 (high T): student explores all teachers' landscapes broadly, finds the common structure
+   - Phase 2 (medium T): student begins to differentiate teacher signals, develops routing preferences
+   - Phase 3 (low T): student commits to sharp teacher matching, maximum information transfer
+   This is thermodynamically optimal: the system finds the global minimum (broad exploration first) rather than getting trapped in a local minimum (premature commitment to one teacher).
+
+3. **Free energy as a KD objective**. Instead of minimizing KL to one teacher, minimize a MULTI-TEACHER free energy:
+
+```
+F_multi(theta, t) = sum_i w_i(t) * E_{p_student}[H_i] - T(t) * S(p_student)
+
+where H_i(x) = -log p_teacher_i(x)  (teacher i's "energy" for token x)
+      S(p_student) = -sum_x p_student(x) log p_student(x)  (student entropy)
+      T(t) = temperature schedule
+      w_i(t) = teacher weights (from routing)
+```
+
+This decomposes the multi-teacher KD objective into energy (matching teachers) and entropy (maintaining diversity/exploration). The temperature explicitly controls the tradeoff. At high T, the entropy term dominates and the student maintains a broad distribution. At low T, the energy terms dominate and the student sharpens to match teacher preferences.
+
+**Mathematical formulation for Ekalavya:**
+
+```
+Per-teacher adaptive temperature:
+  T_i(s, t) = T_base(t) * (1 + beta * H(p_i(s)))
+  where H(p_i(s)) = entropy of teacher i's distribution on span s
+  Intuition: uncertain teachers (high H) get higher effective temperature
+             confident teachers (low H) get lower effective temperature
+
+Temperature annealing schedule:
+  T_base(t) = T_max * (T_min/T_max)^(t/t_total)  # geometric cooling
+  T_max = 4.0 (initial: broad exploration)
+  T_min = 1.0 (final: sharp matching)
+
+Multi-teacher free energy loss:
+  L_free(s) = sum_i w_i * KL(p_student(s) || softmax(z_i(s) / T_i(s,t)))
+            = sum_i w_i * [ (1/T_i) * CE(p_student, p_i^{T_i}) + log Z_i(T_i) - S(p_student)/T_i ]
+
+Simplified (Hinton-style with per-teacher T):
+  L_free(s) = sum_i w_i * T_i^2 * KL(softmax(z_student/T_i) || softmax(z_i/T_i))
+
+The T^2 factor (from Hinton 2015) ensures gradient magnitudes scale correctly with temperature.
+```
+
+**Connection to alpha-divergence (AMID, arXiv 2025):**
+The KL divergence is a special case of the alpha-divergence D_alpha. Using alpha != 1 changes the effective "temperature" of the divergence:
+- alpha → 0: mode-covering (high effective T, student covers all teacher modes)
+- alpha → 1: standard KL (student matches teacher's peaks)
+- alpha → infinity: mode-seeking (low effective T, student commits to teacher's sharpest peak)
+
+Recent work (AMID, ABKD) shows alpha-divergence KD with alpha in [0.2, 0.7] outperforms standard KL for LLMs. This is thermodynamically interpretable: the optimal "temperature" of the divergence itself is not 1.
+
+The Transformed Teacher Matching (TTM) paper proved that temperature-based KD is theoretically equivalent to KD + Renyi entropy regularization, providing an information-theoretic decomposition of the temperature effect.
+
+**Key papers:**
+- Hinton, Vinyals, Dean 2015: "Distilling the Knowledge in a Neural Network" (T as temperature)
+- Jafari et al. 2021 (EACL): "Annealing Knowledge Distillation" (simulated annealing for KD)
+- Li et al. 2024 (arXiv:2404.12711): "Dynamic Temperature Knowledge Distillation"
+- Chen et al. 2025 (arXiv:2511.13767): "Dynamic Temperature Scheduler for Knowledge Distillation"
+- Wen et al. 2024 (arXiv:2402.11148): "Transformed Teacher Matching" (KD = KD + Renyi entropy)
+- AMID 2025 (OpenReview): alpha-divergence KD for LLMs
+- ABKD 2024 (arXiv:2404.xxxxx): alpha-beta divergence allocation in KD
+
+---
+
+### Integration: How the 5 Mechanisms Compose in Ekalavya
+
+The five physics mechanisms are not independent — they form a coherent system:
+
+```
+EKALAVYA PHYSICS-INFORMED PIPELINE:
+
+1. MEASURE (PM-2: Spin Glass)
+   For each byte span s, compute q_EA(s) and pairwise overlaps q_ij(s).
+   Classify span as: CONSENSUS (q_EA < theta_1) / ROUTABLE (theta_1 < q_EA < theta_2) / FRUSTRATED (q_EA > theta_2)
+
+2. ROUTE (PM-1: RG + PM-2: Frustration)
+   CONSENSUS spans → Wasserstein barycenter (PM-3)
+   ROUTABLE spans → route to best teacher (lowest transport cost to student)
+   FRUSTRATED spans → suppress KD, trust NTP only
+
+   RG schedule: UV surfaces (depth 8,16) weighted early → IR surface (depth 24) weighted late
+
+3. AGGREGATE (PM-3: Wasserstein Barycenter)
+   For CONSENSUS spans: compute robust barycenter of teacher distributions
+   Outlier teachers (transport cost > threshold) auto-excluded
+   Use 1D Wasserstein approximation for efficiency (O(V log V))
+
+4. TEMPER (PM-5: Free Energy)
+   Per-teacher adaptive temperature: uncertain teachers get higher T
+   Global annealing: T_base decays from 4.0 → 1.0 over training
+   KD loss = multi-teacher free energy with temperature-scaled divergences
+
+5. MONITOR (PM-4: Phase Transitions)
+   Track loss variance, gradient autocorrelation, representation rank
+   If phase transition detected: freeze KD weights, reduce LR
+   If transition completes: re-evaluate frustration landscape, increase KD weight
+
+Total additional compute per step (estimated):
+  q_EA computation: ~0.01 GFLOP (K dot products on M=16 span vectors)
+  1D Wasserstein barycenter: ~0.05 GFLOP (K sorts of top-100 logits)
+  Phase transition monitoring: ~0.02 GFLOP (variance + autocorrelation)
+  Total: ~0.08 GFLOP overhead — negligible vs forward/backward pass
+```
+
+**What makes this novel:**
+Individual pieces (OT for KD, temperature scheduling, gradient conflict resolution) exist in prior art. The novel integration is:
+1. Spin-glass frustration diagnostic driving routing decisions
+2. RG-inspired temporal scheduling of multi-depth matching
+3. Robust Wasserstein barycenters (not arithmetic means) for multi-teacher consensus
+4. Phase-transition monitoring as a training stability mechanism
+5. Free-energy framing unifying temperature, divergence choice, and exploration-exploitation
+
+No published system combines these five mechanisms. The physics analogies provide not just metaphors but ACTIONABLE MATH — every mechanism above has a concrete formula implementable in PyTorch.
 
 ---
 

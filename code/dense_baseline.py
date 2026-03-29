@@ -1559,7 +1559,7 @@ def byte_span_pool(hidden, byte_offsets, attention_mask, n_spans=16):
         # Fallback: uniform position-based pooling
         span_matrix = torch.zeros(B, n_spans, D, device=device, dtype=hidden.dtype)
         for b in range(B):
-            real_len = attention_mask[b].sum().item()
+            real_len = int(attention_mask[b].sum().item())
             if real_len == 0:
                 continue
             chunk_size = max(1, real_len // n_spans)
@@ -3636,6 +3636,359 @@ def probe_memory(parent_ckpt, steps=1000, run_name="probe_memory",
     print(f"\nMemory probe complete. Results: results/{run_name}_metrics.json")
 
 
+def probe_committee_map(student_ckpt, n_windows=50, seq_len=512, n_spans=16):
+    """Audit-only committee map: run student + all 4 teachers on validation windows.
+
+    Collects per-span metrics for T+L R2 Ekalavya design:
+    - compatibility: cosine(student_span_repr, teacher_span_repr) via byte_span_pool
+    - confidence: mean max(softmax(teacher_logits)) per span
+    - student_difficulty: mean entropy(student_softmax) per span
+    - gap: KL(teacher || student) on shared vocab per span
+    - novelty: mean JS divergence between teacher pairs per span
+    - target route shares based on R1 routing formula
+
+    Processes teachers one at a time for VRAM efficiency.
+    No training — pure diagnostic.
+    """
+    import numpy as np
+
+    TEACHERS = [
+        "Qwen/Qwen3-0.6B-Base",
+        "LiquidAI/LFM2.5-1.2B-Base",
+        "Qwen/Qwen3-1.7B-Base",
+        "google/embeddinggemma-300m",
+    ]
+    TEACHER_SHORT = ["q06", "lfm", "q17", "emb"]
+
+    print(f"\n{'='*60}")
+    print(f"COMMITTEE MAP AUDIT")
+    print(f"  Student: {student_ckpt}")
+    print(f"  Teachers: {TEACHERS}")
+    print(f"  Windows: {n_windows}, seq_len={seq_len}, spans={n_spans}")
+    print(f"{'='*60}\n")
+
+    # ---- Load student ----
+    ckpt = torch.load(student_ckpt, weights_only=False, map_location="cpu")
+    stu_cfg = ckpt.get("config", {})
+    model = DenseTransformer(
+        vocab_size=stu_cfg.get("vocab_size", VOCAB_SIZE),
+        dim=stu_cfg.get("dim", 768),
+        n_layers=stu_cfg.get("n_layers", 24),
+        n_heads=stu_cfg.get("n_heads", 12),
+        ff_dim=stu_cfg.get("ff_dim", 2048),
+        exit_layers=stu_cfg.get("exit_layers", [7, 15, 23]),
+        norm_type=stu_cfg.get("norm_type", "rmsnorm"),
+        block_schedule=stu_cfg.get("block_schedule", None),
+        n_q_heads=stu_cfg.get("n_q_heads", None),
+        n_kv_heads=stu_cfg.get("n_kv_heads", None),
+        head_dim=stu_cfg.get("head_dim", 64),
+    ).to(DEVICE)
+    init_key = "model_state_dict" if "model_state_dict" in ckpt else "model"
+    model.load_state_dict(ckpt[init_key])
+    model.eval()
+    student_dim = stu_cfg.get("dim", 768)
+    step = ckpt.get("step", "?")
+    del ckpt
+    torch.cuda.empty_cache()
+    print(f"  Student loaded (step {step}, dim={student_dim})")
+
+    # ---- Load student tokenizer ----
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    from tokenizers import Tokenizer
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # ---- Prepare validation data: get raw text windows ----
+    shard_dir = REPO / "data" / "shards_16k"
+    dataset = ShardedDataset(shard_dir=str(shard_dir))
+
+    # Sample validation windows as token IDs, then decode to text for teachers
+    print(f"  Sampling {n_windows} validation windows...")
+    windows_tokens = []
+    windows_text = []
+    for _ in range(n_windows):
+        x, _ = dataset.sample_batch(1, seq_len, device="cpu", split="test")
+        tokens = x[0].tolist()
+        windows_tokens.append(tokens)
+        text = student_tokenizer.decode(tokens)
+        windows_text.append(text)
+
+    # ---- Student inference: collect logits + hidden states ----
+    print("  Running student inference...")
+    student_logits_all = []   # list of (T, V_s) on CPU
+    student_hidden_all = []   # list of (T, D_s) on CPU
+    student_entropy_all = []  # list of (T,) on CPU
+
+    with torch.no_grad():
+        for i, tokens in enumerate(windows_tokens):
+            inp = torch.tensor([tokens], device=DEVICE)
+            out = model(inp, return_hidden=True)
+            logits = out["logits"][0].float().cpu()  # (T, V)
+            hidden = out["hidden"][0].float().cpu()   # (T, D)
+            # Compute per-token entropy
+            probs = F.softmax(logits, dim=-1)
+            entropy = -(probs * (probs + 1e-10).log()).sum(dim=-1)  # (T,)
+            student_logits_all.append(logits)
+            student_hidden_all.append(hidden)
+            student_entropy_all.append(entropy)
+            if (i + 1) % 10 == 0:
+                print(f"    Student: {i+1}/{n_windows} windows")
+
+    # ---- Process each teacher one at a time ----
+    # Per-teacher results: teacher_spans[t][w] = (n_spans, D_t) hidden repr per span
+    # teacher_logit_metrics[t] = dict of per-span metrics
+    teacher_results = {}
+
+    for ti, (t_name, t_short) in enumerate(zip(TEACHERS, TEACHER_SHORT)):
+        print(f"\n  Loading teacher {ti+1}/4: {t_name}...")
+        teacher = TeacherAdapter(t_name, device=DEVICE, dtype=torch.float16)
+        is_generative = not teacher.is_embedding and not teacher.is_encoder
+
+        # Compute shared vocab (for generative teachers)
+        shared_s_ids, shared_t_ids, n_shared = None, None, 0
+        if is_generative:
+            shared_s_ids, shared_t_ids, n_shared = compute_vocab_overlap(
+                student_tokenizer, teacher.tokenizer, device="cpu"
+            )
+            print(f"    Shared vocab: {n_shared} tokens")
+
+        # Per-window metrics
+        span_compat = []     # cosine compatibility per span
+        span_conf = []       # teacher confidence per span
+        span_gap = []        # KL gap per span
+        span_t_hidden = []   # teacher span hidden states for novelty computation
+
+        with torch.no_grad():
+            for wi in range(n_windows):
+                text = windows_text[wi]
+                s_hidden = student_hidden_all[wi]  # (T, D_s) on CPU
+
+                # Teacher forward
+                t_out = teacher.forward([text], max_length=seq_len)
+                t_hidden = t_out["hidden"]  # (1, T_t, D_t) on GPU
+                t_logits = t_out.get("logits", None)  # (1, T_t, V_t) on GPU or None
+                t_mask = t_out["attention_mask"]  # (1, T_t)
+                t_offsets = t_out.get("byte_offsets", None)
+
+                # ---- Representation compatibility via byte_span_pool ----
+                # Student: create fake batch dim and offsets
+                s_h = s_hidden.unsqueeze(0).to(DEVICE)  # (1, T_s, D_s)
+                s_mask = torch.ones(1, s_hidden.shape[0], device=DEVICE)
+
+                # Pool both into spans (using position-based fallback since student has no byte offsets)
+                s_spans = byte_span_pool(s_h, None, s_mask, n_spans)  # (1, M, D_s)
+                t_spans = byte_span_pool(t_hidden, t_offsets, t_mask, n_spans)  # (1, M, D_t)
+
+                # Store teacher spans for novelty computation
+                span_t_hidden.append(t_spans[0].cpu())  # (M, D_t)
+
+                # Compatibility: cosine per span (project to same dim via mean-normalized comparison)
+                # Use CKA-style: compute per-span cosine after L2 norm (dimension-agnostic)
+                s_norm = F.normalize(s_spans[0].cpu().float(), dim=-1)  # (M, D_s)
+                t_norm = F.normalize(t_spans[0].cpu().float(), dim=-1)  # (M, D_t)
+                # Since dims differ, use Gram matrix similarity per span
+                # For each span m: compat = how similar the representation "fingerprint" is
+                # Use min-dim projection: truncate to smaller dim
+                min_d = min(s_norm.shape[-1], t_norm.shape[-1])
+                compat_per_span = F.cosine_similarity(
+                    s_norm[:, :min_d], t_norm[:, :min_d], dim=-1
+                )  # (M,)
+                span_compat.append(compat_per_span.numpy())
+
+                # ---- Logit-level metrics (generative teachers only) ----
+                if is_generative and t_logits is not None and n_shared > 0:
+                    t_log = t_logits[0].float().cpu()  # (T_t, V_t)
+                    s_log = student_logits_all[wi]      # (T_s, V_s)
+                    s_ent = student_entropy_all[wi]      # (T_s,)
+
+                    # Align: use simple position-based (proportional mapping)
+                    T_s = s_log.shape[0]
+                    T_t = t_log.shape[0]
+
+                    # Teacher confidence: max prob per position
+                    t_probs_full = F.softmax(t_log, dim=-1)  # (T_t, V_t)
+                    t_max_prob = t_probs_full.max(dim=-1).values  # (T_t,)
+
+                    # KL on shared vocab: student vs teacher
+                    t_shared = t_log[:, shared_t_ids.long()]  # (T_t, N_shared)
+                    s_shared = s_log[:, shared_s_ids.long()]  # (T_s, N_shared)
+
+                    # Map teacher positions to student positions (proportional)
+                    T_min = min(T_s, T_t)
+                    t_probs_sh = F.softmax(t_shared[:T_min] / 2.0, dim=-1)
+                    s_lprobs_sh = F.log_softmax(s_shared[:T_min] / 2.0, dim=-1)
+                    per_tok_kl = F.kl_div(s_lprobs_sh, t_probs_sh, reduction="none").sum(-1)  # (T_min,)
+
+                    # Aggregate per span
+                    tokens_per_span = max(1, T_min // n_spans)
+                    conf_per_span = []
+                    gap_per_span = []
+                    for m in range(n_spans):
+                        start = m * tokens_per_span
+                        end = min((m + 1) * tokens_per_span, T_min)
+                        if start >= end:
+                            conf_per_span.append(0.0)
+                            gap_per_span.append(0.0)
+                            continue
+                        # Confidence: mean max prob on hardest 25% student-entropy tokens
+                        span_s_ent = s_ent[start:end]
+                        n_hard = max(1, len(span_s_ent) // 4)
+                        hard_idx = span_s_ent.topk(n_hard).indices
+                        # Map hard_idx to teacher positions
+                        t_start = int(start * T_t / T_min)
+                        t_hard_idx = (hard_idx.float() * T_t / T_min).long().clamp(0, T_t - 1)
+                        conf_per_span.append(t_max_prob[t_hard_idx].mean().item())
+                        # Gap: mean KL on this span
+                        gap_per_span.append(per_tok_kl[start:end].mean().item())
+
+                    span_conf.append(np.array(conf_per_span))
+                    span_gap.append(np.array(gap_per_span))
+                else:
+                    span_conf.append(np.zeros(n_spans))
+                    span_gap.append(np.zeros(n_spans))
+
+                if (wi + 1) % 10 == 0:
+                    print(f"    {t_short}: {wi+1}/{n_windows} windows")
+
+        # Cleanup teacher
+        del teacher.model
+        del teacher
+        torch.cuda.empty_cache()
+
+        teacher_results[t_short] = {
+            "name": t_name,
+            "is_generative": is_generative,
+            "n_shared_vocab": n_shared,
+            "compat": np.stack(span_compat),      # (n_windows, M)
+            "conf": np.stack(span_conf),           # (n_windows, M)
+            "gap": np.stack(span_gap),             # (n_windows, M)
+            "span_hidden": span_t_hidden,          # list of (M, D_t) tensors
+        }
+        print(f"    {t_short} done: mean_compat={np.stack(span_compat).mean():.4f}, "
+              f"mean_conf={np.stack(span_conf).mean():.4f}, mean_gap={np.stack(span_gap).mean():.4f}")
+
+    # ---- Cross-teacher novelty ----
+    print("\n  Computing cross-teacher novelty...")
+    generative_teachers = [t for t in TEACHER_SHORT if teacher_results[t]["is_generative"]]
+    for t_short in TEACHER_SHORT:
+        others = [o for o in TEACHER_SHORT if o != t_short]
+        # Novelty: mean cosine distance to other teachers' span representations
+        novelty_all = []
+        for wi in range(n_windows):
+            t_h = teacher_results[t_short]["span_hidden"][wi]  # (M, D_t)
+            dists = []
+            for o_short in others:
+                o_h = teacher_results[o_short]["span_hidden"][wi]  # (M, D_o)
+                min_d = min(t_h.shape[-1], o_h.shape[-1])
+                cos = F.cosine_similarity(
+                    t_h[:, :min_d].float(), o_h[:, :min_d].float(), dim=-1
+                )
+                dists.append(1.0 - cos.numpy())  # distance = 1 - cosine
+            novelty_all.append(np.stack(dists).mean(axis=0))  # (M,)
+        teacher_results[t_short]["novelty"] = np.stack(novelty_all)  # (n_windows, M)
+
+    # ---- Compute routing scores (R1 formula) ----
+    print("  Computing routing scores...")
+    pi = {"q06": 0.5, "lfm": 0.2, "q17": 0.15, "emb": 0.15}  # prior shares
+    all_scores = {t: np.zeros((n_windows, n_spans)) for t in TEACHER_SHORT}
+
+    for t_short in TEACHER_SHORT:
+        r = teacher_results[t_short]
+        for wi in range(n_windows):
+            for m in range(n_spans):
+                compat = max(0.01, r["compat"][wi, m])
+                conf = max(0.01, r["conf"][wi, m])
+                gap = max(0.01, r["gap"][wi, m])
+                novel = max(0.01, r["novelty"][wi, m])
+                score = pi[t_short] * compat * conf * (gap ** 0.75) * ((0.25 + novel) ** 0.5)
+                all_scores[t_short][wi, m] = score
+
+    # Normalize scores to get route shares
+    route_shares = {t: 0.0 for t in TEACHER_SHORT}
+    route_winner_counts = {t: 0 for t in TEACHER_SHORT}
+    total_spans = n_windows * n_spans
+    disagreement_spans = 0
+
+    for wi in range(n_windows):
+        for m in range(n_spans):
+            scores = {t: all_scores[t][wi, m] for t in TEACHER_SHORT}
+            winner = max(scores, key=scores.get)
+            route_winner_counts[winner] += 1
+            # Check disagreement (margin < 20% of top score)
+            sorted_scores = sorted(scores.values(), reverse=True)
+            if len(sorted_scores) > 1 and sorted_scores[0] > 0:
+                margin = (sorted_scores[0] - sorted_scores[1]) / sorted_scores[0]
+                if margin < 0.2:
+                    disagreement_spans += 1
+
+    for t in TEACHER_SHORT:
+        route_shares[t] = route_winner_counts[t] / total_spans
+
+    # ---- Student difficulty profile ----
+    difficulty_per_span = np.zeros((n_windows, n_spans))
+    for wi in range(n_windows):
+        ent = student_entropy_all[wi].numpy()
+        T = len(ent)
+        tps = max(1, T // n_spans)
+        for m in range(n_spans):
+            start = m * tps
+            end = min((m + 1) * tps, T)
+            if start < end:
+                difficulty_per_span[wi, m] = ent[start:end].mean()
+
+    # ---- Compile results ----
+    results = {
+        "probe": "committee_map_audit",
+        "student_checkpoint": str(student_ckpt),
+        "student_step": step,
+        "n_windows": n_windows,
+        "n_spans": n_spans,
+        "seq_len": seq_len,
+        "route_shares": route_shares,
+        "route_winner_counts": route_winner_counts,
+        "disagreement_fraction": disagreement_spans / total_spans,
+        "student_mean_entropy": float(np.mean([e.mean().item() for e in student_entropy_all])),
+        "student_difficulty_by_span": difficulty_per_span.mean(axis=0).tolist(),
+        "teachers": {},
+    }
+    for t_short in TEACHER_SHORT:
+        r = teacher_results[t_short]
+        results["teachers"][t_short] = {
+            "name": r["name"],
+            "is_generative": r["is_generative"],
+            "n_shared_vocab": r["n_shared_vocab"],
+            "mean_compatibility": float(r["compat"].mean()),
+            "mean_confidence": float(r["conf"].mean()),
+            "mean_gap": float(r["gap"].mean()),
+            "mean_novelty": float(r["novelty"].mean()),
+            "compat_by_span": r["compat"].mean(axis=0).tolist(),
+            "conf_by_span": r["conf"].mean(axis=0).tolist(),
+            "gap_by_span": r["gap"].mean(axis=0).tolist(),
+            "novelty_by_span": r["novelty"].mean(axis=0).tolist(),
+            "route_share": route_shares[t_short],
+        }
+
+    # Clean up span_hidden before saving (not JSON serializable)
+    out_path = REPO / "results" / "committee_map_audit.json"
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"COMMITTEE MAP AUDIT COMPLETE")
+    print(f"  Route shares: {route_shares}")
+    print(f"  Disagreement: {results['disagreement_fraction']:.1%} of spans")
+    print(f"  Student mean entropy: {results['student_mean_entropy']:.3f}")
+    for t in TEACHER_SHORT:
+        tr = results["teachers"][t]
+        print(f"  {t}: compat={tr['mean_compatibility']:.3f} conf={tr['mean_confidence']:.3f} "
+              f"gap={tr['mean_gap']:.3f} novelty={tr['mean_novelty']:.3f}")
+    print(f"  Results: {out_path}")
+    print(f"{'='*60}")
+
+    del model
+    torch.cuda.empty_cache()
+    return results
+
+
 def run_ab_probe(config_path):
     """Run a clean A/B probe from a JSON config file.
 
@@ -5093,12 +5446,20 @@ if __name__ == "__main__":
                         help="Run only this variant tag from the KD config (skip others)")
     parser.add_argument("--kd-phased", type=str, default=None,
                         help="Run phase-aware RMFD production training from JSON config")
+    parser.add_argument("--committee-map", type=str, default=None,
+                        help="Run committee map audit on this student checkpoint (Ekalavya Probe 1)")
+    parser.add_argument("--committee-windows", type=int, default=50,
+                        help="Number of validation windows for committee map audit")
     args = parser.parse_args()
 
     if args.ff_dim is not None:
         FF_DIM = args.ff_dim
     if args.max_steps is not None:
         MAX_TRAIN_STEPS = args.max_steps
+
+    if args.committee_map:
+        probe_committee_map(args.committee_map, n_windows=args.committee_windows)
+        sys.exit(0)
 
     if args.kd_phased:
         train_kd_phased(args.kd_phased)
