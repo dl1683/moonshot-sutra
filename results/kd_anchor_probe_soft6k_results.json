@@ -1,0 +1,256 @@
+{
+  "probe": "anchor_probe_soft6k",
+  "config": {
+    "name": "anchor_probe_soft6k",
+    "init_from": "results/checkpoints_kd_197m_60k_gate/control_197m_60k_step60000.pt",
+    "total_steps": 6000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 0.0001,
+    "min_lr": 1e-05,
+    "warmup": 500,
+    "eval_every": 500,
+    "seq_len": 512,
+    "n_spans": 16,
+    "logit_temperature": 2.0,
+    "logit_top_k": 64,
+    "variants": [
+      {
+        "tag": "lfm_soft6k",
+        "teachers": [
+          {
+            "name": "LiquidAI/LFM2.5-1.2B-Base",
+            "surfaces": [
+              "logit"
+            ]
+          }
+        ],
+        "alpha_state": 0.0,
+        "alpha_semantic": 0.0,
+        "alpha_logit": 0.08,
+        "alpha_schedule": {
+          "warmup_steps": 1000,
+          "start_frac": 0.0,
+          "decay_start_step": 3500,
+          "decay_end_frac": 0.0,
+          "zero_start_step": 5000,
+          "tail_frac": 0.0
+        },
+        "tau_schedule": {
+          "start": 1.4,
+          "end": 2.2,
+          "ramp_steps": 3000
+        }
+      },
+      {
+        "tag": "q06_soft6k",
+        "teachers": [
+          {
+            "name": "Qwen/Qwen3-0.6B-Base",
+            "surfaces": [
+              "logit"
+            ]
+          }
+        ],
+        "alpha_state": 0.0,
+        "alpha_semantic": 0.0,
+        "alpha_logit": 0.08,
+        "alpha_schedule": {
+          "warmup_steps": 1000,
+          "start_frac": 0.0,
+          "decay_start_step": 3500,
+          "decay_end_frac": 0.0,
+          "zero_start_step": 5000,
+          "tail_frac": 0.0
+        },
+        "tau_schedule": {
+          "start": 1.4,
+          "end": 2.2,
+          "ramp_steps": 3000
+        }
+      }
+    ]
+  },
+  "results": {
+    "lfm_soft6k": {
+      "params": 196707891,
+      "teachers": [
+        "LiquidAI/LFM2.5-1.2B-Base"
+      ],
+      "alpha_state": 0.0,
+      "alpha_semantic": 0.0,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "lfm_soft6k",
+          "bpt": 3.646,
+          "avg_kurtosis": 109.79,
+          "max_kurtosis": 1537.41,
+          "max_activation": 286.37,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3315,
+          "bpt_exit_15": 3.7642
+        },
+        {
+          "step": 1000,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6521,
+          "avg_kurtosis": 27.44,
+          "max_kurtosis": 60.86,
+          "max_activation": 267.77,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3383,
+          "bpt_exit_15": 3.7664
+        },
+        {
+          "step": 1500,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6721,
+          "avg_kurtosis": 39.2,
+          "max_kurtosis": 193.19,
+          "max_activation": 257.01,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.347,
+          "bpt_exit_15": 3.7758
+        },
+        {
+          "step": 2000,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6519,
+          "avg_kurtosis": 67.22,
+          "max_kurtosis": 962.12,
+          "max_activation": 298.69,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3291,
+          "bpt_exit_15": 3.7615
+        },
+        {
+          "step": 2500,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6992,
+          "avg_kurtosis": 49.97,
+          "max_kurtosis": 332.92,
+          "max_activation": 288.9,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3814,
+          "bpt_exit_15": 3.811
+        },
+        {
+          "step": 3000,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6481,
+          "avg_kurtosis": 29.08,
+          "max_kurtosis": 103.88,
+          "max_activation": 259.96,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3334,
+          "bpt_exit_15": 3.7633
+        },
+        {
+          "step": 3500,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6676,
+          "avg_kurtosis": 265.19,
+          "max_kurtosis": 4567.39,
+          "max_activation": 395.11,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3463,
+          "bpt_exit_15": 3.7724
+        },
+        {
+          "step": 4000,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6384,
+          "avg_kurtosis": 64.7,
+          "max_kurtosis": 711.23,
+          "max_activation": 239.05,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3262,
+          "bpt_exit_15": 3.7513
+        },
+        {
+          "step": 4500,
+          "tag": "lfm_soft6k",
+          "bpt": 3.63,
+          "avg_kurtosis": 150.05,
+          "max_kurtosis": 1684.83,
+          "max_activation": 263.99,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3267,
+          "bpt_exit_15": 3.7545
+        },
+        {
+          "step": 5000,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6185,
+          "avg_kurtosis": 23.63,
+          "max_kurtosis": 56.46,
+          "max_activation": 221.74,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.3209,
+          "bpt_exit_15": 3.7498
+        },
+        {
+          "step": 5500,
+          "tag": "lfm_soft6k",
+          "bpt": 3.6016,
+          "avg_kurtosis": 205.28,
+          "max_kurtosis": 3414.99,
+          "max_activation": 309.52,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.313,
+          "bpt_exit_15": 3.7333
+        },
+        {
+          "step": 6000,
+          "tag": "lfm_soft6k",
+          "bpt": 3.5686,
+          "avg_kurtosis": 131.16,
+          "max_kurtosis": 1749.97,
+          "max_activation": 341.83,
+          "teachers": [
+            "LiquidAI/LFM2.5-1.2B-Base"
+          ],
+          "bpt_exit_7": 4.2864,
+          "bpt_exit_15": 3.7045
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is that it is a living thing, and that life is a living thing.\nThe word life is a word that means to live. It is a word that means to live. It is a word that means to live. It is a word that means to live. It is a word that means to live. It"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\n                                                               "
+        }
+      ]
+    }
+  }
+}
