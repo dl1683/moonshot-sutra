@@ -1,0 +1,183 @@
+{
+  "probe": "ce_soft6k_control",
+  "config": {
+    "name": "ce_soft6k_control",
+    "init_from": "results/checkpoints_kd_197m_60k_gate/control_197m_60k_step60000.pt",
+    "total_steps": 6000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 0.0001,
+    "min_lr": 1e-05,
+    "warmup": 500,
+    "eval_every": 500,
+    "seq_len": 512,
+    "n_spans": 16,
+    "logit_temperature": 2.0,
+    "logit_top_k": 64,
+    "variants": [
+      {
+        "tag": "ce_soft6k",
+        "teachers": [],
+        "alpha_state": 0.0,
+        "alpha_semantic": 0.0,
+        "alpha_logit": 0.0
+      }
+    ]
+  },
+  "results": {
+    "ce_soft6k": {
+      "params": 196707891,
+      "teachers": [],
+      "alpha_state": 0.0,
+      "alpha_semantic": 0.0,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "ce_soft6k",
+          "bpt": 3.6382,
+          "avg_kurtosis": 92.28,
+          "max_kurtosis": 823.56,
+          "max_activation": 330.59,
+          "teachers": [],
+          "bpt_exit_7": 4.3439,
+          "bpt_exit_15": 3.7668
+        },
+        {
+          "step": 1000,
+          "tag": "ce_soft6k",
+          "bpt": 3.6358,
+          "avg_kurtosis": 47.86,
+          "max_kurtosis": 313.54,
+          "max_activation": 270.33,
+          "teachers": [],
+          "bpt_exit_7": 4.3369,
+          "bpt_exit_15": 3.7638
+        },
+        {
+          "step": 1500,
+          "tag": "ce_soft6k",
+          "bpt": 3.6272,
+          "avg_kurtosis": 22.98,
+          "max_kurtosis": 56.69,
+          "max_activation": 242.02,
+          "teachers": [],
+          "bpt_exit_7": 4.3321,
+          "bpt_exit_15": 3.7602
+        },
+        {
+          "step": 2000,
+          "tag": "ce_soft6k",
+          "bpt": 3.6174,
+          "avg_kurtosis": 32.58,
+          "max_kurtosis": 180.28,
+          "max_activation": 257.2,
+          "teachers": [],
+          "bpt_exit_7": 4.3283,
+          "bpt_exit_15": 3.7511
+        },
+        {
+          "step": 2500,
+          "tag": "ce_soft6k",
+          "bpt": 3.6215,
+          "avg_kurtosis": 119.71,
+          "max_kurtosis": 2232.39,
+          "max_activation": 350.78,
+          "teachers": [],
+          "bpt_exit_7": 4.3332,
+          "bpt_exit_15": 3.7583
+        },
+        {
+          "step": 3000,
+          "tag": "ce_soft6k",
+          "bpt": 3.6378,
+          "avg_kurtosis": 191.34,
+          "max_kurtosis": 1853.49,
+          "max_activation": 352.93,
+          "teachers": [],
+          "bpt_exit_7": 4.3445,
+          "bpt_exit_15": 3.7692
+        },
+        {
+          "step": 3500,
+          "tag": "ce_soft6k",
+          "bpt": 3.6302,
+          "avg_kurtosis": 45.17,
+          "max_kurtosis": 231.98,
+          "max_activation": 230.72,
+          "teachers": [],
+          "bpt_exit_7": 4.3386,
+          "bpt_exit_15": 3.7648
+        },
+        {
+          "step": 4000,
+          "tag": "ce_soft6k",
+          "bpt": 3.6404,
+          "avg_kurtosis": 115.35,
+          "max_kurtosis": 900.93,
+          "max_activation": 310.35,
+          "teachers": [],
+          "bpt_exit_7": 4.3491,
+          "bpt_exit_15": 3.7755
+        },
+        {
+          "step": 4500,
+          "tag": "ce_soft6k",
+          "bpt": 3.6011,
+          "avg_kurtosis": 126.31,
+          "max_kurtosis": 1696.34,
+          "max_activation": 280.92,
+          "teachers": [],
+          "bpt_exit_7": 4.3103,
+          "bpt_exit_15": 3.7366
+        },
+        {
+          "step": 5000,
+          "tag": "ce_soft6k",
+          "bpt": 3.605,
+          "avg_kurtosis": 140.5,
+          "max_kurtosis": 1353.88,
+          "max_activation": 285.16,
+          "teachers": [],
+          "bpt_exit_7": 4.3052,
+          "bpt_exit_15": 3.7379
+        },
+        {
+          "step": 5500,
+          "tag": "ce_soft6k",
+          "bpt": 3.5781,
+          "avg_kurtosis": 92.96,
+          "max_kurtosis": 701.11,
+          "max_activation": 301.43,
+          "teachers": [],
+          "bpt_exit_7": 4.2901,
+          "bpt_exit_15": 3.7155
+        },
+        {
+          "step": 6000,
+          "tag": "ce_soft6k",
+          "bpt": 3.5547,
+          "avg_kurtosis": 225.95,
+          "max_kurtosis": 4292.14,
+          "max_activation": 349.62,
+          "teachers": [],
+          "bpt_exit_7": 4.2687,
+          "bpt_exit_15": 3.6925
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is not clear.\n\nThe word life is used in the Bible to describe the life of a person. It is used in the Bible to describe the life of a person.\n\nThe word life is used in the Bible to describe the life of a person. It is used in the Bible to describe the life of"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world will be a better place to live.\n\nThe world is a better place to live.\n\nThe world is a better place to live.\n\nThe world is a better place to live.\n\nThe world is a better place to live.\n\nThe world is a better place to"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\n                                                               "
+        }
+      ]
+    }
+  }
+}

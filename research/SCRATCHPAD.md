@@ -50,7 +50,27 @@ Q0.6 final kurtosis: 76.7 (vs LFM's 1750) — far smoother representations at en
 - Smaller capacity gap → more learnable signal → better consolidation
 - This aligns with TAID's "interpolation principle" and the general KD finding that very large teachers can hurt small students
 
-**CRITICAL: ce_soft6k control NOW RUNNING** — if the matched CE control also reaches ~3.56, then BOTH teacher probes are schedule artifacts, not genuine KD wins.
+### ce_soft6k RESULT: KD FALSIFIED — GAINS ARE SCHEDULE ARTIFACTS
+
+**CE control FINAL BPT = 3.5547 — BEATS BOTH KD PROBES.**
+- CE control: **3.5547**
+- Q0.6 KD: 3.5589 (+0.004 worse)
+- LFM KD: 3.5686 (+0.014 worse)
+
+**THE "FIRST POSITIVE KD RESULT" WAS A MIRAGE.** The improvement came from the 6K warm-start continuation with WSD decay, not from teacher knowledge. The CE control beats both KD probes at 9 of 12 eval points AND at the final endpoint.
+
+**Implications:**
+1. logit-only KD at alpha=0.08 with this schedule HURTS relative to CE-only
+2. KD creates a "tax" during active training (steps 1K-5K) that is never fully recovered
+3. The consolidation gains are from the WSD decay schedule, not from smoother KD representations
+4. CKA-based teacher selection is irrelevant if KD itself doesn't work at this alpha/tau/schedule
+5. The entire probe ladder (static mix, routing, Q1.7 add, etc.) is BLOCKED until KD itself is proven to beat matched CE
+
+**WHAT THIS MEANS FOR EKALAVYA:**
+- Current logit-only KD at alpha=0.08 is NOT sufficient to justify teacher compute
+- Need to either: (a) find stronger KD signal (state matching? higher alpha? different loss?), (b) use KD differently (offline pre-computed targets? curriculum?), or (c) completely rethink the KD approach
+- The "KD-then-consolidate" hypothesis was wrong — it was "schedule-then-consolidate"
+- Codex R4 was RIGHT to demand this control. Always run matched controls.
 
 ---
 
