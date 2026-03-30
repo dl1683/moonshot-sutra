@@ -1722,6 +1722,8 @@ def compute_cross_tok_logit_kd(
     temperature=2.0,
     top_k=64,
     confidence_gating=False,
+    taid_beta=None,     # TAID interpolation: 0=pure student, 1=pure teacher. None=standard KD
+    hard_token_frac=None,  # If set, only apply KD to top-frac highest student entropy tokens
 ):
     """Cross-tokenizer logit-level KD via vocabulary overlap (DSKDv2 ETA).
 
@@ -1804,16 +1806,32 @@ def compute_cross_tok_logit_kd(
     del s_shared
 
     # Step 4: Per-token KL with temperature, masked for valid positions
-    t_probs = F.softmax(topk_vals / temperature, dim=-1)
+    if taid_beta is not None and taid_beta < 1.0:
+        # TAID-style: target is interpolation between student (detached) and teacher logits
+        # p_beta = softmax(((1-beta)*stopgrad(z_s) + beta*z_t) / tau)
+        interp_logits = (1.0 - taid_beta) * s_at_topk.detach() + taid_beta * topk_vals
+        target_probs = F.softmax(interp_logits / temperature, dim=-1)
+    else:
+        target_probs = F.softmax(topk_vals / temperature, dim=-1)
     s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
     # Per-token KL: sum over vocab dim, then average over valid positions
-    per_token_kl = F.kl_div(s_log_probs, t_probs, reduction="none").sum(dim=-1)  # (B, T_s)
+    per_token_kl = F.kl_div(s_log_probs, target_probs, reduction="none").sum(dim=-1)  # (B, T_s)
     # Confidence gating: scale per-token KD by teacher confidence over full distribution
     if confidence_gating:
         conf_w = torch.where(full_p_max > 0.5, 1.5,
                              torch.where(full_p_max < 0.1, 0.3, 1.0))
         per_token_kl = per_token_kl * conf_w
         del full_p_max
+    # Hard-token gating: only apply KD to highest-entropy student positions
+    if hard_token_frac is not None and hard_token_frac < 1.0:
+        # Compute student entropy at aligned shared-vocab positions
+        s_entropy = -(F.softmax(s_at_topk / temperature, dim=-1) *
+                      F.log_softmax(s_at_topk / temperature, dim=-1)).sum(dim=-1)  # (B, T_s)
+        # Find the entropy threshold for the top-frac positions
+        n_keep = max(1, int(hard_token_frac * s_entropy.shape[1]))
+        threshold = s_entropy.topk(n_keep, dim=1).values[:, -1:]  # (B, 1)
+        hard_mask = (s_entropy >= threshold).float()
+        per_token_kl = per_token_kl * hard_mask
     per_token_kl = per_token_kl * valid_mask.float()  # zero out invalid positions
     n_valid = valid_mask.float().sum().clamp(min=1.0)
     kl = per_token_kl.sum() / n_valid  # per-token average
@@ -4445,6 +4463,8 @@ def train_kd(config_path, variant_filter=None):
         v_alpha_schedule = variant.get("alpha_schedule", None)
         v_confidence_gating = variant.get("confidence_gating", False)
         v_tau_schedule = variant.get("tau_schedule", None)
+        v_taid_beta_schedule = variant.get("taid_beta_schedule", None)
+        v_hard_token_frac = variant.get("hard_token_frac", None)
 
         print(f"\n{'='*60}")
         print(f"KD VARIANT: {tag}")
@@ -4648,6 +4668,15 @@ def train_kd(config_path, variant_filter=None):
             else:
                 step_tau = logit_temperature
 
+            # ---- TAID beta schedule (interpolation ramp from student to teacher) ----
+            if v_taid_beta_schedule:
+                taid_ramp = v_taid_beta_schedule.get("ramp_steps", 2000)
+                taid_start = v_taid_beta_schedule.get("start", 0.0)
+                taid_end = v_taid_beta_schedule.get("end", 1.0)
+                step_taid_beta = taid_start + (taid_end - taid_start) * min(step / taid_ramp, 1.0)
+            else:
+                step_taid_beta = None
+
             opt.zero_grad()
             step_ce = 0.0
             step_kd = 0.0
@@ -4752,6 +4781,8 @@ def train_kd(config_path, variant_filter=None):
                                     temperature=step_tau,
                                     top_k=logit_top_k,
                                     confidence_gating=v_confidence_gating,
+                                    taid_beta=step_taid_beta,
+                                    hard_token_frac=v_hard_token_frac,
                                 )
                                 kd_loss = kd_loss + (sa_logit / max(n_logit_teachers, 1)) * logit_kd
 

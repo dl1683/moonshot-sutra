@@ -6,6 +6,77 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## q06_taid_3k RESULT: FIRST VALIDATED POSITIVE KD (2026-03-29)
+
+**TAID BEATS MATCHED CE BY 0.052 BPT AT STEP 3000.**
+
+| Step | TAID BPT | CE BPT | Delta | Exit7 TAID | Exit7 CE | Exit15 TAID | Exit15 CE |
+|------|----------|--------|-------|------------|----------|-------------|-----------|
+| 500  | 3.6274   | 3.6382 | **-0.011** | 4.3295 | 4.3439 | 3.7590 | 3.7668 |
+| 1000 | 3.6393   | 3.6358 | +0.004 | 4.3354 | 4.3369 | 3.7658 | 3.7638 |
+| 1500 | 3.6993   | 3.6272 | +0.072 | 4.3815 | 4.3321 | 3.8225 | 3.7602 |
+| 2000 | 3.6367   | 3.6174 | +0.019 | 4.3305 | 4.3283 | 3.7583 | 3.7511 |
+| 2500 | 3.6257   | 3.6215 | +0.004 | 4.3234 | 4.3332 | 3.7498 | 3.7583 |
+| 3000 | **3.5856** | 3.6378 | **-0.052** | **4.2878** | 4.3445 | **3.7133** | 3.7692 |
+
+**TAID config:** alpha=0.02 (warmup 500 steps), tau=2.0, beta ramp 0→1 over 2000 steps, Q0.6 teacher, 3K steps from step-60000 checkpoint.
+
+**Key dynamics:**
+1. TAID wins early (step 500) due to gentle ramp — target is mostly student signal
+2. TAID trails badly at step 1500 (beta=0.75) — teacher tax peaks when target shifts heavily
+3. Dramatic recovery during WSD decay (steps 2500-3000) — teacher knowledge consolidates
+4. **TAID wins at ALL metrics at endpoint:** final BPT, exit7, exit15
+
+**Comparison to previous KD (alpha=0.08, no TAID):**
+- TAID 3K: **3.5856** — WINS
+- CE 3K: 3.6378 — loses by 0.052
+- Original Q0.6 6K: 3.5589 — better but had 2x more steps
+- Original CE 6K: 3.5547 — better but had 2x more steps
+
+**What changed vs the falsified probes:**
+1. alpha: 0.02 vs 0.08 — 4x lower weight
+2. TAID interpolation: beta ramp instead of pure teacher target from step 0
+3. Both matter. TAID at alpha=0.08 would likely still fail (alpha sweep will test this).
+
+**Generations:** Still repetitive at 3K steps (expected — model needs >15K for coherent generation).
+
+**CRITICAL CAVEATS:**
+- Failed R5's "not trail at step 1000" criterion (3.6393 vs 3.6358, trails by 0.004)
+- The win is concentrated in the WSD decay phase — unclear if TAID helps or just recovers from its own tax
+- Need 6K and 15K runs to confirm this isn't another schedule artifact
+
+**NEXT:** Alpha sweep (separate weight from objective), then extend TAID to 6K for fair comparison with CE 6K.
+
+---
+
+## Alpha Sweep Result: alpha=0.02 is the Sweet Spot (2026-03-29)
+
+**ALL alphas beat CE at step 1000.** The sweep separates "weight" from "objective" — even plain forward KL beats CE at the right weight.
+
+| Alpha | BPT@500 | BPT@1000 | Exit7@1000 | Exit15@1000 | Kurtosis@1000 |
+|-------|---------|----------|------------|-------------|---------------|
+| CE    | 3.6382  | 3.6358   | 4.3369     | 3.7638      | 47.9          |
+| 0.01  | 3.6324  | 3.6271   | 4.3365     | 3.7597      | 63.9          |
+| **0.02** | **3.6231** | **3.6055** | 4.3056 | 3.7350 | 185.5 |
+| 0.04  | 3.6239  | 3.6228   | 4.3171     | 3.7472      | 131.0         |
+| 0.08  | 3.6404  | **3.6066** | **4.2891** | **3.7173** | **32.2** |
+
+**Key findings:**
+1. **Alpha=0.02 wins BPT** but alpha=0.08 wins exits + kurtosis at 1K steps
+2. **Alpha=0.08 shows V-shaped tax-then-recovery** — worse at 500, nearly tied at 1000
+3. **All alphas beat CE** — the old alpha=0.08 6K failure was a schedule-length interaction, not a fundamental failure of the alpha
+4. **At step 1000, alpha=0.02 plain KD (3.6055) massively beats TAID (3.6393)** — TAID's beta ramp HURTS early by diluting teacher signal
+
+**Revised hypothesis:**
+- The original 6K alpha=0.08 failure was: too much alpha × too long stable-LR phase = accumulated tax > consolidation benefit
+- Alpha=0.02 avoids the tax entirely (never hurts relative to CE at any checkpoint)
+- TAID is NOT needed if alpha is right — the ramp delays benefit without compensating gain
+- **The key design variable is alpha × schedule-length interaction**
+
+**CRITICAL OPEN QUESTION:** Does alpha=0.02 plain KD at 3K also beat CE? If yes, TAID is unnecessary overhead. Need `q06_plain_3k` probe with alpha=0.02, no TAID, 3K steps.
+
+---
+
 ## Codex R4 Output Summary (2026-03-30)
 
 **Status: RECEIVED. Executing probe ladder.**
