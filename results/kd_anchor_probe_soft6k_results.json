@@ -72,183 +72,183 @@
     ]
   },
   "results": {
-    "lfm_soft6k": {
+    "q06_soft6k": {
       "params": 196707891,
       "teachers": [
-        "LiquidAI/LFM2.5-1.2B-Base"
+        "Qwen/Qwen3-0.6B-Base"
       ],
       "alpha_state": 0.0,
       "alpha_semantic": 0.0,
       "metrics": [
         {
           "step": 500,
-          "tag": "lfm_soft6k",
-          "bpt": 3.646,
-          "avg_kurtosis": 109.79,
-          "max_kurtosis": 1537.41,
-          "max_activation": 286.37,
+          "tag": "q06_soft6k",
+          "bpt": 3.6276,
+          "avg_kurtosis": 132.91,
+          "max_kurtosis": 1923.48,
+          "max_activation": 310.28,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3315,
-          "bpt_exit_15": 3.7642
+          "bpt_exit_7": 4.3256,
+          "bpt_exit_15": 3.7529
         },
         {
           "step": 1000,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6521,
-          "avg_kurtosis": 27.44,
-          "max_kurtosis": 60.86,
-          "max_activation": 267.77,
+          "tag": "q06_soft6k",
+          "bpt": 3.6609,
+          "avg_kurtosis": 234.76,
+          "max_kurtosis": 2923.66,
+          "max_activation": 356.31,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3383,
-          "bpt_exit_15": 3.7664
+          "bpt_exit_7": 4.3526,
+          "bpt_exit_15": 3.7794
         },
         {
           "step": 1500,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6721,
-          "avg_kurtosis": 39.2,
-          "max_kurtosis": 193.19,
-          "max_activation": 257.01,
+          "tag": "q06_soft6k",
+          "bpt": 3.6734,
+          "avg_kurtosis": 155.4,
+          "max_kurtosis": 2259.69,
+          "max_activation": 352.67,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.347,
-          "bpt_exit_15": 3.7758
+          "bpt_exit_7": 4.3531,
+          "bpt_exit_15": 3.7802
         },
         {
           "step": 2000,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6519,
-          "avg_kurtosis": 67.22,
-          "max_kurtosis": 962.12,
-          "max_activation": 298.69,
+          "tag": "q06_soft6k",
+          "bpt": 3.6637,
+          "avg_kurtosis": 287.99,
+          "max_kurtosis": 4541.34,
+          "max_activation": 371.14,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3291,
-          "bpt_exit_15": 3.7615
+          "bpt_exit_7": 4.3556,
+          "bpt_exit_15": 3.7775
         },
         {
           "step": 2500,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6992,
-          "avg_kurtosis": 49.97,
-          "max_kurtosis": 332.92,
-          "max_activation": 288.9,
+          "tag": "q06_soft6k",
+          "bpt": 3.6575,
+          "avg_kurtosis": 101.78,
+          "max_kurtosis": 1797.18,
+          "max_activation": 263.43,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3814,
-          "bpt_exit_15": 3.811
+          "bpt_exit_7": 4.3334,
+          "bpt_exit_15": 3.7647
         },
         {
           "step": 3000,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6481,
-          "avg_kurtosis": 29.08,
-          "max_kurtosis": 103.88,
-          "max_activation": 259.96,
+          "tag": "q06_soft6k",
+          "bpt": 3.6686,
+          "avg_kurtosis": 60.34,
+          "max_kurtosis": 571.35,
+          "max_activation": 261.04,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3334,
-          "bpt_exit_15": 3.7633
+          "bpt_exit_7": 4.3361,
+          "bpt_exit_15": 3.7711
         },
         {
           "step": 3500,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6676,
-          "avg_kurtosis": 265.19,
-          "max_kurtosis": 4567.39,
-          "max_activation": 395.11,
+          "tag": "q06_soft6k",
+          "bpt": 3.6646,
+          "avg_kurtosis": 72.47,
+          "max_kurtosis": 582.05,
+          "max_activation": 243.59,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3463,
-          "bpt_exit_15": 3.7724
+          "bpt_exit_7": 4.3417,
+          "bpt_exit_15": 3.7721
         },
         {
           "step": 4000,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6384,
-          "avg_kurtosis": 64.7,
-          "max_kurtosis": 711.23,
-          "max_activation": 239.05,
+          "tag": "q06_soft6k",
+          "bpt": 3.6419,
+          "avg_kurtosis": 64.95,
+          "max_kurtosis": 566.1,
+          "max_activation": 272.66,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3262,
-          "bpt_exit_15": 3.7513
+          "bpt_exit_7": 4.3256,
+          "bpt_exit_15": 3.7568
         },
         {
           "step": 4500,
-          "tag": "lfm_soft6k",
-          "bpt": 3.63,
-          "avg_kurtosis": 150.05,
-          "max_kurtosis": 1684.83,
-          "max_activation": 263.99,
+          "tag": "q06_soft6k",
+          "bpt": 3.6488,
+          "avg_kurtosis": 71.93,
+          "max_kurtosis": 984.86,
+          "max_activation": 296.75,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3267,
-          "bpt_exit_15": 3.7545
+          "bpt_exit_7": 4.3392,
+          "bpt_exit_15": 3.7743
         },
         {
           "step": 5000,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6185,
-          "avg_kurtosis": 23.63,
-          "max_kurtosis": 56.46,
-          "max_activation": 221.74,
+          "tag": "q06_soft6k",
+          "bpt": 3.6072,
+          "avg_kurtosis": 141.81,
+          "max_kurtosis": 2339.8,
+          "max_activation": 298.82,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.3209,
-          "bpt_exit_15": 3.7498
+          "bpt_exit_7": 4.3094,
+          "bpt_exit_15": 3.7409
         },
         {
           "step": 5500,
-          "tag": "lfm_soft6k",
-          "bpt": 3.6016,
-          "avg_kurtosis": 205.28,
-          "max_kurtosis": 3414.99,
-          "max_activation": 309.52,
+          "tag": "q06_soft6k",
+          "bpt": 3.591,
+          "avg_kurtosis": 26.57,
+          "max_kurtosis": 82.69,
+          "max_activation": 212.79,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.313,
-          "bpt_exit_15": 3.7333
+          "bpt_exit_7": 4.2979,
+          "bpt_exit_15": 3.7273
         },
         {
           "step": 6000,
-          "tag": "lfm_soft6k",
-          "bpt": 3.5686,
-          "avg_kurtosis": 131.16,
-          "max_kurtosis": 1749.97,
-          "max_activation": 341.83,
+          "tag": "q06_soft6k",
+          "bpt": 3.5589,
+          "avg_kurtosis": 26.46,
+          "max_kurtosis": 76.66,
+          "max_activation": 232.24,
           "teachers": [
-            "LiquidAI/LFM2.5-1.2B-Base"
+            "Qwen/Qwen3-0.6B-Base"
           ],
-          "bpt_exit_7": 4.2864,
-          "bpt_exit_15": 3.7045
+          "bpt_exit_7": 4.2705,
+          "bpt_exit_15": 3.6972
         }
       ],
       "generations": [
         {
           "prompt": "The meaning of life is",
-          "generation": "The meaning of life is that it is a living thing, and that life is a living thing.\nThe word life is a word that means to live. It is a word that means to live. It is a word that means to live. It is a word that means to live. It is a word that means to live. It"
+          "generation": "The meaning of life is not clear.\nThe word life is a word that is used to describe a person\u2019s life. It is a word that is used to describe a person\u2019s life. It is a word that is used to describe a person\u2019s life.\nThe word life is a word that is used to describe a"
         },
         {
           "prompt": "In a distant future",
-          "generation": "In a distant future, the world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will be a little different.\n\nThe world will"
+          "generation": "In a distant future, the world will be a place of peace and harmony.\nThe world is a place of peace and harmony.\nThe world is a place of peace and harmony.\nThe world is a place of peace and harmony.\nThe world is a place of peace and harmony.\nThe world is a place of peace"
         },
         {
           "prompt": "def fibonacci(n):\n",
-          "generation": "def fibonacci(n):\n\n                                                               "
+          "generation": "def fibonacci(n):\n\ndef fibonacci(n):\nreturn n\n\ndef fibonacci(n):\nreturn n\n\ndef fibonacci(n):\nreturn n\n\ndef fibonacci(n):\nreturn n\n\ndef fibonacci(n"
         }
       ]
     }

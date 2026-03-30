@@ -37,8 +37,20 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 - **No state surface in proof stage**: token-only for 2-teacher proof
 - **Keep top_k=64**: split K_metrics=64 / K_loss=16 only after routing is positive
 
-### Q0.6 Early Signal (step 500)
-**BPT=3.6276** vs LFM's 3.6460 at same step. Q0.6 potentially BETTER teacher despite lower CKA (0.736 vs 0.865). If confirmed at 6K, anchor assumption needs revision.
+### Q0.6 FULL RESULTS — OVERTURNS ANCHOR ASSUMPTION
+**Q0.6 FINAL BPT = 3.5589 vs LFM's 3.5686** — Q0.6 wins by 0.010 despite lower CKA (0.736 vs 0.865).
+Q0.6 also wins at ALL exit levels: exit7=4.2705 (vs 4.2864), exit15=3.6972 (vs 3.7045).
+Q0.6 final kurtosis: 76.7 (vs LFM's 1750) — far smoother representations at endpoint.
+
+**This overturns R3/R4's "LFM = primary anchor" assumption.** CKA compatibility is NOT the best predictor of teacher effectiveness. The smaller, less compatible teacher produced a better endpoint.
+
+**Hypothesis for why Q0.6 wins:**
+- Q0.6's logits are "noisier" during training (higher kurtosis throughout) but provide a different kind of regularization
+- The capacity gap between student (197M) and Q0.6 (0.6B) is SMALLER than student-to-LFM (1.2B)
+- Smaller capacity gap → more learnable signal → better consolidation
+- This aligns with TAID's "interpolation principle" and the general KD finding that very large teachers can hurt small students
+
+**CRITICAL: ce_soft6k control NOW RUNNING** — if the matched CE control also reaches ~3.56, then BOTH teacher probes are schedule artifacts, not genuine KD wins.
 
 ---
 
