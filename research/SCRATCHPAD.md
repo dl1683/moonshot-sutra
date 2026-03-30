@@ -6,6 +6,42 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## Codex R4 Output Summary (2026-03-30)
+
+**Status: RECEIVED. Executing probe ladder.**
+
+### Confidence Scores (R3 → R4)
+- O1 (Intelligence): 7→**8** — positive LFM soft6K probe (BPT=3.5686 beats 60K baseline)
+- O2 (Improvability): 8→**8** — no new evidence
+- O3 (Democratization): 7→**7** — no new evidence
+- O4 (Data Efficiency): 8→**8** — single-teacher positive but needs matched CE control
+- O5 (Inference Efficiency): 7→**7** — exits improved but no latency benchmark
+
+### Critical Challenge from R4
+**The LFM result may not prove KD works.** The gain could come from the longer schedule (6K vs 3K) rather than teacher knowledge. A matched `ce_soft6k` (identical 6K schedule, no teachers) is MANDATORY before claiming KD success. If ce_soft6k matches or beats lfm_soft6k, the "first positive KD result" is falsified.
+
+### R4 Probe Ladder (Sequential — each must pass before next)
+1. **ce_soft6k** — CONFIG READY, waiting for GPU. SUCCESS: lfm_soft6k beats by ≥0.02 BPT
+2. **q06_soft6k** — RUNNING NOW. If Q0.6 beats LFM ≥0.01, flip anchor assumption
+3. **lfm_q06_static6k** — static equal-alpha 2-teacher mix. SUCCESS: beats best single
+4. **routed_lfm_q06_12k** — 2-teacher with span routing. SUCCESS: committee ≤ best_single - 0.02 + benchmark gain
+5. **exit_tail_sd_6k** — late self-distillation for exits
+6. **k_ablation** — K_metrics=64, K_loss=16 vs 64
+7. **q17_late_sidecar** — Q1.7 late add with ≤10% share cap
+8. **config_only_swap** — O3 composability proof
+
+### Key R4 Design Changes from R3
+- **Teacher-specific ZPD centers**: mu_lfm=log(0.84), mu_q06=log(1.13) (Gaussian, not exponential)
+- **24K schedule 50/50 split**: 12K KD + 12K consolidation (vs R3's more complex phasing)
+- **Late self-distillation for exits**: KL(stopgrad p_23 || p_15) + KL(stopgrad p_23 || p_7) instead of teacher KD at shallow exits
+- **No state surface in proof stage**: token-only for 2-teacher proof
+- **Keep top_k=64**: split K_metrics=64 / K_loss=16 only after routing is positive
+
+### Q0.6 Early Signal (step 500)
+**BPT=3.6276** vs LFM's 3.6460 at same step. Q0.6 potentially BETTER teacher despite lower CKA (0.736 vs 0.865). If confirmed at 6K, anchor assumption needs revision.
+
+---
+
 ## Cross-Domain Biology/Ecology Analogies for Multi-Teacher KD (2026-03-29)
 
 **Status: RESEARCH COMPLETE -- ready for T+L injection. Each analogy includes mechanism, math model, and concrete KD translation.**
