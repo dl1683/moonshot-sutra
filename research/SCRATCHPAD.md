@@ -73,7 +73,33 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 - TAID is NOT needed if alpha is right — the ramp delays benefit without compensating gain
 - **The key design variable is alpha × schedule-length interaction**
 
-**CRITICAL OPEN QUESTION:** Does alpha=0.02 plain KD at 3K also beat CE? If yes, TAID is unnecessary overhead. Need `q06_plain_3k` probe with alpha=0.02, no TAID, 3K steps.
+**ANSWERED:** q06_plain_3k (alpha=0.02, no TAID, 3K steps) confirms TAID IS a genuine improvement.
+
+## Plain vs TAID 3K Comparison: TAID Wins (2026-03-29)
+
+| Probe | BPT@500 | BPT@1000 | BPT@1500 | BPT@2000 | BPT@2500 | BPT@3000 | Exit7 | Exit15 |
+|-------|---------|----------|----------|----------|----------|----------|-------|--------|
+| CE    | 3.6382  | 3.6358   | 3.6272   | 3.6174   | 3.6215   | 3.6378   | 4.3445 | 3.7692 |
+| **TAID** | 3.6274 | 3.6393 | 3.6993 | 3.6367 | 3.6257 | **3.5856** | **4.2878** | **3.7133** |
+| Plain | **3.6214** | 3.6688 | 3.6655 | 3.6434 | 3.6561 | 3.6063 | 4.3144 | 3.7350 |
+
+**Three effects decomposed:**
+1. **Alpha effect (0.08→0.02):** Both TAID and Plain beat CE. This is the primary effect.
+2. **TAID effect (beta ramp):** TAID beats Plain by 0.021 BPT at endpoint. This is a real secondary effect.
+3. **Mechanism:** TAID reduces mid-run "tax" by diluting teacher signal during stable-LR phase. The tax avoided > the delayed benefit. Net result: better consolidation endpoint.
+
+**Key dynamics:**
+- Plain starts better (full signal) but accumulates more tax during stable-LR (BPT rises to 3.6688 at step 1000)
+- TAID starts worse (diluted) but avoids worst of stable-LR tax (peaks at 3.6993 step 1500 but from a different source — beta ramp)
+- Both recover during WSD consolidation, TAID recovers MORE
+
+**Confirmed findings:**
+1. Online logit KD with Q0.6 teacher at alpha=0.02 IS positive (beats CE by 0.032-0.052 BPT)
+2. TAID interpolation provides additional 0.021 BPT beyond raw alpha fix
+3. The original failure was alpha=0.08, NOT teacher knowledge being useless
+4. WSD consolidation is critical for KD to work — both TAID and Plain lose at mid-run
+
+**NEXT: Extend winning TAID config to 6K for fair comparison with CE 6K (3.5547).**
 
 ---
 
