@@ -6,6 +6,546 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## Cross-Domain Biology/Ecology Analogies for Multi-Teacher KD (2026-03-29)
+
+**Status: RESEARCH COMPLETE -- ready for T+L injection. Each analogy includes mechanism, math model, and concrete KD translation.**
+
+This section maps 7 biological systems of multi-source information integration onto the Ekalavya multi-teacher KD problem: a 197M-param student learning simultaneously from 4 teachers (Qwen3-1.7B, LFM2.5-1.2B, Mamba2-780M, EmbeddingGemma-300M) of different architectures.
+
+---
+
+### 1. IMMUNE SYSTEM: Kinetic Proofreading for Teacher Signal Discrimination
+
+**Biological mechanism.** T-cells face a problem identical to ours: they must integrate signals from multiple antigen-presenting cells (APCs) while discriminating high-quality signals (real pathogens) from noise (self-antigens). The solution is *kinetic proofreading* (Hopfield 1974, Ninio 1975). Instead of deciding immediately on a signal, the T-cell requires the signal to survive through N sequential phosphorylation steps. Each step is an opportunity for a weak (wrong) signal to dissociate. Only signals that persist through all N steps trigger activation.
+
+The JAK-STAT pathway converges signals from multiple cytokine receptors (IL-2, IL-4, IL-6, etc.) through a shared set of STAT transcription factors. Different cytokines activate different STAT combinations (STAT1/2, STAT3, STAT4, STAT5, STAT6), creating a *combinatorial code* -- the cell does not just sense "how much signal" but "what combination of signals," enabling context-dependent responses. The immune system avoids "teacher collapse" (responding to only one pathogen type) through *clonal diversity* -- different T-cell subpopulations specialize in different antigen classes, maintained by thymic selection pressure.
+
+**Mathematical model.** The Hopfield-Ninio kinetic proofreading formula for discrimination:
+
+If a correct substrate has dissociation rate k_off and an incorrect substrate has rate k_off' = k_off * f (where f > 1), then after N proofreading steps, the discrimination ratio improves from f to f^(N+1).
+
+Error rate without proofreading: eta_0 ~ exp(-Delta_G / kT)
+Error rate with N proofreading steps: eta_N ~ exp(-(N+1) * Delta_G / kT) = eta_0^(N+1)
+
+The cost: each proofreading step consumes one ATP (free energy). Discrimination scales exponentially with steps, but so does energy cost.
+
+For multi-signal integration (JAK-STAT convergence), the T-cell activation function is modeled as a multi-valued logic gate:
+
+    activation = H(sum_i w_i * STAT_i - theta)
+
+where H is a Hill function with cooperativity n (typically 2-4), w_i are pathway-specific weights, and theta is the activation threshold. The Hill function creates the sharp switch-like behavior observed in T-cell commitment.
+
+**KD translation: Multi-Step Teacher Validation.**
+
+Before accepting a teacher's gradient for a given span, require the signal to pass through N validation checkpoints:
+
+    Step 1: KL divergence check -- is teacher distribution meaningfully different from student?
+       If KL(teacher || student) < epsilon_min: signal too weak, discard
+       If KL(teacher || student) > epsilon_max: signal too strong, discard (destructive gradient)
+
+    Step 2: Entropy check -- is teacher confident in its prediction?
+       If H(teacher) > H_max: teacher is uncertain, reduce weight
+
+    Step 3: Agreement check -- does this teacher signal agree with ensemble trend?
+       If cos(grad_teacher_i, grad_ensemble) < 0: teacher conflicts with consensus, reduce weight
+
+    Surviving signal weight = base_weight * f^(steps_passed)
+
+This is kinetic proofreading for gradients. Each checkpoint filters out noise. After N steps, only high-confidence, non-conflicting, informative teacher signals survive with full weight. The exponential discrimination means even modest per-step filtering produces dramatic overall signal quality.
+
+**STAT-inspired combinatorial routing.** Instead of a single scalar "teacher weight," use a vector code per teacher:
+
+    teacher_code_i = [confidence_i, gap_i, agreement_i, novelty_i]  # 4-dim "STAT vector"
+    route_weight = MLP(concat(student_state, teacher_code_i))  # learned combinatorial gate
+
+This lets the routing network learn complex, context-dependent teacher selection -- "use Qwen when confident AND gap is moderate" vs "use LFM when gap is high AND agreement is low" -- exactly how STAT combinations encode context.
+
+**Anti-collapse mechanism (thymic selection analogy).** To prevent the student from collapsing to a single teacher, add a *diversity pressure* loss:
+
+    L_diversity = -H(routing_distribution)  # maximize entropy of teacher selection over a batch
+
+If the router assigns >80% of spans to one teacher across a batch, this penalty activates and pushes toward more uniform usage -- analogous to thymic selection maintaining clonal diversity.
+
+---
+
+### 2. QUORUM SENSING: Threshold Activation for Ensemble Decisions
+
+**Biological mechanism.** Bacteria produce small signaling molecules (autoinducers, AIs) that accumulate in the environment. When AI concentration exceeds a threshold, a positive feedback loop activates: AI-bound transcription factors upregulate AI synthase, producing MORE AI, creating a bistable switch. The key insight is that bacteria do not respond proportionally to signal -- they exhibit *switch-like* behavior with a sharp threshold.
+
+In multi-species quorum sensing, different species produce different AI molecules (3-oxo-C12-HSL, C4-HSL, AI-2, etc.). Vibrio harveyi integrates THREE distinct AI signals through a shared phosphorelay cascade. The integration is *nonlinear and asymmetric* -- the combination of two AIs produces a response far greater than the sum of individual responses (synergy). This allows bacteria to distinguish "I am surrounded by my own species" from "I am in a mixed community" from "I am alone."
+
+Critically, the reciprocal architecture (where each QS system cross-activates the other) is MORE RESPONSIVE to density changes and MORE ROBUST to noise than a strict hierarchy. This was demonstrated quantitatively in the 2025 PLOS Biology study from Brown Lab at Georgia Tech.
+
+**Mathematical model.** The canonical single-species QS model:
+
+    dA/dt = alpha + beta * (A^n / (K^n + A^n)) - gamma * A     [AI concentration]
+    dR/dt = delta * (A^n / (K^n + A^n)) - mu * R                [receptor/response]
+
+where A = autoinducer concentration, R = response protein, n = Hill coefficient (cooperativity, typically 2-4), K = half-activation threshold, gamma = degradation/dilution. The Hill function A^n/(K^n + A^n) creates the bistable switch.
+
+For multi-signal integration (V. harveyi model with 3 AIs):
+
+    Response = V_max * product_i(AI_i^n_i / (K_i^n_i + AI_i^n_i))
+        + synergy terms: sum_{i<j} s_ij * AI_i * AI_j / (K_ij + AI_i * AI_j)
+
+The product form means ALL signals must be present for full activation (AND gate), while synergy terms capture nonlinear cross-talk. The 2025 Brown Lab results show the synergy terms dominate at ecologically relevant concentrations -- combination effects are 3-10x stronger than additive predictions.
+
+**KD translation: Quorum-Gated Teacher Activation.**
+
+Instead of always applying all teachers, use a quorum sensing mechanism to gate when KD activates at all:
+
+    For each span s:
+        AI_i(s) = sigmoid(gap_i(s) - tau_i) * conf_i(s)    # each teacher autoinducer
+
+        # Quorum threshold -- KD only activates when enough teachers have signal
+        quorum_signal = product(AI_i(s)) + sum_{i<j} s_ij * AI_i(s) * AI_j(s)
+
+        if quorum_signal < Q_threshold:
+            L_kd(s) = 0  # no KD on this span -- student learns from data alone
+        else:
+            # Activate with synergy-weighted combination
+            w_i(s) = AI_i(s) / sum_j AI_j(s)
+            L_kd(s) = sum_i w_i(s) * KL(teacher_i || student)
+
+**Why this matters:** The committee map showed 85.9% teacher agreement -- for those spans, any teacher is fine. The 14.1% disagreement spans are where routing MATTERS. The quorum mechanism naturally handles both cases:
+- High agreement = all AIs above threshold = strong quorum = KD activates with equal weights
+- Low agreement = some AIs below threshold = weak quorum = KD reduces or deactivates
+- Mixed signals = synergy terms dominate = the COMBINATION of partially-confident teachers can still trigger KD even when no single teacher is confident enough alone
+
+**Bistable training dynamics.** The positive feedback loop creates interesting training dynamics: once the student starts learning from a teacher on a type of span, the gap decreases, which should REDUCE the signal -- but if we design the AI function correctly, the student improvement INCREASES the confidence term (student entropy drops), maintaining the signal even as the gap shrinks. This creates a stable "on" state that persists until the student fully catches up.
+
+**Hysteresis for curriculum.** Bistable systems exhibit hysteresis -- once activated, they stay on even when the signal drops below the original activation threshold. Translation: once KD activates on a span type, keep it active even as the student improves, until the gap is MUCH smaller than the original activation threshold. Use different thresholds for activation (Q_on) and deactivation (Q_off < Q_on). This prevents oscillation between KD-on and KD-off states.
+
+---
+
+### 3. ECOLOGICAL NICHE PARTITIONING: Teacher Specialization via Competitive Exclusion
+
+**Biological mechanism.** Gause competitive exclusion principle: two species competing for the exact same resource cannot coexist. Coexistence requires *niche differentiation* -- each species must specialize on a different resource dimension. Darwin finches on the Galapagos: closely related species evolved different beak sizes (character displacement) to exploit different seed sizes. The deeper principle: interspecific competition DRIVES specialization.
+
+The Lotka-Volterra coexistence condition: species i and j coexist iff intraspecific competition exceeds interspecific competition for BOTH species. If alpha_ij * alpha_ji < 1 (where alpha is the competition coefficient = niche overlap), coexistence is stable. If alpha_ij * alpha_ji >= 1, one species drives the other to extinction.
+
+The number of coexisting species cannot exceed the number of independent resource dimensions (the competitive exclusion limit).
+
+**Mathematical model.** Lotka-Volterra competition for N species:
+
+    dN_i/dt = r_i * N_i * (1 - (N_i + sum_{j!=i} alpha_ij * N_j) / K_i)
+
+Coexistence requires for all pairs: alpha_ij * alpha_ji < 1.
+
+Niche overlap: rho_ij = sqrt(alpha_ij * alpha_ji).
+
+MacArthur resource utilization theory: alpha_ij = integral(f_i(R) * f_j(R) dR) / integral(f_i(R)^2 dR), where f_i(R) is species i resource utilization function. Niche overlap is literally the overlap integral of resource use distributions.
+
+**KD translation: Force Teacher Specialization Through Competitive Exclusion.**
+
+Map each teacher to a "species" and each span type to a "resource." Define niche overlap:
+
+    alpha_ij = E_spans[w_i(s) * w_j(s)] / E_spans[w_i(s)^2]
+
+This is MacArthur formula applied to routing weights.
+
+**Specialization pressure loss:**
+
+    L_niche = lambda * sum_{i<j} max(0, alpha_ij * alpha_ji - alpha_max)
+
+When alpha_ij * alpha_ji > alpha_max (say 0.5), penalize overlapping routing. Forces character displacement.
+
+**The 4-teacher niche map (predicted, testable):**
+
+| Teacher | Predicted Niche | Why |
+|---------|----------------|-----|
+| Qwen3-1.7B | Hardest spans (highest student entropy) | Largest, most capacity, inverse effectiveness |
+| LFM2.5-1.2B | Medium-difficulty, long-range dependency | Hybrid arch captures patterns Qwen may miss |
+| Mamba2-780M | Sequential/formulaic spans | SSM excels at local sequential patterns |
+| EmbeddingGemma | Always-on semantic anchor (non-competitive) | Encoder model, different surface, no logit competition |
+
+**Critical prediction:** Without niche pressure, the router collapses to Qwen3-1.7B for everything. With niche pressure, each teacher carves out its domain. The niche loss is an anti-monopoly mechanism.
+
+---
+
+### 4. HORIZONTAL GENE TRANSFER: Cross-Architecture Knowledge Integration
+
+**Biological mechanism.** HGT is the transfer of genetic material between organisms that are NOT parent-offspring. Bacteria do this via: (a) transformation (uptake of free DNA), (b) conjugation (direct cell-to-cell transfer), (c) transduction (phage-mediated). The transferred DNA must be INTEGRATED into the recipient genome without breaking existing function.
+
+Critical challenge: foreign DNA has different codon usage, GC content, regulatory sequences, and may interact epistatically with host genome. Integration success rate is very low (~0.1%). The process of *amelioration* -- where foreign DNA gradually adapts to host genome statistics -- takes many generations.
+
+Key finding (eLife 2024, Nature Communications 2024): A single HGT event often has negative epistasis (breaks co-adapted gene networks). But a SECOND HGT event can RESCUE the first by transferring the co-adapted partner gene. The "two-hit epistasis model" explains how bacteria navigate cross-lineage fitness landscapes: individual transfers are costly, but the right COMBINATION bridges epistatic barriers.
+
+**Mathematical model.** Population dynamics with HGT:
+
+    dN_R/dt = r_R*N_R*(1-N_T/K) - gamma*N_R*N_D + delta*N_T   [recipients]
+    dN_D/dt = r_D*N_D*(1-N_T/K) - gamma*N_R*N_D                [donors]
+    dN_T/dt = (r_R-c)*N_T*(1-N_T/K) + gamma*N_R*N_D - delta*N_T  [transconjugants]
+
+gamma=transfer rate, c=fitness cost, delta=loss rate.
+
+Fitness: W(g_host, g_d) = W_0 + sum_i beta_i*g_d_i + sum_{i,j} epsilon_ij*g_host_i*g_d_j
+
+epsilon = cross-lineage epistasis. epsilon<0 = conflict. epsilon>0 = synergy. Two-hit rescue: adding g_d_2 flips epsilon sign for g_d_1.
+
+Amelioration: CU_foreign(t) = CU_donor*exp(-lambda*t) + CU_host*(1-exp(-lambda*t))
+
+**KD translation: Epistasis-Aware Cross-Architecture Knowledge Transfer.**
+
+**Amelioration = Projector Adaptation.** Cross-tokenizer projector converts foreign representations into student statistics. Gradual refinement:
+
+    steps 0-1000: frozen projector (student learns to ignore noise)
+    steps 1000-3000: train projector only (learn cross-architecture mapping)
+    steps 3000+: train projector + student jointly (co-adaptation)
+
+**Two-hit epistasis for multi-teacher interaction.** When teacher A conflicts with teacher B (negative epistasis), look for teacher C that resolves the conflict:
+
+    if cos(grad_A, grad_B) < -0.3:  # negative epistasis
+        for C in remaining_teachers:
+            if cos(grad_A + grad_C, grad_B) > 0 or cos(grad_B + grad_C, grad_A) > 0:
+                # C acts as epistatic rescue
+                use {A, B, C} with conflict-resolution weighting
+                break
+        else:
+            drop whichever of {A, B} has lower confidence
+
+**Fitness cost monitoring.** Track per-teacher fitness cost = change in validation loss when teacher is active vs inactive. If consistently INCREASING loss, reduce weight. If cost persists >500 steps, gate teacher off.
+
+---
+
+### 5. SYMBIOGENESIS: Gradual Integration of Foreign Architecture
+
+**Biological mechanism.** Mitochondria were once free-living alpha-proteobacteria engulfed by an ancestral archaeon ~2 billion years ago. Over time, ~95% of genome transferred to host nucleus. The remaining 5% stayed because they are too hydrophobic to import or require local regulation.
+
+Integration stages:
+
+1. **Initial engulfment** -- endosymbiont is independent inside host
+2. **Metabolic coupling** -- mutual dependency established
+3. **Gene transfer ratchet** -- Doolittle ratchet: unidirectional organelle-to-nucleus
+4. **Muller ratchet acceleration** -- small asexual endosymbiont genome accumulates deleterious mutations; EGT rescues genes
+5. **Full integration** -- organelle retains only locally-essential genes
+
+Once metabolic coupling establishes mutual dependency, gene transfer becomes a RATCHET -- unidirectional, each transferred gene increases dependency, positive feedback toward full integration.
+
+**Mathematical model.** Gene transfer ratchet:
+
+    dG_o/dt = -lambda * G_o        [genes transfer out]
+    dG_n/dt = +lambda*G_o*(1-delta) [transfer succeeds with prob 1-delta]
+
+Exponential genome reduction: G_o(t) = G_0 * exp(-lambda*t).
+
+**KD translation: Staged Integration Protocol.**
+
+**Phase 1 (steps 0-2K):** Teachers loaded but KD OFF. Student trains on data alone.
+
+**Phase 2 (steps 2K-5K):** KD with ONE teacher (Qwen3-1.7B). Low alpha (0.1).
+
+**Phase 3 (steps 5K-15K):** Increase alpha, add LFM. As gap closes, teacher contribution decreases:
+
+    effective_alpha_i(s,t) = alpha_base * max(0, gap_i(s,t)-gap_i(s,t0)) / gap_i(s,t0)
+
+**Phase 4 (steps 15K-25K):** All 4 teachers active. Noisy teacher signals on learned spans pushed to data-only.
+
+**Phase 5 (steps 25K+):** Fully absorbed teachers REMOVED from forward pass.
+
+**Ratchet formalization:**
+
+    T_is = EMA(gap_reduction_rate for teacher i on span type s)
+    When T_is > theta_transfer for N consecutive checkpoints:
+        Mark (i,s) as "transferred"
+        Set alpha_i(s) = 0 permanently (ratchet)
+
+---
+
+### 6. POLLINATION NETWORKS: Nested Mutualistic Network Topology
+
+**Biological mechanism.** Plant-pollinator networks exhibit *nestedness*: specialist pollinators visit a SUBSET of plants visited by generalists. Triangular interaction matrix. Nestedness scores average 0.84-0.85. Maximizes ROBUSTNESS.
+
+Networks are SIMULTANEOUSLY nested AND modular. Resource scarcity drives MORE specialization (counterintuitive).
+
+**Mathematical model.** Mutualistic Lotka-Volterra for bipartite network:
+
+    dP_i/dt = P_i*(r_i - sum_j c_ij*P_j + sum_k gamma_ik*A_k/(1+h*sum_l gamma_il*A_l))
+    dA_k/dt = A_k*(r_k - sum_l d_kl*A_l + sum_i gamma_ki*P_i/(1+h*sum_j gamma_kj*P_j))
+
+Nested networks: robustness R~0.7-0.8. Random: R~0.3-0.4.
+
+**KD translation: Nested Teacher-Student Interaction Architecture.**
+
+Nested interaction matrix:
+
+                | Token | State | Semantic | Exit |
+    Qwen3-1.7B |   X   |   X   |    X     |  X   |  (generalist)
+    LFM2.5-1.2B|   X   |   X   |          |  X   |  (specialist)
+    Mamba2-780M |   X   |   X   |          |      |  (specialist)
+    EmbedGemma  |       |       |    X     |      |  (ultra-specialist)
+
+**Robustness through dropout:**
+
+    teacher_dropout_rate = 0.1  # randomly disable one teacher per batch
+
+**Modularity for gradient isolation:**
+
+    Module 1 (language core): Qwen + LFM -> token + exit
+    Module 2 (representation): LFM + Mamba -> state
+    Module 3 (semantic): Qwen + EmbeddingGemma -> semantic
+
+**Specialization pressure scaling:**
+
+    specialization_pressure = 1 / (1 + grad_norm_ema)
+    L_niche *= specialization_pressure
+
+---
+
+### 7. COLONY INTELLIGENCE: Competitive Evidence Accumulation with Cross-Inhibition
+
+**Biological mechanism.** Honey bee house-hunting: scouts explore candidates, waggle-dance with vigor proportional to quality. Critical mechanism: *cross-inhibition via stop signals* -- scouts for site A butt heads against scouts for site B. Prevents deadlocks. Creates winner-take-all dynamics identical to neural decision-making in primate brains (Seeley, Visscher et al.).
+
+Colonies MORE ACCURATE than individuals for DIFFICULT decisions (small quality differences) but SLOWER.
+
+**Mathematical model.** Drift-diffusion with cross-inhibition (Seeley/Passino):
+
+    dx_A/dt = rho_A*(N-x_A-x_B) - sigma*x_B*x_A + noise_A
+    dx_B/dt = rho_B*(N-x_A-x_B) - sigma*x_A*x_B + noise_B
+
+Cross-inhibition is multiplicative. Winner-take-all. Best-of-N:
+
+    dx_i/dt = rho_i*N_free - sigma*x_i*sum_{j!=i}x_j + noise_i
+
+**KD translation: Cross-Inhibition Router.**
+
+    # Evidence accumulation
+    e_i(s) += lr_route * (quality_i(s) - mean_quality(s))
+
+    # Cross-inhibition
+    e_i(s) -= sigma * e_i(s) * sum_{j!=i} e_j(s) / (sum_j e_j(s) + eps)
+
+    # Routing
+    route_weight_i(s) = softmax(e_i(s) / temperature)
+
+**Temperature annealing:** temperature(t) = T_max * exp(-t/tau_anneal)
+
+**Quorum gating:**
+
+    if max(e_i(s)) < Q: uniform weights (undecided)
+    else: softmax routing (commit)
+
+**Calibration:** sigma = 1/(agreement_rate * mean_evidence) ~ 1/(0.86 * mean_e)
+
+---
+
+### SYNTHESIS: The Unified Ekalavya Biological Framework
+
+These 7 systems form a coherent multi-level design:
+
+| Layer | Biological System | KD Function | Mechanism |
+|-------|------------------|-------------|-----------|
+| **Signal quality** | Immune kinetic proofreading | Teacher signal validation | N-step gradient filtering |
+| **Activation gating** | Quorum sensing | When to apply KD at all | Threshold + bistable switch |
+| **Specialization** | Niche partitioning | Which teacher for which span | Competitive exclusion pressure |
+| **Integration** | Horizontal gene transfer | Cross-arch knowledge transfer | Epistasis-aware projectors |
+| **Curriculum** | Symbiogenesis | When to add/remove teachers | Staged ratchet integration |
+| **Robustness** | Pollination networks | Graceful degradation | Nested interaction topology |
+| **Routing** | Colony intelligence | Decisive teacher selection | Cross-inhibition evidence accumulation |
+
+**They compose as a pipeline:**
+
+    1. QUORUM SENSING: Is this span worth KD-ing? (activation gate)
+       -> If no: train on data only
+       -> If yes: proceed to routing
+
+    2. COLONY INTELLIGENCE: Which teacher(s) for this span? (routing decision)
+       -> Cross-inhibition selects 1-2 teachers
+
+    3. KINETIC PROOFREADING: Is this teacher signal clean? (quality filter)
+       -> N-step validation: KL, entropy, agreement checks
+
+    4. HORIZONTAL GENE TRANSFER: How to transfer? (projection)
+       -> Epistasis-aware projectors, two-hit rescue
+
+    5. NICHE PARTITIONING: Are teachers specializing? (anti-collapse)
+       -> Niche overlap penalty
+
+    6. POLLINATION NETWORKS: Is the system robust? (structural health)
+       -> Nested topology, teacher dropout
+
+    7. SYMBIOGENESIS: Teacher fully absorbed? (lifecycle)
+       -> Ratchet mechanism, progressive removal
+
+### Key Numerical Predictions (testable in first Ekalavya run)
+
+1. **Quorum threshold Q ~ 0.3** (86% spans pass trivially based on committee map)
+2. **Cross-inhibition sigma ~ 0.5-1.5** (moderate: amplify differences, avoid lock-in)
+3. **Kinetic proofreading N=3 steps** (discrimination ~16x for f=2)
+4. **Niche overlap alpha_max ~ 0.5** (50% overlap before penalizing)
+5. **Symbiogenesis Phase 2 onset at step 2K** (stable baseline first)
+6. **Teacher removal at step 25K+** for weakest teacher on its niche
+
+
+---
+
+## Committee Map Analysis: What the Data Actually Says (2026-03-29)
+
+**Status: ANALYSIS COMPLETE — key insights for T+L R2 design decisions.**
+
+### Finding 1: Routing Formula is FUNDAMENTALLY FLAWED (not just prior-dominated)
+Q0.6B gets 87.5% with pi=0.5. But removing pi gives Q1.7B 100% — it's strictly dominant on gap×conf at EVERY span, for ALL gap exponents (0.25 through 1.5). **The problem isn't the prior — it's that gap×conf ALWAYS picks the biggest model.** Any monotonic function of gap and conf will give Q1.7B 100%. We need a fundamentally different routing principle.
+
+**The correct routing principle: Zone of Proximal Development (ZPD)**
+- Route to the teacher whose gap is CALIBRATED to the student's difficulty, not maximized
+- ZPD score = 1 / |gap - k * student_entropy| where k is a tunable scaling factor
+- At k=1.0: LFM wins 8/16 spans, Q0.6B 5/16, Q1.7B 3/16 — BALANCED
+- At k=0.8-0.9: LFM dominates (13/16) — because LFM gap/entropy ratio (0.843) ≈ 1.0
+- At k=1.1-1.2: Q0.6B and Q1.7B become competitive
+- **This aligns with cross-domain "inverse effectiveness" — teach at the student's level**
+
+**Alternative: soft routing with temperature**
+- Softmax over conf×gap^0.75 with T=0.5: Q0.6B 32%, LFM 23%, Q1.7B 45%
+- T=1.0: roughly equal (33/28/39). T=2.0+: near uniform.
+- Advantage: no winner-take-all, all teachers contribute proportionally
+
+### Finding 2: LFM is the Natural Anchor (NOT Q0.6B)
+KL gap: LFM 2.08 < Q0.6B 2.80 < Q1.7B 3.15. But gap alone is misleading. The KEY metric is gap/entropy ratio (teaching difficulty calibrated to student state):
+- LFM: 0.843 (closest to 1.0 — teaches at student's level)
+- Q0.6B: 1.133 (slightly hard)
+- Q1.7B: 1.278 (too hard for many spans)
+
+**LFM should be the anchor teacher, not Q0.6B.** Despite being 1.2B (larger than Q0.6B), LFM has distributions CLOSEST to the student. This is likely because LFM is a different architecture (SSM-hybrid) that processes language differently — its "soft" probability distributions are more conservative/spread-out, making them easier for the student to match.
+
+**R1 assumption challenged:** R1 had Q0.6B as anchor and LFM as delayed "structural specialist." Data says LFM should be the FIRST teacher introduced (gentlest), with Q0.6B as secondary and Q1.7B as advanced.
+
+### Finding 3: Student Difficulty and Teacher Gap Are ANTI-CORRELATED (r=-0.96)
+Span 0 = 3.44 entropy (hardest), Span 15 = 2.29 (easiest). But teacher gap INCREASES with position:
+- Q0.6B: gap[0]=1.81, gap[15]=3.21 (1.77x increase)
+- LFM: gap[0]=1.24, gap[15]=2.45 (1.97x increase)
+- Q1.7B: gap[0]=1.95, gap[15]=3.67 (1.88x increase)
+
+**Paradox: teachers have MORE to teach where student finds it EASIER.** This is because more context helps teachers MORE than students (teachers utilize long-range context better with their larger models). Where student struggles most (span 0, little context), teachers also struggle (smaller gap). Where student does well (span 15, lots of context), teachers excel even more (largest gap).
+
+**Implication:** Inverse effectiveness says apply KD most where student is weakest. But the gap data says teachers have LESS advantage there. Resolution: at early spans, use LFM (gap 1.24, gentle) or Q0.6B (gap 1.81, moderate). Save Q1.7B for later spans where its gap 3.0+ is justified by the student's better baseline.
+
+KD weight per span should be: `w(span) ∝ exp(student_entropy(span) / T)`. At T=1.0, span 0 gets 3.38x more KD weight than span 15.
+
+### Finding 4: >92% Vocab Overlap Makes Cross-Tokenizer Easy
+14,822-15,036 shared tokens out of 16,000. The byte-span bridge was designed for worst-case tokenizer mismatch. With >92% overlap, DSKDv2's exact token alignment (ETA) on shared vocab covers almost everything. **Byte spans are still needed for representation-level alignment (state/semantic) but logit-level KD can use simple shared-vocab projection. This simplifies implementation significantly.**
+
+### Finding 5: CKA Compatibility SOLVED — LFM Most Compatible (0.87)
+Truncated-dim cosine was broken (near-zero). Replaced with Linear CKA (Gram matrix similarity, dimension-agnostic). Results from 20-window probe (results/cka_compatibility_probe.json):
+
+| Teacher | Mean CKA | Span 0 | Span 15 | Trend |
+|---------|----------|--------|---------|-------|
+| LFM | **0.865** | 0.841 | **0.919** | INCREASES with context |
+| Q0.6B | 0.736 | 0.842 | 0.772 | slight decrease |
+| Q1.7B | 0.674 | 0.849 | 0.671 | DECREASES sharply |
+
+**Critical insights:**
+- At span 0 (hardest), all three have similar CKA (~0.84-0.85). Routing by gap/ZPD is valid here.
+- LFM CONVERGES toward student as context grows (0.84→0.92). SSM-hybrid develops reps increasingly aligned with student's.
+- Q1.7B DIVERGES (0.85→0.67). Larger model develops specialized reps student can't match.
+- **Routing implication: Use Q1.7B only on early-mid spans (CKA ≥ 0.75). LFM for late spans (CKA 0.90+). Q0.6B as middle ground.**
+- Combined with gap data: LFM = gentle anchor (low gap, high CKA), Q0.6B = moderate workhorse, Q1.7B = power teacher for early spans only.
+
+### Finding 6: EmbeddingGemma Needs Separate Treatment
+It's an encoder model — no logits, no causal predictions. It CAN'T participate in token-level routing. R1 correctly assigns it to "always-on semantic anchor" via L_sem only. The committee map confirms this is correct: don't try to route it.
+
+### Predictions for First Ekalavya Training Run (testable hypotheses)
+
+Based on committee map data + cross-domain principles, predicting outcomes of 24K continuation:
+
+**P1: BPT should drop 0.15-0.30 from 3.5726 (target 3.27-3.42) if KD works at all.**
+Reasoning: SmolLM2-135M at 2T tokens likely has BPT ~2.5-3.0. Our teacher models (Qwen3-0.6B trained on much more data) likely have BPT ~2.0-2.5 on our eval set. The gap between student (3.57) and teachers (2.0-2.5) is ~1.0-1.5. Literature says KD typically closes 10-20% of this gap. So 0.10-0.30 BPT improvement.
+
+**P2: HellaSwag should gain 3-8pp (29% → 32-37%) — the primary benchmark target.**
+Reasoning: HellaSwag tests commonsense reasoning from context. Teachers have this knowledge from massive pretraining. KD directly transfers distributional knowledge about common patterns. This is the benchmark MOST likely to improve from KD.
+
+**P3: PIQA should gain 2-5pp (59.4% → 61-64%).**
+Reasoning: Same logic as HellaSwag but PIQA is easier (already near 60%) so marginal gains are smaller.
+
+**P4: ARC should be flat or slight gain (+0-2pp).**
+Reasoning: ARC tests science reasoning. KD transfers token distributions, not reasoning ability. Unlikely to gain much.
+
+**P5: If inverse effectiveness routing works, gains should be concentrated on early spans (high entropy).**
+Reasoning: Early spans (entropy 3.44) have the most room for improvement. Teachers are proportionally more helpful where student is weakest.
+
+**Falsification conditions:**
+- If BPT INCREASES or stays flat: KD is harmful, routing or alpha curriculum is wrong
+- If HellaSwag doesn't move despite BPT drop: BPT≠commonsense, KD transfers wrong knowledge
+- If all benchmarks degrade: gradient conflict is dominating, need stronger conflict resolution
+
+### Finding 7: 14.1% Disagreement Rate is LOW
+Teachers mostly agree on what to predict. This means:
+- Routing may be less critical than R1 assumed (most spans → consensus)
+- The 14.1% disagreement spans are where routing MATTERS MOST
+- Quorum sensing threshold (from cross-domain research) should be set at ~85% agreement: below this → careful routing, above → any teacher is fine
+
+### Anchor Probe Control Results (2026-03-29)
+
+3K continuation from 60K checkpoint, CE-only (no teachers), BS=8, GA=4, LR=1e-4→1e-5 WSD.
+
+| Step | Eval BPT | kurtosis_max | max_act | LR |
+|------|----------|-------------|---------|-----|
+| 500  | 3.6447   | 1499.6 | 280.4 | 1.0e-4 |
+| 1000 | 3.6506   | 1799.9 | 329.1 | 1.0e-4 |
+| 1500 | 3.6503   | 4299.1 | 399.3 | 1.0e-4 |
+| 2000 | 3.6646   | 1245.3 | 323.5 | 1.0e-4 |
+| 2500 | 3.6555   | 409.3  | 235.9 | 8.5e-5 |
+| 3000 | 3.6082   | 3720.0 | 339.9 | 1.0e-5 |
+
+**Key: Control is FLAT at ~3.65 for 2.5K steps, then WSD decay recovers to 3.608.** The 60K checkpoint is CE-saturated. KD is the only path to improvement. Kurtosis spiked transiently at step 1500 (4299) but recovered. BPT never improved below 60K baseline (3.5726) — the +0.036 gap is fresh optimizer overhead.
+
+**LFM-only probe COMPLETE (3K steps, alpha=0.20, tau=1.0→1.8):**
+
+| Step | Control | LFM-only | Delta | LFM kurtosis | Control kurtosis |
+|------|---------|----------|-------|-------------|-----------------|
+| 500  | 3.6447  | 3.6883   | +0.044 | 396 | 1500 |
+| 1000 | 3.6506  | 3.6764   | +0.026 | 59 | 1800 |
+| 1500 | 3.6503  | 3.6971   | +0.047 | 189 | 4299 |
+| 2000 | 3.6646  | 3.6877   | +0.023 | 1661 | 1245 |
+| 2500 | 3.6555  | 3.6954   | +0.040 | 1150 | 409 |
+| 3000 | 3.6082  | 3.6154   | +0.007 | 300 | 3720 |
+
+**Verdict: LFM-only nearly matched control at 3K (delta=0.007) but didn't beat it.**
+- Kurtosis dramatically better with KD (300 vs 3720 at step 3000)
+- WSD consolidation more effective for LFM (0.080 gain vs 0.047 for control)
+- Codex diagnosed: alpha=0.20 too aggressive, tau=1.0 too sharp, 3K too short
+
+**Softened 6K probe launched (2026-03-29 ~20:15):**
+- alpha: 0.08, tau: 1.4→2.2, warmup: 1K from 0.0, KD off at 5K, 1K consolidation tail
+- Decision rule: at 3K gap vs control < +0.02, at 6K require parity or better
+
+### Codex R3 Design Summary (2026-03-29)
+
+**Key decisions:**
+1. LFM → PRIMARY anchor (was co-anchor in R2). CKA=0.865 decisive.
+2. ZPD replaces gap×conf as core routing principle. `zpd = exp(-|log(gap/entropy)| / 0.45)`
+3. CKA replaces broken cosine as compatibility signal. Used in gating AND scoring.
+4. Score = `gate × CKA^1.5 × ZPD^1.5 × conf^0.25` — CKA and ZPD dominate.
+5. Q1.7B more restricted: theta=0.60, kappa=0.78, 10% share cap until 18K.
+6. Consensus when max pairwise JS ≤ 0.10 among eligible teachers.
+7. Confidence UNCHANGED: O1=7, O2=8, O3=7, O4=8, O5=7 — "diagnostic, not yet performance-positive."
+
+**Gate to 9/10 on O1:** LFM-only or consensus must beat control by ≥0.03 BPT at 1.5K and ≥0.05 BPT at 3K.
+
+**Branchpoint:** If Q0.6-only beats LFM-only by ≥0.02 BPT at both 1.5K and 3K, swap only their token alpha schedules.
+
+**VALIDATED: R3 routing formula produces balanced niche partitioning:**
+- `score = CKA^1.5 × ZPD^1.5 × conf^0.25` (no gating applied)
+- LFM wins 8/16 spans (8-15, easiest, highest CKA)
+- Q0.6B wins 5/16 spans (3-7, mid-difficulty)
+- Q1.7B wins 3/16 spans (0-2, hardest, highest gap)
+- This matches the cross-domain biology prediction of competitive exclusion → niche partitioning
+- ZPD scores: LFM peaks at 0.95 on easy spans, Q17 peaks at 0.96 on hard spans, Q06 balanced
+- CKA is the dominant discriminator on easy spans; ZPD is dominant on hard spans
+
+### CTI Universal Law Crossover (Codex analysis, 2026-03-29)
+
+Codex reviewed moonshot-cti-universal-law/ for Ekalavya relevance. Three actionable findings:
+
+**1. K_eff for sparse distillation.** CTI shows effective competitors per token are tiny (~1.6-3.5). Full-vocab KL wastes gradient budget. Distill only top-k with k ≈ ceil(c × K_eff) ≈ 4-10. Our current top_k=64 is overkill. Reducing to ~8-16 could speed KD with no quality loss.
+
+**2. Competition-corrected routing.** CTI validated law: `logit(q_norm) = 1.48 × kappa_nearest - beta × log(K-1)` with R²=0.955. Translation for teacher routing: `u_t(x) = alpha_family(t) × kappa_t(x) / sqrt(K_eff_t(x))`. Route by band-pass gap (moderate positive z), not max gap. This IS the ZPD principle derived from rate-distortion theory.
+
+**3. Teacher layer selection.** Best-layer match rate = 66% vs 25% random. Don't assume final layer for representation KD. Probe-calibrate per teacher.
+
+**What CTI does NOT give us:** No universal phase threshold for KD helpful→harmful. No validated rate-distortion bound for multi-teacher KD. The original compute law D(C) was falsified. Encoder results unstable (affects EmbeddingGemma weighting).
+
+---
+
 ## EKALAVYA PROTOCOL: Research Synthesis for T+L Design (2026-03-27)
 
 **Status: COMPILING — research findings from 20+ papers, to be injected into T+L R2.**
@@ -103,6 +643,1301 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Networks:**
 - **D-1: Consensual Representation Space** — Regularize teacher projections into shared space via contrastive loss. Not just cross-tokenizer alignment (byte spans) but cross-ARCHITECTURE alignment.
+
+---
+
+## Neuroscience Mechanisms for Multi-Teacher KD Routing (2026-03-29)
+
+**Status: DEEP RESEARCH COMPLETE — 5 mechanisms with actionable math, concrete ML mappings, and existing paper trails. Ready for T+L injection.**
+
+This section maps five neuroscience mechanisms to concrete multi-teacher KD operations. Each entry provides: (a) the biological mechanism with specificity, (b) mapping to multi-teacher KD, (c) mathematical operation this suggests, (d) existing ML papers using this analogy. These are NOT vague metaphors — each has a specific circuit, a specific computational property, and a specific implementable operation.
+
+---
+
+### NM-1: Thalamic Gating — Selective Amplification/Suppression of Teacher Signals
+
+#### (a) Biological Mechanism
+
+The thalamus is the obligatory relay station through which nearly all sensory information passes before reaching cortex. It is NOT a passive relay — it actively gates which signals pass and which are suppressed.
+
+**Key structure: Thalamic Reticular Nucleus (TRN).** The TRN is a thin sheet of GABAergic (inhibitory) neurons that wraps around the thalamus. It receives collateral input from BOTH ascending thalamocortical axons AND descending corticothalamic axons. It projects back to the thalamic relay nuclei with INHIBITORY connections. This creates a feedback inhibition loop:
+
+1. Relay neuron fires toward cortex -> sends collateral to TRN
+2. TRN neuron activates -> inhibits neighboring relay neurons
+3. Result: lateral inhibition within the thalamus itself
+
+**The gating computation:** The TRN implements competitive inhibition — when one relay channel is active, it suppresses competing channels via lateral inhibition through TRN. This creates winner-take-all dynamics at the thalamic level. Crucially, cortical feedback can BIAS this competition: top-down attention signals from prefrontal cortex project to TRN, modulating which relay channels are open or closed.
+
+**Two distinct modes (from Nature 2021, thalamic circuits for independent control of signal and noise):**
+- A D2-receptor-expressing mediodorsal projection AMPLIFIES prefrontal signals when inputs are sparse (few teachers have something useful to say -> amplify the one that does)
+- A GRIK4-expressing projection SUPPRESSES prefrontal noise when inputs are dense but conflicting (many teachers disagree -> suppress the noise, find the signal)
+
+**Gain modulation:** The TRN doesn't just gate on/off — it modulates GAIN. Reducing TRN firing increases the gain of relay neurons (signal amplification). Increasing TRN firing decreases gain (signal suppression). This is MULTIPLICATIVE modulation, not additive.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Biology | KD System |
+|---------|-----------|
+| Thalamic relay nuclei | Teacher output projections (one per teacher) |
+| Thalamic reticular nucleus (TRN) | Router network (small MLP that gates teacher signals) |
+| Ascending sensory signals | Teacher logits/representations |
+| Descending cortical feedback | Student's current hidden state (what does the student already know?) |
+| Lateral inhibition in TRN | Competition between teachers — activating one suppresses others |
+| Gain modulation | Multiplicative scaling of teacher KD loss weights (not additive) |
+| Two modes (amplify sparse / suppress noisy) | Context-dependent routing: sparse-teacher mode vs disagreement mode |
+
+**Critical insight from biology:** The gating is BINARY per channel (relay neuron is either in tonic/pass-through mode or burst/blocked mode), but the GAIN is continuous. This maps to: hard gate (include/exclude teacher) PLUS soft weight (how much to amplify the included teacher). Two-stage routing.
+
+**The two-mode design is directly applicable:**
+- When few teachers are confident (sparse regime): amplify the one strong signal (D2 pathway analog)
+- When teachers disagree strongly (dense-conflicting regime): suppress outliers, find consensus (GRIK4 pathway analog)
+
+#### (c) Mathematical Operation
+
+**Stage 1 — Hard gate (TRN lateral inhibition):**
+```
+g_t = sigmoid(W_gate * [h_student; h_teacher_t; agreement_t] + b_gate)
+gate_t = 1 if g_t > tau else 0    # hard binary gate, tau = 0.5
+```
+
+Where `agreement_t` = cosine similarity between teacher_t's prediction and the median prediction of all teachers. This captures whether teacher_t is in consensus or outlier.
+
+**Stage 2 — Gain modulation (multiplicative, not additive):**
+```
+# Among gated-in teachers only:
+alpha_t = softmax(W_gain * [h_student; h_teacher_t] / temperature)
+L_KD = sum_t (gate_t * alpha_t * L_teacher_t)
+```
+
+**Two-mode switching (sparse vs conflicting):**
+```
+teacher_entropy = H(softmax(teacher_logits))  # per teacher
+agreement = mean_pairwise_cosine(teacher_logits)  # across teachers
+
+if agreement > theta_high:    # teachers agree -> trust consensus
+    mode = "consensus"        # average gated-in teachers
+elif num_confident < 2:       # few teachers confident -> amplify the one
+    mode = "amplify"          # boost weight of lowest-entropy teacher
+else:                         # teachers disagree -> suppress outliers
+    mode = "suppress"         # gate out high-disagreement teachers, find core
+```
+
+#### (d) Existing ML Papers Using This Analogy
+
+1. **Gated Attention for LLMs (NeurIPS 2025 Oral, Qwen team):** Query-dependent sigmoid gate after SDPA output that modulates each attention head independently. Directly implements multiplicative gain modulation a la thalamic gating. Deployed in Qwen3-Next-80B. Shows gating improves training stability and ultra-long-context performance.
+
+2. **Multiplicative couplings in RNN-FNN architectures (bioRxiv 2025):** Explicitly models thalamocortical interaction as multiplicative coupling between an RNN (cortex analog) and FNN (thalamus analog). Demonstrates that multiplicative interaction creates context-dependent gating and rapid task switching — matching the biological gain modulation mechanism.
+
+3. **Confidence-Aware Multi-Teacher KD (CA-MKD, Zhang & Chen):** Assigns sample-wise reliability weights to each teacher prediction based on agreement with ground-truth labels. High-confidence teachers get more influence. This is the "gain modulation" half but lacks the hard binary gate.
+
+4. **Knowledge Purification (arXiv:2602.01064):** Performance DECLINES as teacher count increases without purification — directly demonstrates the need for TRN-like gating. Their "purification" step is functionally equivalent to TRN lateral inhibition (exclude harmful teachers).
+
+5. **Neural Inhibition in MoE (CNS 2025):** Biologically-inspired global inhibition mechanism for MoE routing. Adaptive inhibition unit learns a continuous mask over neurons that dynamically scales activations — directly analogous to TRN gain modulation.
+
+---
+
+### NM-2: Basal Ganglia Action Selection — Disinhibition for Teacher Competition
+
+#### (a) Biological Mechanism
+
+The basal ganglia (BG) solve the **action selection problem**: given multiple competing motor programs, select exactly one to execute while suppressing all others. The mechanism is DISINHIBITION, not direct excitation.
+
+**The circuit:**
+
+The output nucleus (GPi/SNr) TONICALLY INHIBITS all downstream targets (thalamus, brainstem, superior colliculus). Everything is suppressed by default. Action selection works by RELEASING inhibition on the selected action:
+
+1. **Direct pathway (GO):** Striatal D1 neurons -> inhibit GPi -> GPi stops inhibiting thalamus -> thalamus becomes active -> action executes. Two sequential inhibitions = net disinhibition = GO.
+
+2. **Indirect pathway (NO-GO):** Striatal D2 neurons -> inhibit GPe -> GPe stops inhibiting STN -> STN excites GPi -> GPi MORE STRONGLY inhibits thalamus -> action suppressed. Three inhibitions + one excitation = net inhibition = STOP.
+
+3. **Hyperdirect pathway (GLOBAL STOP):** Cortex -> directly excites STN -> STN excites GPi -> broad inhibition of ALL actions. Fast global brake before the direct/indirect pathways finish computing.
+
+**The "triple-control" model (eLife 2023):** The direct pathway selects the center (desired action), the indirect pathway implements surround inhibition (suppress competing actions), and also provides context-dependent modulation. The indirect pathway's effect is NON-LINEAR: an inverted-U function of input strength. Moderate indirect pathway activity sharpens selection (suppresses weak competitors), but excessive indirect activity suppresses everything including the winner.
+
+**Key computational properties:**
+- **Default = all suppressed.** Selection is an EXCEPTION, not a rule. You must earn activation.
+- **Winner-take-all emerges from architecture**, not from a softmax-like computation. It's structural.
+- **Speed-accuracy tradeoff:** The hyperdirect pathway provides a fast global "wait" signal while the slower direct/indirect pathways compute. Raising the threshold (more STN activity) = slower but more accurate selection.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Biology | KD System |
+|---------|-----------|
+| Motor programs competing for execution | Teacher KD losses competing for gradient influence |
+| GPi/SNr tonic inhibition | Default state: ALL teachers OFF (no KD signal). Teachers must earn activation. |
+| Direct pathway (disinhibition) | Per-teacher "evidence accumulator" — if a teacher's signal is strong enough AND compatible, release its KD loss |
+| Indirect pathway (surround suppression) | When one teacher wins, actively suppress competing teachers for THIS token/span |
+| Hyperdirect pathway (global stop) | Gradient conflict detector: if gradient cosine < threshold, HALT all KD for this step |
+| Speed-accuracy tradeoff via STN threshold | Confidence threshold for teacher activation: higher threshold = fewer teachers active, but higher quality |
+| Inverted-U of indirect pathway | Moderate competition sharpens routing; excessive competition kills all signal |
+
+**Critical design insight: DEFAULT OFF.** In BG, everything is suppressed by default. Teachers must accumulate enough evidence (agreement with student trajectory, low conflict with other active teachers, high confidence) to EARN activation. This is the opposite of the naive approach where all teachers are on by default and you try to downweight the bad ones.
+
+**The hyperdirect pathway is PCGrad's biological cousin:** When gradient conflict is detected across teacher losses, issue a GLOBAL STOP on all KD for that step/span, let the student train on language modeling loss alone, then resume KD when conflict resolves.
+
+#### (c) Mathematical Operation
+
+**Evidence accumulation (striatal computation):**
+```
+# For each teacher t, each span s:
+evidence_t(s) = W_evidence * [
+    cos_sim(grad_LM, grad_KD_t),        # gradient alignment with base task
+    -entropy(teacher_t_logits(s)),        # teacher confidence
+    cos_sim(h_student(s), proj_t(h_teacher_t(s)))  # representation compatibility
+]
+
+# Direct pathway (disinhibition):
+active_t(s) = 1 if evidence_t(s) > theta_direct else 0
+
+# Indirect pathway (surround suppression):
+# The winning teacher suppresses others
+winner = argmax_t(evidence_t(s))
+for t != winner:
+    active_t(s) *= sigmoid(-beta * evidence_winner(s))  # stronger winner -> stronger suppression
+
+# Hyperdirect pathway (global stop):
+conflict = min_pairs(cos_sim(grad_KD_i, grad_KD_j))  # worst-case gradient conflict
+if conflict < -theta_hyper:
+    active_t(s) = 0 for all t  # global halt, train on L_LM only
+```
+
+**The inverted-U constraint:** If ALL evidence scores are moderate (0.3-0.7), allow multiple teachers. If one is very high (>0.8), suppress all others (winner-take-all). If all are low (<0.3), suppress all (no teacher is helpful here). This naturally implements the inverted-U:
+
+```
+spread = max(evidence) - mean(evidence)
+if spread > delta:    # clear winner
+    # winner-take-all: only top teacher
+elif mean(evidence) > mu:  # broad moderate competence
+    # soft weighting among all active
+else:
+    # all teachers off, pure LM training
+```
+
+#### (d) Existing ML Papers Using This Analogy
+
+1. **Gradient Surgery / PCGrad (NeurIPS 2020):** Projects conflicting gradients onto the normal plane of each other. This is functionally the indirect pathway — when two task gradients conflict, project one to reduce interference. The "projection onto normal plane" is a softer version of BG surround suppression.
+
+2. **GCond (arXiv:2509.07252):** Accumulation-based gradient conflict resolution. The "accumulation" step maps directly to BG evidence accumulation — don't react to instantaneous gradient conflict, accumulate evidence over multiple steps before deciding. 2x speedup over PCGrad.
+
+3. **Nash-MTL (NeurIPS 2022):** Nash bargaining for multi-task optimization. Maps to BG balanced selection: each task/teacher is a "player" and the solution is the Nash bargaining point where no teacher can improve without hurting another.
+
+4. **Conditional Routing of Information to Cortex via BG (Frank & Bhatt, PMC 2011):** Computational model explicitly mapping BG disinhibition to information routing. Shows that BG "gates" working memory updates: only information that passes the BG selection threshold gets written to PFC. Directly analogous to gating which teacher signals get written to student weights.
+
+5. **Neural Inhibition in MoE (CNS 2025):** Global data-driven inhibition for MoE routing. Inhibition unit learns a continuous mask — a differentiable approximation of BG binary disinhibition.
+
+---
+
+### NM-3: Dendritic Compartmentalization — Multi-Depth Teacher Matching
+
+#### (a) Biological Mechanism
+
+Pyramidal neurons in cortex are not point neurons — they have spatially extended dendritic trees with distinct functional compartments:
+
+1. **Basal dendrites** (near soma): Receive FEEDFORWARD input from lower cortical layers or thalamus. Local processing, fast integration, drives somatic spiking directly.
+
+2. **Apical trunk** (main shaft extending toward surface): Integrates signals from both basal and tuft compartments. Acts as a coincidence detector between bottom-up and top-down.
+
+3. **Apical tuft** (distal branches near cortical surface, layer 1): Receives FEEDBACK from higher cortical areas, association cortex, and long-range connections. Modulatory — rarely drives spikes alone but can amplify or gate the effect of basal input.
+
+**Key computational property: Segregated integration.** Feedforward (basal) and feedback (tuft) signals are processed in SEPARATE compartments before being combined at the soma. This allows the neuron to:
+- Compute "does the bottom-up evidence (basal) agree with the top-down prediction (tuft)?"
+- If they agree: burst firing (amplified response via dendritic calcium spike in apical trunk)
+- If they disagree: regular firing or suppression
+
+**Compartment-specific plasticity (eNeuro 2022):** After auditory fear conditioning, Ca2+ responses were enhanced in TUFT dendrites but NOT basal dendrites. Learning-related plasticity is compartmentalized — different compartments can learn independently from different input streams without interfering with each other.
+
+**Multi-timescale processing (Nature Comms 2023):** Different dendritic branches can operate at different timescales. Temporal dendritic heterogeneity enables multi-timescale dynamics — short branches integrate fast inputs, long branches integrate slow/contextual inputs.
+
+**Enhanced compartmentalization in humans (Cell 2018):** Human cortical neurons show MORE electrical compartmentalization than rodent neurons due to longer dendrites. This suggests that increased compartmentalization scales with computational sophistication.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Biology | KD System |
+|---------|-----------|
+| Basal dendrites (feedforward) | Early student layers (depth 8) receiving KD from early teacher layers |
+| Apical tuft (feedback/context) | Deep student layers (depth 24) receiving KD from final teacher layers |
+| Apical trunk (coincidence detection) | Mid student layers (depth 16) where early-KD and late-KD signals must be reconciled |
+| Compartment-specific plasticity | Different student depths learn from different teachers/surfaces independently |
+| Burst vs regular firing | When multi-depth signals agree: amplify learning rate. When they disagree: reduce. |
+| Multi-timescale dendritic processing | Fast-changing KD (logit surface, updates every step) vs slow-changing KD (representation surface, updates every N steps) |
+
+**Critical design insight: SEGREGATED LEARNING.** Just as basal and tuft dendrites learn independently, student layers at different depths should receive KD signals from corresponding teacher depths WITHOUT those signals interfering with each other. The gradient from depth-8 KD loss should primarily update layers 1-8, NOT propagate through to layers 16-24 (where it would conflict with the depth-24 KD signal).
+
+**The coincidence detection principle:** At middle depths (layer 16), the student has both "feedforward" structure (from early-layer KD) and "feedback" signal (from late-layer KD backpropagating). If these agree (early-layer structure predicts late-layer semantics), amplify learning. If they disagree, something is wrong — reduce learning rate or skip this span.
+
+**Multi-teacher depth assignment:** Different teachers may be most informative at different depths:
+- Mamba2 (SSM): Best at early layers (sequential structure, local syntax) -> basal compartment
+- EmbeddingGemma (encoder): Best at final layer (semantic geometry) -> tuft compartment
+- Qwen3 (decoder): Informative at all depths -> distributed across compartments
+- LFM2 (hybrid): Mid-layer representations may be uniquely valuable -> trunk compartment
+
+#### (c) Mathematical Operation
+
+**Compartmentalized KD with stop-gradient boundaries:**
+```
+# Define 3 compartments with gradient isolation:
+# Basal: layers 0-8, Trunk: layers 9-16, Tuft: layers 17-24
+
+L_basal = sum_t (alpha_basal_t * KD_loss(student_layer8, teacher_t_early))
+L_trunk = sum_t (alpha_trunk_t * KD_loss(student_layer16, teacher_t_mid))
+L_tuft  = sum_t (alpha_tuft_t * KD_loss(student_layer24, teacher_t_final))
+
+# Gradient isolation (the key operation):
+# L_basal gradients only update layers 0-8 (stop_grad at layer 8 boundary)
+# L_tuft gradients only update layers 17-24 (stop_grad at layer 16 boundary)
+# L_trunk receives gradient from both but updates only layers 9-16
+
+grad_basal = d(L_basal)/d(params_0_to_8)   # no leak to deeper layers
+grad_tuft  = d(L_tuft)/d(params_17_to_24)   # no leak to shallower layers
+grad_trunk = d(L_trunk)/d(params_9_to_16)    # mid-depth only
+```
+
+**Coincidence detection (burst mode):**
+```
+# At depth 16 (trunk), check agreement between compartments:
+agreement = cos_sim(
+    stop_grad(student_layer8_projected_to_16),   # what early KD predicts
+    stop_grad(student_layer24_backprojected_to_16)  # what late KD expects
+)
+
+# Amplify or suppress trunk learning:
+trunk_lr_multiplier = 1.0 + gamma * relu(agreement - 0.5)  # burst if agree
+trunk_lr_multiplier *= sigmoid(agreement)  # suppress if disagree
+```
+
+**Teacher-compartment assignment (learned, not fixed):**
+```
+# Small router assigns each teacher to compartments based on where it's most informative:
+for teacher_t in teachers:
+    affinity_t = [
+        CKA(student_layer8, proj_t(teacher_t_layer_early)),   # basal affinity
+        CKA(student_layer16, proj_t(teacher_t_layer_mid)),    # trunk affinity
+        CKA(student_layer24, proj_t(teacher_t_layer_final))   # tuft affinity
+    ]
+    compartment_weights_t = softmax(affinity_t / temperature)
+```
+
+#### (d) Existing ML Papers Using This Analogy
+
+1. **"Towards Deep Learning with Segregated Dendrites" (Guerguiev, Lillicrap & Richards, eLife 2017):** Foundational paper showing that segregated basal (feedforward) and apical (feedback) dendritic compartments enable deep credit assignment. Neurons in different layers coordinate weight updates through compartmentalized integration. Direct biological precedent for compartmentalized multi-depth KD.
+
+2. **"Dendrites endow ANNs with accurate, robust and parameter-efficient learning" (Nature Comms 2025):** ANNs with dendritic structure match or outperform traditional ANNs on image classification while using FEWER parameters. Demonstrates compartmentalized processing is computationally superior, not just biologically plausible.
+
+3. **FitNets (Romero et al. 2015):** First to use intermediate teacher representations as "hints" for training student layers. The original multi-depth KD. However, FitNets do NOT isolate gradients between depth levels (no compartmentalization).
+
+4. **Contrastive Multi-Level KD (CAAI Trans 2025):** Multi-level distillation using contrastive loss across different network depths. Approaches compartmentalization by having separate objectives at different depths but does not enforce gradient isolation.
+
+5. **Counterclockwise Block-by-Block KD (Scientific Reports 2025):** Distills knowledge block-by-block in reverse order (deep to shallow). Block-by-block structure naturally creates partial compartmentalization.
+
+---
+
+### NM-4: Multi-Sensory Integration / Inverse Effectiveness — Help Most Where Student Is Weakest
+
+#### (a) Biological Mechanism
+
+The **principle of inverse effectiveness** (Stein & Meredith 1993): multisensory integration produces the LARGEST enhancement when the individual unisensory responses are WEAKEST.
+
+**The neural evidence:** In the superior colliculus (SC), multisensory neurons respond to visual, auditory, and somatosensory input. When a visual stimulus alone produces a weak response (e.g., dim light), adding a spatially-aligned auditory stimulus produces a SUPERADDITIVE response — the combined response exceeds the sum of individual responses. But when the visual stimulus is already strong (bright light), adding the auditory stimulus produces only additive or even subadditive combination.
+
+**Quantitatively:** If unimodal response = R_v (visual alone), and bimodal response = R_va (visual + auditory):
+- Enhancement ratio = (R_va - max(R_v, R_a)) / max(R_v, R_a)
+- This ratio is INVERSELY correlated with max(R_v, R_a)
+- Near threshold: enhancement can be 1200% (12x amplification)
+- Well above threshold: enhancement drops to 0-20%
+
+**Three governing principles of multisensory integration:**
+1. **Spatial coincidence:** Stimuli must come from roughly the same spatial location
+2. **Temporal coincidence:** Stimuli must be nearly synchronous (within ~100-300ms window)
+3. **Inverse effectiveness:** Integration gain is inversely proportional to the strongest unisensory response
+
+**Computational model (Bayesian account):** The brain performs approximate Bayesian inference, weighting each sensory modality by its RELIABILITY (inverse variance). When a modality is reliable (low variance, strong signal), it dominates; when unreliable, other modalities fill in. Inverse effectiveness falls out naturally: when ALL modalities are unreliable, the Bayesian combination gives a LARGER relative improvement over any single modality.
+
+**Important caveat (Holmes 2009):** At the behavioral level, inverse effectiveness is more nuanced than at the neural level. Some studies show ceiling effects rather than true inverse effectiveness. The principle is strongest for neural spike counts and weakest for behavioral accuracy measures.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Biology | KD System |
+|---------|-----------|
+| Visual, auditory, somatosensory modalities | Different teacher architectures (Qwen3=decoder, Mamba2=SSM, LFM2=hybrid, EmbeddingGemma=encoder) |
+| Unisensory response strength | Student's own confidence/loss on a given token/span |
+| Superadditive integration near threshold | Maximum KD benefit where student is WEAKEST (high loss, low confidence) |
+| Subadditive integration above threshold | Minimal KD benefit where student is STRONG (low loss, high confidence) |
+| Bayesian reliability weighting | Weight each teacher inversely to its prediction uncertainty |
+| Spatial coincidence | Teacher signals must target the SAME student representation (cross-tokenizer alignment) |
+| Temporal coincidence | Teacher signals should arrive at the right TRAINING PHASE |
+
+**Core design insight: KD alpha should be INVERSELY proportional to student competence on each token.** Tokens where the student already performs well get minimal KD signal (it's not needed). Tokens where the student struggles get MAXIMUM KD signal (that's where multi-teacher integration provides superadditive benefit).
+
+**This INVERTS the common practice** of weighting KD more on tokens where student-teacher agreement is high (which is where KD is LEAST needed). The biological evidence says: disagreement is where the magic happens, provided the teachers are reliable.
+
+**The Bayesian reliability weighting maps to:** weight each teacher by the inverse of its prediction entropy on this token. A teacher that is confident (low entropy) gets high weight. A teacher that is uncertain (high entropy) gets low weight. But the TOTAL KD weight (sum across teachers) is inversely proportional to student confidence.
+
+#### (c) Mathematical Operation
+
+**Inverse effectiveness weighting:**
+```
+# Student competence per span:
+student_loss_s = cross_entropy(student_logits(s), target(s))
+student_confidence_s = 1.0 - sigmoid(student_loss_s - loss_median)
+
+# Inverse effectiveness: KD strength inversely proportional to student competence
+kd_alpha_s = alpha_max * (1 - student_confidence_s)^gamma
+# gamma > 1 makes it MORE aggressive (superadditive near threshold)
+# gamma = 1 is linear inverse
+# gamma < 1 is mild inverse
+
+# Per-teacher reliability (Bayesian weighting):
+teacher_reliability_t_s = 1.0 / (entropy(teacher_t_logits(s)) + epsilon)
+teacher_weight_t_s = softmax(teacher_reliability_t_s)  # normalized
+
+# Combined:
+L_KD(s) = kd_alpha_s * sum_t(teacher_weight_t_s * L_teacher_t(s))
+```
+
+**The superadditive check (from biology: enhancement > sum of parts):**
+```
+# If multiple teachers independently agree on a correction for a struggling token,
+# the combined signal should be AMPLIFIED beyond the sum:
+agreement_on_weak = num_teachers_agreeing(s) * (1 - student_confidence_s)
+if agreement_on_weak > threshold:
+    kd_alpha_s *= superadditive_boost  # e.g., 1.5x
+```
+
+**Spatial coincidence constraint (signals must be aligned):**
+```
+# Only apply inverse effectiveness weighting to teachers whose signals
+# are spatially aligned (same byte-span, compatible predictions):
+aligned_t = cos_sim(proj_t(teacher_t_rep(s)), student_rep(s)) > align_threshold
+L_KD(s) = kd_alpha_s * sum_t(aligned_t * teacher_weight_t_s * L_teacher_t(s))
+```
+
+#### (d) Existing ML Papers Using This Analogy
+
+1. **"Knowledge Distillation from A Stronger Teacher" (Huang et al., NeurIPS 2022):** Shows that stronger teachers create LARGER student-teacher discrepancy that can HURT distillation. Demonstrates that when the student-teacher gap is too large, naive KD fails — but doesn't yet exploit the insight that the gap is where the OPPORTUNITY lies.
+
+2. **"Respecting Transfer Gap in Knowledge Distillation" (Niu & Chen, ICLR 2024):** Explicitly addresses capacity gap between teacher and student. Shows that the gap creates a non-trivial optimization landscape. Their adaptive mechanism approaches inverse effectiveness from the optimization side.
+
+3. **Confidence-Aware Multi-Teacher KD (CA-MKD):** Weights teachers by per-sample reliability (inverse entropy). Implements Bayesian reliability weighting but does NOT implement inverse effectiveness (doesn't upweight KD where student is weak).
+
+4. **Staged KD via Least-to-Most Prompting (EMNLP 2025 Findings):** Curriculum from easy to hard, with adaptive KD loss. The difficulty-aware staging naturally concentrates KD effort where the student struggles most — an implicit form of inverse effectiveness.
+
+5. **Adaptive Weighting in KD: Axiomatic Framework (arXiv:2601.17910, Jan 2026):** Multi-scale (token/task/context) adaptive weighting. Uncertainty-based constructions decrease monotonically with teacher entropy. The framework supports inverse-effectiveness-like axioms at the token level.
+
+---
+
+### NM-5: Synaptic Consolidation — Two-Stage Fast/Slow Teacher Influence
+
+#### (a) Biological Mechanism
+
+Memory formation involves two complementary learning systems operating at different timescales:
+
+**Stage 1 — Fast learning (hippocampus):** The hippocampus rapidly encodes new experiences through one-shot or few-shot synaptic modification (primarily via NMDA-receptor-dependent LTP at Schaffer collateral synapses in CA1). Properties:
+- Very fast: single exposure can create a memory trace
+- Pattern-separated: each memory is stored as a distinct, sparse representation
+- Interference-prone: new memories can overwrite old ones (catastrophic interference)
+- Temporary: without consolidation, hippocampal traces decay
+
+**Stage 2 — Slow consolidation (neocortex):** During sleep (specifically slow-wave sleep), hippocampal memories are "replayed" — the hippocampus reactivates stored patterns which drive neocortical synaptic changes. Properties:
+- Very slow: requires many replay cycles over days/weeks
+- Interleaved: old and new memories are replayed together, preventing catastrophic forgetting
+- Structural: consolidated memories are integrated into the existing knowledge structure
+- Permanent: neocortical traces are stable and long-lasting
+
+**The key computation:** Hippocampus provides FAST initial encoding (high learning rate, pattern-specific), then cortex provides SLOW structural integration (low learning rate, schema-dependent). The hippocampus acts as a "teacher" for the neocortex — replaying experiences for gradual cortical learning.
+
+**Stepwise synaptic plasticity (Science 2022):** Memory consolidation is NOT continuous — it proceeds in discrete steps. Early after learning, specific synapses are "tagged" (synaptic tagging and capture theory). Hours later, protein synthesis-dependent consolidation converts these tags into permanent structural changes. There is a WINDOW between tagging and consolidation where the memory is labile.
+
+**Replay bias (Nature Comms 2025):** Not all experiences are replayed equally. Replay is biased toward: (1) rewarding experiences, (2) novel experiences, (3) experiences that violated predictions. This is NOT random replay — it's importance-weighted.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Biology | KD System |
+|---------|-----------|
+| Hippocampus (fast learner) | High-alpha KD phase: strong teacher influence, student rapidly absorbs structure |
+| Neocortex (slow integrator) | Low-alpha consolidation phase: teacher influence reduced, student integrates and refines |
+| Sleep replay | Periodic "replay" steps with high KD alpha on previously-learned content |
+| Pattern separation (hippocampal) | Per-teacher learning: each teacher's signal learned separately before integration |
+| Interleaved replay | Mix old and new teacher signals during consolidation to prevent forgetting |
+| Synaptic tagging | Mark which student parameters were most affected by each teacher (gradient magnitude) |
+| Protein synthesis consolidation | After fast KD phase, "lock" the most-changed parameters (reduce their LR) |
+| Replay bias toward reward/novelty | Replay teacher signals on tokens where student improved MOST or was most surprised |
+
+**Critical design insight: TWO LEARNING RATES for KD.**
+- **Fast phase (hippocampal):** High KD alpha, each teacher presented individually (not mixed), student rapidly acquires teacher-specific structure. This is Phase 2 in our curriculum (single anchor teacher).
+- **Slow phase (neocortical):** Low KD alpha, all teachers mixed, student integrates knowledge into a coherent whole. This is Phase 3+ in our curriculum (routed committee).
+- **Consolidation windows:** Between phases, reduce all KD to zero and let the student train on pure LM loss. This "sleep" period lets the student consolidate what it learned from teachers without new teacher interference.
+
+**Replay bias maps to importance-weighted replay:** During consolidation windows, replay teacher signals on the token types where the student showed the LARGEST improvement during the fast phase (reward bias) or the LARGEST remaining gap (novelty/surprise bias).
+
+#### (c) Mathematical Operation
+
+**Two-rate KD schedule:**
+```
+# Phase 1 (fast/hippocampal): high alpha, single teacher
+if step in [5K, 10K]:
+    alpha_KD = alpha_fast  # e.g., 0.5
+    active_teachers = [anchor_only]  # pattern separation
+    lr_student = lr_base
+
+# Consolidation window (sleep):
+if step in [10K, 11K]:
+    alpha_KD = 0.0  # no teacher signal
+    lr_student = lr_base * 0.5  # gentle training
+    # Replay: select important tokens from Phase 1
+    replay_buffer = select_top_k(phase1_tokens, key=student_improvement)
+
+# Phase 2 (slow/neocortical): low alpha, all teachers, interleaved
+if step in [11K, 60K]:
+    alpha_KD = alpha_slow  # e.g., 0.1
+    active_teachers = all_routed  # interleaved
+    lr_student = lr_base
+```
+
+**Synaptic tagging and selective consolidation:**
+```
+# During fast phase, track which parameters changed most per teacher:
+for teacher_t in active_teachers:
+    param_delta_t = abs(params_after_step - params_before_step)  # per-param
+    tag_mask_t = (param_delta_t > percentile_90(param_delta_t))  # tag top 10%
+
+# During consolidation, reduce LR on tagged params (protect fast learning):
+lr_per_param = lr_base * (1 - consolidation_strength * any_tag_mask)
+# Tagged params get lower LR -> protected from overwriting
+# Untagged params get full LR -> free to adapt
+```
+
+**Importance-weighted replay:**
+```
+# Maintain a buffer of (token, teacher, improvement_score) from fast phase:
+# improvement_score = loss_before_teacher - loss_after_teacher
+
+# During consolidation, sample from buffer with probability:
+p_replay(token) = softmax(improvement_score / replay_temperature)
+
+# Apply teacher signal to replayed tokens at low alpha:
+L_replay = alpha_replay * sum_t(active_t * L_teacher_t(replayed_tokens))
+```
+
+#### (d) Existing ML Papers Using This Analogy
+
+1. **Complementary Learning Systems Theory in ML (McClelland, McNaughton & O'Reilly 1995; van de Ven et al., Nature Comms 2020):** Foundational theory. The 1995 paper proposed hippocampus/neocortex dual system. van de Ven et al. implemented "brain-inspired replay" for continual learning — generative replay interleaving old and new experiences, directly mimicking hippocampal replay.
+
+2. **FSC-Net: Fast-Slow Consolidation Networks (arXiv:2511.11707, 2025):** Dual-network architecture separating rapid task learning (fast network) from gradual knowledge consolidation (slow network). Key finding: pure replay WITHOUT distillation during consolidation outperforms replay WITH distillation, suggesting consolidation should be gentle.
+
+3. **Adaptive Memory Replay for Continual Learning (CVPR 2024 Workshop):** Importance-weighted replay biased toward high-value experiences. Directly implements hippocampal replay bias.
+
+4. **Curriculum Distillation with Temperature Scheduling (CoTCD, 2025):** Curriculum from easy to hard with adaptive temperature. Temperature schedule acts as proxy for fast->slow transition.
+
+5. **MiniPLM (2024):** Completely offline KD via "difference sampling" — pre-compute what the teacher would add beyond the student's current knowledge, then train only on that delta. Functionally equivalent to hippocampal replay: store the "what's new" signal, replay it selectively.
+
+---
+
+### SYNTHESIS: How the 5 Mechanisms Compose into a Full Routing System
+
+These 5 mechanisms are NOT independent alternatives — they operate at different levels and compose naturally:
+
+```
+LEVEL 1 — WHAT enters the system? (FILTERING)
+  NM-1 (Thalamic Gating): Binary gate + gain modulation per teacher per span.
+  Hard decision: is this teacher signal worth processing AT ALL?
+
+LEVEL 2 — WHO wins when teachers compete? (SELECTION)
+  NM-2 (Basal Ganglia): Disinhibition-based action selection among gated-in teachers.
+  Default = all off. Evidence accumulation. Winner suppresses losers.
+
+LEVEL 3 — WHERE does each signal go? (ROUTING)
+  NM-3 (Dendritic Compartments): Route different teacher depths to different student depths.
+  Gradient isolation between compartments. Coincidence detection at boundaries.
+
+LEVEL 4 — HOW MUCH signal at each location? (SCALING)
+  NM-4 (Inverse Effectiveness): KD strength inversely proportional to student competence.
+  Maximum help where student is weakest. Bayesian reliability weighting per teacher.
+
+LEVEL 5 — WHEN does each signal arrive? (SCHEDULING)
+  NM-5 (Synaptic Consolidation): Fast/slow two-phase learning with consolidation windows.
+  Hippocampal rapid encoding -> neocortical slow integration. Importance-weighted replay.
+```
+
+**The composed pipeline for a single training step:**
+1. Compute student hidden states at all depths
+2. For each span, compute teacher outputs (or load from offline cache)
+3. **NM-1 (Gate):** For each teacher x span, apply thalamic gate (binary: in or out?)
+4. **NM-2 (Select):** Among gated-in teachers, run evidence accumulation -> select winner or soft-weight
+5. **NM-3 (Route):** Send each selected teacher's signal to the appropriate student depth compartment
+6. **NM-4 (Scale):** Scale KD strength inversely to student confidence at each depth
+7. **NM-5 (Schedule):** Apply current phase's learning rate and replay policy
+8. Compute total loss = L_LM + composed_L_KD, backprop with gradient isolation per compartment
+
+**Connection to existing cross-domain research in SCRATCHPAD:**
+- NM-1 (Thalamic Gating) = instantiation of meta-principle P1 (Signal Quality Gating)
+- NM-2 (Basal Ganglia) = instantiation of meta-principle P4 (Partial Consensus) + E-2 (Selection Before Weighting)
+- NM-3 (Dendritic Compartments) = instantiation of PM-1 (RG multi-depth matching) with gradient isolation
+- NM-4 (Inverse Effectiveness) = instantiation of meta-principle P3, also N-1 hypothesis
+- NM-5 (Synaptic Consolidation) = instantiation of meta-principle P5 (Temporal Staging)
+
+
+---
+
+## Neuroscience Mechanisms for Multi-Source Signal Routing (2026-03-29)
+
+**Status: DEEP RESEARCH COMPLETE — 7 mechanisms with biological detail, mathematical formalizations, and specific Ekalavya KD proposals. Ready for T+L injection.**
+
+This section maps seven neuroscience frameworks to concrete multi-teacher KD mechanisms. Each entry contains: (a) the biological mechanism in detail, (b) the mathematical formalization (where it exists in the literature), (c) a SPECIFIC proposal for translation into the Ekalavya KD system with implementable formulas.
+
+**Context:** Sutra-24A-197M (24-layer transformer, 768d, 12h GQA) learning simultaneously from 4 teachers: Qwen3-1.7B (decoder), LFM2.5-1.2B (hybrid), Mamba2-780M (SSM), EmbeddingGemma-300M (encoder). The student has exit surfaces at depths 8, 16, 24.
+
+---
+
+### NS-1: Thalamic Gating — Inhibition-Mediated Signal Routing
+
+#### (a) The Biology
+
+The thalamus is the brain's central relay station — nearly ALL sensory information passes through it before reaching the cortex. But it is NOT a passive relay. The thalamic reticular nucleus (TRN) wraps around the thalamus like a shell and provides GABAergic (inhibitory) gating of thalamic relay neurons. The TRN determines which signals get through to the cortex and which are suppressed.
+
+**Key architectural features:**
+
+1. **Topographic organization**: The TRN is organized along the anterior-posterior axis into modality-specific sectors — visual signals are gated by one TRN sector, auditory by another, somatosensory by a third. This is NOT a single gate but a bank of parallel, modality-specific gates.
+
+2. **Dual inhibitory network**: A 2025 bioRxiv study (Crabtree lab) revealed that TRN contains TWO inhibitory circuits: (a) external globus pallidus (GPe) projects to ALL TRN neurons, providing global inhibitory tone; (b) intra-TRN connections, primarily from somatostatin-expressing (SOM) neurons onto parvalbumin-expressing (PV) neurons in a feedforward motif. The GPe provides global "volume control" while intra-TRN provides local competitive interactions between modality sectors.
+
+3. **Gating is NOT binary**: TRN neurons have two firing modes: (a) tonic mode (during attention/wakefulness) — graded inhibition, partial gating, gain control; (b) burst mode (during sleep/drowsiness) — all-or-nothing gating, blocks relay. During attentive processing, the TRN implements GAIN CONTROL, not on/off switching.
+
+4. **Cortical feedback controls the gate**: Layer 6 cortical pyramidal cells project back to the TRN, forming precise connections that modulate the feedforward pathway. This means the cortex (the "recipient" of thalamic signals) can control WHICH signals it wants to receive. This is top-down attention.
+
+5. **Lateral inhibition within TRN sectors**: When one relay channel is strongly activated, its TRN sector inhibits neighboring channels. This creates a contrast-enhancement effect: the strongest signal is amplified relative to weaker signals. This is winner-take-all competition among sensory channels.
+
+6. **Pulvinar as higher-order relay**: Beyond first-order relays (LGN for vision, MGN for audition), the pulvinar thalamic nucleus provides "precision-weighted gain for routing information across visual hierarchies, priority mapping for selection of behaviorally relevant stimuli, and temporal alignment for feature binding and multisensory integration."
+
+**Mathematical model (divisive normalization):**
+
+The thalamic gating mechanism is well-modeled by divisive normalization (Carandini & Heeger 2012, canonical neural computation):
+
+```
+R_i = g_i * D_i^n / (sigma^2 + sum_j w_j * D_j^n)
+```
+
+Where R_i = output (gated) response of channel i, D_i = input drive from sensory source i, g_i = top-down gain (cortical feedback), sigma^2 = semi-saturation constant (prevents division by zero), w_j = inhibitory weight from channel j (lateral inhibition via TRN), n = exponent (typically 2, the power-law nonlinearity). The denominator sums over ALL channels — this is the divisive normalization that creates competition.
+
+#### (b) Mapping to Ekalavya
+
+The thalamus maps almost perfectly to the multi-teacher routing problem:
+- 4 sensory modalities -> 4 teacher signals (Qwen, LFM, Mamba, EmbGemma)
+- TRN sectors -> per-teacher gate modules
+- Cortical feedback -> student's own hidden state controlling which teacher signal to accept
+- Lateral inhibition -> teacher signals competing for student attention
+- Tonic vs burst mode -> soft gating (training) vs hard gating (inference)
+
+#### (c) Specific KD Mechanism: Thalamic Gate Module
+
+```python
+class ThalamicGate(nn.Module):
+    """
+    Divisive-normalization gating of multi-teacher signals.
+    Each teacher signal is gain-modulated by student state (top-down),
+    then competitively normalized (lateral inhibition via TRN).
+    """
+    def __init__(self, student_dim=768, n_teachers=4, n_exponent=2.0, sigma_sq=0.1):
+        super().__init__()
+        self.n = n_exponent
+        self.sigma_sq = sigma_sq
+        # Top-down gain: student state -> per-teacher gain
+        self.gain_proj = nn.Linear(student_dim, n_teachers)  # g_i = f(student_state)
+        # Lateral inhibition weights (learnable TRN connectivity)
+        self.w = nn.Parameter(torch.ones(n_teachers, n_teachers) / n_teachers)
+        # Drive projection: teacher signal strength
+        self.drive_proj = nn.ModuleList([
+            nn.Linear(student_dim, 1) for _ in range(n_teachers)
+        ])
+
+    def forward(self, student_hidden, teacher_signals):
+        """
+        student_hidden: (B, T, D) student hidden state at some depth
+        teacher_signals: list of K tensors, each (B, T, D_t) or scalar drive strengths
+        Returns: (B, T, K) gating weights that sum to < 1 per position
+        """
+        # Top-down gain from student state (cortical L6 -> TRN)
+        gains = torch.sigmoid(self.gain_proj(student_hidden))  # (B, T, K)
+
+        # Input drive from each teacher (how strong is this teacher's signal?)
+        drives = []
+        for k, proj in enumerate(self.drive_proj):
+            d_k = torch.relu(proj(student_hidden)).squeeze(-1)  # (B, T)
+            drives.append(d_k)
+        drives = torch.stack(drives, dim=-1)  # (B, T, K)
+
+        # Apply power-law nonlinearity
+        drives_n = drives ** self.n  # (B, T, K)
+
+        # Divisive normalization (TRN lateral inhibition)
+        # R_i = g_i * D_i^n / (sigma^2 + sum_j w_ij * D_j^n)
+        inhibition = torch.einsum('...k, jk -> ...j', drives_n, self.w)  # (B, T, K)
+        gated = gains * drives_n / (self.sigma_sq + inhibition)  # (B, T, K)
+
+        # Normalize so total teacher influence <= 1
+        total = gated.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        gated = gated / total
+
+        return gated  # (B, T, K) per-position, per-teacher weights
+```
+
+**Key design choices from neuroscience:**
+1. Gain is controlled by STUDENT state (top-down), not teacher confidence — the student decides what it needs
+2. Divisive normalization creates automatic competition — strengthening one teacher weakens others
+3. sigma^2 prevents any single teacher from monopolizing (semi-saturation)
+4. The weights w_ij are learnable lateral inhibition — can discover which teacher pairs compete vs cooperate
+5. Total gating <= 1 ensures NTP signal always has nonzero weight (the student's own learning is never fully suppressed)
+
+**Training schedule (tonic vs burst analogy):**
+- Steps 0-5K: sigma^2 = 1.0 (high), exponent n = 1.0 (linear) — soft, exploratory gating (tonic mode)
+- Steps 5K-15K: sigma^2 = 0.1, n = 1.5 — sharpening competition
+- Steps 15K+: sigma^2 = 0.01, n = 2.0 — near winner-take-all (approaching burst mode)
+
+---
+
+### NS-2: Multisensory Integration — Inverse Effectiveness and Bayesian Causal Inference
+
+#### (a) The Biology
+
+The superior colliculus (SC) is the brain's primary site of multisensory integration. SC neurons receive convergent inputs from visual, auditory, and somatosensory pathways and produce responses that are often SUPERADDITIVE — the combined response exceeds the sum of individual responses.
+
+**Three principles established by Stein and Meredith (1993):**
+
+1. **Spatial principle**: Signals from the same spatial location are integrated; signals from different locations are not. Spatial register between modalities is required.
+
+2. **Temporal principle**: Signals must arrive within a temporal window (~100-200ms for audiovisual) to be integrated. Beyond this window, they are processed independently.
+
+3. **Inverse effectiveness**: THE most important principle for Ekalavya. The magnitude of multisensory enhancement is INVERSELY related to the effectiveness of the individual stimuli. When one modality's signal is weak (near threshold), adding a second modality produces superadditive enhancement. When individual signals are strong, combination produces subadditive or linear integration.
+
+**Mathematical formalization — Bayesian Causal Inference (Kording et al. 2007):**
+
+The brain solves a causal inference problem: do these signals come from the same source (should integrate) or different sources (should keep separate)?
+
+```
+P(C=1 | x_1, x_2) = P(x_1, x_2 | C=1) * P(C=1) / P(x_1, x_2)
+
+If C=1 (same cause): optimal estimate = weighted average by reliabilities
+  x_hat = (x_1/sigma_1^2 + x_2/sigma_2^2) / (1/sigma_1^2 + 1/sigma_2^2)
+
+If C=2 (different causes): keep separate
+  x_hat_1 = x_1, x_hat_2 = x_2
+
+Final estimate = P(C=1|data) * x_hat_integrated + P(C=2|data) * x_hat_separate
+```
+
+This naturally produces inverse effectiveness: when individual signals are noisy (high sigma), P(C=1) dominates (integrating helps more), and the improvement from integration is large.
+
+**Divisive normalization model (Ohshiro et al. 2011):**
+
+Superadditivity and inverse effectiveness from a single divisive normalization circuit:
+```
+R = (sum_m w_m * S_m)^n / (sigma^2 + sum_m w_m * S_m)
+```
+When S_m are small (near sigma^2), the denominator is dominated by sigma^2 and the response grows superlinearly. When S_m are large, the denominator grows and the response saturates (subadditivity).
+
+#### (b) Mapping to Ekalavya
+
+- Multiple sensory modalities -> multiple teacher architectures (each "sees" language differently)
+- Spatial coincidence -> token-level alignment (teachers must be aligned to the same byte spans)
+- Temporal coincidence -> training step alignment (teachers evaluated at same training state)
+- Inverse effectiveness -> KD signal strongest WHERE STUDENT IS WEAKEST
+- Causal inference -> deciding whether teachers are "seeing the same thing" or providing genuinely different information
+
+#### (c) Specific KD Mechanism: Inverse Effectiveness Router
+
+```python
+def inverse_effectiveness_weights(student_loss_per_span, temperature=1.0):
+    """
+    Weight teacher contributions inversely to student competence.
+    Where student is strong (low loss), teachers contribute less.
+    Where student is weak (high loss), teachers contribute more.
+
+    This is the OPPOSITE of confidence-based routing.
+
+    student_loss_per_span: (B, S) per-span cross-entropy loss
+    Returns: (B, S) KD weight multiplier per span
+    """
+    loss_norm = (student_loss_per_span - student_loss_per_span.min()) / \
+                (student_loss_per_span.max() - student_loss_per_span.min() + 1e-8)
+
+    # Inverse effectiveness: high loss -> high weight
+    kd_weights = F.softmax(loss_norm / temperature, dim=-1) * loss_norm.shape[-1]
+    return kd_weights  # (B, S), mean ~1.0, high where student struggles
+
+
+def bayesian_causal_inference_routing(teacher_logits, student_logits, prior_same=0.5):
+    """
+    For each token, decide: are the teachers seeing the same thing as the student
+    (integrate their signal) or something different (downweight)?
+    Uses teacher-student agreement as evidence for common cause.
+    """
+    K = len(teacher_logits)
+    kl_divs = []
+    for t_logits in teacher_logits:
+        kl = F.kl_div(
+            F.log_softmax(student_logits, dim=-1),
+            F.softmax(t_logits, dim=-1),
+            reduction='none'
+        ).sum(dim=-1)  # (B, T)
+        kl_divs.append(kl)
+
+    kl_stack = torch.stack(kl_divs, dim=-1)  # (B, T, K)
+
+    # Low KL = same cause = integrate; High KL = different cause = keep separate
+    sigma_sq = kl_stack.mean() + 1e-8  # adaptive scale
+    p_same = prior_same * torch.exp(-kl_stack / sigma_sq)
+    p_same = p_same / (p_same + (1 - prior_same))  # Bayes rule
+
+    return p_same  # (B, T, K) per-teacher integration weight
+```
+
+**Key design choices from neuroscience:**
+1. Inverse effectiveness: strongest KD signal where student is weakest (high entropy/loss spans). The opposite of "teach what's easy first" — the brain integrates MOST when individual signals are weakest.
+2. Bayesian causal inference: automatically detect when a teacher's distribution is fundamentally different from the student's (different "cause") vs when they track the same patterns.
+3. The sigma^2 in causal inference is adaptive — scales with average teacher-student divergence.
+
+**Testable prediction:** IE weighting should show disproportionate improvement on HIGH-LOSS tokens vs uniform KD weighting. Falsifiable.
+
+---
+
+### NS-3: Neuromodulation — Global State Signals Modulating Learning Rates
+
+#### (a) The Biology
+
+The brain has four major neuromodulatory systems that broadcast GLOBAL signals affecting learning across entire brain regions. These are not modality-specific — they modulate HOW learning happens from ALL sources simultaneously.
+
+**The four modulators and their computational roles (Doya 2002):**
+
+| Neuromodulator | Source Nucleus | Computational Role | ML Equivalent |
+|---------------|---------------|-------------------|--------------|
+| **Dopamine** | VTA/SNc | Reward prediction error (RPE) | Loss signal / advantage |
+| **Serotonin** | Dorsal raphe | Time scale of reward prediction | Discount factor / planning horizon |
+| **Norepinephrine** | Locus coeruleus | Unexpected uncertainty / exploration | Inverse temperature / noise |
+| **Acetylcholine** | Basal forebrain | Expected uncertainty / precision | Learning rate / attention gain |
+
+**Dopamine-serotonin opposition (Nature, Nov 2024):** Dopamine and serotonin work in opposition to shape learning. Dopamine drives approach/exploitation ("this worked, do more"), serotonin drives avoidance/patience ("wait, consider alternatives"). Like an accelerator and brake.
+
+**Norepinephrine and exploration-exploitation (Yu & Dayan 2005):**
+- NE signals UNEXPECTED uncertainty — when the environment has changed
+- High NE -> high exploration (system samples broadly), mathematically equivalent to high softmax temperature
+- Low NE -> low exploration (system commits to current best)
+
+**Acetylcholine and precision (Friston, J Neurosci 2013):**
+- ACh enhances precision (inverse variance) of bottom-up sensory signals
+- High ACh -> sensory signals treated as reliable -> large learning updates
+- Low ACh -> signals treated as noisy -> prior beliefs dominate
+- `precision_i = exp(gain_i)` where gain_i set by ACh level
+
+**Developmental switching:** Neuromodulatory effects CHANGE over development. In early vertebrate motor development, serotonin is predominantly INHIBITORY; in later stages, the SAME receptors switch to EXCITATORY. The neuromodulatory landscape reconfigures as the system matures.
+
+**D1 vs D2 receptors (J Neurosci, Feb 2025):** D1 antagonism slowed learning, while D2 antagonism IMPROVED learning and enhanced connectivity. Different receptor subtypes have opposing effects — one speeds learning, the other slows it for better accuracy.
+
+#### (b) Mathematical Formalization (Doya 2002)
+
+```
+LR(t) = f_ACh(ACh(t))              # Acetylcholine sets learning rate
+T(t) = f_NE(NE(t))                 # Norepinephrine sets temperature
+gamma(t) = f_5HT(5HT(t))           # Serotonin sets discount/time horizon
+delta(t) = r(t) + gamma*V(t+1) - V(t)  # Dopamine = TD error
+```
+
+#### (c) Specific KD Mechanism: Neuromodulatory Training Controller
+
+```python
+class NeuromodulatorController:
+    """
+    Four global signals that modulate ALL KD learning simultaneously.
+    Not per-teacher — they affect the entire training system.
+    """
+    def __init__(self):
+        self.loss_ema = ExponentialMovingAverage(alpha=0.01)   # slow
+        self.loss_var_ema = ExponentialMovingAverage(alpha=0.05)  # medium
+        self.loss_change_ema = ExponentialMovingAverage(alpha=0.1)  # fast
+
+    def compute_modulators(self, current_loss, prev_loss, kd_losses_per_teacher):
+        # DOPAMINE: reward prediction error = improvement over expected
+        expected_loss = self.loss_ema.value
+        delta_da = expected_loss - current_loss  # positive = better than expected
+        self.loss_ema.update(current_loss)
+
+        # SEROTONIN: time horizon — large recent gains = extend strategy
+        recent_improvement = self.loss_change_ema.value
+        serotonin = sigmoid(recent_improvement * 100)
+
+        # NOREPINEPHRINE: unexpected uncertainty — loss variance spike
+        current_var = self.loss_var_ema.value
+        loss_change = abs(current_loss - prev_loss)
+        self.loss_var_ema.update(loss_change)
+        surprise = loss_change / (current_var + 1e-8)
+        norepinephrine = clamp(surprise / 3.0, 0, 1)
+
+        # ACETYLCHOLINE: expected uncertainty — teacher signal consistency
+        teacher_loss_var = var([l for l in kd_losses_per_teacher])
+        acetylcholine = 1.0 / (1.0 + teacher_loss_var * 10)
+
+        return {'da': delta_da, '5ht': serotonin, 'ne': norepinephrine, 'ach': acetylcholine}
+
+    def modulate_training(self, modulators, base_lr, base_kd_alpha, base_temperature):
+        """
+        DA > 0: increase KD alpha (reinforce current teacher mix)
+        DA < 0: decrease KD alpha, trust NTP more
+        NE high: increase routing temperature (explore teacher assignments)
+        ACh high: increase learning rate (data reliable, learn fast)
+        5HT high: maintain current strategy; low: trigger review
+        """
+        lr_mult = 0.5 + modulators['ach']        # [0.5, 1.5]
+        alpha_mult = 1.0 + 0.3 * tanh(modulators['da'] * 5)  # [0.7, 1.3]
+        temp_mult = 1.0 + modulators['ne']        # [1.0, 2.0]
+
+        return base_lr * lr_mult, base_kd_alpha * alpha_mult, base_temperature * temp_mult
+```
+
+**Key design choices:**
+1. DA modulates KD strength: better-than-expected -> reinforce; worse -> back off
+2. NE modulates routing exploration: surprise -> broaden search; stable -> commit
+3. ACh modulates learning rate: consistent teachers -> faster learning
+4. 5HT modulates strategy persistence: improving -> maintain; stalled -> reconsider
+5. Developmental switching: early = NE dominant (explore), mid = DA dominant (reinforce), late = ACh dominant (precise)
+
+---
+
+### NS-4: Critical Periods — Sequential Receptivity to Different Sources
+
+#### (a) The Biology
+
+The brain does NOT learn from all sources simultaneously from the start. Learning is organized into a SEQUENCE of critical periods, each optimally receptive to a specific input type.
+
+**Key findings:**
+
+1. **Sequential timing**: Somatosensory critical period first (~P0-P5 in rodents), auditory next (~P11-P15), visual last (~P19-P32). Follows the order each system becomes functional.
+
+2. **Opening mechanism**: BDNF triggers maturation of parvalbumin-positive (PV) inhibitory interneurons. When PV cells reach a threshold, the critical period OPENS. This is a threshold phenomenon.
+
+3. **Closing mechanism**: Perineuronal nets (PNNs) gradually deposit around PV interneurons, physically encasing them. Once PNNs are fully formed, the critical period CLOSES. Enzymatic PNN degradation can reopen critical periods in adults.
+
+4. **Cross-modal gating**: Visual experience gates auditory critical periods. Dark-rearing extends auditory critical periods; early eye opening closes them prematurely. One sensory system directly affects another's timing.
+
+5. **Hierarchical progression**: Within a sensory system, critical periods progress from primary cortex (V1) to higher areas (V2, V4, IT). Lower areas must develop first.
+
+6. **Developmental plasticity rules outperform adult rules (CCN 2025)**: Sequential critical periods with developmental plasticity rules produce better final representations than simultaneous learning, with fewer synaptic updates.
+
+**Mathematical model (BCM-like sliding threshold):**
+```
+theta(t) = theta_0 + integral_0^t f(activity(s)) ds
+dw/dt = eta * (activity - theta(t)) * input
+As theta rises: harder to induce LTP -> critical period closes
+```
+
+#### (b) Mapping to Ekalavya
+
+- Sequential critical periods -> sequential teacher introduction
+- BDNF/PV threshold -> student readiness criterion (loss below threshold before next teacher activates)
+- PNN closure -> reduced KD alpha for a teacher after its window
+- Cross-modal gating -> learning from one teacher affects readiness for the next
+- Hierarchy -> low-level teachers first (syntax/patterns), high-level later (semantics/reasoning)
+
+#### (c) Specific KD Mechanism: Critical Period Curriculum
+
+```python
+class CriticalPeriodScheduler:
+    """
+    Sequential teacher activation based on student readiness.
+    Teachers ordered low-level -> high-level.
+    """
+    def __init__(self, total_steps):
+        self.total_steps = total_steps
+        # Order: semantic geometry -> sequential -> hybrid -> full decoder
+        self.schedule = {
+            'embgemma': {'open': 0, 'close': 0.4, 'peak_alpha': 0.3, 'ramp': 1000},
+            'mamba':    {'open': 0.05, 'close': 0.6, 'peak_alpha': 0.4, 'ramp': 2000},
+            'lfm':      {'open': 0.1, 'close': 0.8, 'peak_alpha': 0.5, 'ramp': 3000},
+            'qwen':     {'open': 0.15, 'close': 1.0, 'peak_alpha': 0.6, 'ramp': 5000},
+        }
+
+    def get_alpha(self, teacher, step, student_loss=None):
+        cfg = self.schedule[teacher]
+        # Student readiness gate (BDNF threshold)
+        if student_loss is not None:
+            threshold = 6.0 - (step / self.total_steps) * 2.0
+            if student_loss > threshold:
+                return 0.0
+
+        open_step = cfg['open'] * self.total_steps
+        close_step = cfg['close'] * self.total_steps
+        if step < open_step:
+            return 0.0
+        if step > close_step:
+            # Post-critical-period residual (adult plasticity)
+            decay = exp(-(step - close_step) / (self.total_steps * 0.1))
+            return cfg['peak_alpha'] * 0.1 * decay
+
+        # Bell curve within critical period (peak at 30% of window)
+        progress = (step - open_step) / (close_step - open_step)
+        alpha = cfg['peak_alpha'] * exp(-((progress - 0.3)**2) / (2 * 0.15**2))
+
+        # Ramp-up at opening
+        if step - open_step < cfg['ramp']:
+            alpha *= (step - open_step) / cfg['ramp']
+        return alpha
+```
+
+**Key design choices:**
+1. Teachers introduced SEQUENTIALLY: EmbGemma (geometry) -> Mamba (sequences) -> LFM (hybrid) -> Qwen (full decoder)
+2. Each has a bell-curve influence: ramp up, peak, ramp down — mimicking PV maturation -> PNN closure
+3. Student readiness gates opening (BDNF threshold analog)
+4. Post-closure residual: small nonzero influence (adult plasticity is reduced but not zero)
+5. Cross-modal gating emerges naturally: if EmbGemma teaches good representations, student loss drops faster, opening Mamba's window earlier
+
+**Testable prediction:** Sequential should outperform simultaneous, especially in final benchmark quality.
+
+---
+
+### NS-5: Synaptic Competition and Homeostatic Scaling — Preventing Teacher Dominance
+
+#### (a) The Biology
+
+When multiple input pathways converge on the same neuron, their synapses COMPETE for limited synaptic resources.
+
+**1. Hebbian/STDP (LTP/LTD):** Synapses that drive the postsynaptic neuron to fire are strengthened; those that fail are weakened. Pure Hebbian learning is UNSTABLE — strong connections grow unbounded.
+
+**2. BCM Rule (Bienenstock-Cooper-Munro 1982):** The critical stabilizer. LTP/LTD threshold SLIDES based on recent activity:
+```
+dw_i/dt = eta * phi(y, theta_M) * x_i
+phi(y, theta_M) = y * (y - theta_M)
+theta_M = E[y^p] with p > 1
+
+When y > theta_M: LTP. When y < theta_M: LTD.
+theta_M slides UP when neuron is very active -> harder to get LTP
+theta_M slides DOWN when neuron is quiet -> easier to get LTP
+```
+If one input dominates, theta_M rises, making it HARDER for that input to get further strengthening and EASIER for weak inputs. This prevents monopolization.
+
+**3. Synaptic Scaling (Turrigiano 2008):** Homeostatic mechanism that multiplicatively rescales ALL synapses:
+```
+w_i(t+1) = w_i(t) * (target_rate / actual_rate)^alpha
+```
+Preserves relative strengths while controlling total drive.
+
+**4. Synapse-type-specific competition (PNAS 2024):** Different synapse types compete for SEPARATE resource pools. Excitatory inputs compete with each other, not with inhibitory inputs. Structured competition.
+
+**5. Oja's Rule (weight normalization):**
+```
+dw_i/dt = eta * (x_i * y - y^2 * w_i)
+```
+The `y^2 * w_i` term provides automatic normalization — weight vector converges to first principal component.
+
+**6. Synaptic Tagging and Capture (STC):** Strong activation creates a "tag." Consolidation requires plasticity-related proteins (PRPs) produced globally. A strong signal from ONE pathway can consolidate learning from ALL recently-active pathways. Extended temporal flexibility: STC observed even at 9-hour intervals (Nature 2025).
+
+#### (b) Specific KD Mechanism: Homeostatic Teacher Weight Regulation
+
+```python
+class HomeostaticTeacherWeights:
+    """
+    BCM-inspired sliding threshold + synaptic scaling for teacher weights.
+    Prevents single-teacher dominance while maintaining target total KD influence.
+    """
+    def __init__(self, n_teachers=4, target_total=1.0, bcm_p=2.0):
+        self.w = np.ones(n_teachers) / n_teachers
+        self.theta_M = 0.0
+        self.gain_history = []
+        self.bcm_p = bcm_p
+        self.target_total = target_total
+
+    def update(self, per_teacher_gains):
+        """per_teacher_gains: improvement in student loss from each teacher."""
+        gains = np.array(per_teacher_gains)
+        total_gain = gains.sum()
+
+        # BCM sliding threshold: theta = E[total_gain^p]
+        self.gain_history.append(total_gain)
+        self.gain_history = self.gain_history[-100:]
+        self.theta_M = np.mean([g ** self.bcm_p for g in self.gain_history])
+
+        # BCM update: phi(g, theta) = g * (g - theta)
+        for i in range(len(self.w)):
+            phi = gains[i] * (gains[i] - self.theta_M)
+            self.w[i] += 0.01 * phi
+
+        self.w = np.maximum(self.w, 0.01)  # floor at 1%
+
+        # Synaptic scaling: normalize to target total
+        self.w *= self.target_total / self.w.sum()
+        return self.w.copy()
+```
+
+**Key design choices:**
+1. BCM sliding threshold: when total KD is effective, threshold rises and each teacher must provide MORE improvement to maintain weight
+2. Synaptic scaling: total influence rescaled to fixed target — no unbounded growth or collapse
+3. Floor at 1%: no teacher fully excluded (maintains option value)
+4. STC analog: strong improvement from one teacher consolidates learning from all recently-active teachers
+
+---
+
+### NS-6: Predictive Coding — Precision-Weighted Prediction Errors from Multiple Sources
+
+#### (a) The Biology
+
+The predictive coding framework (Rao & Ballard 1999, Friston 2005) proposes the brain is a hierarchical prediction machine. Each level generates top-down predictions; only PREDICTION ERRORS propagate upward. Crucially, errors are weighted by PRECISION (inverse variance).
+
+```
+Prediction: mu_L = f(mu_{L+1})         (top-down)
+Error: epsilon_L = x_L - mu_L           (bottom-up)
+Weighted error: pi_L * epsilon_L         (what propagates)
+Update: mu_{L+1} += kappa * pi_L * epsilon_L
+```
+
+**Precision weighting by neuromodulators (Friston 2013):**
+- ACh enhances precision of bottom-up (sensory) errors
+- DA modulates precision of top-down predictions
+- Balance determines data-driven vs belief-driven processing
+
+**Source reliability tracking:** The brain tracks reliability per source over time:
+- Consistently accurate channel -> high precision (its errors are trusted)
+- Noisy/unreliable channel -> low precision (its errors downweighted)
+- Equivalent to online variance estimation: precision_i = 1 / running_var(error_i)
+
+**Free energy formulation:**
+```
+F = sum_L [ pi_L * epsilon_L^2 + log(1/pi_L) ]
+```
+Minimizing F simultaneously updates beliefs (reduce errors), updates precision (correct weighting), and penalizes extreme precision (prevents overfitting to one source).
+
+#### (b) Specific KD Mechanism: Precision-Weighted KD
+
+```python
+class PrecisionWeightedKD:
+    """
+    Each teacher's KD loss weighted by estimated precision (1/running_variance).
+    Reliable teachers amplified. Noisy teachers suppressed.
+    """
+    def __init__(self, n_teachers=4, ema_alpha=0.01, complexity_penalty=0.1):
+        self.mean_loss = [0.0] * n_teachers
+        self.var_loss = [1.0] * n_teachers
+        self.precision = [1.0] * n_teachers
+        self.alpha = ema_alpha
+        self.lam = complexity_penalty
+
+    def update_and_weight(self, per_teacher_kd_losses):
+        # Update running variance per teacher
+        for i, loss in enumerate(per_teacher_kd_losses):
+            val = loss.item() if hasattr(loss, 'item') else loss
+            old_mean = self.mean_loss[i]
+            self.mean_loss[i] += self.alpha * (val - old_mean)
+            self.var_loss[i] += self.alpha * (
+                (val - old_mean) * (val - self.mean_loss[i]) - self.var_loss[i]
+            )
+            self.var_loss[i] = max(self.var_loss[i], 1e-6)
+            self.precision[i] = 1.0 / self.var_loss[i]
+
+        # Free-energy KD loss: F = sum_i [pi_i * L_i + lambda * log(1/pi_i)]
+        total_loss = 0.0
+        total_pi = sum(self.precision)
+        for i, loss in enumerate(per_teacher_kd_losses):
+            error_term = self.precision[i] * loss
+            complexity = self.lam * np.log(1.0 / self.precision[i] + 1e-8)
+            total_loss += error_term + complexity
+        return total_loss / (total_pi + 1e-8)
+```
+
+**Key design choices:**
+1. Precision = 1/var(KD loss): consistent teachers are more reliable
+2. Complexity penalty prevents runaway precision (one teacher dominating)
+3. Precision LEARNED from training history, not set manually
+4. Automatically suppresses noisy teachers per content type
+
+---
+
+### NS-7: Attention and Salience — Allocating Processing to the Most Informative Source
+
+#### (a) The Biology
+
+The brain allocates limited processing capacity via attention, operating through complementary mechanisms:
+
+**1. Bottom-up salience (Itti & Koch 2000):**
+```
+salience(x) = sum_features || feature(x) - mean(feature(neighborhood)) ||
+```
+High contrast = high salience = automatic capture.
+
+**2. Top-down bias (Desimone & Duncan 1995, biased competition):**
+```
+R_i = f(drive_i + bias_i) / normalization_pool
+```
+Task goals bias competition among stimuli.
+
+**3. Priority map (tripartite model):**
+```
+priority(x) = w_bu * salience(x) + w_td * relevance(x) + w_hist * history(x)
+```
+Combines bottom-up, top-down, and selection history. Winner-take-all determines allocation.
+
+**4. Attentional sampling (2025):** Attention fluctuates at ~8 Hz (single object), ~4 Hz (two objects). Temporal multiplexing of limited resources.
+
+**5. Learned suppression (eLife 2024):** Consistently distracting locations are ACTIVELY inhibited, not just ignored.
+
+**Information-theoretic salience (Itti & Baldi 2009):**
+```
+salience(x) = KL(posterior(x) || prior(x))  # Bayesian surprise
+```
+
+#### (b) Specific KD Mechanism: Salience-Driven Teacher Attention
+
+```python
+class SalienceRouter:
+    """
+    Tripartite priority map: bottom-up surprise + top-down relevance + history.
+    """
+    def __init__(self, n_teachers=4, w_bu=0.4, w_td=0.4, w_hist=0.2):
+        self.w_bu = w_bu
+        self.w_td = w_td
+        self.w_hist = w_hist
+        self.recent_gains = [[] for _ in range(n_teachers)]
+
+    def compute_bottom_up(self, teacher_logits, student_logits):
+        """Bayesian surprise: KL(student || teacher) per teacher per token."""
+        salience = []
+        sp = F.softmax(student_logits, dim=-1)
+        for tl in teacher_logits:
+            tp = F.softmax(tl, dim=-1)
+            kl = F.kl_div(sp.log(), tp, reduction='none').sum(-1)
+            salience.append(kl)
+        return torch.stack(salience, dim=-1)  # (B, T, K)
+
+    def compute_top_down(self, phase):
+        """Phase-dependent relevance. Early: structure. Late: generation."""
+        if phase < 0.3:
+            return torch.tensor([1.5, 1.2, 0.8, 0.5])  # EmbG, Mamba, LFM, Qwen
+        elif phase < 0.7:
+            return torch.tensor([0.8, 1.0, 1.2, 1.0])
+        else:
+            return torch.tensor([0.5, 0.8, 1.2, 1.5])
+
+    def route(self, teacher_logits, student_logits, phase):
+        bu = self.compute_bottom_up(teacher_logits, student_logits)
+        bu_norm = bu / (bu.sum(-1, keepdim=True) + 1e-8)
+        td = self.compute_top_down(phase)
+        td_norm = (td / td.sum()).unsqueeze(0).unsqueeze(0)
+        hist = torch.tensor([
+            np.mean(g[-100:]) if g else 0.01 for g in self.recent_gains
+        ])
+        hist = (hist / (hist.sum() + 1e-8)).unsqueeze(0).unsqueeze(0)
+
+        priority = self.w_bu * bu_norm + self.w_td * td_norm + self.w_hist * hist
+        weights = F.softmax(priority * 5.0, dim=-1)  # temp=0.2
+
+        # Learned suppression: active inhibition of consistently harmful teachers
+        for i, gains in enumerate(self.recent_gains):
+            if len(gains) > 100 and np.mean(gains[-100:]) < 0:
+                weights[:, :, i] *= 0.1
+        return weights / (weights.sum(-1, keepdim=True) + 1e-8)
+```
+
+**Key design choices:**
+1. Bayesian surprise as salience: KL(student || teacher) measures how much teacher would change predictions
+2. Phase-dependent top-down: early -> structure teachers, late -> generation teachers
+3. Learned suppression: actively inhibit consistently harmful teachers
+4. Attentional sampling analog: approximate WTA cycling through teachers over steps
+
+---
+
+### Integration: How the 7 Neuroscience Mechanisms Compose
+
+```
+EKALAVYA NEUROSCIENCE-INFORMED PIPELINE:
+
+Step 1: GLOBAL STATE (NS-3: Neuromodulatory Controller)
+  Compute DA/NE/ACh/5HT from training dynamics.
+  NE -> routing temperature. ACh -> learning rate. DA -> KD alpha. 5HT -> persistence.
+
+Step 2: TEACHER ACTIVATION (NS-4: Critical Period Scheduler)
+  Which teachers are in their critical period? Student readiness gates opening.
+
+Step 3: PER-TOKEN ROUTING (NS-7: Salience Router + NS-1: Thalamic Gate)
+  Priority map: surprise + task relevance + history.
+  Divisive normalization creates competitive weights per token.
+
+Step 4: SIGNAL INTEGRATION (NS-2: Inverse Effectiveness + NS-6: Precision Weighting)
+  Boost where student is weakest (inverse effectiveness).
+  Amplify reliable teachers (precision weighting).
+  Only integrate when P(same cause) high (causal inference).
+
+Step 5: WEIGHT REGULATION (NS-5: Homeostatic Scaling)
+  BCM sliding threshold prevents single-teacher dominance.
+  Synaptic scaling maintains target total KD influence.
+
+Step 6: LOSS COMPUTATION
+  Precision-weighted, IE-scaled, homeostasis-regulated KD loss + NTP loss.
+```
+
+**Cross-mechanism interactions:**
+
+| Interaction | Connection |
+|------------|-----------|
+| NS-3 -> NS-7 | NE modulates routing temperature in salience router |
+| NS-3 -> NS-5 | DA influences BCM threshold update rate |
+| NS-4 -> NS-1 | Critical period scheduler controls which teachers enter thalamic gate |
+| NS-1 -> NS-2 | Thalamic gate output feeds into integration |
+| NS-2 <-> NS-6 | IE and precision are complementary — different criteria for signal strength |
+| NS-5 -> NS-4 | Homeostatic regulation can extend/shorten effective critical periods |
+| NS-6 -> NS-3 | Precision estimates inform ACh (high precision = faster learning) |
+| NS-7 -> NS-1 | Salience computes the "drive" input to thalamic normalization |
+
+**Neuroscience vs Physics framing — complementary, not competing:**
+
+| Physics provides | Neuroscience provides |
+|-----------------|---------------------|
+| Frustration diagnostic (q_EA) | Real-time routing decisions (thalamic gate) |
+| Temperature math (free energy) | Developmental scheduling (critical periods) |
+| Optimal aggregation (Wasserstein) | Adaptive reliability tracking (precision) |
+| Phase transition detection | Global state modulation (neuromodulators) |
+| Multi-scale matching (RG) | Competitive weight regulation (BCM/homeostasis) |
+
+**The COMBINED system uses physics for mathematical foundations and neuroscience for control architecture.**
+
+### Key Papers (Neuroscience Section)
+
+**Thalamic Gating:**
+- Crick 1984: "Function of the thalamic reticular complex: the searchlight hypothesis"
+- Carandini & Heeger 2012: "Normalization as a canonical neural computation" (Nature Rev Neurosci)
+- Crabtree lab 2025 (bioRxiv): "A Dual Inhibitory Network in the TRN"
+- Halassa & Kastner 2017: "Thalamic functions in distributed cognitive control"
+
+**Multisensory Integration:**
+- Stein & Meredith 1993: "The Merging of the Senses"
+- Kording et al. 2007: "Causal Inference in Multisensory Perception" (PLoS One)
+- Ohshiro et al. 2011: "A Normalization Model of Multisensory Integration" (Nature Neurosci)
+- Ernst & Banks 2002: "Humans integrate visual and haptic information optimally" (Nature)
+- Bolhasani et al. 2026: "Computational Models of MSI with RNNs" (Adv Intell Syst)
+
+**Neuromodulation:**
+- Doya 2002: "Metalearning and neuromodulation" (Neural Networks)
+- Yu & Dayan 2005: "Uncertainty, neuromodulation, and attention" (Neuron)
+- Friston 2013: "Free Energy, Precision and Learning: Cholinergic Neuromodulation" (J Neurosci)
+- Nature Nov 2024: dopamine-serotonin opposition in learning
+
+**Critical Periods:**
+- Hensch 2004: "Critical period regulation" (Ann Rev Neurosci)
+- Toyoizumi et al. 2013: "Theory of Transition to Critical Period Plasticity" (PNAS)
+- Delrocq et al. 2025 (CCN): "Developmental plasticity rules facilitate representation learning"
+- Hooks & Chen 2020: "Critical period regulation across multiple timescales" (PNAS)
+- Nature Comms 2016: "Visual experience gates auditory cortex critical periods"
+
+**Synaptic Competition:**
+- Bienenstock, Cooper & Munro 1982: BCM theory (J Neurosci)
+- Turrigiano 2008: "The Self-Tuning Neuron: Synaptic Scaling" (Cell)
+- PNAS 2024: "Synapse-type-specific competitive Hebbian learning"
+- Nature Comms Biology 2025: "Extended temporal flexibility in STC"
+
+**Predictive Coding:**
+- Rao & Ballard 1999: "Predictive coding in visual cortex" (Nature Neurosci)
+- Friston 2005/2009: "Theory of Cortical Responses" / "Predictive coding under free-energy"
+- Sprevak 2024: "Introduction to Predictive Processing" (Topics Cogn Sci)
+
+**Attention and Salience:**
+- Itti & Koch 2000: "Saliency-based search mechanism" (Vision Research)
+- Desimone & Duncan 1995: "Neural mechanisms of selective visual attention"
+- Reynolds & Heeger 2009: "The Normalization Model of Attention" (Neuron)
+- eLife 2024: "Neural mechanisms of learned suppression"
+- Trends Cogn Sci 2025: "Attentional sampling resolves competition"
 
 ---
 
@@ -214,7 +2049,8 @@ Low-universality spans: route to best teacher (teachers disagree even at IR — 
 
 ### PM-2: Spin Glass Frustration / Teacher Disagreement
 
-**The physics:**
+#### (a) The Physics
+
 In a spin glass (e.g., Edwards-Anderson model), each spin interacts with its neighbors through random couplings J_ij that can be positive (ferromagnetic, "want to align") or negative (antiferromagnetic, "want to anti-align"). When a loop of spins has an odd number of negative couplings, no spin configuration can satisfy all interactions simultaneously — this is **frustration**.
 
 Key properties:
@@ -223,9 +2059,16 @@ Key properties:
 - **Edwards-Anderson order parameter**: q_EA = (1/N) sum_i <s_i>_t^2, where <s_i>_t is the time-average of spin i. Measures "how frozen" each spin is. In a ferromagnet, q_EA = 1 (all spins frozen in one direction). In a paramagnet, q_EA = 0 (all spins fluctuating). In a spin glass, 0 < q_EA < 1 (some spins frozen, some not).
 - **Overlap distribution P(q)**: For two replicas alpha and beta, the overlap q_ab = (1/N) sum_i s_i^alpha * s_i^beta measures how similar two solutions are. In a simple system, P(q) is a delta function (one solution). In a spin glass, P(q) is broad and structured (many diverse solutions). The shape of P(q) reveals the solution landscape.
 
-Recent work (arXiv:2407.20724, Jul 2024) directly applies spin glass theory to analyze neural network loss landscapes, using random walks in parameter space and hierarchical clustering to reveal Parisi-like RSB structure in trained DNNs.
+**Training destroys spin glass structure (Barney, Winer, Galitski 2024, arXiv:2408.06421):** A critical recent paper maps neural networks to Ising spin models (neurons → spins, weights → couplings) and tracks magnetic phases during training. Key finding: a randomly initialized network with independent random weights maps EXACTLY to a layered Sherrington-Kirkpatrick spin glass with RSB. But training DESTROYS the spin glass phase — the system transitions to a "hidden order" phase where the melting temperature grows as a power law in training time: T_melt ~ t^alpha. This means:
+- Pre-trained teachers have LEFT the spin glass phase — their internal representations have structured order
+- But when we combine signals from MULTIPLE trained teachers, the COMBINATION can re-enter a frustrated (spin-glass-like) state because each teacher's "hidden order" is different
+- The student faces a landscape that is neither pure spin glass (random) nor pure ferromagnet (all aligned) but a structured frustration where each teacher contributes a different ordered direction
 
-**Mapping to multi-teacher KD:**
+**Hierarchical RSB structure in DNN loss landscapes (Shao et al. 2024, arXiv:2407.20724):** Direct application of spin glass analysis to trained DNNs reveals Parisi-like RSB structure through random walks in parameter space + hierarchical clustering. This validates that solution spaces are indeed ultrametric (tree-structured), not flat.
+
+**Spin glass characterization via Hopfield models (Li 2025, arXiv:2508.07397):** Constructs Hopfield-type spin glass models from feedforward networks; overlaps between simulated replica samples serve as descriptors of the network's solution landscape.
+
+#### (b) Mapping to Multi-Teacher KD
 
 1. **Teacher disagreement = frustration**. When 4 teachers give conflicting signals on a byte span, the student faces a frustrated landscape — no single representation satisfies all teacher constraints simultaneously. This is EXACTLY the spin glass problem: the student's hidden state is the "spin," and each teacher's signal is a "coupling" that tries to pull it in a different direction.
 
@@ -238,9 +2081,13 @@ Recent work (arXiv:2407.20724, Jul 2024) directly applies spin glass theory to a
    - Using different exit depths for different teachers (the student's representation at depth 8 might align with Mamba, while depth 16 aligns with Qwen)
    - The exit surfaces in our architecture (depths 8, 16, 24) are literally different "replicas" that can explore different parts of solution space
 
-**Mathematical formulation:**
+4. **Hidden order → structured frustration lifecycle**: Per Barney et al., each teacher has transitioned from glass to hidden order during ITS training. But the multi-teacher KD landscape for the student is a SUPERPOSITION of these hidden orders. The student must either: (a) find a hidden order that is compatible with all teachers (possible when universality holds — PM-1), or (b) partition its representation space so different subspaces align with different teachers' orders (parameter partitioning), or (c) use exit surfaces to give each teacher its own "replica" (multi-depth matching).
 
-Define a span-level teacher agreement diagnostic (analogous to the Edwards-Anderson order parameter):
+5. **Gradient conflict as frustration**. The NeurIPS 2020 paper "Agree to Disagree" showed that in multi-teacher ensemble KD, gradients from different teachers can conflict — when distilling from an ensemble, gradients of all teachers do not always reach agreement, making it hard for students to choose learning directions. This is the gradient-space manifestation of spin glass frustration. Methods like PCGrad and Nash-MTL are effectively "frustration resolution" algorithms.
+
+#### (c) Mathematical Formulation
+
+**Span-level teacher agreement diagnostic (Edwards-Anderson KD order parameter):**
 
 ```
 For each byte span s, define:
@@ -254,24 +2101,32 @@ Interpretation:
   q_EA(s) ≈ 0: all teachers agree (ferromagnetic) → use consensus/barycenter
   q_EA(s) >> 0: teachers disagree (frustrated) → route to best or partition
 
-Overlap distribution (Parisi-style):
-  For each pair (i,j), compute q_ij(s) = p_i(s) . p_j(s) / (||p_i|| * ||p_j||)
-  The distribution P(q) over all spans and pairs reveals:
-    - Delta peak at q≈1: universal agreement (use any teacher)
-    - Bimodal: two camps of teachers (route by camp)
-    - Broad/flat: genuine ambiguity (downweight KD, trust NTP)
+Practical: compute on top-K=100 logits only (most mass concentrated there).
+Cost: K dot products on V=100 vectors per span. Negligible.
+```
+
+**Overlap distribution (Parisi-style) for structural diagnostics:**
+```
+For each pair (i,j), compute q_ij(s) = p_i(s) . p_j(s) / (||p_i|| * ||p_j||)
+The distribution P(q) over all spans and pairs reveals:
+  - Delta peak at q≈1: universal agreement (use any teacher)
+  - Bimodal: two camps of teachers (route by camp)
+  - Broad/flat: genuine ambiguity (downweight KD, trust NTP)
+
+Run this ONCE on validation set before training to understand teacher landscape.
+Repeat every 5K steps to track how frustration landscape evolves.
 ```
 
 **Frustration-aware routing rule:**
 ```
 For each span s:
-  If q_EA(s) < theta_consensus:
+  If q_EA(s) < theta_consensus:        # e.g., theta = 0.01
     Use Wasserstein barycenter of all teachers (PM-3 below)
     Full KD weight alpha
-  Elif q_EA(s) < theta_frustrated:
+  Elif q_EA(s) < theta_frustrated:      # e.g., theta = 0.1
     Route to teacher with lowest cross-entropy with student
     Reduced KD weight alpha * (1 - q_EA(s)/q_max)
-  Else (highly frustrated):
+  Else (highly frustrated):             # q_EA > 0.1
     Suppress KD entirely, use NTP only
     alpha = 0 (teacher signal is noise here)
 ```
@@ -286,23 +2141,51 @@ If Q forms a block-diagonal structure:
   Teachers naturally cluster into "camps" (like RSB basins)
   Within-camp consensus is strong → average within camps
   Between-camp disagreement is structural → route between camps
+
+Implementation: compute Q matrix once on validation set.
+  Q = torch.zeros(K, K)
+  for i, j in pairs:
+    Q[i,j] = cosine_similarity(teacher_i_logits, teacher_j_logits).mean()
+  clusters = hierarchical_clustering(1 - Q, method='ward')
 ```
 
-**Key papers:**
+**Gradient frustration index (per-step diagnostic):**
+```python
+# After computing per-teacher KD gradients g_1, ..., g_K:
+frustration_index = 0
+for i in range(K):
+    for j in range(i+1, K):
+        cos_sim = F.cosine_similarity(g_i.flatten(), g_j.flatten(), dim=0)
+        if cos_sim < 0:
+            frustration_index += abs(cos_sim)
+frustration_index /= (K * (K-1) / 2)
+
+# If frustration_index > threshold:
+#   Apply gradient surgery (PCGrad/GCond) or reduce KD weight
+# Log this metric — it reveals when teachers are pulling in opposite directions
+```
+
+#### (d) Key Papers
+
 - Edwards & Anderson 1975: spin glass order parameter
-- Parisi 1979: replica symmetry breaking solution
+- Parisi 1979: replica symmetry breaking solution (Nobel Prize 2021)
 - Sherrington & Kirkpatrick 1975: mean-field spin glass model
 - Mezard, Parisi, Virasoro 1987: "Spin Glass Theory and Beyond" (canonical reference)
 - Barra et al. 2018 (arXiv:1803.06442): RSB in bipartite spin glasses and neural networks
 - Agoritsas et al. 2023 (arXiv:2111.12997): replica symmetry breaking in dense neural networks
-- Shao et al. 2024 (arXiv:2407.20724): exploring loss landscapes through spin glass theory
-- ICLR 2023 "Agree to Disagree": ensemble diversity through controlled disagreement
+- **Barney, Winer, Galitski 2024 (arXiv:2408.06421): "Neural Networks as Spin Models: From Glass to Hidden Order Through Training"** — proves random init = SK glass, training destroys glass in favor of hidden order, power-law melting temperature
+- **Shao et al. 2024 (arXiv:2407.20724): "Exploring Loss Landscapes through the Lens of Spin Glass Theory"** — RSB-like hierarchical clustering in DNN solution spaces
+- **Li 2025 (arXiv:2508.07397): "A Spin Glass Characterization of Neural Networks"** — Hopfield construction, replica overlaps as network descriptors
+- NeurIPS 2020 "Agree to Disagree": ensemble KD in gradient space as multi-objective optimization
+- GCond 2025 (arXiv:2509.07252): gradient accumulation + adaptive arbitration for multi-task conflicts
+- Nash-MTL 2022 (ICML): Nash bargaining for multi-objective gradient combination
 
 ---
 
 ### PM-3: Wasserstein Barycenter Under Noisy/Conflicting Teachers
 
-**The physics:**
+#### (a) The Physics / Mathematics
+
 In optimal transport (OT) theory, the Wasserstein distance W_p measures the minimum "work" to transport one probability distribution into another. The Wasserstein barycenter of K distributions {mu_1, ..., mu_K} with weights {w_1, ..., w_K} is the distribution that minimizes:
 
 ```
@@ -317,15 +2200,25 @@ Key properties:
 - **Entropic regularization makes it tractable**: Adding an entropy penalty transforms the problem into one solvable by Sinkhorn iterations in O(n^2/epsilon^2). The doubly-regularized formulation (Chizat et al., arXiv:2303.11844, published 2025 in Foundations of Computational Mathematics) provides smooth densities, strong stability under perturbation of marginals, and convergence at rate n^{-1/2}.
 - **Robust barycenters**: Standard barycenters are sensitive to outliers. Robust variants (arXiv:2603.07563, Mar 2026) downweight contaminated/outlier distributions, exactly what we need when one teacher is wrong on a specific span.
 
-**Mapping to multi-teacher KD:**
+**Why not KL-averaging?** SinKD (arXiv:2402.17110) demonstrates that KL, RKL, and JS divergences suffer from mode-averaging, mode-collapsing, and mode-underestimation respectively. The Sinkhorn distance avoids all three by considering the geometric structure of the probability simplex. For multi-teacher consensus, this problem is amplified: averaging K peaked distributions with KL creates K spurious modes.
 
-1. **Teacher consensus as barycenter**. When multiple teachers agree on a span, their "consensus distribution" should be the Wasserstein barycenter of their output distributions — not their arithmetic mean. The arithmetic mean of two peaked distributions at different locations creates a bimodal mess. The Wasserstein barycenter creates a single peaked distribution at the "center" while preserving sharpness.
+**Wasserstein in dataset distillation (ICCV 2025):** The WMDD paper demonstrates Wasserstein barycenters for computing "essential characteristics" of data distributions — conceptually identical to computing teacher consensus.
+
+**Teacher-Assisted Wasserstein KD (TARec, WWW 2025):** Uses Wasserstein distance as the KD metric (replacing KL) and shows it provides stable gradient flow even with significant teacher-student capacity gaps. Directly validates OT as a KD distance measure.
+
+#### (b) Mapping to Multi-Teacher KD
+
+1. **Teacher consensus as barycenter**. When multiple teachers agree on a span, their "consensus distribution" should be the Wasserstein barycenter of their output distributions — not their arithmetic mean.
 
 2. **Robust barycenters for noisy teachers**. Some teachers will be wrong on specific spans (Mamba might struggle with local syntax, Qwen might struggle with very long-range dependencies). The robust barycenter naturally downweights outlier teacher distributions, providing automatic "soft routing" even without an explicit router.
 
 3. **Connection to our existing OT infrastructure**. We already identified OT as a cross-tokenizer alignment tool (MultiLevelOT, SinKD). The barycenter extends OT from pairwise alignment (teacher→student) to multi-way consensus (teachers→consensus→student).
 
-**Mathematical formulation for Ekalavya:**
+4. **Cost matrix encodes semantic geometry**. The cost matrix C in OT is where domain knowledge enters. Using C_jk = ||embed_j - embed_k||^2 (embedding distance) means the barycenter respects semantic similarity — transporting mass from "cat" to "kitten" is cheaper than "cat" to "algebra."
+
+5. **Barycenter as a "virtual teacher"**. The consensus barycenter is effectively a virtual (K+1)-th teacher that integrates information from all K real teachers. The student distills from this virtual teacher, not from individuals. This reduces multi-teacher KD to single-teacher KD with a better teacher.
+
+#### (c) Mathematical Formulation
 
 ```
 Given K teacher logit distributions on span s:
@@ -359,52 +2252,93 @@ Step 3: Robust trimming
     (teacher i is an outlier on this span — exclude from consensus)
 
 Step 4: KD loss
-  L_bary(s) = KL(student(s) || bar(p)(s))  # student matches consensus, not individual teachers
+  L_bary(s) = KL(student(s) || bar(p)(s))  # student matches consensus
+  OR (better):
+  L_bary(s) = OT_epsilon(student(s), bar(p)(s))  # OT all the way — avoids KL's mode problems
 ```
 
-**Practical approximation for 24GB GPU budget:**
-
-Full Sinkhorn on V=16K vocabulary per span is expensive. Approximations:
-1. **Top-K truncation**: Only compute barycenter over top-K=100 tokens from union of all teachers' top predictions. Most probability mass is concentrated there.
-2. **Pre-computed offline**: For offline logit storage, compute barycenters once during preprocessing, not during training.
-3. **1D Wasserstein**: For sorted logit vectors, 1D Wasserstein has a closed-form solution (just sort and average quantiles). Much cheaper than full OT.
+**Three practical approximations ranked by cost:**
 
 ```
-1D Wasserstein barycenter (closed-form):
+OPTION A: 1D Wasserstein barycenter (CHEAPEST — O(V log V))
   Sort each teacher's logit vector: z_i_sorted
   bar(z)_sorted = sum_i w_i * z_i_sorted  (weighted average of quantile functions)
   Unsort using average permutation
+  PROS: closed-form, differentiable, no iterations
+  CONS: ignores semantic cost structure (treats all tokens as equidistant)
+  USE WHEN: quick and dirty, or when cost matrix is approximately identity
+
+OPTION B: Top-K truncated Sinkhorn (MODERATE — O(K^2 * N_iter))
+  Keep only top-K=100 tokens from union of all teachers' top predictions
+  Run Sinkhorn on (100 x 100) cost matrix (embedding distances between top-K tokens)
+  N_iter = 10-20 sufficient for epsilon = 0.1
+  PROS: respects semantic geometry, small matrix
+  CONS: truncation loses tail information
+  USE WHEN: online training with moderate compute budget
+
+OPTION C: Pre-computed offline barycenters (ZERO training cost)
+  During preprocessing: for each training sample, compute full barycenter from stored logits
+  Store barycenter as additional "virtual teacher" logits
+  During training: distill from pre-computed barycenter like single-teacher KD
+  PROS: zero runtime overhead, can use full Sinkhorn offline
+  CONS: static (doesn't adapt to student state), storage cost
+  USE WHEN: offline logit mode (which we may need anyway for 4 teachers on 24GB)
 ```
 
-This is O(V log V) instead of O(V^2) for full Sinkhorn — feasible in the training loop.
+**Cost matrix design for language modeling:**
+```python
+# Option 1: Embedding distance (semantic) — most practical for 16K BPE
+C_embed = torch.cdist(token_embeddings, token_embeddings, p=2) ** 2
+# Pre-compute once, cache as (16K, 16K) float16 tensor (~512MB).
+# For top-K=100 truncation: slice C to (100, 100) per sample.
 
-**Key papers:**
+# Option 2: Co-occurrence PMI (statistical)
+C_pmi = -PMI_matrix  # tokens that co-occur are "close"
+
+# Option 3: BPE merge tree distance (structural)
+C_hier = tree_distance(bpe_merge_tree)
+```
+
+#### (d) Key Papers
+
 - Agueh & Carlier 2011 (SIAM): Barycenters in the Wasserstein Space (foundational)
 - Cuturi & Doucet 2014 (ICML): Fast Computation of Wasserstein Barycenters (Sinkhorn)
-- Chizat et al. 2023/2025 (arXiv:2303.11844, FoCM): Doubly Regularized Entropic WB
+- **Chizat et al. 2023/2025 (arXiv:2303.11844, FoCM 2025): Doubly Regularized Entropic WB** — smooth densities, n^{-1/2} convergence, globally convergent algorithms
 - Robust WB (arXiv:2603.07563, Mar 2026): robustness to outlier distributions
-- SinKD 2024 (arXiv:2402.17110): Sinkhorn distance for KD (pairwise, not barycenter)
-- MultiLevelOT 2024 (arXiv:2412.14528, AAAI 2025): OT for cross-tokenizer KD
+- **SinKD 2024 (arXiv:2402.17110): Sinkhorn distance for KD** — demonstrates OT beats KL/RKL/JS for pairwise KD
+- **MultiLevelOT 2024 (arXiv:2412.14528, AAAI 2025): OT for cross-tokenizer KD** — token + sequence level alignment via Sinkhorn
+- **TARec (WWW 2025): Teacher-Assisted Wasserstein KD** — Wasserstein as KD metric, stable gradients under capacity gap
+- **WMDD (ICCV 2025): Dataset Distillation via Wasserstein Metric** — barycenters for essential distribution characteristics
+- COT2Align (arXiv:2502.16806): OT alignment for cross-tokenizer chain-of-thought distillation
+- DSKD-CMA (arXiv:2603.22056): dual-space KD with cross-model attention for vocabulary mismatch
+- NeurIPS 2023: Computational Guarantees for Doubly Entropic WB — convergence proofs
 
 ---
 
 ### PM-4: Phase Transitions and Critical Phenomena in Multi-Teacher Training
 
-**The physics:**
+#### (a) The Physics
+
 At a phase transition, a system undergoes a qualitative change in behavior. Key concepts:
-- **First-order transitions**: discontinuous jump in order parameter (like ice→water). Latent heat. Coexistence of phases. Hysteresis.
+- **First-order transitions**: discontinuous jump in order parameter (like ice to water). Latent heat. Coexistence of phases. Hysteresis.
 - **Second-order (continuous) transitions**: order parameter changes continuously but its derivative diverges. Power-law correlations. Critical slowing down. Universality classes.
 - **Critical slowing down**: Near a phase transition, the system's relaxation time diverges — it takes infinitely long to equilibrate. The system becomes "indecisive" between phases.
 - **Symmetry breaking**: above the critical temperature, the system is symmetric (paramagnetic — spins point randomly). Below, symmetry breaks (ferromagnetic — spins align). The symmetry-broken phase has lower entropy but more structure.
+- **Critical exponents and scaling**: Near a continuous transition, observables follow power laws. The correlation length xi ~ |T - T_c|^{-nu}, the susceptibility chi ~ |T - T_c|^{-gamma}, etc. The exponents (nu, gamma, etc.) are UNIVERSAL — they depend only on dimensionality and symmetry class, not on microscopic details.
 
-Grokking is now understood as a bona fide phase transition in learning:
-- **First-order interpretation** (ICLR 2024, arXiv:2310.03789): grokking maps to a first-order phase transition between competing basins (memorization vs generalization). The transition involves coexistence of both phases and a sharp jump.
+**Grokking as a genuine phase transition** — multiple independent confirmations:
+- **First-order interpretation** (ICLR 2024, arXiv:2310.03789): grokking maps to a first-order phase transition between competing basins (memorization vs generalization). The transition involves coexistence of both phases and a sharp jump. Exact analytic expressions for critical exponents, grokking probability, and grokking time distribution.
 - **Singular learning theory** (arXiv:2603.01192, Mar 2026): grokking is a phase transition between competing basins in the loss landscape, analyzed via RLCT (real log canonical threshold) transitions.
-- **Rate-distortion framing** (ScienceDirect 2025): complexity rises during memorization, then DROPS sharply as the network discovers a simpler generalizing pattern. The phase transition is the complexity collapse.
+- **Rate-distortion framing** (Gromov, ScienceDirect 2025): complexity rises during memorization, then DROPS sharply as the network discovers a simpler generalizing pattern. The phase transition is the complexity collapse. Explicit connection between complexity measures and generalization bounds.
+- **Phase diagrams** (JMLR 2025, arXiv:2210.15435): four-phase diagrams containing comprehension, grokking, memorization, and confusion, depending on decoder capacity and learning speed.
 
-**Critical finding for Ekalavya** (arXiv:2511.04760, Nov 2025): KD from a grokked model can INDUCE and ACCELERATE grokking in a student, even when the student's data is BELOW the critical threshold for spontaneous grokking. KD removes the phase transition barrier without extra data. This is the most direct evidence that KD can trigger qualitative learning transitions, not just quantitative speedups.
+**Universal scaling laws in DNNs (Phys. Rev. Research 2025, arXiv:2307.02284):** DNNs operating near the edge of chaos exhibit universal scaling laws of absorbing phase transitions in nonequilibrium statistical mechanics. MLPs belong to the mean-field universality class, CNNs to the directed percolation class. Finite-size scaling successfully applied — suggesting a connection to the depth-width trade-off. This means phase transition behavior in training is NOT a metaphor — it is governed by the same mathematical framework as phase transitions in physical systems.
 
-**Mapping to multi-teacher KD:**
+**KD induces grokking below threshold (arXiv:2511.04760, Nov 2025):** KD from a grokked model can INDUCE and ACCELERATE grokking in a student, even when the student's data is BELOW the critical threshold for spontaneous grokking. KD removes the phase transition barrier without extra data. Moreover, distilling from models grokked on DIFFERENT distributions enables generalization where standard supervised training fails. This is the most direct evidence that KD can trigger qualitative learning transitions, not just quantitative speedups.
+
+**Anti-grokking (arXiv:2512.00686):** A phase where after a period of perfect test accuracy, the model's generalization COLLAPSES despite perfect training accuracy. This is the OPPOSITE transition — and understanding it is critical for training stability. If KD can trigger grokking, it might also risk triggering anti-grokking if the teacher signal is wrong.
+
+#### (b) Mapping to Multi-Teacher KD
 
 1. **KD as phase-transition catalyst**. The student's learning dynamics may have phase transitions — sudden jumps in capability when the right combination of teacher signals aligns. Multi-teacher KD provides more "directions" of information, making it more likely to trigger a transition. Single-teacher KD provides a rank-1 perturbation; multi-teacher provides a higher-rank perturbation of the loss landscape.
 
@@ -416,11 +2350,20 @@ Grokking is now understood as a bona fide phase transition in learning:
 
 3. **Symmetry breaking via teacher diversity**. Multiple diverse teachers (transformer + SSM + hybrid + encoder) break different symmetries in the student's loss landscape. A single teacher might leave certain symmetries intact (the student finds a solution that matches the teacher but ignores structure the teacher doesn't signal). Multiple diverse teachers break more symmetries, constraining the student to a more structured solution.
 
-**Mathematical formulation:**
+4. **Phase diagram for multi-teacher KD**. By analogy with the four-phase grokking diagram, multi-teacher KD may have its own phase structure:
+   - **Absorption phase**: student successfully integrates all teacher signals, generalization improves
+   - **Confusion phase**: too many conflicting signals, student performance degrades (frustrated spin glass)
+   - **Selective phase**: student grokks one teacher's knowledge, ignores others
+   - **Memorization phase**: student memorizes teacher outputs without generalizing
+   The transitions between these depend on: teacher agreement (PM-2), temperature (PM-5), and learning rate. Mapping this phase diagram empirically would be highly informative.
 
-Phase transition detection during training:
+5. **Multi-teacher KD as higher-rank perturbation inducing grokking**. The arXiv:2511.04760 result shows single-teacher KD can induce grokking. Multi-teacher KD from diverse architectures provides a higher-rank perturbation of the loss landscape. The conjecture: diverse multi-teacher KD can induce grokking on tasks where single-teacher KD cannot, because the richer signal landscape breaks more symmetries.
+
+#### (c) Mathematical Formulation
+
+**Phase transition detection during training (5 diagnostic quantities):**
 ```
-Monitor these order-parameter-like quantities at each eval checkpoint:
+Monitor at each eval checkpoint:
 
 1. Loss variance (susceptibility analog):
    chi(t) = Var_batches[L(t)]
@@ -442,33 +2385,69 @@ Monitor these order-parameter-like quantities at each eval checkpoint:
    kappa(t) = || d^2 L_KD / d theta^2 ||  (Hessian spectral norm of KD loss)
    At a phase transition, the Hessian has near-zero eigenvalues (flat directions).
    Practical: monitor top-5 eigenvalues via Lanczos. If smallest drops below 1e-6, approaching transition.
+
+5. Per-teacher KD loss divergence rate:
+   d_i(t) = L_KD_teacher_i(t) - L_KD_teacher_i(t-delta)
+   If sign(d_i) flips rapidly across teachers, the student is oscillating between basins.
+   Practical: track sign changes of d_i over last 100 steps. > 10 sign changes = instability.
 ```
 
-Phase-transition-aware KD scheduling:
+**Phase-transition-aware KD scheduling:**
 ```
 If chi(t) > 3 * chi(t-1):  # near phase transition
-  Freeze KD weights for next N steps
+  Freeze KD weights for next N steps (e.g., N = 500)
   Reduce learning rate by 0.5x (don't push through — let the transition complete)
   Log: "possible phase transition at step t"
 
 If effective_rank jumps > 20% in one eval:  # transition happened
   Increase KD weight (the student's new representation may be more receptive)
   Re-evaluate per-teacher q_EA — the frustration landscape changed
+  Reset temperature schedule (PM-5) — the student may now benefit from sharper signal
+
+If sign_changes > 10 in last 100 steps:  # anti-grokking risk
+  Reduce KD weight by 50% immediately
+  Check if one teacher is dominating gradients
+  Consider removing the most disagreeable teacher temporarily
 ```
 
-**Key papers:**
+**Grokking-inducing KD intensity schedule (derived from arXiv:2511.04760):**
+```
+# The insight: KD can push through phase barriers.
+# But you don't want to push THROUGH a transition — you want to ENABLE it.
+# Strategy: ramp KD intensity to the threshold, then hold steady.
+
+alpha_kd(t) = alpha_max * sigmoid((t - t_onset) / tau_ramp)
+
+# t_onset: when to start ramping (after student has basic representations)
+# tau_ramp: how quickly to ramp (slow enough to not cause instability)
+# alpha_max: maximum KD weight (determined by frustration level from PM-2)
+
+# Monitor for grokking signatures:
+#   - complexity (measured by description length) starts dropping
+#   - train accuracy saturated but test accuracy suddenly jumps
+# When detected: MAINTAIN current alpha, don't increase further
+```
+
+#### (d) Key Papers
+
 - Power et al. 2022 (NeurIPS): "Grokking: Generalization Beyond Overfitting on Small Algorithmic Datasets"
-- Liu et al. 2024 (ICLR): "Grokking as a First Order Phase Transition in Two Layer Networks"
-- Levi et al. 2026 (arXiv:2603.01192): "Grokking as a Phase Transition between Competing Basins" (SLT)
-- Huang et al. 2025 (arXiv:2511.04760): "When Data Falls Short: Grokking Below the Critical Threshold" (KD induces grokking)
+- **Liu et al. 2024 (ICLR, arXiv:2310.03789): "Grokking as a First Order Phase Transition"** — exact analytic expressions for critical exponents
+- **Levi et al. 2026 (arXiv:2603.01192): "Grokking as a Phase Transition between Competing Basins"** (SLT analysis)
+- **Huang et al. 2025 (arXiv:2511.04760): "When Data Falls Short: Grokking Below the Critical Threshold"** — KD induces grokking, cross-distribution transfer
 - Gromov 2025 (ScienceDirect): "The complexity dynamics of grokking" (rate-distortion phase transition)
 - Levi et al. 2026 (arXiv:2603.24746): "Grokking as a Falsifiable Finite-Size Transition"
+- **Raju et al. 2025 (Phys. Rev. Research, arXiv:2307.02284): "Universal Scaling Laws of Absorbing Phase Transitions in DNNs"** — MLPs = mean-field class, CNNs = directed percolation class
+- **Ghavasieh 2025 (arXiv:2512.00168): "Tuning Universality in DNNs"** — activation functions select universality class
+- JMLR 2025 (arXiv:2210.15435): "Grokking Phase Transitions in Learning Local Rules" — four-phase diagrams
+- arXiv:2512.00686: "Using Singular Learning Theory to understand grokking & other phase transitions" — anti-grokking risk
+- Lee et al. 2024 (arXiv:2405.20233): "Grokfast: Accelerated Grokking by Amplifying Slow Gradients"
 
 ---
 
 ### PM-5: Free Energy, Temperature, and Thermodynamic KD
 
-**The physics:**
+#### (a) The Physics
+
 A system in thermal equilibrium minimizes the Helmholtz free energy:
 
 ```
@@ -485,12 +2464,18 @@ KL(q || p_T) = (1/T) * [E_q[H] - T*S(q)] - F(T)/T = (1/T) * [F_q - F(T)]
 
 So minimizing KL(q || p_T) is EXACTLY minimizing the free energy of q. The connection to KD is immediate: the soft-label loss KL(student || teacher/T) IS a free energy minimization, with the teacher's logits playing the role of the Hamiltonian and T playing the role of temperature.
 
+**SGD itself IS free energy minimization (Sadrtdinov et al. 2025, arXiv:2505.23489):** A landmark recent paper proves that SGD under fixed learning rates implicitly minimizes F = U - TS, where U is training loss, S is entropy of the weight distribution, and T is determined by the learning rate. This means:
+- High learning rate = high temperature = SGD explores broadly
+- Low learning rate = low temperature = SGD converges sharply
+- The learning rate IS the temperature, from first principles
+- This provides a unified thermodynamic framework: both the KD temperature and the optimizer's learning rate are temperatures in the same free energy. They interact: total effective temperature = T_KD * T_LR. Changing one without accounting for the other is thermodynamically inconsistent.
+
 Connections:
 - **Hinton et al. 2015 KD**: the temperature parameter in softmax(z/T) literally IS the statistical physics temperature. This was noted by Hinton but never deeply exploited.
 - **Variational inference**: minimizing KL(q || p) is variational free energy minimization. The ELBO (Evidence Lower BOund) = -F_q. KD is a specific case of variational inference where the "posterior" is the teacher's distribution.
 - **Simulated annealing**: start at high T (broad exploration), gradually cool to low T (sharp exploitation). Applied to KD: start with high temperature (smooth teacher distributions, easy to match) and anneal to low temperature (sharp teacher distributions, harder but more informative).
 
-**Mapping to multi-teacher KD:**
+#### (b) Mapping to Multi-Teacher KD
 
 1. **Per-teacher temperature = per-teacher free energy landscape**. Each teacher defines a different "Hamiltonian" (logit landscape). The temperature controls how much of each teacher's landscape the student explores:
    - High T for teacher i: student sees teacher i's broad distributional structure (which tokens are roughly similar)
@@ -516,54 +2501,104 @@ where H_i(x) = -log p_teacher_i(x)  (teacher i's "energy" for token x)
 
 This decomposes the multi-teacher KD objective into energy (matching teachers) and entropy (maintaining diversity/exploration). The temperature explicitly controls the tradeoff. At high T, the entropy term dominates and the student maintains a broad distribution. At low T, the energy terms dominate and the student sharpens to match teacher preferences.
 
-**Mathematical formulation for Ekalavya:**
+4. **Coordinated temperature: KD temperature x LR temperature**. Per Sadrtdinov et al. 2025, the learning rate is also a temperature. The total effective temperature of the training system is T_eff ~ T_KD * eta (where eta = learning rate). This means:
+   - When LR is high (warmup, early training), KD temperature should be moderate — the optimizer already provides exploration
+   - When LR drops (cosine decay, WSD), KD temperature should increase temporarily to compensate for reduced exploration
+   - At the end of WSD (very low LR), KD temperature should also be low — both temperatures cooling in coordination
+   - This is a TESTABLE prediction: does coordinating T_KD with eta improve over independent scheduling?
 
+5. **Alpha-divergence as a temperature on the divergence itself**. The KL divergence is alpha=1 in the alpha-divergence family. Using alpha != 1 changes the effective geometry of the divergence:
+   - alpha -> 0: mode-covering (student must cover ALL teacher probability mass — high effective T)
+   - alpha = 1: standard KL (balanced)
+   - alpha -> infinity: mode-seeking (student concentrates on teacher's PEAK — low effective T)
+   AMID (2025) shows alpha in [0.2, 0.7] outperforms standard KL for LLMs. This is thermodynamically interpretable: the optimal "temperature" of the divergence itself is less than 1 — slightly mode-covering is better than balanced.
+
+#### (c) Mathematical Formulation
+
+**Per-teacher adaptive temperature:**
 ```
-Per-teacher adaptive temperature:
-  T_i(s, t) = T_base(t) * (1 + beta * H(p_i(s)))
-  where H(p_i(s)) = entropy of teacher i's distribution on span s
-  Intuition: uncertain teachers (high H) get higher effective temperature
-             confident teachers (low H) get lower effective temperature
+T_i(s, t) = T_base(t) * (1 + beta * H(p_i(s)))
+where H(p_i(s)) = entropy of teacher i's distribution on span s
+Intuition: uncertain teachers (high H) get higher effective temperature
+           confident teachers (low H) get lower effective temperature
+beta = 0.5 (tunable — controls sensitivity to teacher confidence)
+```
 
-Temperature annealing schedule:
-  T_base(t) = T_max * (T_min/T_max)^(t/t_total)  # geometric cooling
-  T_max = 4.0 (initial: broad exploration)
-  T_min = 1.0 (final: sharp matching)
+**Temperature annealing schedules (three options):**
+```
+# Option 1: Geometric cooling (simulated annealing classic)
+T_base(t) = T_max * (T_min/T_max)^(t/t_total)
+T_max = 4.0, T_min = 1.0
 
-Multi-teacher free energy loss:
-  L_free(s) = sum_i w_i * KL(p_student(s) || softmax(z_i(s) / T_i(s,t)))
-            = sum_i w_i * [ (1/T_i) * CE(p_student, p_i^{T_i}) + log Z_i(T_i) - S(p_student)/T_i ]
+# Option 2: Curriculum Temperature (CTKD, AAAI 2023)
+# Learnable temperature that increases difficulty over time
+T_base(t) = T_init - lambda * sigmoid(learnable_param(t))
+# lambda and learnable_param trained jointly with KD loss
 
-Simplified (Hinton-style with per-teacher T):
-  L_free(s) = sum_i w_i * T_i^2 * KL(softmax(z_student/T_i) || softmax(z_i/T_i))
+# Option 3: Dynamic Temperature Scheduler (DTS, arXiv:2511.13767)
+# Temperature decays proportional to teacher-student CE gap
+T_base(t) = T_min + (T_max - T_min) * exp(-gamma * gap(t))
+gap(t) = CE_teacher(t) - CE_student(t)
+# When gap is large: high T (teacher is far ahead, smooth signal)
+# When gap is small: low T (student has caught up, sharpen signal)
+```
+
+**Coordinated KD-LR temperature (novel, derived from arXiv:2505.23489):**
+```
+# T_effective = T_KD * f(eta)
+# where f(eta) ~ sqrt(eta * B / N) for SGD (B=batch, N=dataset)
+#
+# To keep T_effective constant during LR decay:
+T_KD(t) = T_target / f(eta(t))
+#
+# During WSD linear decay from eta_peak to eta_min:
+eta(t) = eta_peak * (1 - (t - t_wsd_start) / (t_total - t_wsd_start))
+T_KD(t) = T_target * sqrt(N / (eta(t) * B))
+#
+# This INCREASES T_KD as LR drops — compensating for reduced exploration.
+# At the very end (eta → eta_min), both cool to low temperature.
+#
+# Fallback: if this is too complex, just use:
+T_KD(t) = T_base * (eta_peak / eta(t))^0.25  # mild compensation
+```
+
+**Multi-teacher free energy loss (Hinton-style with per-teacher T):**
+```
+L_free(s) = sum_i w_i * T_i^2 * KL(softmax(z_student/T_i) || softmax(z_i/T_i))
 
 The T^2 factor (from Hinton 2015) ensures gradient magnitudes scale correctly with temperature.
 ```
 
-**Connection to alpha-divergence (AMID, arXiv 2025):**
-The KL divergence is a special case of the alpha-divergence D_alpha. Using alpha != 1 changes the effective "temperature" of the divergence:
-- alpha → 0: mode-covering (high effective T, student covers all teacher modes)
-- alpha → 1: standard KL (student matches teacher's peaks)
-- alpha → infinity: mode-seeking (low effective T, student commits to teacher's sharpest peak)
+**TTM decomposition (Transformed Teacher Matching):**
+```
+# TTM proves: temperature-scaled KD = standard KD + Renyi entropy regularization
+# KL(softmax(z_s/T) || softmax(z_t/T)) = KL(softmax(z_s) || softmax(z_t/T)) + R_alpha(z_s)
+# where R_alpha is a Renyi entropy term that penalizes overconfident student outputs
+# alpha = (T-1)/T
+#
+# Implication: per-teacher T is ALSO per-teacher regularization strength.
+# High T_i = strong regularization (soft student outputs) when matching teacher i.
+# Low T_i = weak regularization (sharp student outputs) when matching teacher i.
+```
 
-Recent work (AMID, ABKD) shows alpha-divergence KD with alpha in [0.2, 0.7] outperforms standard KL for LLMs. This is thermodynamically interpretable: the optimal "temperature" of the divergence itself is not 1.
+#### (d) Key Papers
 
-The Transformed Teacher Matching (TTM) paper proved that temperature-based KD is theoretically equivalent to KD + Renyi entropy regularization, providing an information-theoretic decomposition of the temperature effect.
-
-**Key papers:**
 - Hinton, Vinyals, Dean 2015: "Distilling the Knowledge in a Neural Network" (T as temperature)
+- **Sadrtdinov et al. 2025 (arXiv:2505.23489): "SGD as Free Energy Minimization"** — proves LR is temperature, F=U-TS framework for SGD
 - Jafari et al. 2021 (EACL): "Annealing Knowledge Distillation" (simulated annealing for KD)
+- **Li et al. 2023 (AAAI, arXiv:2211.16231): "Curriculum Temperature for KD" (CTKD)** — learnable, difficulty-increasing temperature
 - Li et al. 2024 (arXiv:2404.12711): "Dynamic Temperature Knowledge Distillation"
-- Chen et al. 2025 (arXiv:2511.13767): "Dynamic Temperature Scheduler for Knowledge Distillation"
-- Wen et al. 2024 (arXiv:2402.11148): "Transformed Teacher Matching" (KD = KD + Renyi entropy)
-- AMID 2025 (OpenReview): alpha-divergence KD for LLMs
-- ABKD 2024 (arXiv:2404.xxxxx): alpha-beta divergence allocation in KD
+- **Chen et al. 2025 (arXiv:2511.13767): "Dynamic Temperature Scheduler for KD" (DTS)** — gap-aware temperature scheduling
+- **Wen et al. 2024 (arXiv:2402.11148): "Transformed Teacher Matching"** — proves KD with T = KD + Renyi entropy regularization
+- **AMID 2025 (OpenReview): alpha-mixture distillation for LLMs** — alpha in [0.2, 0.7] beats KL
+- ICLR 2025 Blogpost: "On LLM Knowledge Distillation — Forward KL vs Reverse KL" — mode-seeking vs mode-covering analysis
+- ABKD 2024: alpha-beta divergence allocation in KD
 
 ---
 
 ### Integration: How the 5 Mechanisms Compose in Ekalavya
 
-The five physics mechanisms are not independent — they form a coherent system:
+The five physics mechanisms are not independent — they form a coherent system with well-defined interactions:
 
 ```
 EKALAVYA PHYSICS-INFORMED PIPELINE:
@@ -571,6 +2606,7 @@ EKALAVYA PHYSICS-INFORMED PIPELINE:
 1. MEASURE (PM-2: Spin Glass)
    For each byte span s, compute q_EA(s) and pairwise overlaps q_ij(s).
    Classify span as: CONSENSUS (q_EA < theta_1) / ROUTABLE (theta_1 < q_EA < theta_2) / FRUSTRATED (q_EA > theta_2)
+   Also compute gradient frustration index across teacher KD gradients.
 
 2. ROUTE (PM-1: RG + PM-2: Frustration)
    CONSENSUS spans → Wasserstein barycenter (PM-3)
@@ -578,38 +2614,399 @@ EKALAVYA PHYSICS-INFORMED PIPELINE:
    FRUSTRATED spans → suppress KD, trust NTP only
 
    RG schedule: UV surfaces (depth 8,16) weighted early → IR surface (depth 24) weighted late
+   Universality test: at IR level (logits), all teachers should agree regardless of architecture.
+                       at UV level (states), architecture-specific signal is valuable.
 
 3. AGGREGATE (PM-3: Wasserstein Barycenter)
    For CONSENSUS spans: compute robust barycenter of teacher distributions
    Outlier teachers (transport cost > threshold) auto-excluded
    Use 1D Wasserstein approximation for efficiency (O(V log V))
+   Cost matrix from token embedding distances (semantic geometry)
 
 4. TEMPER (PM-5: Free Energy)
    Per-teacher adaptive temperature: uncertain teachers get higher T
    Global annealing: T_base decays from 4.0 → 1.0 over training
+   Coordinated with LR schedule: T_KD compensates for LR-induced temperature changes
    KD loss = multi-teacher free energy with temperature-scaled divergences
+   Consider alpha-divergence (alpha ~0.5) instead of pure KL
 
 5. MONITOR (PM-4: Phase Transitions)
-   Track loss variance, gradient autocorrelation, representation rank
-   If phase transition detected: freeze KD weights, reduce LR
-   If transition completes: re-evaluate frustration landscape, increase KD weight
+   Track loss variance, gradient autocorrelation, representation rank, per-teacher sign changes
+   If phase transition detected: freeze KD weights, reduce LR, let transition complete
+   If transition completes: re-evaluate frustration landscape, increase KD weight, reset T schedule
+   If anti-grokking risk (sign oscillation): reduce KD weight, consider teacher removal
 
 Total additional compute per step (estimated):
-  q_EA computation: ~0.01 GFLOP (K dot products on M=16 span vectors)
+  q_EA computation: ~0.01 GFLOP (K dot products on top-100 logit vectors)
   1D Wasserstein barycenter: ~0.05 GFLOP (K sorts of top-100 logits)
   Phase transition monitoring: ~0.02 GFLOP (variance + autocorrelation)
-  Total: ~0.08 GFLOP overhead — negligible vs forward/backward pass
+  Gradient frustration: ~0.01 GFLOP (K*(K-1)/2 cosine similarities)
+  Total: ~0.09 GFLOP overhead — negligible vs forward/backward pass (~15 GFLOP for 197M model)
 ```
+
+**Cross-mechanism interactions (the coherent system):**
+
+| Interaction | How they connect |
+|------------|-----------------|
+| PM-2 → PM-3 | Frustration diagnostic determines WHETHER to compute barycenter (only for consensus spans) |
+| PM-2 → PM-1 | Frustration level determines which DEPTH to match (frustrated at IR → route at UV instead) |
+| PM-1 → PM-5 | RG scale schedule coordinates with temperature schedule (UV needs high T, IR needs low T) |
+| PM-4 → PM-2 | Phase transitions change the frustration landscape (re-measure q_EA after transitions) |
+| PM-4 → PM-5 | Phase transitions require temperature response (freeze T during transition, reset after) |
+| PM-5 → PM-3 | Temperature affects the barycenter computation (teacher distributions at T vs at T=1) |
+| PM-5 → PM-4 | Coordinated T_KD-LR schedule affects phase transition timing and probability |
 
 **What makes this novel:**
 Individual pieces (OT for KD, temperature scheduling, gradient conflict resolution) exist in prior art. The novel integration is:
-1. Spin-glass frustration diagnostic driving routing decisions
-2. RG-inspired temporal scheduling of multi-depth matching
+1. Spin-glass frustration diagnostic (q_EA) driving routing decisions — no published KD system uses this
+2. RG-inspired temporal scheduling of multi-depth matching with universality test
 3. Robust Wasserstein barycenters (not arithmetic means) for multi-teacher consensus
-4. Phase-transition monitoring as a training stability mechanism
+4. Phase-transition monitoring as a training stability mechanism with anti-grokking detection
 5. Free-energy framing unifying temperature, divergence choice, and exploration-exploitation
+6. Coordinated KD-temperature and LR-temperature scheduling (from thermodynamic first principles)
+7. The 5 mechanisms have well-defined INTERACTIONS, not just parallel existence
 
-No published system combines these five mechanisms. The physics analogies provide not just metaphors but ACTIONABLE MATH — every mechanism above has a concrete formula implementable in PyTorch.
+---
+
+### PM-6: Quantum Superposition, Decoherence, and Measurement (Soft-to-Hard Routing)
+
+#### (a) The Physics
+
+In quantum mechanics, a system exists in a **superposition** of states until "measured," at which point the wavefunction collapses to a definite eigenstate. Modern physics (Zurek, decoherence program) replaces "collapse" with a physical process: **decoherence** and **einselection** (environment-induced superselection).
+
+Key concepts:
+
+- **Superposition**: |psi> = sum_i c_i |i>. System is in a weighted combination of basis states.
+
+- **Density matrix**: rho = sum_i p_i |psi_i><psi_i|. Off-diagonal rho_ij = **coherences** (interference terms). On-diagonal rho_ii = **populations** (classical probabilities).
+
+- **Decoherence**: Interaction with environment causes off-diagonal elements to decay: rho_ij(t) ~ rho_ij(0) * exp(-t/tau_d). System transitions from quantum to classical behavior.
+
+- **Einselection (Zurek 2003)**: Environment preferentially selects "pointer states" that survive decoherence. Pointer states maximize predictability (minimize entropy production under monitoring). Via the "predictability sieve" criterion.
+
+- **Quantum Darwinism (Zurek 2009)**: Pointer states are "fittest" — survive environmental monitoring, information proliferates. Non-pointer states "weeded out."
+
+- **Gradual collapse via partial measurement**: Weak measurement barely perturbs state; strong measurement nearly collapses. Continuum from soft to hard.
+
+#### (b) Mapping to Multi-Teacher KD
+
+1. **Student in "superposition" of teacher influences**. Router weights alpha_i are "amplitudes." When all alpha_i = 1/K, maximal superposition.
+
+2. **Decoherence = training-induced specialization**. Representations naturally align more with some teachers, less with others. Cross-teacher coherences decay. Emerges from dynamics, not forced.
+
+3. **Pointer states = stable routing attractors**. Config "Qwen=reasoning, LFM=long-range, Mamba=sequential" is pointer state if robust to different batches. Uniform weighting is NOT — unstable, will decohere.
+
+4. **Einselection = predictability sieve**. Routes that minimize VARIANCE of KD loss (not just loss) are "fittest." Principled criterion for stable routing.
+
+5. **Soft-to-hard gating as controlled decoherence**:
+   - Early (high coherence): soft weights, all teachers, full exploration
+   - Mid (partial decoherence): routing preferences emerge, some interference useful
+   - Late (full decoherence): hard gating, one teacher per span, classical regime
+
+6. **Gumbel-Softmax temperature from high (soft) to low (hard) mirrors decoherence.**
+
+#### (c) Mathematical Formulation
+
+**Router density matrix:**
+```
+rho_ij(s) = alpha_i(s) * alpha_j(s) * cos_sim(teacher_i(s), teacher_j(s))
+C(t) = sum_{i!=j} |rho_ij| / sum_i rho_ii   # coherence measure
+C=1: superposition.  C=0: decohered.
+```
+
+**Controlled decoherence via Gumbel-Softmax:**
+```
+tau_GS(t) = tau_max * (tau_min / tau_max)^(t/t_total)
+tau_max=5.0 (soft early), tau_min=0.1 (hard late)
+alpha(s) = GumbelSoftmax(router_logits(s) / tau_GS(t))
+```
+
+**Predictability sieve (pointer state identification):**
+```python
+stability_i(domain) = 1 / (1 + Var_batches[L_KD_i(domain)])
+# Route to i* = argmax stability. Confidence = stability_i* / sum_j stability_j
+```
+
+**Partial measurement interpolation:**
+```
+M_lambda(alpha) = (1-lambda)*alpha + lambda*one_hot(argmax(alpha))
+lambda(t) = sigmoid((t - 0.3*t_total) / (0.15*t_total))
+```
+
+**Decoherence diagnostic:**
+```
+C(t) = mean_{i!=j} |cos_sim(grad_teacher_i, grad_teacher_j)|
+C decays fast -> natural specialization proceeding
+C stagnant -> force harder gating
+C oscillates -> frustration (PM-2), reduce conflicting teacher weights
+```
+
+#### (d) Key Papers
+
+- **Zurek 2003 (Rev. Mod. Phys. 75:715): "Decoherence, Einselection, and the Quantum Origins of the Classical"**
+- **Zurek 2009 (Nature Physics 5:181): "Quantum Darwinism"**
+- Jang et al. 2017 (ICLR): Gumbel-Softmax
+- Miyato et al. 2025 (ICLR): AKOrN — dynamical representations bind through synchronization
+- Hybrid Quantum-Classical MoE (arXiv:2512.22296): quantum routing via interference
+
+---
+
+### PM-7: Coupled Oscillators and Kuramoto Synchronization
+
+#### (a) The Physics
+
+The **Kuramoto model** describes synchronization of N coupled oscillators:
+```
+d(theta_i)/dt = omega_i + (K/N) * sum_j sin(theta_j - theta_i)
+```
+
+- **Order parameter**: r*exp(i*psi) = (1/N)*sum_j exp(i*theta_j). r in [0,1]. r=0: incoherent. r=1: synchronized.
+
+- **Critical coupling**: K_c = 2/(pi*g(0)) for unimodal symmetric g(omega). Below K_c: incoherent. Above: partial sync. Well above: near-complete sync.
+
+- **Partial synchronization**: Only oscillators near center of g(omega) lock. Extreme-frequency ones remain free-running.
+
+- **Chimera states**: Identical oscillators spontaneously split into sync/desync domains. Symmetry-breaking from dynamics alone.
+
+- **AKOrN (ICLR 2025)**: Kuramoto neurons for reasoning, robustness, uncertainty. Synchronization = binding = grouping = abstraction.
+
+#### (b) Mapping to Multi-Teacher KD
+
+1. **Teachers as oscillators**. Each has "natural frequency" omega_i (native knowledge). Student = coupling medium. Under what K (=alpha_kd) do teachers synchronize with student?
+
+2. **r as routing coherence**. r ~ 1 - sqrt(q_EA). High sync = low frustration = strong KD signal.
+
+3. **K_c = minimum useful KD weight**. Diverse teachers (broad g) need larger K_c. Below K_c: teacher signals cancel = wasted alpha.
+
+4. **Partial sync = selective binding**. Only teachers close to student's current level lock (useful gradients). Teachers too far ahead = free-running noise. **Explains inverse effectiveness.**
+
+5. **Chimera = emergent specialization**. Student may spontaneously specialize without explicit routing. Use chimera pattern as router warm-start.
+
+6. **Frequency adaptation**: Track d KL_i/dt. Negative = approaching (useful). Positive = diverging (harmful). Zero = absorbed.
+
+#### (c) Mathematical Formulation
+
+**Critical KD weight:**
+```
+sigma_teachers = mean_s[std of pairwise KL across teacher pairs]
+K_c = (2/pi) * sigma_teachers
+alpha_kd_min = K_c   # noise below this
+```
+
+**Lock detection:**
+```python
+def teacher_lock_status(student_logits, teacher_logits_list, threshold=0.3):
+    return [F.cosine_similarity(student_logits.flatten(0,-2),
+            t.flatten(0,-2), dim=-1).mean() > threshold
+            for t in teacher_logits_list]
+# Locked: full alpha. Unlocked: reduce/zero.
+```
+
+**Frequency adaptation:**
+```
+weight_i = max(0, -d KL_i / dt)   # upweight approaching teachers
+```
+
+**Chimera detection:**
+```
+# Per-domain per-teacher gradient alignment.
+# Sync in some domains, desync in others -> chimera -> warm-start router.
+```
+
+#### (d) Key Papers
+
+- **Kuramoto 1975: "Self-entrainment of coupled oscillators"**
+- Strogatz 2000: critical coupling derivation
+- **Dorfler & Bullo 2011 (SIAM): K_c bounds**
+- **Miyato et al. 2025 (ICLR): AKOrN** — Kuramoto neurons for reasoning
+
+---
+
+### PM-8: Information Bottleneck (Shared Compression Across Teachers)
+
+#### (a) The Physics / Information Theory
+
+The **Information Bottleneck** (Tishby et al. 1999):
+```
+min_{p(T|X)} I(X;T) - beta * I(T;Y)
+```
+I(X;T) = compression. I(T;Y) = relevance. Solution is soft clustering by conditional output distribution.
+
+- **IB curve**: Concave Pareto frontier in (compression, relevance) plane. Slope = -beta.
+
+- **Phase transitions**: As beta increases, optimal T undergoes discrete bifurcations (cluster count jumps). Information-theoretic phase transitions (Wu et al. 2020).
+
+- **Variational IB (Alemi et al. 2017)**: Encoder-decoder with KL penalty on latent space.
+
+- **Distributed IB**: For K sources X_1,...,X_K:
+  ```
+  min sum_i I(X_i;T_i) - beta * I(T_1,...,T_K;Y)
+  ```
+  Sources compressed independently, relevance criterion is joint. Forces COMPLEMENTARY extraction.
+
+- **Deep Variational Multivariate IB (JMLR 2025)**: Unifying framework.
+
+#### (b) Mapping to Multi-Teacher KD
+
+1. **Student as bottleneck**: min I(X;T) - beta * I(T; Y_1,...,Y_K). Minimize memorization, maximize teacher knowledge capture.
+
+2. **Shared bottleneck forces universal structure**. 197M-param bottleneck compresses out architecture-specific details. Justifies JAK-STAT shared projection (hypothesis I-1).
+
+3. **Distributed IB = complementary extraction**. Each teacher should add unique info. Against naive averaging, for conditional application.
+
+4. **Beta = capacity allocation**. 197M = limited = lower beta = focus on universals.
+
+5. **IB phase transitions = spontaneous specialization**. At critical beta, distinct representations emerge for different teachers.
+
+#### (c) Mathematical Formulation
+
+**Multi-teacher IB:**
+```
+L_IB = beta * D_KL(p(T|X) || r(T)) - sum_i w_i * E[log q_i(Y_i|T)]
+```
+
+**Compression regularization:**
+```python
+def ib_compression_loss(student_hidden, beta):
+    _, S, _ = torch.svd(student_hidden)
+    S_norm = S / S.sum()
+    return -beta * (-(S_norm * torch.log(S_norm + 1e-10)).sum())
+# Total: L_NTP + alpha*L_KD + beta*L_compress
+```
+
+**Complementarity routing:**
+```
+delta_i(s) = D_KL(p_i(s) || p_bar(s)) * confidence_i(s)
+w_i(s) = softmax(delta_i(s) / tau)
+# Divergent-from-consensus + confident = high complementary value
+```
+
+**Beta schedule:**
+```
+beta(t) = beta_max * exp(-t / (0.3 * t_total))
+# Strong compression early -> universals. Decays -> specialization.
+```
+
+**Phase transition detection:**
+```
+d_eff(t) = exp(spectral_entropy(student_hidden(t)))
+# Jump in d_eff = IB bifurcation. Re-evaluate routing.
+```
+
+#### (d) Key Papers
+
+- **Tishby et al. 1999: "The Information Bottleneck Method"**
+- **Alemi et al. 2017 (ICLR): "Deep Variational Information Bottleneck"**
+- Wu et al. 2020 (Phys. Rev. E): IB phase transitions
+- JMLR 2025: Deep Variational Multivariate IB
+- Text Representation Distillation via IB (OpenReview 2025)
+
+---
+
+### PM-9: Boltzmann Machines and the Energy Landscape of Multi-Teacher KD
+
+#### (a) The Physics
+
+**Boltzmann Machine** energy: E(v,h) = -a^T v - b^T h - v^T W h. Probability: p = exp(-E)/Z. Learning = shaping energy landscape.
+
+- **Multi-constraint energy**: E_total = E_NTP + sum_i alpha_i * E_teacher_i. Each teacher adds basins. Shared low-energy region or frustrated?
+
+- **RBMs**: Bipartite. Teacher signals conditionally independent given student = distributed IB condition (PM-8).
+
+- **Simulated annealing**: High T -> low T. Geometric: T(t) = T_0 * 0.98^(t/t_total).
+
+- **Contrastive Divergence**: k-step approximation instead of full equilibrium.
+
+- **Hopfield retrieval = softmax attention** (Ramsauer et al. 2021): Router IS Hopfield network.
+
+#### (b) Mapping to Multi-Teacher KD
+
+1. **Loss landscape = multi-constraint energy**. Basin overlap = teacher compatibility.
+
+2. **SA scheduling**: Same as PM-5 from optimization perspective. alpha_i_eff = alpha_base / T(t).
+
+3. **Landscape probing**: Perturb params, measure loss. Overlap matrix reveals compatibility.
+
+4. **Hopfield router init**: Teacher capability embeddings as stored patterns. Principled init via mean hidden states per content domain.
+
+#### (c) Mathematical Formulation
+
+**Landscape probing:**
+```python
+def probe_landscape(model, teachers, n=20, eps=0.01):
+    base = [L_i(model) for i in range(K)]
+    deltas = [[L_i(perturb(model,eps))-base[i] for i in range(K)]
+              for _ in range(n)]
+    overlap = np.corrcoef(np.array(deltas).T)
+    frustration = np.mean(overlap[np.triu_indices(K,k=1)] < 0)
+    return overlap, frustration
+```
+
+**SA modulation:** alpha_i_eff(t) = alpha_base / (T_max * 0.98^(t/t_total))
+
+**Hopfield router:** weights = softmax(beta * q^T K_mat), init k_i from teacher embeddings.
+
+#### (d) Key Papers
+
+- **Hopfield 1982** (2024 Nobel Prize)
+- **Ramsauer et al. 2021 (ICLR): Hopfield = attention**
+- Kirkpatrick et al. 1983: Simulated Annealing
+
+---
+
+### EXPANDED Integration: How All 8+ Mechanisms Compose
+
+**Unified Picture**: Student navigates multi-constraint energy landscape (PM-9), possibly frustrated (PM-2), starting in superposition of teacher influences (PM-6) at high T (PM-5). As training progresses: T drops, teacher signals synchronize where coupling > K_c (PM-7), representations undergo RG coarse-graining (PM-1) while compressing through IB (PM-8). Phase transitions (PM-4) mark qualitative jumps. Optimal target = Wasserstein barycenter of synchronized teachers (PM-3).
+
+```
+EKALAVYA PIPELINE (EXPANDED):
+
+1. CHARACTERIZE (PM-9 + PM-2 + PM-7)
+   q_EA(s), r_i(s), K_c, landscape overlap matrix
+
+2. COMPRESS (PM-8 + PM-1)
+   Shared bottleneck, IB regularization, RG depth schedule
+
+3. ROUTE (PM-6 + PM-7 + PM-2)
+   CONSENSUS->barycenter, ROUTABLE->locked teacher, FRUSTRATED->NTP
+   Soft-to-hard decoherence schedule
+
+4. AGGREGATE (PM-3 + PM-8)
+   Robust barycenter, complementarity weighting
+
+5. TEMPER (PM-5 + PM-9)
+   Per-teacher T, SA annealing, LR coordination
+
+6. MONITOR (PM-4 + PM-7)
+   Phase transitions, chimeras, anti-grokking
+```
+
+**Mathematical connections (8 views of one structure):**
+
+| Connection | Relationship |
+|-----------|-------------|
+| PM-2 <-> PM-7 | q_EA ~ 1 - r^2 |
+| PM-5 <-> PM-9 | Same F=E-TS framework |
+| PM-6 <-> PM-7 | Pointer states = locked oscillators |
+| PM-1 <-> PM-8 | RG = IB (Koch-Janusz & Ringel 2018) |
+| PM-8 <-> PM-9 | IB Lagrangian = free energy. beta=1/T |
+| PM-4 <-> PM-8 | IB bifurcations = grokking transitions |
+| PM-3 <-> PM-7 | Barycenter = OT Kuramoto mean phase |
+| PM-7 <-> PM-4 | K_c transition IS phase transition |
+
+**Implementation priority (all 8):**
+1. q_EA + frustration routing (PM-2)
+2. Temperature annealing (PM-5)
+3. 1D Wasserstein barycenter (PM-3)
+4. IB compression regularization (PM-8)
+5. Phase transition monitoring (PM-4)
+6. Gumbel-Softmax decoherence (PM-6)
+7. Teacher lock detection (PM-7)
+8. RG multi-depth scheduling (PM-1)
+9. Complementarity routing (PM-8)
+10. Energy landscape probing (PM-9)
+11. Coordinated T_KD-LR (PM-5)
+12. Full Sinkhorn barycenter (PM-3B)
 
 ---
 
@@ -2301,3 +4698,406 @@ DEFERRED: Multi-marginal OT loss (ablation only, after P1-P3 work)
 
 *(Sections removed 2026-03-27: First KD Probe Design, Pre-Round-1 Design Space, Cached Teacher Models, VRAM Budget, Offline KD Feasibility, 197M Scaling Config, Post-6K Codex Template, Decisions Needed — all superseded by current 60K gate implementation. Historical content preserved in git.)*
 
+
+
+---
+
+## Biology & Ecology Mechanisms for Multi-Teacher KD Design (2026-03-29)
+
+**Status: DEEP RESEARCH COMPLETE -- 5 biological mechanisms with detailed biology, KD mapping, mathematical formulations, and ML paper trails. Companion to "Physics Mechanisms" section above. Ready for T+L injection.**
+
+This section maps five biology/ecology frameworks to concrete multi-teacher KD mechanisms. Like the physics section, each entry includes: (a) the biological mechanism in detail, (b) the mapping to multi-teacher KD, (c) mathematical algorithm this suggests, (d) existing ML papers using this analogy.
+
+---
+
+### BIO-1: Clonal Selection & Affinity Maturation (Adaptive Immune System)
+
+#### (a) The Biological Mechanism
+
+Clonal selection (Burnet 1957) explains how the adaptive immune system routes: given an enormous diversity of B-cells (each expressing a unique antibody via V(D)J recombination), the system selects the best-match B-cells and amplifies them while discarding the rest. The four tenets:
+
+1. **Unique receptors**: Each lymphocyte bears a single receptor type with unique specificity.
+2. **Activation requires binding**: Only B-cells whose receptors bind the antigen are activated.
+3. **Clonal expansion**: Activated cells proliferate -- clones inherit the parent's specificity.
+4. **Self-reactive deletion**: B-cells that bind self-molecules are destroyed early (negative selection -- see BIO-2).
+
+**Affinity maturation** refines the response through an iterative cycle in germinal centers:
+
+- **Dark zone (mutation)**: Activated B-cells (centroblasts) undergo somatic hypermutation (SHM) -- the enzyme AID introduces random point mutations in antibody variable regions, specifically targeting WRC/GYW hotspot motifs in CDR loops. This is NOT random noise -- it is targeted diversification of the antigen-binding pocket.
+- **Light zone (selection)**: Mutated B-cells (centrocytes) are tested against antigen. B-cells with INCREASED affinity receive T-follicular-helper (Tfh) cell signals (c-Myc upregulation), are positively selected, and return to the dark zone for more mutation. B-cells with DECREASED affinity are denied help and undergo apoptosis.
+- **The cycle repeats** -- dark zone mutation, light zone selection -- iterating until very high affinity is achieved. The magnitude of Tfh help determines the number of cell divisions in the DZ, creating a direct link between selection strength and proliferation rate.
+
+**Key quantitative properties:**
+- Mutation rate is INVERSELY proportional to affinity: high-affinity clones mutate conservatively (fine-tuning), low-affinity clones mutate aggressively (exploration).
+- Clone count is PROPORTIONAL to affinity: better-matched cells get more copies.
+- The process is inherently competitive: B-cells compete for limited Tfh help. Only the top-affinity fraction survives each cycle.
+
+#### (b) Mapping to Multi-Teacher KD
+
+The mapping is direct and powerful:
+
+| Immune System | Multi-Teacher KD |
+|---------------|-----------------|
+| Antigen (pathogen) | Current training batch / token context |
+| B-cell repertoire | Pool of available teachers |
+| Antibody affinity | Teacher relevance to this specific content |
+| Clonal selection | Select best-match teacher(s) per token/span |
+| Clonal expansion | Amplify signal weight of selected teacher(s) |
+| Somatic hypermutation | Perturb teacher projector weights to explore better alignment |
+| Dark zone / Light zone cycle | Alternating exploration (mutate projectors) and selection (evaluate on validation) phases |
+| Memory B-cells | Cached teacher-content affinity maps (learned routing table) |
+| Affinity proportional mutation | Teachers with poor fit get aggressive projector updates; good-fit teachers get conservative fine-tuning |
+
+**The key insight for Ekalavya**: The immune system does NOT average all B-cells. It does NOT soft-weight them. It **selects the best match, amplifies it, and iterates**. The multi-teacher equivalent: for each content type, find the ONE teacher with highest affinity (lowest KD loss on that content), amplify that teacher's signal, and suppress the rest. Over training, the routing sharpens -- just as affinity maturation sharpens antibody fit.
+
+**Memory cells = routing cache**: Once the system discovers that Teacher A is best for code tokens and Teacher B is best for reasoning, this mapping persists like immune memory -- the system doesn't re-derive it for every batch.
+
+#### (c) Mathematical Algorithm
+
+**CLONALG-inspired teacher routing:**
+
+```
+Definitions:
+  K = number of teachers
+  For batch B, for each span s in B:
+    affinity_i(s) = -KD_loss(teacher_i, student, span_s)  # higher = better match
+
+Step 1: Selection (Light Zone)
+  rank teachers by affinity_i(s) for each span
+  select top-m teachers (m=1 or m=2 for quorum mode)
+
+Step 2: Clonal expansion (Amplification)
+  For selected teacher i with affinity a_i:
+    weight_i(s) = a_i^beta / sum_j(selected) a_j^beta   # sharpened softmax
+  For non-selected teachers:
+    weight_i(s) = 0  # hard exclusion, not soft downweighting
+
+Step 3: Affinity maturation (Projector mutation)
+  For each teacher's projector P_i:
+    mutation_rate_i = alpha / (1 + affinity_i)  # inverse proportional to fit
+    P_i += mutation_rate_i * randn_like(P_i)
+    # Low-affinity teachers get aggressive exploration
+    # High-affinity teachers get conservative fine-tuning
+
+Step 4: Memory update
+  Maintain EMA routing table: M[content_type][teacher] = EMA(affinity)
+  Use M for warm-start routing in subsequent batches
+
+KD loss for span s:
+  L_KD(s) = sum_i weight_i(s) * KD_loss(teacher_i, student, s)
+```
+
+**The DZ/LZ cycle maps to a training schedule:**
+- Every N steps (e.g., 100): "dark zone" -- update projectors with elevated LR (exploration)
+- Remaining steps: "light zone" -- evaluate teacher affinity, route based on current projectors (selection)
+- DZ/LZ ratio anneals: early = 50/50 (heavy exploration), late = 90/10 (mostly exploitation)
+
+#### (d) Existing ML Papers
+
+- **CLONALG (de Castro & Von Zuben 2002)**: Canonical clonal selection algorithm. Affinity-proportional cloning + inverse-affinity mutation. Framework transfers directly to KD routing.
+- **AIS survey (Greensmith et al. 2010, arXiv:1006.4949)**: Comprehensive review of immune-inspired algorithms.
+- **Reinforced Multi-Teacher Selection (RMTS, AAAI 2023)**: RL-based teacher selection per sample. State = teacher-student gap = affinity measurement. Validates selection > averaging.
+- **PerSyn (arXiv:2510.10925)**: Per-sample routing. "Stronger models are not always optimal teachers" -- immune analogy predicts this.
+- **Adaptive Weighting Framework (arXiv:2601.17910)**: Multi-scale routing at token/task/context levels.
+
+---
+
+### BIO-2: Immune Tolerance -- Negative Selection & Suppression
+
+#### (a) The Biological Mechanism
+
+While clonal selection amplifies helpful responses, immune tolerance SUPPRESSES harmful ones -- responses that would attack the body's own tissues (autoimmunity). Operates at two levels:
+
+**Central tolerance (thymus/bone marrow):**
+- Developing T-cells encounter self-peptides presented on MHC by mTECs (medullary thymic epithelial cells).
+- mTECs express the AIRE gene, driving ectopic expression of tissue-specific antigens -- T-cells tested against proteins from pancreas, liver, brain, etc., all in one place.
+- **High-affinity binding to self = death (clonal deletion)**. T-cells with TCRs binding self too strongly are eliminated via apoptosis.
+- **Intermediate affinity = Treg diversion**. Moderate self-affinity T-cells become regulatory T-cells (Tregs) -- active suppressors.
+- **Low affinity = conventional T-cell**. Released to periphery as functional repertoire.
+- Three-outcome filter: delete (too reactive), suppress (moderately reactive), pass (appropriately reactive).
+
+**Peripheral tolerance (lymph nodes, tissues):**
+- **Anergy**: Chronic stimulation without co-stimulation = functionally unresponsive.
+- **Exhaustion**: Repeated stimulation = progressive loss of effector function.
+- **Treg suppression**: Tregs actively suppress effector T-cells via IL-10, TGF-beta, IL-35 and IL-2 depletion.
+- **AICD**: Activation-induced cell death eliminates chronically stimulated cells.
+
+**Crucial design principle**: Both positive selection AND negative selection needed. Different mechanisms, different thresholds, different locations. Cannot get tolerance by "not selecting" -- need active suppression.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Immune Tolerance | Multi-Teacher KD |
+|-----------------|-----------------|
+| Self-peptides | Student's own NTP loss signal / existing representations |
+| Foreign antigen | Teacher KD signal |
+| Central tolerance | Pre-training filter: reject signals conflicting with NTP |
+| Treg diversion | Partially conflicting signals dampened, not killed |
+| Peripheral anergy | Persistent disagreement gradually silences teacher for that content |
+| AIRE (testing all tissues) | Evaluate signals against diverse validation content |
+| Three-outcome filter | PASS (full weight) / DAMPEN (reduced) / KILL (zero) |
+
+**The key insight**: Teacher signals conflicting with NTP are ACTIVELY DESTRUCTIVE, not just "less useful." Immune system doesn't ignore autoimmune cells -- it actively suppresses them with dedicated Treg machinery.
+
+**Dual selection is mandatory**: Positive selection (BIO-1) finds good teachers. Negative selection (BIO-2) suppresses bad teachers. Both run simultaneously. Maps to hypothesis I-2: dual filter per teacher signal.
+
+#### (c) Mathematical Algorithm
+
+**Three-outcome teacher signal filter:**
+
+```
+For each span s, each teacher i:
+  ntp_grad(s) = gradient of NTP loss w.r.t. student hidden state
+  kd_grad_i(s) = gradient of KD loss from teacher i w.r.t. same
+
+  alignment_i(s) = cos(ntp_grad(s), kd_grad_i(s))
+
+  if alignment_i(s) > tau_pass (0.3):     gate_i(s) = 1.0    # PASS
+  elif alignment_i(s) > tau_kill (-0.1):   gate_i(s) = sigma() # DAMPEN
+  else:                                     gate_i(s) = 0.0    # KILL
+
+  L_KD_filtered(s) = sum_i gate_i(s) * weight_i(s) * KD_loss_i(s)
+```
+
+**Peripheral tolerance (anergy):**
+```
+A[teacher_i][content_type] = 0  # anergy score
+  if teacher keeps getting killed: A += 0.01 (slow accumulation)
+  else: A *= 0.9 (fast recovery, matches biology)
+  effective_tau_pass[i][c] = tau_pass + A[i][c]  # progressively harder to pass
+```
+
+**Treg suppression (gradient conflicts):**
+```
+conflict_ij(s) = max(0, -cos(kd_grad_i, kd_grad_j))
+if max(conflict) > theta_conflict:
+  L_KD(s) *= (1 - max_conflict)    # reduce ALL KD
+  L_NTP(s) *= (1 + theta_boost)    # boost NTP (student trusts itself)
+```
+
+#### (d) Existing ML Papers
+
+- **Negative Selection Algorithm (Forrest et al. 1994)**: Foundational self/nonself discrimination for anomaly detection.
+- **"Is T-Cell Negative Selection a Learning Algorithm?" (Chandra et al. 2020, PMC7140671)**: Negative selection actively shapes repertoire, not just filters it.
+- **GCond (arXiv:2509.07252)**: Gradient conflict detection + adaptive arbitration = Treg mechanism.
+- **PCGrad (Yu et al. 2020)**: Projects conflicting gradients to remove conflict component.
+- **Nash-MTL (Navon et al. 2022)**: Nash bargaining for gradient conflicts = Treg balance.
+- **Knowledge Purification (arXiv:2602.01064)**: Consolidates conflicting rationales = tolerance filter.
+
+---
+
+### BIO-3: Niche Partitioning (Ecology -- Competitive Exclusion)
+
+#### (a) The Biological Mechanism
+
+**Competitive exclusion (Gause's Principle):** Two species competing for the exact same limiting resource cannot coexist. Lotka-Volterra:
+
+```
+dN1/dt = r1*N1*(K1 - N1 - alpha_12*N2)/K1
+dN2/dt = r2*N2*(K2 - N2 - alpha_21*N1)/K2
+```
+
+**Coexistence condition:** alpha_12 < K1/K2 AND alpha_21 < K2/K1. Each species must limit its OWN growth more than the other's.
+
+**Resource partitioning**: warblers at different heights (spatial), hawks/owls (temporal), Darwin's finches (morphological). **Character displacement** (Brown & Wilson 1956): competition drives traits APART in overlap zones. **MacArthur bound**: at most D species coexist with D resource dimensions.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Ecology | Multi-Teacher KD |
+|---------|-----------------|
+| Species | Teachers |
+| Resource / niche | Content domain |
+| Carrying capacity K | Max useful KD signal per domain |
+| alpha_ij | Teacher overlap on a domain |
+| Competitive exclusion | Two teachers best at same thing = use only better one |
+| Character displacement | Diversity pressure pushes routing profiles apart |
+| MacArthur D-bound | D content dimensions = at most D useful teachers |
+
+**Key insight**: With 4 teachers, need 4+ distinct niches for all to contribute. Measure affinity profiles pre-KD; near-identical profiles = drop redundant teacher.
+
+#### (c) Mathematical Algorithm
+
+**Niche discovery:**
+```
+K x D affinity matrix A: affinity_id = -E[KD_loss(teacher_i, student, domain_d)]
+overlap_ij = cos(A[i,:], A[j,:])
+if overlap > 0.9: exclude weaker teacher from overlapping domains
+```
+
+**Lotka-Volterra routing:**
+```
+dw_i = lr * r_i * w_id * (1 - w_id/K_i - sum_j alpha_ij * w_jd/K_i)
+# Competitive exclusion emerges naturally when w_id -> 0
+```
+
+**Character displacement:** `L_diversity = -lambda * sum_{i<j} ||profile_i - profile_j||^2`
+
+**Dimensionality check:** PCA on affinity matrix. If effective_dims < K, teachers are redundant.
+
+#### (d) Existing ML Papers
+
+- **MoE (Jacobs 1991; Shazeer 2017)**: ML incarnation of niche partitioning. Load balancing = carrying capacity.
+- **Switch Transformer (Fedus 2022)**: Auxiliary loss prevents competitive exclusion.
+- **SimBal (arXiv:2506.14038)**: Router orthogonality = character displacement.
+- **Loss-Free Balancing (arXiv:2408.15664)**: Adaptive bias = niche partitioning.
+- **Sparse Multi-Task (arXiv:2411.18615)**: Parameter subsets = literal niches.
+- **Collective Intelligence & Resource Partitioning (PMC11293853, 2024)**: Frequency-dependent learning produces partitioning.
+
+---
+
+### BIO-4: Quorum Sensing (Microbiology -- Collective Decision-Making)
+
+#### (a) The Biological Mechanism
+
+Bacteria coordinate via autoinducers (AIs). Low density: AI diffuses away. High density: AI accumulates, crosses threshold, triggers population-wide behavioral switch.
+
+**Mechanism (V. fischeri):** LuxI produces AHL -> diffusion -> accumulation -> LuxR binding -> positive feedback (luxI upregulated) -> sharp bistable switch.
+
+**Key properties:**
+- **Bistability**: Two stable states (QS-off, QS-on). Requires induced/constitutive ratio > ~8, Hill coefficient >= 2.
+- **Noise filtering**: Threshold ignores transient fluctuations.
+- **Multi-signal AND-gate**: V. harveyi uses AI-1 (species-specific) + AI-2 (universal) + CAI-1 simultaneously.
+
+**Math:** `dA/dt = k_basal + k_induced * A^h/(K_m^h + A^h) - gamma*A`
+
+#### (b) Mapping to Multi-Teacher KD
+
+| Quorum Sensing | Multi-Teacher KD |
+|---------------|-----------------|
+| Bacterium | Teacher |
+| AI signal | Teacher logit distribution |
+| AI concentration | Aggregated teacher agreement |
+| Threshold | Sufficient consensus |
+| Bistable switch | Binary KD gate (off/on) |
+| Positive feedback | Agreement -> more KD -> more alignment -> more agreement |
+| Multi-signal AND | Require logit + representation + confidence agreement |
+
+**Key insight**: SHARP bistable threshold, not gradual interpolation. Meta-principle P4: 2-3 teacher core = signal, 1-2 outliers = noise.
+
+#### (c) Mathematical Algorithm
+
+**Quorum gating:**
+```
+agreement_ij(s) = 1 - JSD(p_i(s), p_j(s))
+Q(s) = fraction of pairs with agreement > tau_agree
+gate(s) = Q^h / (K_m^h + Q^h)   # Hill function, h=4, K_m=0.5
+L_KD(s) = gate(s) * L_consensus + (1-gate) * L_NTP
+```
+
+**Multi-signal AND:** `gate_multi = gate_logit * gate_repr * gate_conf`
+
+**Positive feedback:** `effective_K_m = K_m_base * (1 - 0.3 * EMA(gate))`
+
+**Temporal smoothing:** `gate_smoothed = EMA(gate, window=16_spans)`
+
+**Curriculum:** `K_m(t) = 0.3 + 0.4 * (t/T_total)` (early: easy KD, late: strict consensus)
+
+#### (d) Existing ML Papers
+
+- **SQUAD (arXiv:2601.22711, Jan 2026)**: Ensemble voting via t-test consensus. +5.95% acc, -70.6% latency.
+- **"Agree to Disagree" (ICLR 2023)**: Encourages disagreement so agreement is meaningful.
+- **Byzantine FL**: Krum, trimmed mean = quorum for model updates.
+- **Quorum in Neural Nets (arXiv:1007.5143)**: Bistable switching in biological neural networks.
+
+---
+
+### BIO-5: Horizontal Gene Transfer (HGT) -- Cross-Species Knowledge Transfer
+
+#### (a) The Biological Mechanism
+
+HGT transmits genes ACROSS species. Three mechanisms: **transformation** (free DNA uptake, requires competence + >70% sequence similarity), **transduction** (phage-mediated, host range = compatibility filter), **conjugation** (cell-to-cell, requires compatible receptors).
+
+**Compatibility barriers:**
+- **RM systems**: Methylation-based self/foreign discrimination. Foreign DNA cut by restriction enzymes.
+- **CRISPR-Cas**: Adaptive immunity with persistent memory. Spacer arrays block previously-encountered harmful DNA.
+- **Inc incompatibility**: Some plasmids cannot coexist -- competitive exclusion at molecular level.
+
+**Fitness cost + amelioration**: Foreign genes impose initial cost (codon bias, regulatory mismatch). Genes adapt over time. Transfer unit is OPERON (co-functional module), not individual genes.
+
+#### (b) Mapping to Multi-Teacher KD
+
+| HGT | Multi-Teacher KD |
+|-----|-----------------|
+| Foreign DNA | Teacher knowledge |
+| Competence state | Minimum NTP ability before KD |
+| >70% similarity | Representation compatibility threshold |
+| RM system | CKA compatibility check per-batch |
+| CRISPR-Cas | Persistent memory of harmful transfers |
+| Fitness cost | Short-term loss increase during integration |
+| Amelioration | Gradual adaptation to foreign knowledge |
+| Operon | Functional subspace transfer, not neuron matching |
+
+**Key insight**: Cross-architecture KD is NOT free. Must: (1) check compatibility before integration, (2) track harmful transfers persistently, (3) allow fitness cost + amelioration, (4) transfer modules not features.
+
+#### (c) Mathematical Algorithm
+
+**RM compatibility check:**
+```
+compat_i = CKA(P_i(h_teacher), h_student)
+if compat < theta_restrict: block state-KD, allow only logit-KD
+# theta: 0.2 same-arch, 0.4 cross-arch
+```
+
+**CRISPR memory:**
+```
+CRISPR[(teacher, domain)] = loss_with - loss_without  # persists across training
+if (teacher, domain) in CRISPR: gate = 0
+```
+
+**Operon transfer:**
+```
+teacher_modules = SVD(h_teacher)[:, :k]  # top-k principal directions
+L_module_KD = ||proj_student(h_s) - proj_module(h_t)||^2
+```
+
+**Amelioration:** `kd_weight *= ramp_up(t, 1000_steps); halt if NTP degrades > 0.05`
+
+**Competence gate:** `if NTP_loss > threshold: train NTP only; else: add KD`
+
+#### (d) Existing ML Papers
+
+- **Cross-Architecture KD (Liu et al., IJCV 2024, arXiv:2207.05273)**: Projectors for Transformer-CNN KD.
+- **CAB (arXiv:2510.19266)**: Attention bridge for Transformer-to-Mamba.
+- **DPIAT (arXiv:2212.13970)**: DP matching across architectures = homologous recombination.
+- **Zebra-Llama**: Iterative layer-wise distillation = amelioration.
+- **Task-Agnostic Multi-Teacher (NeurIPS 2025)**: MI-based compatibility for architectural diversity.
+
+---
+
+### Cross-Mechanism Integration: The Biological Immune Response as a Complete KD System
+
+**The five mechanisms form an integrated system. The ordering mirrors biology:**
+
+```
+INTEGRATED BIOLOGICAL KD PIPELINE:
+
+1. COMPETENCE CHECK (HGT/BIO-5)
+   Student ready? -> Warm-start gate: NTP competence threshold
+
+2. COMPATIBILITY CHECK (HGT/BIO-5 RM system)
+   Knowledge integrable? -> CKA test; block state-KD from incompatible architectures
+
+3. NICHE ASSIGNMENT (Ecology/BIO-3)
+   Teacher domains? -> Lotka-Volterra niche discovery + competitive exclusion
+
+4. CLONAL SELECTION (Immune/BIO-1)
+   Best teacher for THIS span? -> Affinity ranking, top-1/top-2, hard zeros
+
+5. QUORUM CHECK (Microbiology/BIO-4)
+   Enough agreement? -> Bistable Hill gate, multi-signal AND, positive feedback
+
+6. TOLERANCE FILTER (Immune/BIO-2)
+   Conflicts with student? -> Gradient alignment, PASS/DAMPEN/KILL
+
+7. CRISPR MEMORY (HGT/BIO-5 adaptive)
+   Harmed us before? -> Persistent blocking
+
+8. AMELIORATION (HGT/BIO-5)
+   Gradual integration -> Ramp-up, monitor NTP degradation
+```
+
+**Convergence with Physics Mechanisms:**
+- PM-2 (Spin Glass) quantifies WHAT biology detects (teacher disagreement)
+- PM-3 (Wasserstein Barycenter) = consensus ALGORITHM that BIO-4 decides WHEN to apply
+- PM-1 (RG Flow) = SCALE at which BIO-3 niche partitioning operates
+- PM-4 (Kuramoto) = DYNAMICS of how BIO-4 consensus emerges
+- PM-5 (Free Energy) = OBJECTIVE that BIO-2 tolerance optimizes

@@ -3020,3 +3020,492 @@ Competitive bar (MobileLLM): ARC-E≥44, ARC-C≥27, HS≥39, PIQA≥65, WG≥53
 | LAMBADA (acc) | 12.4% | 22.6% | — | — |
 
 ARC-E 38.5% with 90M params within 1.5pp of Pythia-160M (40.0%) using 1200x less data. HellaSwag barely moved (+0.5%) despite BPT 4.6→4.08 — BPT does NOT predict commonsense reasoning. SciQ and LAMBADA showed massive gains (+10.8%, +10.2%).
+
+---
+
+## 9. Multi-Teacher KD Methods: Implementation Deep-Dive (2023-2026)
+
+**Purpose:** Exact loss formulas, routing mechanics, teacher-disagreement handling, and cross-architecture compatibility for the 6 methods most relevant to Ekalavya. This is the technical reference for T+L design sessions.
+
+---
+
+### 9.1 TinyLLM — Multi-Task Rationale Distillation (WSDM 2025)
+
+**Source:** arXiv:2402.04616, "Beyond Answers: Transferring Reasoning Capabilities to Smaller LLMs Using Multi-Teacher Knowledge Distillation"
+
+**Core idea:** Train a small student to simultaneously generate correct answers AND reproduce each teacher's reasoning rationale via multi-task instruction tuning. Teachers contribute through separate task prefixes, not through logit averaging.
+
+**Loss formulation:**
+
+```
+L = L_A + sum_{m=1}^{M} alpha^m * L_T^m
+```
+
+Where:
+- `L_A = (1/N) sum_{i=1}^{N} l(S(Q_i, O_i, p_A; theta_S), A_i)` — ground truth answer loss
+- `L_T^m = (1/N) sum_{i=1}^{N} l(S(Q_i, O_i, p_m; theta_S), R_i^m)` — teacher m rationale loss
+- `p_A` = answer task prefix, `p_m` = teacher m task prefix
+- `alpha^m` = per-teacher importance weight (searched over {0.01, 0.1, 0.5, 1, 2, 3})
+- `R_i^m = T^m(Q_i, O_i, A_i, P_i; theta_T^m)` — teacher m's rationale given question, options, correct answer, and in-context examples
+
+**How teachers are combined:** NO routing, NO gating, NO logit averaging. Each teacher gets a distinct prefix token (`p_m`) that tells the student "now generate teacher m's reasoning." All teachers contribute to every sample via separate loss terms. This is multi-task learning, not ensemble distillation.
+
+**Teacher disagreement handling:** None. All teacher rationales are treated as equally valid targets. The student must learn to generate ALL of them (gated by prefix). Weight `alpha^m` is static (tuned once, not adaptive).
+
+**Cross-architecture:** YES — teachers only need to produce text rationales, so any LLM works regardless of architecture. Teachers tested: GPT-4 (API), LLaMA-2-70B, Mixtral-8x7B.
+
+**Results on small models:**
+- 80M student: 55.78% avg (vs 50.70% KD baseline, +15.69% over fine-tuning)
+- 250M student: 65.02% avg (+11.55% over fine-tuning)
+- 780M student: 73.88% avg (+14.56% over 3B teacher, +23.40% over 7B teacher)
+
+**Compute overhead:** Teacher inference is offline (rationale generation). Training cost = standard instruction tuning with M+1 tasks. LR=5e-5, batch=8, max_len=1024, 1 epoch.
+
+**Ekalavya relevance:** TinyLLM is rationale-level KD, not representation or logit KD. It requires teachers that can generate chain-of-thought text. NOT directly applicable to our pre-training KD setup (we need continuous signal from hidden states/logits, not text rationales). However, the finding that even 80M models can absorb multi-teacher knowledge is encouraging for our 197M student.
+
+---
+
+### 9.2 TAID — Temporally Adaptive Interpolated Distillation (NeurIPS 2024)
+
+**Source:** arXiv:2501.16937, Sakana AI. Official implementation: github.com/SakanaAI/TAID
+
+**Core idea:** Instead of directly minimizing KL(teacher||student), create a time-dependent intermediate distribution that starts near the student and gradually shifts toward the teacher. This bridges the capacity gap smoothly rather than forcing the student to match the teacher from step 1.
+
+**Loss formulation:**
+
+```
+J_TAID^(t)(p, q_theta) = J_KL(p_t, q_theta) = (1/S) sum_s sum_{y_s} p_t(y_s|y_{<s}) * log(p_t(y_s|y_{<s}) / q_theta(y_s|y_{<s}))
+```
+
+**Intermediate distribution (the key innovation):**
+
+```
+p_t(y_s|y_{<s}) = softmax((1-t) * logit_{q'_theta}(y_s|y_{<s}) + t * logit_p(y_s|y_{<s}))
+```
+
+Where:
+- `t in [0, 1]` = interpolation parameter (starts near 0, approaches 1)
+- `q'_theta` = **detached** student logits (no gradient flows through this copy)
+- `logit_p` = teacher logits
+- At t=0: target = student's own distribution (trivial, zero loss)
+- At t=1: target = teacher's distribution (standard forward KL)
+
+**Adaptive scheduling mechanism:**
+
+```
+delta_n = (J_TAID^{t_{n-1}} - J_TAID^{t_n}) / (J_TAID^{t_{n-1}} + epsilon)    # relative loss change
+m_n = beta * m_{n-1} + (1 - beta) * delta_n                                       # momentum smoothing
+t_n <- min(1.0, max(t_linear, t_{n-1} + alpha_schedule * sigmoid(m_n)))            # clamped update
+```
+
+Where `t_linear = n/N` is a linear baseline floor. The schedule aggressively increases t early (when the interpolated target is close to the student, learning is easy) and slows down later (when the gap is harder to close).
+
+**Capacity gap handling:** The interpolation mechanism IS the capacity gap solution. Standard KL forces a small student to match a large teacher's full distribution, causing mode-averaging or collapse. TAID starts with an achievable target and raises the bar gradually. Empirical evidence shows monotonic improvement across all teacher sizes tested (unlike KL and RKL which show inconsistent scaling).
+
+**Cross-architecture:** YES — operates purely at the logit level. Tested across Phi-3, LLaMA-2, StableLM, Pythia, TinyLLaMA families. Architecture-agnostic as long as both models produce token-level logit distributions. Requires SAME tokenizer (no cross-tokenizer support built in).
+
+**Results:**
+- Instruction tuning (MT-Bench): Phi-3-mini -> TinyLLaMA = 4.27 (best baseline 4.18)
+- Pre-training (Open LLM Leaderboard avg): 40.10 (outperforms all baselines)
+- TAID-LLM-1.5B: 52.27 (best sub-2B model at time of publication)
+- ~2x faster than DistiLLM, ~10x faster than GKD (no on-policy SGO generation needed)
+
+**Compute overhead:** Minimal — one additional softmax per step for the interpolated distribution. No student-generated output sampling (unlike MiniLLM/GKD). Teacher forward pass is required (same as standard KD).
+
+**Ekalavya relevance:** HIGHLY relevant. The interpolation mechanism addresses exactly our 1:8.7 capacity ratio problem (197M student vs 1.7B Qwen3 teacher). The adaptive schedule could replace our manual alpha scheduling. LIMITATION: single-teacher only. Multi-teacher extension would require either: (a) interpolating toward an ensemble target, or (b) separate TAID schedules per teacher with a meta-controller.
+
+---
+
+### 9.3 DSKD — Dual-Space Knowledge Distillation (EMNLP 2024 + 2025 extension)
+
+**Source:** arXiv:2406.17328 (v1), arXiv:2504.11426 (v2, DSKDv2). github.com/songmzhang/DSKD
+
+**Core idea:** Unify teacher and student output spaces by projecting hidden states across representation spaces, then compute KD loss in BOTH spaces. Solves the cross-tokenizer problem by learning alignment rather than hard-coding it.
+
+**Loss formulation (DSKDv2):**
+
+```
+L_dskd = L^stu_kd + L^tea_kd + L^{t->s}_ce
+```
+
+Where:
+- `L^stu_kd = sum_i D(p^{t->s}(x_i|x_{<i}; tau) || q_theta(x_i|x_{<i}; tau))` — KD loss in student space (projected teacher vs student)
+- `L^tea_kd = sum_i KL(p(x_i|x_{<i}; tau) || q_theta^{s->t}(x_i|x_{<i}; tau))` — KD loss in teacher space (teacher vs projected student)
+- `L^{t->s}_ce = -sum_i log(p^{t->s}(x_i*|x_{<i}))` — cross-entropy loss training the projector to match teacher's top-1 predictions
+
+**Projector design (DSKDv2 initialization — the key improvement over v1):**
+
+```
+W^{t->s} = W^t * (W^s)^+     # teacher-to-student projector
+W^{s->t} = W^s * (W^t)^+     # student-to-teacher projector
+```
+
+Where `(W^s)^+` is the pseudo-inverse of the student's prediction head. This ensures `W^{t->s} * W^s = W^t` — the projector is initialized to make the teacher's hidden states produce the teacher's logits when passed through the student's head. v1 used random initialization; v2's pseudo-inverse initialization gives much better starting point.
+
+Projectors are simple linear layers. Add ~2M params for GPT-2 scale models.
+
+**Cross-tokenizer handling — ETA (Exact Token Alignment) algorithm:**
+
+Aligns tokens across differently-tokenized sequences by finding positions where:
+1. Identical token prefix: `y^t_{<j} = y^s_{<i}` (same text decoded up to this point)
+2. Identical current token: `y^t_j = y^s_i`
+3. Teacher prediction in student vocabulary: `y_hat^t_j in V_stu`
+
+For different vocabularies, uses vocabulary intersection `V_tilde = V_tea ∩ V_stu` and reinitializes projectors using overlapped prediction heads.
+
+**Cross-Model Attention (CMA) for sequence alignment:**
+
+```
+a^{t->s} = softmax(Q * K^T / sqrt(2D))      # attention matrix aligning student positions to teacher positions
+h_tilde^{t->s}_{1:n} = a^{t->s} * V          # aligned hidden states
+```
+
+This generates an alignment matrix between student tokens (n positions) and teacher tokens (m positions) by concatenating input and target embeddings, normalizing, and learning alignment.
+
+**On-policy extension (DSKDv2):** Replace ground-truth prefix `y_{<i}` with student-generated prefix `y_hat_{<i}` sampled from student distribution. Same dual-space mechanism applies.
+
+**Cross-architecture compatibility:** YES — tested on GPT-2 (120M) and TinyLLaMA (1.1B) as students, with GPT-2 (1.5B), Qwen1.5 (1.8B), LLaMA-2 (7B), and Mistral (7B) as teachers. Different architectures, different tokenizers, different vocab sizes all work.
+
+**Compute overhead:** ~2M additional params for projectors. CMA attention matrix is O(n*m) where n, m are student/teacher sequence lengths. Memory: ~116 MiB per (B, T, N_shared) tensor at vocab intersection size 14822.
+
+**Ekalavya relevance:** DIRECTLY applicable. DSKD is the state-of-the-art for cross-tokenizer logit KD. Our student (16K custom tokenizer) can distill from Qwen3-1.7B (151K vocab), LFM2.5-1.2B (different vocab) simultaneously. DSKDv2's pseudo-inverse projector initialization is critical — random init projectors were identified as a bug risk in our own infrastructure. LIMITATION: single-teacher per invocation. Multi-teacher would require separate projector pairs per teacher.
+
+---
+
+### 9.4 MiniLLM — Reverse KL On-Policy Distillation (ICLR 2024)
+
+**Source:** arXiv:2306.08543. "Knowledge Distillation of Large Language Models"
+
+**Core idea:** Replace standard forward KL with reverse KL divergence. Forward KL forces mode-covering (student tries to cover the entire teacher distribution, spreading probability too thin). Reverse KL enables mode-seeking (student focuses on the teacher's most likely outputs, producing higher quality generations within its capacity).
+
+**Loss formulation:**
+
+```
+L(theta) = KL[q_theta || p] = arg min_theta [-E_{x~p_x, y~q_theta} log(p(y|x) / q_theta(y|x))]
+```
+
+**Policy gradient derivation:**
+
+```
+nabla L(theta) = -E_{x~p_x, y~q_theta} sum_t (R_t - 1) * nabla log q_theta(y_t | y_{<t}, x)
+```
+
+Where `R_t` = accumulated log-probability ratios from position t onward. This is a REINFORCE-style gradient because sampling from `q_theta` (the student) is required.
+
+**Variance reduction — single-step decomposition:**
+
+```
+nabla L(theta) = (nabla L)_single + (nabla L)_long
+```
+
+The single-step term directly computes expected rewards at each position, reducing variance compared to full-trajectory REINFORCE.
+
+**Teacher-mixed sampling (critical for stability):**
+
+```
+p_tilde(y_t|y_{<t}, x) = alpha * p(y_t|y_{<t}, x) + (1-alpha) * q_theta(y_t|y_{<t}, x)
+```
+
+With alpha=0.2 across all experiments. Importance weighting corrects for the distribution mismatch. Without mixing, the student's on-policy samples can be very low quality early in training.
+
+**Forward KL vs Reverse KL — which works better for small students:**
+- **Reverse KL substantially outperforms forward KL for small students.** Forward KL causes "mode-covering" — the student assigns high probability to low-probability teacher regions, producing incoherent text. Reverse KL exhibits "mode-seeking" — focuses on the teacher's major modes, producing more faithful but less diverse outputs.
+- The advantage grows with the capacity gap: the smaller the student relative to the teacher, the more reverse KL helps.
+- Forward KL dominates for convergence speed when the student has sufficient capacity.
+
+**Results across scales:**
+- GPT-2 family: 120M, 340M, 760M students — consistent gains over forward KL baselines
+- OPT family: 1.3B, 2.7B, 6.7B — positive scaling continues
+- LLaMA-7B — substantially outperforms baselines
+- "Excellent scalability" from 120M to 13B
+
+**Compute overhead:** HIGH. On-policy generation requires sampling from the student at every step (autoregressive decoding is slow). Teacher-mixed sampling requires BOTH teacher and student forward passes. Much slower than standard KD (forward KL with teacher targets is a single forward pass).
+
+**Cross-architecture:** YES for logit-level KD, but requires same tokenizer. The on-policy sampling generates text from the student, which is then scored by the teacher — both must use the same tokenizer to compute the KL divergence over the same vocabulary.
+
+**Ekalavya relevance:** The reverse KL insight is important — at our 1:8.7 ratio, forward KL will cause mode-covering and degrade quality. However, MiniLLM's on-policy approach is extremely expensive (student autoregressive decoding every step). For pre-training, this is prohibitive. BETTER: Use TAID's interpolated approach (gets reverse-KL-like mode-seeking behavior without on-policy sampling cost) or DistiLLM's skew KL (similar benefits, 2.5-4.3x faster).
+
+---
+
+### 9.5 GKD — Generalized Knowledge Distillation (ICLR 2024)
+
+**Source:** arXiv:2306.13649, Google DeepMind. "On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes"
+
+**Core idea:** Unify KD objectives into a single framework where both the data distribution (teacher-generated vs student-generated) and the divergence measure (forward KL, reverse KL, JSD) are design choices.
+
+**Loss formulation:**
+
+```
+L_GKD(theta) = (1 - lambda) * E_{(x,y)~(X,Y)} [D(p_T || p_S^theta)(y|x)]
+             + lambda * E_{x~X} [E_{y~p_S(.|x)} [D(p_T || p_S^theta)(y|x)]]
+```
+
+Where:
+- `lambda in [0, 1]` controls student data fraction
+- `lambda = 0`: pure off-policy (standard KD on fixed data)
+- `lambda = 1`: pure on-policy (train on student-generated sequences, scored by teacher)
+- `D` is any divergence measure
+
+**Generalized JSD formula:**
+
+```
+D_JSD(beta)(P || Q) = beta * D_KL(P || beta*P + (1-beta)*Q) + (1-beta) * D_KL(Q || beta*P + (1-beta)*Q)
+```
+
+Where:
+- `beta -> 0`: approaches forward KL
+- `beta -> 1`: approaches reverse KL
+- `beta = 0.5`: symmetric JSD
+
+**On-policy mechanism:** The student receives "token-specific feedback from the teacher's logits on the erroneous tokens in its self-generated output sequences." The student generates a full sequence, then the teacher provides per-token probability scores. This gives the student signal on its own mistakes rather than only on teacher-generated text.
+
+**Distribution mismatch handling:** Standard KD trains on teacher/ground-truth sequences that the student may never generate at inference time. GKD trains on sequences the student actually produces — addressing the train-inference distribution gap. Draws from imitation learning principles (DAgger-like).
+
+**Which divergence works best (by task):**
+- XSum (summarization): Mode-seeking (JSD(0.9), reverse KL) excel with temperature sampling
+- WMT (translation): JSD outperforms both forward and reverse KL; gap reduces with larger students
+- GSM8K (reasoning): Forward KL performs well with greedy; reverse KL also strong
+- FLAN (instruction tuning): On-policy GKD with reverse KL "substantially outperforms supervised KD"
+
+**The optimal divergence is task-dependent.** No single divergence dominates across all settings.
+
+**Cross-architecture:** YES at logit level, requires same tokenizer (student-generated sequences must be scorable by teacher).
+
+**Compute overhead:** On-policy mode requires student autoregressive generation (expensive, like MiniLLM). Off-policy mode is standard KD cost. GKD recommends mixed: `lambda=0.5` balances cost and quality.
+
+**Ekalavya relevance:** GKD's framework helps us think about the design space systematically. Key insight for Ekalavya: (1) on-policy is better but expensive — consider offline student-generated caching (like DistiLLM's replay buffer), (2) JSD(0.1-0.5) may be better than pure forward or reverse KL at our capacity ratio, (3) the optimal divergence likely differs by content type — reasoning tokens may want reverse KL while factual tokens want forward KL. This argues for per-surface divergence selection in our routing system.
+
+---
+
+### 9.6 DistiLLM — Skew KL + Adaptive Off-Policy (ICML 2024)
+
+**Source:** arXiv:2402.03898, Microsoft. "Towards Streamlined Distillation for Large Language Models"
+
+**Core idea:** Replace standard KL with skew KL divergence (mathematically bounded, better gradient behavior), and use adaptive off-policy training with a replay buffer to get on-policy benefits without the per-step generation cost.
+
+**Skew KL divergence formulas:**
+
+```
+D_SKL^(alpha)(p, q_theta) = D_KL(p, alpha*p + (1-alpha)*q_theta)     # Skew forward KL
+D_SRKL^(alpha)(p, q_theta) = D_KL(q_theta, (1-alpha)*p + alpha*q_theta)  # Skew reverse KL
+```
+
+Where `alpha in [0, 1]` controls mixing between teacher `p` and student `q_theta`.
+
+**Gradient analysis (why skew KL is better):**
+
+```
+nabla_theta D_SKL^(alpha)(p, q_theta) = -(1-alpha) * r_{p, q_tilde_theta} * nabla_theta q_theta(y|x)
+```
+
+Where `q_tilde_theta = alpha*p + (1-alpha)*q_theta`. The `(1-alpha)` factor reduces gradient magnitude compared to standard KL, preventing instability when student probability approaches zero. Standard KL has unbounded gradients when `q_theta(y) -> 0`; skew KL caps this.
+
+**Convergence bound (Theorem 1):**
+
+```
+E[|D_SKL^(alpha)(p_n^1, p_n^2) - D_SKL^(alpha)(p^1, p^2)|^2]
+  <= c_1(alpha)/n^2 + c_2*log^2(alpha*n)/n + c_3*log^2(c_4*n)/(alpha^2*n)
+```
+
+Smaller approximation errors and faster convergence than standard KL.
+
+**Adaptive off-policy approach:**
+
+```
+lambda_R = phi(1 - t/T)        # SGO generation probability
+```
+
+Where `phi` is adaptively scheduled: when validation loss increases beyond threshold `epsilon`, the SGO probability increments by `1/N_phi` (capped at 1.0). Student-generated outputs stored in replay buffer `D_R`, resampled in subsequent iterations. This gives on-policy benefits without generating new sequences every step.
+
+**Results vs MiniLLM and GKD:**
+- DistiLLM demonstrates "superiority across diverse teacher-student combinations"
+- MiniLLM and GKD show "performance decline in smaller-sized student models"
+- 2.5-4.3x faster training than MiniLLM/GKD
+- SAMSum (T5-XL->Base): 49.11 ROUGE-L (vs GKD: 48.49)
+- Skew reverse KL (SRKL) slightly outperforms skew forward KL (SKL): 26.11 vs 25.79 on Dolly
+
+**Cross-architecture:** Same constraints as GKD — logit-level, same tokenizer required for on-policy generation.
+
+**Ekalavya relevance:** HIGHLY relevant. DistiLLM's skew KL solves the gradient instability problem we'll face at large capacity ratios, and the replay buffer gives us on-policy benefits cheaply. Recommended: Use D_SRKL as our base divergence instead of standard forward KL, with alpha~0.1-0.3. The adaptive SGO scheduler could replace manual curriculum design.
+
+---
+
+### 9.7 AE-KD — Gradient-Space Multi-Teacher Conflict Resolution (NeurIPS 2020)
+
+**Source:** "Agree to Disagree: Adaptive Ensemble Knowledge Distillation in Gradient Space." github.com/AnTuo1998/AE-KD
+
+**Core idea:** Formulate multi-teacher KD as a multi-objective optimization (MOO) problem. Each teacher's loss defines one objective. Use MGDA (Multiple Gradient Descent Algorithm) to find a Pareto-optimal direction that accommodates all teachers, with a tolerance parameter to handle noisy/weak teachers.
+
+**Formulation:** Each teacher m produces a loss `L_m` with gradient `g_m = nabla_theta L_m`. Standard averaging uses `g_avg = (1/M) sum g_m`, which fails when teachers disagree (gradients point in conflicting directions).
+
+AE-KD instead solves:
+
+```
+min_{w in Delta_M} || sum_{m=1}^{M} w_m * g_m ||^2
+```
+
+Subject to `w_m >= 0`, `sum w_m = 1`. This finds the minimum-norm direction in the convex hull of teacher gradients — the Pareto-optimal update that makes progress on all objectives simultaneously.
+
+**Tolerance parameter C (default 0.6):** Controls how much teacher disagreement is allowed. With C < 1.0, the optimization allows some teachers to be underserved, reducing the influence of outlier/noisy teachers.
+
+**Key parameters from implementation:**
+- `-C 0.6`: tolerance (higher = more tolerance for disagreement)
+- `-a 0.9`: KD loss weight
+- `-r 1`: cross-entropy weight
+- `-b 100`: feature distillation weight
+- Supports both logit-based and feature-based ensemble KD
+
+**Teacher collapse prevention:** The Pareto optimization inherently prevents single-teacher dominance — the minimum-norm solution must make progress on ALL objectives (modulo tolerance). If one teacher's gradient dominates, the others pull the direction back.
+
+**Per-sample vs per-batch:** Per-BATCH optimization — the MGDA QP is solved once per mini-batch using batch-averaged gradients from each teacher.
+
+**Cross-architecture:** Works for any teacher that provides gradients through its KD loss (logit or feature). Not inherently cross-tokenizer.
+
+**Ekalavya relevance:** DIRECTLY applicable to our multi-teacher setup. When Qwen3, LFM2.5, and EmbeddingGemma produce conflicting gradients, MGDA finds the compromise direction. CRITICAL INSIGHT: This is complementary to routing — routing selects WHICH teachers supervise each sample, MGDA resolves conflicts WHEN multiple teachers are active on the same sample. AE-KD handles the "Consensus" bucket where all teachers contribute. Alternative: PCGrad (from Codex review §6.4.21) is simpler — just project conflicting gradients to be orthogonal.
+
+---
+
+### 9.8 Knowledge Purification — Per-Sample Teacher Routing (Feb 2026)
+
+**Source:** arXiv:2602.01064, "Exploring Knowledge Purification in Multi-Teacher Knowledge Distillation for LLMs"
+
+**Core finding: Performance DECLINES as teacher count increases** due to conflicting rationales. The 5 purification methods with exact formulas:
+
+**Method 1 — Knowledge Aggregation:** GPT-4 synthesizes all rationales into one consensus. Offline, expensive. CMV (Conflict Mitigation Value) = -0.003 to -0.007 (NEGATIVE — hurts). Worst method.
+
+**Method 2 — Plackett-Luce Ranking:**
+```
+P_theta(r_{t_i} | q) = e^{xi_i} / sum_{j=1}^{n} e^{xi_j}
+```
+Coefficients learned by minimizing weighted cross-entropy. No retraining needed. Transfers across domains.
+
+**Method 3 — PLM Classifier:**
+```
+P_theta(r_{t_i} | q) = e^{W_{i2}(W_{i1} * h_CLS + b_{i1}) + b_{i2}} / sum_{j=1}^{n} e^{W_{j2}(W_{j1} * h_CLS + b_{j1}) + b_{j2}}
+```
+Two-layer MLP on mDeBERTaV3-base encoder. Training: ~0.5 GPU hours.
+
+**Method 4 — Similarity-based Router (BEST):**
+```
+P_theta(r_{t_i} | q) = e^{sim<E(q), k_i>} / sum_{j=1}^{n} e^{sim<E(q), k_j>}
+```
+Dual contrastive learning: sample-LLM pairs + sample-sample pairs. Uses trainable key embeddings per teacher. CMV = +0.025 to +0.032 (BEST across all student sizes).
+
+**Method 5 — RL-based Teacher Selection:**
+```
+pi_theta(s_i, a_i) = a_i * sigma(W_i * s_i + b_i) + (1 - a_i) * (1 - sigma(W_i * s_i + b_i))
+```
+State = question embedding + correctness indicator. Reward = -L_PR - L_DL. Selects ONE teacher per sample. Training: ~3.5 GPU hours. Best on large students (67.55% for 783M).
+
+**Combined loss for purified KD:**
+```
+L_MTKD-KP = L_PR + lambda * L_DL-KP
+```
+
+Where L_PR = prediction loss, L_DL-KP = distillation loss from the purified (selected) teacher only.
+
+**Key results on FLAN-T5-large (783M):**
+- TinyLLM baseline: 62.53%
+- Knowledge aggregation: 63.32%
+- Similarity-based router: 67.20%
+- RL teacher selection: 67.55%
+
+**Out-of-domain generalization:** Routing methods maintained performance on unseen PIQA (69.53%) and BioASQ (91.87%) without retraining.
+
+**Ekalavya relevance:** The similarity-based router is our recommended starting point for per-sample teacher selection. It's the simplest method that works best, requires minimal training, and generalizes OOD. For our 3-teacher setup (Qwen3, LFM2.5, EmbeddingGemma), a lightweight router on the student's hidden states can select which teacher(s) to learn from per sample. CRITICAL: routing to ONE teacher beats combining ALL — this contradicts naive multi-teacher averaging.
+
+---
+
+### 9.9 CDM — Contextual Dynamic Mapping for Cross-Tokenizer KD (ACL Findings 2025)
+
+**Source:** arXiv:2502.11104, "Enhancing Cross-Tokenizer Knowledge Distillation with Contextual Dynamical Mapping"
+
+**Core idea:** Improve vocabulary coverage from 65% (exact match) to 87% by using contextual information to dynamically map unmapped tokens between different tokenizers.
+
+**Two-stage vocabulary alignment:**
+
+1. **Exact Match Dictionary F_EM:** Direct string match between tokenizers (65% coverage for Qwen2-Phi3)
+
+2. **Dynamic Contextual Mapping F_dynamic:** For unmapped tokens:
+   - Select top-K logits at each position: `argsort(sum_j o_{ij}, descending)[:k]`
+   - Match candidates using normalized edit distance with threshold theta=0.3
+   - Bidirectional: forward (teacher->student) + reverse (student->teacher)
+
+**Entropy-weighted DTW for sequence alignment:**
+```
+W(O) = ceil(Sigmoid(phi(H(O))) * C + C)
+```
+Where H(O) = entropy of output distribution, phi = learned transformation, C = scaling constant. High-entropy (ambiguous) positions are down-weighted.
+
+**Loss formulation:**
+```
+L = alpha * L_KL + (1 - alpha) * L_lm
+```
+Where `L_KL(O^{stu}_f || O^{tea}_f) = sum_{i=1}^{k} O^{stu}_f[i] * log(O^{stu}_f[i] / O^{tea}_f[i])`, alpha=0.5.
+
+Dual representation: `O^{stu}_f = O^{stu}_{align} ⊕ O^{stu}_{reverse}` (concatenation of forward-aligned and reverse-aligned outputs).
+
+**Comparison to DSKD/ETA:** CDM acknowledges DSKD's dual alignment but notes both "ULD and DSKD methods suffer from inefficiencies due to underutilization of the vocabulary." CDM's advantage: contextual top-K filtering processes only relevant vocabulary entries rather than the full vocab.
+
+**Ekalavya relevance:** CDM's coverage improvement (65%->87%) directly addresses a gap in DSKD's ETA algorithm. For our multi-teacher setup with 3 different tokenizers, CDM's contextual mapping could recover signal from the ~35% of tokens that ETA drops. Consider as an enhancement layer on top of DSKD projectors.
+
+---
+
+### 9.10 Cross-Tokenizer Likelihood Scoring — BPE Recursive Framework (Dec 2025)
+
+**Source:** arXiv:2512.14954, "Cross-Tokenizer Likelihood Scoring Algorithms for Language Model Distillation"
+
+**Core idea:** Exploit BPE's implicit recursive merge structure to derive a principled probabilistic framework for computing likelihoods across different tokenizers. No learned projectors, no alignment algorithms — pure mathematical conversion using the tokenizer's own structure.
+
+**Conversion probability:**
+```
+P_alpha(e_beta) = Pr[encode_beta(x) begins with e_beta]
+```
+Where `x` is sampled from model `P_alpha` (trained on vocab `V_alpha`), and `e_beta` is an encoding in vocab `V_beta`.
+
+**Relative alphabet concept:** If `V_{M'} <= V_M` (one vocab is a subset via BPE merge ordering), then:
+- **Relative encoding:** `encode_{M'->M}(e_{M'}) = merge_M o ... o merge_{M'+1}(e_{M'})`
+- **Relative decoding:** `decode_{M->M'}(e_M) = demerge_{M'+1} o ... o demerge_M(e_M)`
+
+**Subset-to-full conversion (the key recursive algorithm):**
+Given merged token `t_{M'+1} = t_{M'+1}^left * t_{M'+1}^right`:
+- If `e_{M'+1}[-1] != t_{M'+1}^left`: `P_{M'}(e_{M'+1}) = P_{M'}(e_{M'})`
+- Otherwise: `P_{M'}(e_{M'+1}) = P_{M'}(e_{M'}) - P_{M'}(e_{M'} * t_{M'+1}^right)`
+
+**Full-to-subset conversion (Lemma 1):**
+```
+P(e_{M'}) = sum_{e_M in C} P(e_M)
+```
+Where `C = cover_{M'->M}(e_{M'})` — the set of valid encodings in `V_M` that decode to the same string. Computable in O(|e_{M'}|) time.
+
+**Computational complexity:**
+- Subset case: O(1) model evaluations per token
+- General case (exact): Exponential worst-case (but finite)
+- General case (approximate): Beam search with whitespace stopping, ~0.5s per token
+
+**Ekalavya relevance:** This is the most principled cross-tokenizer approach — no learned components, purely mathematical. However, the 0.5s/token overhead makes it impractical for online training KD. Better suited for offline scoring or validation. For online training, DSKD's learned projectors are faster despite being less principled.
+
+---
+
+### 9.11 Synthesis: Method Selection Matrix for Ekalavya
+
+| Method | Multi-Teacher | Cross-Tokenizer | Cross-Architecture | Capacity Gap | Compute Cost | Ekalavya Fit |
+|--------|--------------|-----------------|-------------------|-------------|-------------|-------------|
+| TinyLLM | YES (native) | N/A (text-level) | YES | Weak | Low (offline rationales) | LOW — rationale-level, not for pre-training |
+| TAID | NO (single) | NO | YES (logit-level) | STRONG (interpolation) | Low | HIGH — capacity gap solution, needs multi-teacher extension |
+| DSKD/DSKDv2 | NO (single) | YES (native) | YES | Moderate | Medium (~2M projector params) | HIGH — cross-tokenizer solved |
+| MiniLLM | NO (single) | NO | YES (logit-level) | STRONG (reverse KL) | HIGH (on-policy) | MEDIUM — right objective, wrong cost |
+| GKD | NO (single) | NO | YES (logit-level) | Moderate (JSD) | Medium-High | MEDIUM — framework insight, not direct use |
+| DistiLLM | NO (single) | NO | YES (logit-level) | STRONG (skew KL) | Low (replay buffer) | HIGH — skew KL + adaptive schedule |
+| AE-KD | YES (native) | NO | YES (gradient-level) | N/A | Low (QP per batch) | HIGH — gradient conflict resolution |
+| Purification | YES (native) | N/A (text-level) | YES | Moderate | Low (lightweight router) | HIGH — per-sample teacher routing |
+| CDM | NO | YES | YES | N/A | Low | MEDIUM — coverage improvement over ETA |
+| BPE Recursive | NO | YES | YES | N/A | HIGH (0.5s/tok) | LOW — offline only |
+
+**Recommended Ekalavya stack (to be validated by T+L):**
+1. **Cross-tokenizer alignment:** DSKD projectors with CDM-enhanced coverage
+2. **Divergence:** DistiLLM's skew reverse KL (D_SRKL, alpha~0.1-0.3) instead of forward KL
+3. **Capacity gap:** TAID-style interpolation schedule (start near student, shift toward teacher)
+4. **Multi-teacher routing:** Purification-style similarity router (per-sample teacher selection)
+5. **Gradient conflicts:** AE-KD MGDA or PCGrad when multiple teachers are active
+6. **No on-policy generation** during pre-training (too expensive) — use DistiLLM's replay buffer if on-policy benefits needed later
