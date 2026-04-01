@@ -7217,6 +7217,10 @@ def train_state_kd_scratch(config_path):
     proj_lr = cfg.get("projector_lr", 6e-4)
     proj_wd = cfg.get("projector_weight_decay", 0.01)
 
+    # VICReg spectral regularization (Option A: combined with InfoNCE)
+    spectral_reg = cfg.get("spectral_reg", 0.0)
+    use_spectral = spectral_reg > 0
+
     assert len(student_kd_layers) == len(teacher_kd_layers) == len(depth_weights), \
         "student_kd_layers, teacher_kd_layers, and depth_weights must have same length"
 
@@ -7241,6 +7245,8 @@ def train_state_kd_scratch(config_path):
               f"hold ({ramp_end+1}-{decay_start_step}), "
               f"decay {alpha_max} -> {alpha_min} ({decay_start_step+1}-{decay_end_step})")
     print(f"  Projector LR={proj_lr}, WD={proj_wd}")
+    if use_spectral:
+        print(f"  VICReg spectral_reg={spectral_reg} (constant, on exit_hidden)")
     print(f"{'='*60}")
 
     # ---- Student tokenizer ----
@@ -7321,6 +7327,9 @@ def train_state_kd_scratch(config_path):
     metrics_log = []
     running_ce = 0.0
     running_state = 0.0
+    running_spec = 0.0
+    running_var = 0.0
+    running_cov = 0.0
 
     print(f"  Exit weights: {actual_exit_weights}")
     print(f"  Starting from step {start_step + 1}...\n")
@@ -7341,6 +7350,9 @@ def train_state_kd_scratch(config_path):
         opt.zero_grad()
         step_ce = 0.0
         step_state = 0.0
+        step_spec = 0.0
+        step_var = 0.0
+        step_cov = 0.0
         bad_step = False
 
         for _ in range(grad_accum):
@@ -7400,9 +7412,33 @@ def train_state_kd_scratch(config_path):
                     )
                     state_loss_total = state_loss_total + depth_weights[pair_idx] * layer_loss
 
-                # ADDITIVE loss: L = L_CE + alpha_state * L_state
+                # ---- VICReg spectral regularization (if enabled) ----
+                spec_loss = torch.tensor(0.0, device=DEVICE)
+                raw_var = 0.0
+                raw_cov = 0.0
+                if use_spectral and 'exit_hidden' in out:
+                    with torch.amp.autocast("cuda", enabled=False):
+                        total_var = torch.tensor(0.0, device=DEVICE)
+                        total_cov = torch.tensor(0.0, device=DEVICE)
+                        for eidx, h_exit in out['exit_hidden'].items():
+                            h_flat = h_exit.reshape(-1, h_exit.shape[-1]).float()
+                            if h_flat.shape[0] > 512:
+                                idx = torch.randperm(h_flat.shape[0], device=h_flat.device)[:512]
+                                h_flat = h_flat[idx]
+                            std = h_flat.std(dim=0)
+                            total_var = total_var + F.relu(1.0 - std).mean()
+                            h_centered = h_flat - h_flat.mean(dim=0, keepdim=True)
+                            cov = (h_centered.T @ h_centered) / max(h_flat.shape[0] - 1, 1)
+                            D = cov.shape[0]
+                            off_diag = cov.pow(2).sum() - cov.diagonal().pow(2).sum()
+                            total_cov = total_cov + off_diag / D
+                        spec_loss = spectral_reg * (total_var + total_cov)
+                        raw_var = total_var.item()
+                        raw_cov = total_cov.item()
+
+                # ADDITIVE loss: L = L_CE + alpha_state * L_state + spec_loss
                 # NOT mixture (1-alpha)*CE + alpha*KD — that's wrong for representation shaping
-                total_loss = (base_loss + alpha_state * state_loss_total) / grad_accum
+                total_loss = (base_loss + alpha_state * state_loss_total + spec_loss) / grad_accum
 
             if not torch.isfinite(total_loss):
                 print(f"  WARNING: NaN/Inf at step {step}, skipping")
@@ -7413,6 +7449,10 @@ def train_state_kd_scratch(config_path):
             scaler.scale(total_loss).backward()
             step_ce += ce_val / grad_accum
             step_state += state_loss_total.item() / grad_accum
+            if use_spectral:
+                step_spec += spec_loss.item() / grad_accum
+                step_var += raw_var / grad_accum
+                step_cov += raw_cov / grad_accum
 
         if bad_step:
             continue
@@ -7426,19 +7466,30 @@ def train_state_kd_scratch(config_path):
 
         running_ce += step_ce
         running_state += step_state
+        running_spec += step_spec
+        running_var += step_var
+        running_cov += step_cov
 
         # ---- Logging ----
         if step % LOG_EVERY == 0:
             avg_ce = running_ce / LOG_EVERY
             avg_state = running_state / LOG_EVERY
+            avg_spec = running_spec / LOG_EVERY
             bpt = avg_ce / math.log(2)
             msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
                    f"StateKD={avg_state:.4f} alpha={alpha_state:.3f} LR={current_lr:.2e}")
+            if use_spectral:
+                avg_var = running_var / LOG_EVERY
+                avg_cov = running_cov / LOG_EVERY
+                msg += f" SPEC={avg_spec:.4f} VAR={avg_var:.3f} COV={avg_cov:.3f}"
             print(msg, flush=True)
             with open(log_file, "a") as f:
                 f.write(msg + "\n")
             running_ce = 0.0
             running_state = 0.0
+            running_spec = 0.0
+            running_var = 0.0
+            running_cov = 0.0
 
         # ---- Eval ----
         if step % eval_every == 0 or step == total_steps:

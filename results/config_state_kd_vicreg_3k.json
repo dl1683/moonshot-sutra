@@ -1,0 +1,54 @@
+{
+    "name": "state_kd_vicreg_3k",
+    "teacher": "Qwen/Qwen3-1.7B-Base",
+
+    "total_steps": 3000,
+    "batch_size": 4,
+    "grad_accum": 8,
+    "seq_len": 512,
+
+    "lr": 3e-4,
+    "min_lr": 1e-5,
+    "warmup": 200,
+    "eval_every": 500,
+
+    "dim": 768,
+    "n_layers": 24,
+    "n_heads": 12,
+    "ff_dim": 2304,
+    "exit_layers": [7, 15, 23],
+    "norm_type": "ss_rmsnorm",
+    "block_schedule": ["A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A","A"],
+    "n_q_heads": 6,
+    "n_kv_heads": 3,
+    "head_dim": 64,
+    "conv_kernel_size": 4,
+
+    "kd_surface": "state_only",
+    "student_kd_layers": [7, 15, 23],
+    "teacher_kd_layers": [8, 16, 24],
+    "n_spans": 32,
+
+    "state_loss": "span_infonce_cosine",
+    "contrastive_temperature": 0.07,
+    "depth_weights": [0.30, 0.50, 0.20],
+
+    "alpha_state_start": 0.06,
+    "alpha_state_max": 0.30,
+    "alpha_state_min": 0.03,
+    "alpha_state_ramp_end": 400,
+    "alpha_state_decay_start": 2200,
+    "alpha_state_decay_end": 3000,
+
+    "projector_lr": 6e-4,
+    "projector_weight_decay": 0.01,
+
+    "spectral_reg": 0.005,
+
+    "teacher_dtype": "float16",
+    "logit_kd": false,
+    "semantic_kd": false,
+    "attention_transfer": false,
+
+    "_purpose": "Option A: R13 InfoNCE + VICReg combined. Tests if teacher alignment + anti-collapse are additive. VICReg (0.005) same scalar weight proven in Track 1. Success: BPT<=4.86 (additive). Strong: BPT<4.80."
+}
