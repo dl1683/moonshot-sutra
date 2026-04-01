@@ -7090,13 +7090,42 @@ def train_state_kd_scratch(config_path):
     temperature = cfg.get("contrastive_temperature", 0.07)
     depth_weights = cfg.get("depth_weights", [0.30, 0.50, 0.20])
 
-    # Alpha state schedule (ramp up, hold, decay — NOT WSD)
-    alpha_start = cfg.get("alpha_state_start", 0.06)
-    alpha_max = cfg.get("alpha_state_max", 0.30)
-    alpha_min = cfg.get("alpha_state_min", 0.03)
-    ramp_end = cfg.get("alpha_state_ramp_end", 400)
-    decay_start = cfg.get("alpha_state_decay_start", 2200)
-    decay_end = cfg.get("alpha_state_decay_end", total_steps)
+    # Alpha state schedule — supports two modes:
+    # 1. Simple ramp/hold/decay: alpha_state_start/max/min + ramp_end/decay_start/decay_end
+    # 2. Phase list: alpha_state_schedule = [{start_step, end_step, shape, start_value/end_value/value}]
+    alpha_schedule_phases = cfg.get("alpha_state_schedule", None)
+    if alpha_schedule_phases is None:
+        # Legacy simple schedule
+        alpha_start = cfg.get("alpha_state_start", 0.06)
+        alpha_max = cfg.get("alpha_state_max", 0.30)
+        alpha_min = cfg.get("alpha_state_min", 0.03)
+        ramp_end = cfg.get("alpha_state_ramp_end", 400)
+        decay_start_step = cfg.get("alpha_state_decay_start", 2200)
+        decay_end_step = cfg.get("alpha_state_decay_end", total_steps)
+
+    def alpha_for_step(step):
+        """Compute alpha_state for a given step using config schedule."""
+        if alpha_schedule_phases is not None:
+            for phase in alpha_schedule_phases:
+                if phase["start_step"] <= step <= phase["end_step"]:
+                    if phase["shape"] == "constant":
+                        return phase["value"]
+                    elif phase["shape"] == "linear":
+                        t = (step - phase["start_step"]) / max(phase["end_step"] - phase["start_step"], 1)
+                        return phase["start_value"] + t * (phase["end_value"] - phase["start_value"])
+            # Fallback: use last phase's end value
+            return alpha_schedule_phases[-1].get("end_value", alpha_schedule_phases[-1].get("value", 0.0))
+        else:
+            # Simple ramp/hold/decay
+            if step <= ramp_end:
+                return alpha_start + (alpha_max - alpha_start) * step / max(ramp_end, 1)
+            elif step <= decay_start_step:
+                return alpha_max
+            elif step <= decay_end_step:
+                progress = (step - decay_start_step) / max(decay_end_step - decay_start_step, 1)
+                return alpha_max - progress * (alpha_max - alpha_min)
+            else:
+                return alpha_min
 
     # Projector config
     proj_lr = cfg.get("projector_lr", 6e-4)
@@ -7114,9 +7143,17 @@ def train_state_kd_scratch(config_path):
     print(f"  State KD: student layers {student_kd_layers} -> teacher layers {teacher_kd_layers}")
     print(f"  n_spans={n_spans}, temperature={temperature}")
     print(f"  Depth weights: {depth_weights}")
-    print(f"  Alpha: {alpha_start} -> {alpha_max} (ramp 1-{ramp_end}), "
-          f"hold ({ramp_end+1}-{decay_start}), "
-          f"decay {alpha_max} -> {alpha_min} ({decay_start+1}-{decay_end})")
+    if alpha_schedule_phases:
+        print(f"  Alpha: {len(alpha_schedule_phases)}-phase schedule")
+        for i, p in enumerate(alpha_schedule_phases):
+            if p["shape"] == "constant":
+                print(f"    Phase {i+1}: steps {p['start_step']}-{p['end_step']} constant {p['value']}")
+            else:
+                print(f"    Phase {i+1}: steps {p['start_step']}-{p['end_step']} {p['start_value']} -> {p['end_value']}")
+    else:
+        print(f"  Alpha: {alpha_start} -> {alpha_max} (ramp 1-{ramp_end}), "
+              f"hold ({ramp_end+1}-{decay_start_step}), "
+              f"decay {alpha_max} -> {alpha_min} ({decay_start_step+1}-{decay_end_step})")
     print(f"  Projector LR={proj_lr}, WD={proj_wd}")
     print(f"{'='*60}")
 
@@ -7212,17 +7249,8 @@ def train_state_kd_scratch(config_path):
         proj_current_lr = get_lr_wsd(step, warmup, total_steps, proj_lr, proj_lr * 0.01)
         opt.param_groups[1]["lr"] = proj_current_lr
 
-        # ---- Alpha state schedule: ramp -> hold -> decay ----
-        if step <= ramp_end:
-            # Linear ramp from alpha_start to alpha_max
-            alpha_state = alpha_start + (alpha_max - alpha_start) * step / max(ramp_end, 1)
-        elif step <= decay_start:
-            alpha_state = alpha_max
-        elif step <= decay_end:
-            progress = (step - decay_start) / max(decay_end - decay_start, 1)
-            alpha_state = alpha_max - progress * (alpha_max - alpha_min)
-        else:
-            alpha_state = alpha_min
+        # ---- Alpha state schedule ----
+        alpha_state = alpha_for_step(step)
 
         opt.zero_grad()
         step_ce = 0.0
@@ -7436,6 +7464,522 @@ def train_state_kd_scratch(config_path):
     gc.collect()
 
 
+def train_pcd_scratch(config_path):
+    """From-scratch pre-training with Predictive Coding Distillation (R15 design).
+
+    Codex R15: Student PREDICTS teacher hidden states via Huber loss.
+    Key innovations over R13 InfoNCE:
+    - Learned per-span precision heads (sigmoid gating)
+    - Student-entropy-based active span selection (top 20%)
+    - Huber loss (delta=0.5) on L2-normalized spans instead of InfoNCE
+    - This is the FINAL KD mechanism experiment. If it fails at 3K gate, KD-mechanism work ends.
+
+    Config JSON fields (beyond standard):
+        student_kd_layers: [7, 15, 23]
+        teacher_kd_layers: [8, 16, 24]
+        n_spans: 32
+        depth_weights: [0.25, 0.50, 0.25]
+        huber_delta: 0.5
+        active_span_fraction: 0.20
+        projector_lr: 6e-4
+        projector_weight_decay: 0.01
+        precision_head_weight_decay: 0.0
+        precision_bias_init: -2.2
+        lambda_pcd_schedule: [{start_step, end_step, shape, start_value/end_value/value}]
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    teacher_name = cfg["teacher"]
+    total_steps = cfg.get("total_steps", 6000)
+    batch_size = cfg.get("batch_size", 4)
+    grad_accum = cfg.get("grad_accum", 8)
+    lr = cfg.get("lr", 3e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 200)
+    eval_every = cfg.get("eval_every", 500)
+    seq_len = cfg.get("seq_len", 512)
+
+    # Architecture
+    dim = cfg.get("dim", 768)
+    n_layers = cfg.get("n_layers", 24)
+    n_heads = cfg.get("n_heads", 12)
+    ff_dim = cfg.get("ff_dim", 2304)
+    exit_layers = cfg.get("exit_layers", [7, 15, 23])
+    norm_type = cfg.get("norm_type", "ss_rmsnorm")
+    block_schedule = cfg.get("block_schedule", None)
+    n_q_heads = cfg.get("n_q_heads", 6)
+    n_kv_heads = cfg.get("n_kv_heads", 3)
+    head_dim = cfg.get("head_dim", 64)
+    conv_kernel_size = cfg.get("conv_kernel_size", 4)
+
+    # PCD config
+    student_kd_layers = cfg.get("student_kd_layers", [7, 15, 23])
+    teacher_kd_layers = cfg.get("teacher_kd_layers", [8, 16, 24])
+    n_spans = cfg.get("n_spans", 32)
+    depth_weights = cfg.get("depth_weights", [0.25, 0.50, 0.25])
+    huber_delta = cfg.get("huber_delta", 0.5)
+    active_frac = cfg.get("active_span_fraction", 0.20)
+    precision_bias_init = cfg.get("precision_bias_init", -2.2)
+
+    # λ_pcd schedule (4-phase)
+    lambda_schedule = cfg.get("lambda_pcd_schedule", [
+        {"start_step": 1, "end_step": 500, "shape": "linear", "start_value": 0.0, "end_value": 0.30},
+        {"start_step": 501, "end_step": 1800, "shape": "constant", "value": 0.30},
+        {"start_step": 1801, "end_step": 3000, "shape": "linear", "start_value": 0.30, "end_value": 0.10},
+        {"start_step": 3001, "end_step": 6000, "shape": "linear", "start_value": 0.10, "end_value": 0.03},
+    ])
+
+    def lambda_for_step(step):
+        for phase in lambda_schedule:
+            if phase["start_step"] <= step <= phase["end_step"]:
+                if phase["shape"] == "constant":
+                    return phase["value"]
+                elif phase["shape"] == "linear":
+                    t = (step - phase["start_step"]) / max(phase["end_step"] - phase["start_step"], 1)
+                    return phase["start_value"] + t * (phase["end_value"] - phase["start_value"])
+        return lambda_schedule[-1].get("end_value", lambda_schedule[-1].get("value", 0.0))
+
+    # Head LR and WD
+    proj_lr = cfg.get("projector_lr", 6e-4)
+    proj_wd = cfg.get("projector_weight_decay", 0.01)
+    prec_wd = cfg.get("precision_head_weight_decay", 0.0)
+
+    assert len(student_kd_layers) == len(teacher_kd_layers) == len(depth_weights)
+
+    print(f"\n{'='*60}")
+    print(f"PREDICTIVE CODING DISTILLATION (R15): {run_name}")
+    print(f"  Architecture: {n_layers}L / d={dim} / {n_heads}h / ff={ff_dim}")
+    print(f"  Teacher: {teacher_name}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  LR: {lr} -> {min_lr}, warmup={warmup} (WSD)")
+    print(f"  PCD: student layers {student_kd_layers} -> teacher layers {teacher_kd_layers}")
+    print(f"  n_spans={n_spans}, huber_delta={huber_delta}, active_frac={active_frac}")
+    print(f"  Depth weights: {depth_weights}")
+    print(f"  Lambda schedule: {len(lambda_schedule)} phases")
+    for i, p in enumerate(lambda_schedule):
+        if p["shape"] == "constant":
+            print(f"    Phase {i+1}: steps {p['start_step']}-{p['end_step']} constant {p['value']}")
+        else:
+            print(f"    Phase {i+1}: steps {p['start_step']}-{p['end_step']} {p['start_value']} -> {p['end_value']}")
+    print(f"  Projector LR={proj_lr}, WD={proj_wd}")
+    print(f"  Precision head WD={prec_wd}, bias_init={precision_bias_init}")
+    print(f"{'='*60}")
+
+    # ---- Student tokenizer ----
+    from tokenizers import Tokenizer
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # ---- Dataset ----
+    shard_dir = REPO / "data" / "shards_16k"
+    weight_file = cfg.get("weight_file", None)
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+
+    # ---- Eval cache ----
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+
+    # ---- Fresh student (random init) ----
+    model = DenseTransformer(
+        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+        norm_type=norm_type, block_schedule=block_schedule,
+        n_q_heads=n_q_heads, n_kv_heads=n_kv_heads, head_dim=head_dim,
+        conv_kernel_size=conv_kernel_size,
+    ).to(DEVICE)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  Student: {n_params:,} params (random init)")
+
+    # ---- Load teacher ----
+    teacher = TeacherAdapter(teacher_name, device=DEVICE, dtype=torch.float16)
+    teacher_dim = teacher.hidden_dim
+
+    # ---- 3 projectors: Linear(D_student -> D_teacher, bias=False) ----
+    projectors = nn.ModuleList([
+        nn.Linear(dim, teacher_dim, bias=False).to(DEVICE)
+        for _ in student_kd_layers
+    ])
+    for proj in projectors:
+        nn.init.normal_(proj.weight, std=0.02)
+
+    # ---- 3 precision heads: LayerNorm(D_student) -> Linear(D_student, 1, bias=True) ----
+    precision_heads = nn.ModuleList([
+        nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, 1, bias=True),
+        ).to(DEVICE)
+        for _ in student_kd_layers
+    ])
+    # Initialize precision bias to -2.2 (sigmoid(-2.2) ≈ 0.10 — low initial confidence)
+    for head in precision_heads:
+        nn.init.zeros_(head[1].weight)
+        nn.init.constant_(head[1].bias, precision_bias_init)
+
+    n_proj_params = sum(p.numel() for p in projectors.parameters())
+    n_prec_params = sum(p.numel() for p in precision_heads.parameters())
+    print(f"  Projectors: {n_proj_params:,} params ({len(projectors)}x Linear({dim}->{teacher_dim}))")
+    print(f"  Precision heads: {n_prec_params:,} params ({len(precision_heads)}x LN+Linear({dim}->1))")
+
+    # ---- Optimizer: 3 param groups ----
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+    opt = torch.optim.AdamW([
+        {"params": model.parameters(), "lr": lr, "weight_decay": 0.1},
+        {"params": projectors.parameters(), "lr": proj_lr, "weight_decay": proj_wd},
+        {"params": precision_heads.parameters(), "lr": proj_lr, "weight_decay": prec_wd},
+    ], betas=(0.9, 0.95))
+    scaler = torch.amp.GradScaler("cuda")
+
+    # ---- Resume support ----
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"pcd_{run_name}_log.txt"
+
+    start_step = 0
+    rolling = ckpt_dir / "rolling_latest.pt"
+    if rolling.exists():
+        ckpt = torch.load(rolling, weights_only=False, map_location=DEVICE)
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "projectors_state_dict" in ckpt:
+            projectors.load_state_dict(ckpt["projectors_state_dict"])
+        if "precision_heads_state_dict" in ckpt:
+            precision_heads.load_state_dict(ckpt["precision_heads_state_dict"])
+        opt.load_state_dict(ckpt["optimizer_state_dict"])
+        start_step = ckpt.get("step", 0)
+        print(f"  Resumed from step {start_step}")
+        del ckpt
+        torch.cuda.empty_cache()
+
+    metrics_log = []
+    running_ce = 0.0
+    running_pcd = 0.0
+    running_active_rate = 0.0
+    running_precision_mean = 0.0
+    log_vocab = math.log(VOCAB_SIZE)  # for normalized entropy
+    # Auxiliary kill: track consecutive evals with bad active-span rate
+    bad_active_rate_count = 0
+
+    print(f"  Exit weights: {actual_exit_weights}")
+    print(f"  Starting from step {start_step + 1}...\n")
+
+    model.train()
+    projectors.train()
+    precision_heads.train()
+    for step in range(start_step + 1, total_steps + 1):
+        # ---- LR schedule (WSD) ----
+        current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+        opt.param_groups[0]["lr"] = current_lr
+        head_lr = get_lr_wsd(step, warmup, total_steps, proj_lr, proj_lr * 0.01)
+        opt.param_groups[1]["lr"] = head_lr
+        opt.param_groups[2]["lr"] = head_lr
+
+        # ---- λ_pcd schedule ----
+        lam_pcd = lambda_for_step(step)
+
+        opt.zero_grad()
+        step_ce = 0.0
+        step_pcd = 0.0
+        step_active_rate = 0.0
+        step_prec_mean = 0.0
+        bad_step = False
+
+        for _ in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                # Student forward — get logits + exit hidden states
+                out = model(inp, return_exits=True, return_hidden=True)
+                base_loss, loss_metrics = compute_edsr_loss(
+                    out, tgt, exit_weights=actual_exit_weights)
+                ce_val = loss_metrics["ce_final"]
+
+                # ---- Student per-token entropy for span selection ----
+                logits_for_ent = out["logits"].detach().float()  # (B, T, V)
+                log_probs = F.log_softmax(logits_for_ent, dim=-1)
+                probs = log_probs.exp()
+                token_entropy = -(probs * log_probs).sum(dim=-1)  # (B, T)
+                token_entropy_norm = token_entropy / log_vocab  # normalized to [0, 1]
+
+                # ---- Student byte offsets ----
+                texts = [student_tokenizer.decode(inp[b].tolist())
+                         for b in range(inp.size(0))]
+                stu_offsets = torch.zeros(
+                    inp.shape[0], inp.shape[1], 2,
+                    device=DEVICE, dtype=torch.long)
+                for b_idx, text in enumerate(texts):
+                    enc_s = student_tokenizer.encode(text)
+                    n_tok = min(len(enc_s.offsets), inp.shape[1])
+                    for ti in range(n_tok):
+                        stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                        stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
+                stu_mask = torch.ones(inp.shape[0], inp.shape[1],
+                                      device=DEVICE, dtype=torch.long)
+
+                # ---- Pool entropy into byte spans -> select active spans ----
+                # byte_span_pool expects (B, T, D), use D=1 for entropy
+                ent_spans = byte_span_pool(
+                    token_entropy_norm.unsqueeze(-1),  # (B, T, 1)
+                    stu_offsets, stu_mask, n_spans
+                ).squeeze(-1)  # (B, M)
+                ent_flat = ent_spans.reshape(-1)  # (B*M,)
+                n_total = ent_flat.numel()
+                k_active = max(1, int(active_frac * n_total))
+                _, top_idx = ent_flat.topk(k_active)
+                active_mask = torch.zeros(n_total, device=DEVICE, dtype=torch.bool)
+                active_mask[top_idx] = True
+                batch_active_rate = k_active / max(n_total, 1)
+
+                # ---- Teacher forward with hidden states ----
+                with torch.no_grad():
+                    t_out = teacher.forward(texts, max_length=seq_len,
+                                            kd_layers=teacher_kd_layers)
+
+                # ---- Compute per-layer PCD losses ----
+                pcd_loss_total = torch.tensor(0.0, device=DEVICE)
+                prec_reg_total = torch.tensor(0.0, device=DEVICE)
+                batch_prec_total = 0.0
+                for pair_idx, (s_layer, t_layer) in enumerate(
+                        zip(student_kd_layers, teacher_kd_layers)):
+                    s_hidden = out['exit_hidden'].get(s_layer)
+                    if s_hidden is None:
+                        continue
+                    t_hidden = t_out['kd_hidden'].get(t_layer)
+                    if t_hidden is None:
+                        continue
+
+                    # Pool into byte spans
+                    S_s = byte_span_pool(s_hidden, stu_offsets, stu_mask, n_spans)  # (B, M, D_s)
+                    S_t = byte_span_pool(t_hidden, t_out['byte_offsets'],
+                                         t_out['attention_mask'], n_spans)  # (B, M, D_t)
+
+                    BM = S_s.shape[0] * S_s.shape[1]
+
+                    # Project student -> teacher dim, L2-normalize
+                    S_s_flat = S_s.reshape(BM, dim)
+                    S_s_proj = projectors[pair_idx](S_s_flat)  # (BM, D_t)
+                    S_s_proj = F.normalize(S_s_proj, dim=-1)
+
+                    # Teacher targets: L2-normalize, stopgrad (already detached via no_grad)
+                    S_t_flat = F.normalize(S_t.reshape(BM, -1).float(), dim=-1)
+
+                    # Precision gate: sigmoid(precision_head(student_span))
+                    prec_logit = precision_heads[pair_idx](S_s_flat.float())  # (BM, 1)
+                    prec = torch.sigmoid(prec_logit).squeeze(-1)  # (BM,)
+
+                    # Cosine-distance Huber (not element-wise — avoids 1/sqrt(D) scaling)
+                    # cos_sim in [-1, 1], cos_dist in [0, 2], target=0
+                    cos_sim = (S_s_proj * S_t_flat).sum(dim=-1)  # (BM,)
+                    cos_dist = 1.0 - cos_sim  # (BM,)
+                    huber_per_span = F.huber_loss(
+                        cos_dist, torch.zeros_like(cos_dist),
+                        reduction='none', delta=huber_delta
+                    )  # (BM,)
+
+                    # Gate by precision, mask to active spans
+                    gated = prec * huber_per_span  # (BM,)
+                    if active_mask.any():
+                        layer_loss = gated[active_mask].mean()
+                    else:
+                        layer_loss = gated.mean()
+
+                    pcd_loss_total = pcd_loss_total + depth_weights[pair_idx] * layer_loss
+                    batch_prec_total += prec.mean().item()
+
+                    # Precision regularizer: -log(prec) pushes precision away from 0
+                    prec_reg_total = prec_reg_total + depth_weights[pair_idx] * (
+                        -torch.log(prec.clamp(min=1e-6)).mean())
+
+                # Total loss: L_CE + λ_pcd * PCD + precision_reg (fixed weight)
+                # Precision reg is OUTSIDE λ_pcd to prevent collapse even at low λ
+                total_loss = (base_loss + lam_pcd * pcd_loss_total
+                              + 0.01 * prec_reg_total) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                opt.zero_grad()
+                bad_step = True
+                break
+
+            scaler.scale(total_loss).backward()
+            step_ce += ce_val / grad_accum
+            step_pcd += pcd_loss_total.item() / grad_accum
+            step_active_rate += batch_active_rate / grad_accum
+            step_prec_mean += (batch_prec_total / len(student_kd_layers)) / grad_accum
+
+        if bad_step:
+            continue
+
+        scaler.unscale_(opt)
+        all_params = (list(model.parameters()) + list(projectors.parameters())
+                      + list(precision_heads.parameters()))
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in all_params if p.grad is not None], GRAD_CLIP)
+        scaler.step(opt)
+        scaler.update()
+
+        running_ce += step_ce
+        running_pcd += step_pcd
+        running_active_rate += step_active_rate
+        running_precision_mean += step_prec_mean
+
+        # ---- Logging ----
+        if step % LOG_EVERY == 0:
+            avg_ce = running_ce / LOG_EVERY
+            avg_pcd = running_pcd / LOG_EVERY
+            avg_ar = running_active_rate / LOG_EVERY
+            avg_prec = running_precision_mean / LOG_EVERY
+            bpt = avg_ce / math.log(2)
+            msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                   f"PCD={avg_pcd:.4f} lam={lam_pcd:.3f} prec={avg_prec:.3f} "
+                   f"AR={avg_ar:.2%} LR={current_lr:.2e}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            running_ce = 0.0
+            running_pcd = 0.0
+            running_active_rate = 0.0
+            running_precision_mean = 0.0
+
+        # ---- Eval ----
+        if step % eval_every == 0 or step == total_steps:
+            model.eval()
+            projectors.eval()
+            precision_heads.eval()
+            det = deterministic_eval_dense(model, cache_path)
+            kurt = measure_activation_kurtosis(model, dataset, DEVICE)
+            entry = {
+                "step": step,
+                "bpt": det["bpt"],
+                "lambda_pcd": round(lam_pcd, 4),
+                "lr": round(current_lr, 6),
+                "avg_kurtosis": round(
+                    sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+                "active_rate": round(step_active_rate, 4),
+                "precision_mean": round(step_prec_mean, 4),
+            }
+            for k, v in det.items():
+                if k.startswith("bpt_exit"):
+                    entry[k] = v
+            metrics_log.append(entry)
+            msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
+                   f"kurtosis={entry['avg_kurtosis']:.1f} "
+                   f"lam_pcd={lam_pcd:.3f} AR={step_active_rate:.2%}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+
+            # ---- Auxiliary kill: active-span rate out of [5%, 35%] ----
+            if step_active_rate < 0.05 or step_active_rate > 0.35:
+                bad_active_rate_count += 1
+                print(f"  WARNING: Active rate {step_active_rate:.2%} out of [5%, 35%] "
+                      f"({bad_active_rate_count}/2 consecutive)")
+                if bad_active_rate_count >= 2:
+                    print(f"  AUXILIARY KILL: active-span rate out of bounds for 2 consecutive evals")
+                    with open(log_file, "a") as f:
+                        f.write(f"  AUXILIARY KILL at step {step}: AR={step_active_rate:.2%}\n")
+                    break
+            else:
+                bad_active_rate_count = 0
+
+            model.train()
+            projectors.train()
+            precision_heads.train()
+            torch.cuda.empty_cache()
+
+        # ---- Checkpoint (rolling + milestone) ----
+        if step % ROLLING_SAVE == 0 or (step == 100 and start_step < 100):
+            ckpt_data = {
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "projectors_state_dict": projectors.state_dict(),
+                "precision_heads_state_dict": precision_heads.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim, "exit_layers": exit_layers,
+                    "norm_type": norm_type, "block_schedule": block_schedule,
+                    "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads, "head_dim": head_dim,
+                    "conv_kernel_size": conv_kernel_size,
+                },
+                "pcd_config": cfg,
+                "metrics": metrics_log,
+            }
+            rolling_path = ckpt_dir / "rolling_latest.pt"
+            tmp = rolling_path.with_suffix(".tmp")
+            torch.save(ckpt_data, tmp)
+            os.replace(str(tmp), str(rolling_path))
+
+        # Milestone checkpoints
+        if step in [500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000]:
+            torch.save({
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "projectors_state_dict": projectors.state_dict(),
+                "precision_heads_state_dict": precision_heads.state_dict(),
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim, "exit_layers": exit_layers,
+                    "norm_type": norm_type, "block_schedule": block_schedule,
+                    "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads, "head_dim": head_dim,
+                },
+                "metrics": metrics_log,
+            }, ckpt_dir / f"step{step}.pt")
+
+    # ---- Generation check ----
+    model.eval()
+    generations = []
+    prompts = ["The meaning of life is", "In a distant future",
+               "def fibonacci(n):\n"]
+    for prompt_text in prompts:
+        input_ids = student_tokenizer.encode(prompt_text).ids
+        gen_inp = torch.tensor([input_ids], device=DEVICE)
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+            for _ in range(64):
+                logits = model(gen_inp)
+                if isinstance(logits, dict):
+                    logits = logits["logits"]
+                next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                if gen_inp.size(1) > seq_len:
+                    break
+        gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+        generations.append({"prompt": prompt_text, "generation": gen_text})
+
+    # ---- Save results ----
+    output = {
+        "name": run_name,
+        "config": cfg,
+        "metrics": metrics_log,
+        "generations": generations,
+    }
+    out_path = REPO / "results" / f"pcd_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"PCD COMPLETE: {run_name}")
+    print(f"Results: {out_path}")
+    if metrics_log:
+        final = metrics_log[-1]
+        print(f"  Final: BPT={final.get('bpt', '?')}, step={final.get('step', '?')}")
+    print(f"{'='*60}")
+
+    # Cleanup
+    del teacher.model, teacher
+    del model, opt, scaler, projectors, precision_heads
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Dense Transformer (F4 baseline / EDSR-98M)")
@@ -7494,6 +8038,8 @@ if __name__ == "__main__":
                         help="Run from-scratch pre-training with online teacher KD from JSON config")
     parser.add_argument("--state-kd-scratch", type=str, default=None,
                         help="Run from-scratch hidden-state contrastive KD (R13) from JSON config")
+    parser.add_argument("--pcd-scratch", type=str, default=None,
+                        help="Run from-scratch Predictive Coding Distillation (R15) from JSON config")
     parser.add_argument("--committee-map", type=str, default=None,
                         help="Run committee map audit on this student checkpoint (Ekalavya Probe 1)")
     parser.add_argument("--committee-windows", type=int, default=50,
@@ -7515,6 +8061,10 @@ if __name__ == "__main__":
 
     if args.state_kd_scratch:
         train_state_kd_scratch(args.state_kd_scratch)
+        sys.exit(0)
+
+    if args.pcd_scratch:
+        train_pcd_scratch(args.pcd_scratch)
         sys.exit(0)
 
     if args.committee_map:

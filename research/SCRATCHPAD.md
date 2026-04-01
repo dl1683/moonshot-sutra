@@ -6,6 +6,91 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## PCD R15 RUNNING — Predictive Coding Distillation (2026-04-01)
+
+**Codex R15 design.** FINAL KD mechanism experiment. If it fails at 3K gate, KD-mechanism work ends.
+
+**Key differences from R13 (InfoNCE):**
+- **Loss**: Cosine-distance Huber (not InfoNCE). `1 - cos_sim(pred, target)` → Huber(delta=0.5)
+- **Precision heads**: 3 × LayerNorm(768) → Linear(768,1), sigmoid gating. Learns per-span confidence.
+- **Active spans**: Top 20% by student normalized entropy (mean token entropy / log(V))
+- **Precision regularizer**: `-0.01 * log(precision)` prevents gate collapse (discovered and fixed during implementation — original Codex design had no regularizer and precision collapsed to 0.005)
+- **λ_pcd schedule**: 4-phase (0→0.30, hold 0.30, 0.30→0.10, 0.10→0.03)
+- **Depth weights**: [0.25, 0.50, 0.25] (R13 was [0.30, 0.50, 0.20])
+
+**Implementation bugs found and fixed:**
+1. Element-wise Huber on L2-normalized vectors → PCD=0.0000 (each component ~1/sqrt(2048), Huber ≈ 0). Fixed: cosine-distance Huber.
+2. Precision heads collapse to sigmoid→0 without regularizer. Fixed: `-0.01 * log(prec)` outside λ_pcd.
+
+**Early metrics (step 100):** BPT=10.85, PCD=0.092, precision=0.767, AR=19.53%. Tracking R13 trajectory.
+
+**Kill gates:** step 500 BPT>7.61, step 1000 BPT>6.56, step 3000 BPT>4.80, step 6000 ΔBPT>-0.20 vs CE-WSD 6K.
+
+---
+
+## BDH (Baby Dragon Hatchling) — Future Architecture Reference (2026-04-01)
+
+**Paper**: arXiv:2509.26507, Pathway (Palo Alto). Code: github.com/pathwaycom/bdh (toy demo only).
+
+**What it is**: Biologically-inspired sequence model. Scale-free neuron network with Hebbian plasticity. Weight-shared layers (Universal Transformer style). ReLU-sparse activations (~5% firing). Claims to rival GPT-2 at equivalent params but NO published benchmarks (no perplexity, MMLU, etc).
+
+**Headline result**: 97.4% on "Sudoku Extreme" (~250K hardest puzzles) vs ~0% for LLMs. But this is from internal implementation, not the open-source code.
+
+**Key innovations worth studying for post-Ekalavya architecture exploration:**
+1. **Hebbian gating**: `xy = ReLU(x @ W_pre) * ReLU(attended_x @ W_post)` — co-activation strengthening. Could replace SwiGLU gate.
+2. **Weight sharing across layers**: All layers share parameters. Extreme parameter efficiency but unclear if it works at 24-layer depth.
+3. **ReLU sparsity**: Only 5% of neurons active → inference efficiency. Could test as activation policy.
+4. **Q=K self-attention**: Query = Key, only learn values. Reduces parameters.
+
+**Red flags**: O(T^2) attention in code despite "linear" claims. No real benchmarks. Toy demo only. The "Hebbian learning" is NOT runtime plasticity — it's a structural inductive bias (element-wise product during forward pass).
+
+**Status**: Filed for future T+L session. NOT a priority over Ekalavya.
+
+---
+
+## R14 KILLED — Phase-Pulse Alpha + n_spans=16 (2026-04-01)
+
+**BPT=6.8263 at step 1000 — KILLED (threshold was >6.60).**
+
+| Step | R14 BPT | R13 BPT | CE-WSD | R14 vs CE | R13 vs CE |
+|------|---------|---------|--------|-----------|-----------|
+| 500  | 7.4591  | 7.578   | 7.6915 | **-0.232** | -0.114 |
+| 1000 | **6.8263** | **6.4738** | 6.786 | **+0.040** | **-0.312** |
+
+**R14 started strong (+500: -0.232 gap, double R13) but collapsed by step 1000.**
+
+**Root cause analysis:**
+1. **Alpha=0.55 sustained for 700 steps (200-900) overwhelmed CE learning.** R13 used alpha_max=0.30 with gradual ramp. R14 held 0.55 constant. The state loss dominated, student optimized contrastive objective at expense of language modeling.
+2. **n_spans=16 (coarser) may have contributed** but alpha magnitude is the primary factor.
+3. **The 6-phase schedule was correct in spirit** (it correctly modeled the gap oscillation). The problem was the alpha VALUES, not the schedule SHAPE.
+4. **StateKD loss at step 1000 (1.84) similar to R13 (1.99)** — the contrastive objective was being learned, but BPT suffered. This confirms alpha was too high.
+
+**What this means for hidden-state KD:**
+- R13's recipe (alpha_max=0.30, n_spans=32) is near the optimum. Small hyperparameter perturbations destroy the signal.
+- R14 did NOT test the schedule hypothesis cleanly — it confounded schedule shape with alpha magnitude.
+- A cleaner test would be: R13's alpha_max=0.30 WITH the 6-phase schedule shape (keeping alpha values proportionally lower).
+- **However: per Codex R14 directive, cross-tokenizer hidden-state KD is DEPRIORITIZED.** One fragile positive result (-0.113 at 3K) does not justify further optimization.
+
+**Experiment trajectory (R5-R14 comprehensive):**
+
+| Phase | Round | Surface | Teacher | Result | BPT | vs Control |
+|-------|-------|---------|---------|--------|-----|-----------|
+| Warm-start | R5-R7 | Logit TAID | Qwen 0.6B | NOISE | 3.5856 | +0.009 vs CE |
+| Warm-start | R7 | Multi-surface | Qwen+Gemma | NOISE | 3.5971 | +0.021 vs CE |
+| Warm-start | R8 | WSD-alpha | Qwen+Gemma | BEST WS | 3.5816 | +0.005 vs CE |
+| Warm-start | R9 | Logit RKL | Qwen 1.7B | FAIL | 3.5934 | +0.017 vs CE |
+| Warm-start | R10 | Offline replay | Qwen 1.7B | KILLED | 3.6474 | +0.021 vs CE |
+| Warm-start | R11 | RKP+DSKD | Qwen 1.7B | KILLED | 3.5789 | +0.006 vs CE |
+| Scratch | R12 | Cross-tok logit | Qwen 1.7B | FALSIFIED | 4.9507 | +0.02 vs WSD |
+| Scratch | R13 | State InfoNCE | Qwen 1.7B | **POSITIVE** | **4.8576** | **-0.113 vs WSD** |
+| Scratch | R14 | Phase-pulse state | Qwen 1.7B | **KILLED** | 6.8263@1K | +0.040 vs WSD |
+
+**14 rounds of experimentation. ONE positive result (R13). That result is fragile (R14 proved it).**
+
+**DECISION POINT: Route to Codex for R15 design.**
+
+---
+
 ## KD Evaluation Beyond BPT — Research Synthesis (2026-03-31)
 
 **Problem:** BPT is a blunt instrument. KD may reshape the distribution in ways that matter for downstream tasks but barely move aggregate perplexity. We need a multi-metric evaluation suite to detect whether KD is transferring meaningful knowledge.
