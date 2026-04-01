@@ -4037,3 +4037,23 @@ At 3K from scratch, CKA is ALREADY 0.91+ at all layers. At 60K, L23 has DIVERGED
 4. Kurtosis grew to 10.7 (vs 0.8 control, 0.7 R13) — variance term creates sharp activations, possibly limiting cooldown performance.
 
 **Conclusion:** The root cause hypothesis was approximately right but overshot. R13's gains were ~50% regularization (anti-collapse) + ~50% genuine teacher alignment via InfoNCE. The teacher is NOT irrelevant — it provides real signal beyond diversity preservation. Future KD work should: (a) always include VICReg as a baseline regularizer (it's free), (b) focus teacher-dependent mechanisms on the ALIGNMENT signal that VICReg can't replicate, (c) investigate why R13's advantage materialized during WSD cooldown specifically.
+
+### 11.7 Track 1b Result: Decoupled Scheduled VICReg (2026-04-01)
+
+**Hypothesis:** VICReg's kurtosis explosion (0.5 → 10.7) during WSD cooldown caused performance degradation. Decoupling var/cov with independent decay schedules should fix kurtosis and close the R13 gap.
+
+**Design (Codex):** var_w=0.0015 decays [2000,2400]→0. cov_w=0.0035 decays [2400,3000]→0.001.
+
+| Step | Decoupled BPT | Scalar VICReg BPT | Control BPT | R13 BPT |
+|------|---------------|-------------------|-------------|---------|
+| 500  | 7.446 | 7.715 | 7.692 | - |
+| 1000 | 6.754 | 6.654 | 6.786 | 6.474 |
+| 2000 | 5.558 | 5.459 | 5.726 | 5.460 |
+| 2500 | 5.257 | 5.191 | 5.352 | 5.133 |
+| 3000 | **4.941** | **4.914** | 4.970 | 4.858 |
+
+Kurtosis at 3000: 1.5 (decoupled) vs 10.7 (scalar) vs 0.8 (control) vs 0.7 (R13).
+
+**Result: KURTOSIS HYPOTHESIS FALSIFIED.** Kurtosis controlled perfectly (1.5 vs 10.7) but BPT is 0.027 WORSE than scalar VICReg, not better. The high kurtosis was not hurting performance — stronger regularization (even with kurtosis side effects) works better than weaker but cleaner regularization.
+
+**Implication:** The ~0.056 BPT gap between VICReg and R13 is genuine teacher alignment signal, not a regularizer bug. Next step: combine VICReg + InfoNCE (Option A) to test additivity.

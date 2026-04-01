@@ -235,6 +235,14 @@ Also: Exit 15 captures 99% of final accuracy. Layers 16-23 add only 0.5pp. Confi
 - IMPLICATION: The teacher is NOT irrelevant. ~50% regularization + ~50% alignment. Future KD should focus on the alignment signal, not just diversity. But also: the diversity half is FREE (no teacher needed). Combine VICReg + teacher alignment for maximum effect.
 - CODEX AUDIT: Fixed cov normalization (was /D*(D-1), should be /D per VICReg). VRAM: 6.4 GiB (no teacher loaded).
 
+**Track 1b: Decoupled VICReg with Scheduled Decay — COMPLETED 2026-04-01**
+- HYPOTHESIS: Kurtosis explosion (10.7) caused VICReg's cooldown degradation. Decay var before WSD, keep weak cov through WSD.
+- MECHANISM: var_w=0.0015 (decay 2000-2400 to 0), cov_w=0.0035 (decay 2400-3000 to 0.001)
+- RESULT: **BPT=4.941**, kurtosis=1.5 (vs scalar VICReg 4.914/kurtosis 10.7)
+- VERDICT: **KURTOSIS HYPOTHESIS FALSIFIED.** Kurtosis controlled (1.5 vs 10.7) but BPT is WORSE, not better. The high kurtosis wasn't the problem.
+- KEY FINDING: Stronger regularization (scalar VICReg) works better despite kurtosis side effects. The R13 gap is genuine teacher alignment signal, not a VICReg bug.
+- NEXT: Per Codex decision tree, move to Option A — combine VICReg + InfoNCE.
+
 **Track 2: Data-Distribution Transport**
 - HYPOTHESIS: The teacher's value is in selecting/rewriting training data, not in runtime loss signals.
 - SUB-TRACK A: Teacher-scored data reweighting (MiniPLM/DoReMi style). Use teacher to score documents, upweight ones where student has most to learn.

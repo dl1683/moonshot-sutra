@@ -6724,7 +6724,16 @@ def train_kd_scratch(config_path):
     kl_mode = cfg.get("kl_mode", "forward")
     top_k = cfg.get("top_k", 64)
     hard_token_frac = cfg.get("hard_token_frac", None)
-    spectral_reg = cfg.get("spectral_reg", 0.0)  # VICReg-style regularizer weight
+    spectral_reg = cfg.get("spectral_reg", 0.0)  # VICReg-style regularizer weight (scalar fallback)
+    # Decoupled var/cov weights with independent schedules
+    spectral_var_weight = cfg.get("spectral_var_weight", spectral_reg if spectral_reg > 0 else 0.0)
+    spectral_cov_weight = cfg.get("spectral_cov_weight", spectral_reg if spectral_reg > 0 else 0.0)
+    spectral_var_decay_start = cfg.get("spectral_var_decay_start", total_steps)  # no decay by default
+    spectral_var_decay_end = cfg.get("spectral_var_decay_end", total_steps)
+    spectral_cov_decay_start = cfg.get("spectral_cov_decay_start", total_steps)
+    spectral_cov_decay_end = cfg.get("spectral_cov_decay_end", total_steps)
+    spectral_cov_final_weight = cfg.get("spectral_cov_final_weight", 0.0)
+    use_spectral = spectral_var_weight > 0 or spectral_cov_weight > 0
     skip_teacher = (alpha_max == 0.0 and alpha_min == 0.0)  # skip teacher entirely for pure CE
 
     # Architecture config (default: Sutra-24A-197M)
@@ -6750,8 +6759,12 @@ def train_kd_scratch(config_path):
     print(f"  KL mode: {kl_mode}, temperature: {temperature}, top_k: {top_k}")
     if hard_token_frac:
         print(f"  SE-KD: hard_token_frac={hard_token_frac}")
-    if spectral_reg > 0:
-        print(f"  Spectral reg (VICReg): weight={spectral_reg}")
+    if use_spectral:
+        print(f"  Spectral reg: var={spectral_var_weight}, cov={spectral_cov_weight}")
+        if spectral_var_decay_start < total_steps:
+            print(f"    Var decay: [{spectral_var_decay_start}, {spectral_var_decay_end}] -> 0")
+        if spectral_cov_decay_start < total_steps:
+            print(f"    Cov decay: [{spectral_cov_decay_start}, {spectral_cov_decay_end}] -> {spectral_cov_final_weight}")
     if skip_teacher:
         print(f"  PURE CE MODE (alpha=0, no teacher loaded)")
     print(f"{'='*60}")
@@ -6826,6 +6839,8 @@ def train_kd_scratch(config_path):
     running_ce = 0.0
     running_kd = 0.0
     running_spec = 0.0
+    running_var = 0.0
+    running_cov = 0.0
 
     print(f"  Exit weights: {actual_exit_weights}")
     print(f"  Starting from step {start_step + 1}...\n")
@@ -6850,6 +6865,8 @@ def train_kd_scratch(config_path):
         step_ce = 0.0
         step_kd = 0.0
         step_spec = 0.0
+        step_var = 0.0
+        step_cov = 0.0
         bad_step = False
 
         for _ in range(grad_accum):
@@ -6857,8 +6874,7 @@ def train_kd_scratch(config_path):
 
             with torch.amp.autocast("cuda", dtype=DTYPE):
                 # Student forward (get hidden states if spectral reg needed)
-                need_hidden = spectral_reg > 0
-                out = model(inp, return_exits=True, return_hidden=need_hidden)
+                out = model(inp, return_exits=True, return_hidden=use_spectral)
                 base_loss, loss_metrics = compute_edsr_loss(
                     out, tgt, exit_weights=actual_exit_weights)
                 ce_val = loss_metrics["ce_final"]
@@ -6897,30 +6913,52 @@ def train_kd_scratch(config_path):
                         hard_token_frac=hard_token_frac,
                     )
 
-                # ---- Spectral regularizer (VICReg-style) ----
+                # ---- Spectral regularizer (VICReg-style, decoupled var/cov) ----
                 spec_loss = torch.tensor(0.0, device=DEVICE)
-                if spectral_reg > 0 and 'exit_hidden' in out:
+                raw_var = 0.0
+                raw_cov = 0.0
+                if use_spectral and 'exit_hidden' in out:
+                    # Schedule var weight: linear decay to 0
+                    if step < spectral_var_decay_start:
+                        cur_var_w = spectral_var_weight
+                    elif step >= spectral_var_decay_end:
+                        cur_var_w = 0.0
+                    else:
+                        frac = (step - spectral_var_decay_start) / max(spectral_var_decay_end - spectral_var_decay_start, 1)
+                        cur_var_w = spectral_var_weight * (1.0 - frac)
+                    # Schedule cov weight: linear decay to final weight
+                    if step < spectral_cov_decay_start:
+                        cur_cov_w = spectral_cov_weight
+                    elif step >= spectral_cov_decay_end:
+                        cur_cov_w = spectral_cov_final_weight
+                    else:
+                        frac = (step - spectral_cov_decay_start) / max(spectral_cov_decay_end - spectral_cov_decay_start, 1)
+                        cur_cov_w = spectral_cov_weight + frac * (spectral_cov_final_weight - spectral_cov_weight)
+
+                    total_var = torch.tensor(0.0, device=DEVICE)
+                    total_cov = torch.tensor(0.0, device=DEVICE)
                     for eidx, h_exit in out['exit_hidden'].items():
-                        # h_exit: (B, T, D) — flatten to (B*T, D)
                         h_flat = h_exit.reshape(-1, h_exit.shape[-1]).float()
-                        # Subsample for efficiency (max 512 tokens)
                         if h_flat.shape[0] > 512:
                             idx = torch.randperm(h_flat.shape[0], device=h_flat.device)[:512]
                             h_flat = h_flat[idx]
-                        # Variance term: std of each dim, penalize if < 1
+                        # Variance term
                         std = h_flat.std(dim=0)
-                        var_loss = F.relu(1.0 - std).mean()
-                        # Covariance term: off-diagonal of cov matrix
+                        total_var = total_var + F.relu(1.0 - std).mean()
+                        # Covariance term
                         h_centered = h_flat - h_flat.mean(dim=0, keepdim=True)
                         cov = (h_centered.T @ h_centered) / max(h_flat.shape[0] - 1, 1)
                         D = cov.shape[0]
                         off_diag = cov.pow(2).sum() - cov.diagonal().pow(2).sum()
-                        cov_loss = off_diag / D
-                        spec_loss = spec_loss + var_loss + cov_loss
+                        total_cov = total_cov + off_diag / D
 
-                # Combined: (1-alpha)*CE + alpha*KD + spectral_reg * spec_loss
+                    spec_loss = cur_var_w * total_var + cur_cov_w * total_cov
+                    raw_var = total_var.item()
+                    raw_cov = total_cov.item()
+
+                # Combined: (1-alpha)*CE + alpha*KD + spec_loss (already weighted)
                 total_loss = ((1.0 - alpha) * base_loss + alpha * kd_loss
-                              + spectral_reg * spec_loss) / grad_accum
+                              + spec_loss) / grad_accum
 
             if not torch.isfinite(total_loss):
                 print(f"  WARNING: NaN/Inf at step {step}, skipping")
@@ -6932,6 +6970,8 @@ def train_kd_scratch(config_path):
             step_ce += ce_val / grad_accum
             step_kd += kd_loss.item() / grad_accum
             step_spec += spec_loss.item() / grad_accum
+            step_var += raw_var / grad_accum
+            step_cov += raw_cov / grad_accum
 
         if bad_step:
             continue
@@ -6945,23 +6985,29 @@ def train_kd_scratch(config_path):
         running_ce += step_ce
         running_kd += step_kd
         running_spec += step_spec
+        running_var += step_var
+        running_cov += step_cov
 
         # ---- Logging ----
         if step % LOG_EVERY == 0:
             avg_ce = running_ce / LOG_EVERY
             avg_kd = running_kd / LOG_EVERY
             avg_spec = running_spec / LOG_EVERY
+            avg_var = running_var / LOG_EVERY
+            avg_cov = running_cov / LOG_EVERY
             bpt = avg_ce / math.log(2)
             msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
                    f"KD={avg_kd:.4f} alpha={alpha:.3f} LR={current_lr:.2e}")
-            if spectral_reg > 0:
-                msg += f" SPEC={avg_spec:.4f}"
+            if use_spectral:
+                msg += f" SPEC={avg_spec:.4f} VAR={avg_var:.3f} COV={avg_cov:.3f}"
             print(msg, flush=True)
             with open(log_file, "a") as f:
                 f.write(msg + "\n")
             running_ce = 0.0
             running_kd = 0.0
             running_spec = 0.0
+            running_var = 0.0
+            running_cov = 0.0
 
         # ---- Eval ----
         if step % eval_every == 0 or step == total_steps:
