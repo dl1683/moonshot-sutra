@@ -6,6 +6,1023 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## KD Evaluation Beyond BPT — Research Synthesis (2026-03-31)
+
+**Problem:** BPT is a blunt instrument. KD may reshape the distribution in ways that matter for downstream tasks but barely move aggregate perplexity. We need a multi-metric evaluation suite to detect whether KD is transferring meaningful knowledge.
+
+**Key insight from "Why KD Works in Generative Models" (NeurIPS 2025, SmolLM2 validation):** KD induces a **precision-recall tradeoff** — the student concentrates probability mass on high-likelihood regions (precision/quality) at the expense of coverage (recall/diversity). This means BPT can appear flat while generation quality improves significantly. The student learns WHERE the teacher thinks samples should come from, not how to cover everything equally. This is mode-seeking behavior. **Implication: BPT measures recall, not precision. We need precision-side metrics.**
+
+### 1. Probing Methods (Probe-KD, Feb 2026)
+**Paper:** "Task-Specific KD via Intermediate Probes" (Brown & Russell, arXiv:2603.12270)
+- Train lightweight MLP probes on frozen teacher hidden states to predict task labels
+- Use probe soft predictions as KD supervision instead of teacher output logits
+- **Key finding:** Teacher representations encode 2-6% MORE correct answers than the output layer expresses (output bottleneck effect)
+- **As evaluation:** Train probes on student hidden states at each layer. Compare probe accuracy CE-student vs KD-student. If KD student's intermediate probes are more accurate, KD is transferring representation-level knowledge even if BPT barely moves.
+- **Calibration bonus:** Probe-trained students inherit better calibration (35.5% confidence / 29.4% accuracy) vs standard KD students that inherit teacher miscalibration (74.5% confidence / 44.7% accuracy)
+- **Cost:** Minutes on cached representations. Very cheap.
+
+### 2. CKA / Representation Similarity Analysis
+**Paper:** "Rethinking CKA in KD" (IJCAI 2024)
+- CKA computes cosine similarity between centered normalized gram matrices — works even when teacher/student have different dimensions
+- **CKA = upper bound on MMD + regularizer.** Higher CKA between teacher-student = better distillation quality.
+- **Caveat:** CKA alone cannot capture feature STRUCTURE, even at zero CKA loss. Need to combine with other metrics.
+- **Our use:** Compute CKA between Qwen3-1.7B teacher layers and Sutra student layers (we already have `embeddinggemma_layer_cka.json` infrastructure). Track CKA trajectory across training. If KD improves CKA alignment with teacher while CE doesn't, KD is transferring structural knowledge.
+- **Also useful:** PWCCA (Projection Weighted CCA) weights individual canonical correlations by importance. SVCCA for denoised comparison.
+
+### 3. Calibration Analysis
+**Papers:** "Role of Teacher Calibration in KD" (IEEE 2025), "Calibration Transfer via KD" (ACCV 2024)
+- **Key finding:** Teacher ACE (Adaptive Calibration Error) correlates MORE with student accuracy (R²=0.92) than teacher accuracy itself (R²=0.68). Calibration quality predicts KD success.
+- **Metrics:** Expected Calibration Error (ECE), decomposed into ECE_o (overconfident) and ECE_u (underconfident), plus Adaptive Calibration Error (ACE).
+- **What to measure:** Compare ECE/ACE of KD student vs CE student. If KD improves calibration (lower ECE), the teacher's soft labels are providing genuine probability structure, not just noise.
+- **Temperature scaling:** T=1.5-3.0 on teacher consistently improves student calibration without changing teacher accuracy. We already use τ=2.0.
+- **Practical:** Bin model predictions by confidence, compute accuracy per bin. Well-calibrated = diagonal reliability diagram.
+
+### 4. Student Entropy Analysis (SE-KD)
+**Paper:** "Rethinking Selective KD" (arXiv:2602.01395, Feb 2026)
+- Student entropy signals are the BEST indicator of where KD helps (better than teacher entropy, KL, reverse KL)
+- **Top-20% student-entropy selection** beats dense KD: 64.8% vs 64.4% accuracy, 6.9 vs 7.3 perplexity
+- **As evaluation:** Compare entropy distributions of KD student vs CE student. If KD produces LOWER entropy on high-confidence tokens and HIGHER entropy on uncertain tokens (better calibrated entropy), KD is reshaping the distribution meaningfully.
+- **Token-type disaggregation:** Break down entropy by token type (content words, function words, rare tokens, common tokens). KD should show biggest entropy reduction on content/rare tokens where teacher knowledge matters most.
+
+### 5. Memorization vs Generalization Metrics
+**Paper:** "Memorization Dynamics in KD for LMs" (arXiv:2601.15394, Jan 2026, Pythia/OLMo/Qwen3)
+- **KD reduces memorization 2.4x** vs baseline while improving validation loss
+- Students inherit only 0.9% of teacher-exclusive memorization (soft distillation)
+- **Predictive features:** Zlib entropy (most predictive), baseline perplexity, teacher-baseline KL divergence
+- **Shannon entropy vs log-probability analysis** reveals KD regularization: students output flatter distributions on complex examples (avoiding forced memorization) while maintaining sharp predictions on confident examples
+- **As evaluation:** Check if KD student memorizes less than CE student on held-out data. Measure "discoverable memorization" (50-token greedy match after 50-token prefix). Better generalization + less memorization = genuine knowledge transfer.
+
+### 6. Layer-wise Representation Alignment (DistilLens)
+**Paper:** "DistillLens: Symmetric KD Through Logit Lens" (arXiv:2602.13567, Feb 2026)
+- Project intermediate hidden states into vocabulary space via logit lens: p^(l) = softmax(W_U * h^(l))
+- Reveals "evolving thought processes" — how models refine predictions through depth
+- **Standard KD produces divergent intermediate representations** even when final output converges
+- **Jensen-Shannon Divergence** between teacher/student logit-lens projections at each layer = diagnostic metric
+- **As evaluation:** Compute JSD between teacher logit-lens and student logit-lens at each layer. If KD aligns intermediate "thought processes" (lower JSD across layers) while CE only aligns at the final layer, KD is transferring deeper structural knowledge.
+
+### 7. Task-Tangent Geometry (Feature Relevance)
+**Paper:** "What Should Feature Distillation Transfer in LLMs?" (ACL 2025)
+- Not all representation dimensions matter equally — output variation concentrates in a small subset of directions
+- **Aggregated Functional Contribution (G):** gradient-based measure of how much each representation dimension affects output
+- **Functional Tail Mass:** removing low-importance dimensions causes minimal degradation (even at 50% removal)
+- **As evaluation:** Compute functional contribution of student representation dimensions. If KD increases the concentration of functional contribution (more information in fewer dimensions = better compression), KD is teaching the student to allocate capacity efficiently.
+
+### 8. Distribution-Level Metrics Beyond KL
+- **Wasserstein/Optimal Transport:** MultiLevelOT (AAAI 2025) aligns distributions at token AND sequence level using Sinkhorn distance
+- **Maximum Mean Discrepancy (MMD):** Kernel-based distributional comparison. CKA is an upper bound on MMD.
+- **Precision-Recall for distributions:** From the "Why KD Works" paper — measure sample quality (precision) vs coverage (recall) separately. KD should improve precision.
+
+### Practical Evaluation Suite for Sutra (PROPOSED)
+**Tier 1 — Cheap, run every KD checkpoint:**
+1. **Entropy histogram comparison** (KD vs CE student) — seconds to compute from logits
+2. **Calibration: ECE + reliability diagram** — bin predictions by confidence, compare accuracy
+3. **Token-type disaggregated BPT** — break BPT into content/function/rare/common tokens
+
+**Tier 2 — Run at experiment end (6K steps):**
+4. **Linear probes on student hidden states** (layers 6, 12, 18, 24) for ARC-E/HellaSwag-style classification
+5. **CKA between student and teacher** (all layer pairs) — track alignment trajectory
+6. **Memorization test** — 50-token prefix completion on training data subset
+
+**Tier 3 — Benchmarks (already planned):**
+7. **ARC-E, HellaSwag, PIQA, WinoGrande** — already in success criteria
+8. **Generation quality** — sample coherence, factual accuracy on prompts
+
+---
+
+## q17_offline_sparse_replay_6k — LIVE (2026-03-31)
+
+**R10 #1: Codex pivot to offline sparse replay KD. Zero teacher VRAM overhead.**
+
+**Config:** 85% random CE + 12.5% curated replay with cached Q17 top-64 logits. Reverse KL on hard 10% student-entropy tokens. WSD-alpha (warmup 300, hold 300-4800, decay 4800-6000). α_logit=0.12, τ=2.0.
+
+**Init:** control_197m_60k_step60000.pt | 6K steps from step 60K.
+
+**Kill criteria:** BPT > 3.64 at step 1500. Gap > 0.005 vs CE-6K (3.5547) at step 3000.
+
+**Success:** ≥0.010 BPT better than CE-6K (3.5547) + ≥1.5pp avg benchmark lift on ARC-E/HellaSwag/PIQA/WinoGrande.
+
+**Controls:** CE-6K (3.5547, already run). replay_mix_ce_only_6k (config ready, will run if KD wins).
+
+### Eval Trajectory
+| Step | Offline KD | CE 6K | Delta |
+|------|-----------|-------|-------|
+| 500  | **3.6259** | 3.6382 | **-0.012 (KD wins)** |
+| 1000 | **3.6327** | 3.6358 | **-0.003 (KD wins)** |
+| 1500 | **3.6230** | 3.6272 | **-0.004 (KD wins, SURVIVES kill)** |
+| 2500 | **3.6257** | 3.6215 | **+0.004 (CE wins)** |
+| 3000 | pending   | ~3.63  | — |
+| 6000 | pending   | 3.5547 | — |
+
+**FINAL RESULT: KILLED at step 3000.** BPT=3.6474 vs CE-matched 3.626. Gap +0.021 > 0.005 kill threshold. Experiment terminated automatically.
+
+| Step | Offline KD | CE 6K | Delta |
+|------|-----------|-------|-------|
+| 500  | **3.6259** | 3.6382 | **-0.012 (KD wins)** |
+| 1000 | **3.6327** | 3.6358 | **-0.003 (KD wins)** |
+| 1500 | **3.6230** | 3.6272 | **-0.004 (KD wins)** |
+| 2000 | 3.6399 | — | — |
+| 2500 | 3.6257 | 3.6215 | **+0.004 (CE wins)** |
+| 3000 | 3.6474 | ~3.63 | **+0.021 (KILLED)** |
+
+**Root causes (confirmed by literature + data):**
+1. **Biased gradients**: ACL 2025 proves naive top-K caching gives biased gradient estimates. Our top-64 is exactly this.
+2. **Basin-locked warm-start**: 60K-step CE-trained student is in a basin shaped entirely by CE. KD perturbation (0.003) is 1000x weaker than CE (2.8) — cannot escape basin.
+3. **α too low**: 0.12 × 0.003 = 0.0004 effective gradient. Three orders of magnitude below CE.
+4. **12.5% replay too sparse**: Teacher signal diluted across 87.5% random CE batches.
+
+**This is the LAST single-teacher KD experiment on warm-start.** Focus shifts entirely to T+L R11 for fundamentally stronger mechanisms.
+
+---
+
+## q17_akl_hard10_3k — DONE, FAILED (2026-03-31)
+
+**R9 #2: Qwen3-1.7B + reverse KL + hard 10% + WSD-alpha. Final BPT: 3.5934. CE control: 3.5766. Gap: +0.017.**
+
+Best WSD recovery of any variant (0.077 BPT) but overhead during stable LR phase too large. See RESEARCH.md §10.8-10.9 for full analysis. Benchmarks pending.
+
+---
+
+## miniplm_top20_ce_3k — DEAD (2026-03-31)
+
+**R9 #1: CATASTROPHIC FAILURE. BPT 3.58 → 6.16 → 7.26. Killed at step ~2050.**
+
+Exclusive training on narrow curated data (5M tokens) causes accelerating catastrophic forgetting. The scoring infrastructure works (target-density confirmed) but the training approach is fundamentally wrong — you cannot train exclusively on a tiny curated subset. See RESEARCH.md §10.7 for full analysis.
+
+**Salvageable:** The MiniPLM scoring infrastructure and curated shards remain valid for mixed-training approaches (importance-weighted sampling from full corpus with curated upweighting).
+
+---
+
+## multi_2surface_direct_3k LIVE TRACKING (2026-03-30)
+
+**Config:** Qwen3-0.6B logit TAID (α=0.02, β 0→1/2000) + EmbeddingGemma semantic Gram (α=0.01, fp32)
+**Init:** control_197m_60k_step60000.pt | WSD 3K (warmup 500, decay 2400-3000)
+
+### Eval Trajectory
+| Step | Multi-2T | TAID 3K | Plain KD | CE 6K | Delta vs best single |
+|------|----------|---------|----------|-------|---------------------|
+| 500  | **3.6187** | 3.6274 | 3.6214 | 3.6382 | -0.003 vs Plain |
+| 1000 | **3.6281** | 3.6393 | 3.6688 | 3.6358 | -0.008 vs CE |
+| 1500 | **3.6370** | 3.6993 | 3.6655 | 3.6272 | +0.010 vs CE (CE better) |
+| 2000 | 3.6563   | 3.6367 | 3.6434 | 3.6174 | +0.020 (TAID better) |
+| 2500 | 3.6466   | 3.6257 | 3.6561 | 3.6215 | +0.021 (TAID better) |
+| 3000 | **3.5971** | **3.5856** | 3.6063 | 3.6378 | +0.012 (TAID wins) |
+
+### Key Observations (FINAL — steps 500-3000)
+1. **Multi-teacher led ALL KD baselines at steps 500-1500.** Gap widened from 0.009 to 0.062.
+2. **No dead zone at step 1500.** TAID-only spiked to 3.6993; multi-teacher only 3.6370. Strongest finding.
+3. **Step 2000 reversal:** Multi-teacher BPT rose to 3.6563 while TAID recovered to 3.6367. Coincides with TAID beta reaching 1.0.
+4. **WSD decay recovery:** Multi-teacher dropped 0.050 BPT (3.6466→3.5971) during decay. TAID dropped 0.040 (3.6257→3.5856). Multi-teacher recovers FASTER during decay — the semantic constraint helps WSD consolidation.
+5. **Final: Multi-2T 3.5971, TAID 3.5856 — gap 0.012.** Multi-teacher loses but beats Plain KD (3.6063) and CE 6K (3.6378).
+6. **Kurtosis NOT a concern:** Multi-2T final kurtosis 1659 is LOWER than the CE-60K base (4021). Kurtosis oscillation is architectural (CE-only also oscillates: 88→3357→4021). Plain KD uniquely monotone-decreasing (2193→436). TAID oscillates (219→2856→1394). Multi-2T oscillates (390→1635→1659). This is normal for Sutra-24A.
+7. **AMP bug caveat:** Gemma semantic ran in bf16 despite fp32 load. May degrade semantic quality. AMP-fixed re-run could close or eliminate the 0.012 gap.
+8. **TAID schedule is the #1 lever.** Literature says reverse annealing or WSD-alpha could give 3-7x more improvement than current TAID (β 0→1).
+
+### CE-ONLY MATCHED CONTROL (RUNNING — 2026-03-30)
+**CRITICAL: CE control step 500 BPT=3.5985 — ALREADY BETTER than multi-2T step 500 (3.6187).**
+If CE control at step 3000 beats multi-2T (3.5971), it means KD is net-negative overhead.
+| Step | CE Control | Multi-2T | TAID 3K | Delta (CE vs M2T) |
+|------|-----------|----------|---------|-------------------|
+| 500  | **3.5985** | 3.6187  | 3.6274  | -0.020 (CE better) |
+| 1000 | 3.6535    | **3.6281**  | 3.6393  | +0.025 (M2T better!) |
+| 1500 | 3.6086    | 3.6370  | 3.6993  | -0.028 (CE better) |
+| 2000 | **3.6071** | 3.6563  | 3.6367  | -0.049 (CE MUCH better) |
+| 2500 | 3.6163    | 3.6466  | 3.6257  | -0.030 (CE better) |
+| 3000 | **3.5766** | 3.5971  | 3.5856  | **-0.021 (CE WINS)** |
+
+**DEVASTATING RESULT: CE-only control BEATS ALL KD variants.**
+- Beats multi-2T by 0.021
+- Beats TAID 3K by 0.009
+- CE-60K base was BPT=3.5726. CE control at 63K total nearly recovers it (3.5766).
+- All KD variants are net-negative overhead compared to pure CE continuation.
+
+**INTERPRETATION:**
+1. At 197M from 60K warm-start, the model has already learned most of what Qwen 0.6B can teach via logit KD. Adding KD overhead SLOWS convergence.
+2. The teacher signal is NOT noise (multi-2T beats plain KD, avoids dead zone). But the gradient interference exceeds the informational value.
+3. The WSD-alpha experiment may change this — if alpha decays during consolidation, the overhead is removed when it matters most.
+4. Alternatively: the student may need a LARGER or DIFFERENT teacher to benefit from continued KD.
+
+### BENCHMARK COMPARISON (lm-eval, 4 benchmarks × 4 variants)
+| Benchmark | CE 60K | CE +3K | TAID 3K | Multi-2T |
+|-----------|--------|--------|---------|----------|
+| ARC-Easy (acc) | 45.4% | 45.8% | **46.2%** | 45.1% |
+| HellaSwag (acc) | 27.6% | 27.3% | 27.6% | **27.8%** |
+| PIQA (acc) | 59.2% | 59.1% | **59.7%** | 59.0% |
+| WinoGrande (acc) | 51.3% | 51.2% | **51.4%** | 50.9% |
+
+**ALL variants within ~1% on every benchmark. NO meaningful difference.**
+The 0.02 BPT difference between CE control (3.5766) and multi-2T (3.5971) produces ZERO benchmark signal.
+TAID has a very slight edge on raw acc (ARC-Easy, PIQA, WinoGrande) but it's within noise.
+**Conclusion: at 197M / 60K warm-start / 3K continuation, KD from Qwen-0.6B is detectable in BPT but invisible in benchmarks.**
+
+### WHY does multi-teacher avoid the dead zone? (Theory)
+The "river valley" framework (ICLR 2025) explains the dead zone: during stable LR, models oscillate in the "mountain direction" while progressing along the "river direction." TAID-only has one constraint surface (logit KD). Multi-teacher has TWO constraint surfaces (logit + semantic Gram). Multiple constraints reduce the oscillation dimensionality — the student can't bounce as freely because it must also maintain relational similarity to the encoder.
+
+**Alternative explanations (must be tested):**
+- The improvement is from regularization (any extra loss smooths the landscape), not from teacher knowledge
+- The different alpha warmup (start_frac=0.0 vs whatever TAID 3K used) changes the trajectory
+- At 197M params, the student can fit both signals without conflict, but wouldn't at smaller scale
+
+**Ablation suite (configs ready):**
+1. `config_qlogit_only_3k.json` — Qwen-only, identical schedule. Tests: is Gemma the differentiator?
+2. `config_reverse_taid_3k.json` — Reverse TAID (β 1→0). Tests: thermodynamic annealing vs forward TAID.
+3. (Already running) multi_2surface with control arm (CE-only) — sequential, runs after qlogit_gsem
+
+---
+
+## CRITICAL: TAID Schedule May Be WRONG — Literature Says DECREASE (2026-03-30)
+
+**Research sweep (9 papers, 2018-2026) on KD alpha/beta scheduling:**
+
+### The Strongest Evidence: Peng et al., ACL 2025
+"Pre-training Distillation for LLMs: A Design Space Exploration" (1.9B student, GLM-4-9B teacher):
+| Schedule | Avg Improvement |
+|---|---|
+| Linear Increase (0→1) | +1.1% |
+| **Linear Decrease (1→0)** | **+4.1%** |
+| WSD-alpha + WSD LR | **+8.0%** |
+
+**Linear Decrease beats Linear Increase by 3.7x.** TAID's beta ramp (0→1) is functionally "linear increase."
+
+### Consensus Across 9 Papers
+- **BAM Teacher Annealing (Clark 2019):** Alpha 1→0 helped student SURPASS teachers
+- **Annealing-KD (Jafari 2021):** Temperature high→low (soft early, sharp late)
+- **DTS (Nov 2025):** "Students benefit from softer probabilities early, sharper later"
+- **CAW-KD (2025):** Cosine schedule (high→low) beats static
+- **Peng et al. (ACL 2025):** WSD-shaped alpha (brief ramp, plateau, cosine decay to 0) = best
+
+### Three Dimensions (Don't Conflate)
+| Dimension | Early | Late | Evidence |
+|---|---|---|---|
+| Teacher weight (alpha/beta) | HIGH | LOW → 0 | 4x better than reverse |
+| Temperature | HIGH (soft) | LOW (sharp) | DTS, Annealing-KD |
+| Teacher capability | Matched | Stronger | SCD (2026) |
+
+### Optimal Schedule (from Peng et al.)
+For our warm-start KD (3K-6K steps from step 60K):
+```
+WSD-alpha: beta 0→1.0 over ~200 steps (stability warmup)
+           beta holds at 1.0 during stable LR
+           beta cosine decays to 0 during WSD LR decay (last 20%)
+```
+This = "start high, decay with LR" = the thermodynamic recommendation.
+
+### Why TAID May Still Have Worked at 3K
+Nuance: our student is warm-started (60K pre-training), not random. TAID's ramp-up may serve as "gentle introduction" to avoid shocking pre-trained representations. But the 3K win may be DESPITE the schedule, not because of it. The WSD decay phase (steps 2400-3000) is where TAID catches up — exactly when beta is at 1.0 AND LR is decaying, which approximates "high teacher + cooling."
+
+### Ablation Configs Ready (ALL VALIDATED against code)
+1. **TAID (current):** beta 0→1 over 2000 steps, alpha constant — COMPLETED: BPT=3.5971
+2. **Reverse TAID:** beta 1.0→0.0 over 2000 steps, alpha constant — config_reverse_taid_3k.json
+3. **WSD-alpha:** beta 0→1 over 200 steps, alpha decays 1→0 over steps 2400-3000 — config_wsd_alpha_3k.json
+
+### MECHANISM DISTINCTION (important for interpreting results)
+**Reverse TAID** reduces teacher influence via the TAID interpolation:
+- p_β = softmax(((1-β)*stopgrad(z_s) + β*z_t)/τ) — as β→0, target converges to student's OWN logits
+- KD loss weight (α) stays constant at 0.02
+- Effect: KD loss becomes self-distillation as β→0 — student regularizes against itself
+
+**WSD-alpha** reduces teacher influence via gradient weight:
+- β stays at 1.0 — TAID target is always pure teacher logits
+- α decays from 0.02→0 — the KD gradient contribution shrinks
+- Effect: CE loss dominates in final phase — pure next-token prediction consolidation
+
+**These test DIFFERENT hypotheses:**
+- Reverse TAID: "teacher signal should fade into self-reinforcement"
+- WSD-alpha: "teacher signal should be removed so CE can consolidate freely"
+- If both beat TAID: decreasing teacher influence is the key, mechanism doesn't matter
+- If only one beats TAID: the HOW of withdrawal matters
+
+### Impact on R8
+This is the #1 experiment to propose. If WSD-alpha beats TAID, we've been leaving performance on the table. The thermodynamic + pedagogical + empirical evidence all agree: **constrain early, release late.**
+
+---
+
+## CODEX R8 OUTPUT SUMMARY (2026-03-30)
+
+**Full output: results/tl_ekalavya_r8_output.md** (will be deleted after ingestion into RESEARCH.md)
+
+### Key Decisions
+1. **Direct-sum validated as base composition rule** — but not production-ready
+2. **"No dead zone" = semantic channel prevents optimization vacuum** when TAID beta is weak
+3. **Semantic helps early, hurts mid-training** — once logit channel fully sharp, semantic becomes drag
+4. **WSD-alpha is #1 priority** — run with AMP fix. Kill at 1500 if BPT > 3.65. Promote if BPT ≤ 3.58.
+5. **After WSD-alpha: CREATE NEW matched qlogit_only_wsdalpha** — DON'T use old TAID-schedule config
+6. **Shuffled Gemma semantic control** = decisive knowledge vs regularizer test (batch-permuted Gram target)
+7. **O4 raised to 7/10** — first real heterogeneous teacher evidence
+8. **15K gate requires**: beats TAID by ≥0.01, Gemma is causal, 6K stable, mini-eval/generation check
+
+### Confidence Scores
+| Outcome | R7 | R8 | Change |
+|---------|-----|-----|--------|
+| O1 Intelligence | 6 | 6 | Flat — no benchmark win |
+| O2 Improvability | 8 | 8 | Flat — audit diagnosability confirmed |
+| O3 Democratization | 7 | 7 | Flat |
+| O4 Data Efficiency | 6 | **7** | +1 — heterogeneous teachers show nontrivial value |
+| O5 Inference Efficiency | 7 | 7 | Flat |
+
+### Novel Mechanisms Proposed
+1. **Scaffold-then-sharpen schedule**: Gemma semantic high early, low mid-training, optional tail during WSD
+2. **Semantic memory bank**: Queue/prototype bank of Gemma-pooled states (batch-invariant structural target)
+3. **Orthogonal semantic sidecar**: Low-rank adapter with orthogonality penalty to LM/logit subspace
+
+### CRITICAL: CE CONTROL INVALIDATES CURRENT KD APPROACH
+**CE-only at 3K (BPT=3.5766) BEATS all KD variants:**
+- Beats multi-2T (3.5971) by 0.021
+- Beats TAID 3K (3.5856) by 0.009
+**This means: at this scale/warm-start, KD from Qwen-0.6B is net-negative overhead.**
+The WSD-alpha experiment is now even MORE important — it may recover value by removing KD during consolidation.
+
+### WSD-ALPHA RESULT (2026-03-31) — BEST KD VARIANT
+
+| Step | WSD-alpha | CE Control | TAID 3K | Multi-2T | Alpha Frac |
+|------|-----------|-----------|---------|----------|-----------|
+| 500  | 3.6274 | **3.5985** | 3.6274 | 3.6187 | 1.00 |
+| 1000 | **3.6190** | 3.6535 | 3.6393 | 3.6281 | 1.00 |
+| 1500 | 3.6459 | **3.6086** | 3.6993 | 3.6370 | 1.00 |
+| 2000 | 3.6533 | **3.6071** | 3.6367 | 3.6563 | 1.00 |
+| 2500 | 3.6431 | **3.6163** | 3.6257 | 3.6466 | 0.83 (decaying) |
+| 3000 | **3.5816** | **3.5766** | 3.5856 | 3.5971 | 0.00 (done) |
+
+**WSD-alpha (3.5816) = BEST KD VARIANT.** Beats TAID by 0.004, multi-2T by 0.016, plain KD by 0.025.
+Still loses to CE control (3.5766) by **0.005** — but gap shrunk from 0.021 (multi-2T) to 0.005.
+
+**Key dynamics:**
+- Alpha reached 0.0 at step 3000 — final steps were pure CE consolidation
+- KD loss dropped to 0.002 (essentially zero teacher signal)
+- Recovery in last 500 steps: **0.062 BPT** — BEST of any variant (CE: 0.025, TAID: 0.040, multi-2T: 0.050)
+- Kurtosis excellent at 2500 (110) but spiked at 3000 (1258)
+- Was the ONLY model to improve between steps 500→1000 (3.6274→3.6190)
+
+**Interpretation:**
+1. WSD-alpha validates Peng et al.: removing teacher signal during WSD decay dramatically improves consolidation
+2. The 0.005 gap to CE means KD is ALMOST break-even with the optimal schedule — but still not positive
+3. The schedule IS the dominant variable, not the teacher composition (WSD-alpha beats multi-2T despite same teachers)
+4. The larger recovery (0.062) suggests WSD-alpha builds up structure that "snaps into place" during pure-CE consolidation
+
+### qlogit_only_wsdalpha RESULT (2026-03-31) — GEMMA ADDS NOTHING
+
+| Step | qlogit_only | WSD-alpha | Gap |
+|------|-------------|-----------|-----|
+| 500  | 3.6304 | 3.6274 | +0.003 |
+| 1000 | 3.6490 | **3.6190** | +0.030 |
+| 1500 | 3.6876 | **3.6459** | +0.042 (Gemma prevents dead zone) |
+| 2000 | 3.6532 | 3.6533 | **-0.001 (TIED)** |
+| 2500 | 3.6430 | 3.6431 | **-0.001 (TIED)** |
+| 3000 | 3.5904 | 3.5816 | +0.009 (NOISE) |
+
+**Gemma's contribution: 0.009 BPT at final. Within noise. NOT meaningful.**
+Gemma prevents the dead zone early (step 1500 gap = 0.042) but qlogit_only recovers on its own by step 2000. Gemma = early regularizer, not lasting knowledge.
+
+---
+
+## DEFINITIVE CONCLUSION: KD FROM 0.6B TEACHER IS NOISE (2026-03-31)
+
+**ALL 6 KD variants are functionally identical to CE control:**
+
+| Variant | Final BPT | vs CE Control | Verdict |
+|---------|-----------|---------------|---------|
+| CE control | **3.5766** | — | WINS |
+| WSD-alpha (Qwen+Gemma) | 3.5816 | +0.005 | NOISE |
+| TAID 3K | 3.5856 | +0.009 | NOISE |
+| qlogit_only_wsdalpha | 3.5904 | +0.014 | NOISE |
+| Multi-2T | 3.5971 | +0.021 | NOISE |
+| Plain KD | 3.6063 | +0.030 | NOISE |
+
+**Entire spread: 0.030 BPT. Benchmarks: all within ~1%. This is NOT meaningful.**
+
+**What we learned (hard-won knowledge):**
+1. KD from a 3x teacher (0.6B → 197M) at 60K warm-start adds NOTHING
+2. Schedule (WSD-alpha) is the dominant variable but total effect is within noise
+3. Gemma semantic = early regularization, not knowledge transfer
+4. BPT differences ≤0.1 are noise — stop chasing them
+5. BPT is a compression metric, NOT an intelligence metric at these scales
+
+**STRATEGIC PIVOT NEEDED — Codex R9 must address:**
+- Is KD from a MUCH bigger teacher (1.7B, 4B = 9-20x gap) fundamentally different?
+- Is pre-training KD the wrong paradigm entirely?
+- Should we be evaluating on harder benchmarks / generation quality instead of BPT?
+- Is 3K steps too short for KD effects to accumulate?
+- Should we abandon incremental ablations and go directly to a 15K+ run with a bigger teacher?
+
+---
+
+## CODEX TIER 1 REVIEW FINDINGS (2026-03-30)
+
+### Correctness Engineer (HIGH priority)
+- **AMP autocast overrides fp32 teachers.** Teacher forward() runs inside student's bf16 autocast block. Gemma fp32 weights still execute ops in bf16. **FIXED: wrap fp32 teacher forwards with `autocast(enabled=False)`**. Applied to both `train_kd` and `train_kd_phased`.
+- Audit `multisignal_audit.py` passes `student_offsets=None` to LFM state loss (uses fallback pooling). Not critical since LFM dropped from current run.
+- Config field names match `train_kd()` correctly. Schedule is warmup-then-flat (correct for 3K scout).
+
+### Performance Engineer (HIGH priority)
+- **Teacher adapter over-allocates:** Qwen (logit-only) still emits full hidden-state stack; LFM (state-only) would compute unused LM logits. TODO: make loading surface-specific.
+- Current 2-teacher run: 17.9/24.5 GB, safe.
+- 3-teacher with LFM: ~20.5-22 GB, tight but should fit at BS=8.
+- Throughput bottleneck: 4x teacher forward per optimizer step (grad_accum=4). ~3-4s/step is expected.
+- Audit gradient capture wastes ~2-3 GB (concatenating 104M param gradients). Use `torch.autograd.grad` instead.
+
+### TODO from reviews
+- [ ] Make teacher loading surface-specific (skip hidden states for logit-only, skip LM head for state-only)
+- [ ] Fix `multisignal_audit.py` to pass student offsets to LFM state loss
+- [ ] Clean up stale files: watch_taid_6k*.sh, R6/R7 brief/output files (ingest then delete)
+
+---
+
+## CROSS-DOMAIN ANALOGUES TO MULTI-TEACHER KD (2026-03-30)
+
+Research sweep: 7 domains outside ML that solve the "learn from multiple heterogeneous sources" problem. For each: the key mechanism, how it maps to Ekalavya, a concrete experiment, and what it changes about our current approach.
+
+### Current Approach Baseline (for "what changes" comparisons)
+- Qwen3-0.6B logit KD (TAID, alpha=0.02) + EmbeddingGemma semantic (relational Gram, alpha~0.01)
+- Fixed alpha weights, direct sum of losses, no routing, no scheduling between teachers
+- Signal channel architecture: each teacher = (extractor, projector, loss) triple
+
+---
+
+### 1. BIOLOGICAL MULTI-SENSORY INTEGRATION
+
+**Key mechanism: Inverse-variance reliability weighting with causal inference gating.**
+
+The brain combines visual, auditory, and proprioceptive signals using Maximum Likelihood Estimation (MLE). Each sensory modality is weighted by the INVERSE of its variance (i.e., more reliable signals get more weight). The combined estimate has LOWER variance than any individual sense alone — this is the "multisensory integration benefit."
+
+The critical subtlety is the **causal inference layer** (Kording et al. 2007). Before integrating, the brain asks: "Do these signals come from the same source?" If signals are highly discrepant (visual says left, auditory says right), the brain SEGREGATES them instead of integrating. The probability of a common cause p_common modulates a continuous blend between:
+- Full integration (weighted sum, when signals agree)
+- Full segregation (use most reliable one, when signals strongly conflict)
+- Model averaging (Bayesian blend, for intermediate cases)
+
+The combined estimate is: x_hat = p(C=1|signals) * x_integrated + p(C=2|signals) * x_segregated
+
+**Mapping to Ekalavya:**
+- Each teacher = a sensory modality with its own "reliability" (inverse of loss variance)
+- Qwen logits = vision (high resolution, sometimes noisy)
+- LFM state = auditory (lower resolution, different temporal structure)
+- EmbeddingGemma semantic = proprioception (slow but structural)
+- "Reliability" = inverse of per-teacher loss variance over a rolling window
+- "Causal inference" = if teacher signals strongly CONFLICT on a token, reduce integration weight
+
+**Concrete experiment — Reliability-Weighted Multi-Teacher (RWMT):**
+```python
+# Instead of fixed alpha per teacher, compute rolling reliability:
+# Every 100 steps, for each teacher channel:
+#   reliability_i = 1 / var(loss_i over last 100 steps)
+#   alpha_i = reliability_i / sum(reliability_j for all j)
+# Scale to maintain total KD weight budget (sum of alphas = 0.05 or whatever)
+#
+# Additionally: compute per-token conflict signal
+#   conflict_ij = cos_sim(grad_i, grad_j) < -threshold
+#   On conflicting tokens: reduce alpha for LESS reliable teacher
+```
+**Cost:** One extra forward pass per eval window for variance tracking. Gradient conflict measurement costs 2-3x per diagnostic step (not every step).
+
+**What this changes:** Fixed alpha=0.02, alpha=0.01 becomes DYNAMIC alpha that adapts to which teacher is currently most informative. A teacher going through a "noisy phase" (high loss variance) automatically gets downweighted. This is free — no new parameters, just a running statistic.
+
+---
+
+### 2. COGNITIVE SCIENCE: LEARNING FROM MULTIPLE EXPERTS
+
+**Key mechanism: Diversity Prediction Theorem + expertise-weighted credibility.**
+
+Scott Page's Diversity Prediction Theorem: **Collective Error = Average Individual Error - Predictive Diversity**. The group's error is ALWAYS less than the average individual error, and the reduction EQUALS the diversity of predictions. This means: maximizing diversity among teachers is as important as minimizing individual teacher error.
+
+Critical finding from wisdom-of-crowds research: simple averaging only works when judges are independent. When experts are correlated (e.g., all trained on similar data), you get "cascading errors." The fix: weight experts by their unique contribution (residual expertise after removing what others already provide), not their absolute accuracy.
+
+**How attention/trust gets allocated:** Cognitive science shows humans use a "contribution score" — not "how accurate is this expert" but "how much does this expert add BEYOND what the group already knows." An expert who is 95% accurate but perfectly correlated with another expert has zero contribution. An expert who is 70% accurate but uncorrelated has high contribution.
+
+**Mapping to Ekalavya:**
+- Teacher diversity is a FEATURE, not a problem. Qwen (decoder), LFM (hybrid), EmbeddingGemma (encoder) have maximum architectural diversity = maximum predictive diversity
+- The "contribution score" maps to: how much does adding teacher_i's loss reduce student BPT beyond what the other teachers already provide?
+- Correlated teachers (e.g., two decoders of different sizes) have lower marginal value than uncorrelated teachers (decoder + encoder)
+
+**Concrete experiment — Marginal Contribution Scoring:**
+```python
+# Run 4 probes (1K steps each, from same checkpoint):
+# 1. CE only (no teachers)
+# 2. CE + Qwen logit only
+# 3. CE + Qwen logit + Gemma semantic
+# 4. CE + Qwen logit + Gemma semantic + LFM state
+#
+# Measure BPT at each. Marginal contribution:
+#   MC_qwen = BPT(1) - BPT(2)     # Qwen's raw contribution
+#   MC_gemma = BPT(2) - BPT(3)    # Gemma's marginal contribution GIVEN Qwen
+#   MC_lfm = BPT(3) - BPT(4)      # LFM's marginal contribution GIVEN others
+#
+# If MC_lfm < 0 (adding LFM HURTS), it's correlated noise, not diversity.
+# If MC_gemma > MC_qwen, the semantic signal is more valuable per-alpha.
+```
+**Cost:** 4 short probes, ~30 min each on GPU. This is the FIRST experiment to run — it directly validates whether multi-teacher is even useful.
+
+**What this changes:** Currently we plan to load all 3 teachers simultaneously with fixed weights. This experiment might reveal that 2 teachers > 3, or that the ordering of marginal value is not what we expect. It directly informs which teachers to include and roughly what alpha ratios to use.
+
+---
+
+### 3. MULTI-OBJECTIVE OPTIMIZATION / GAME THEORY
+
+**Key mechanism: Nash Bargaining Solution for gradient aggregation.**
+
+The direct analogue is Nash-MTL (Navon et al., ICML 2022): treat each teacher's loss as a "player" in a bargaining game. The Nash Bargaining Solution finds the update direction where NO player can improve without making another player worse off. Key properties:
+- **Scale-invariant:** Unlike simple gradient sum, NBS is invariant to loss magnitudes. A KL loss that's 100x larger than CKA doesn't dominate.
+- **Pareto-optimal:** The combined gradient always lies on the Pareto front of all teacher objectives.
+- **Balanced:** Produces well-balanced solutions across all objectives (no single teacher dominates).
+
+Related methods with different tradeoffs:
+- **PCGrad (gradient surgery):** When two teacher gradients conflict (negative cosine similarity), project one onto the normal plane of the other. Simple, cheap, but only handles pairwise conflicts.
+- **CAGrad:** Find a conflict-averse direction that minimizes overall conflict. More principled than PCGrad.
+- **GradVac:** Maintains a "target" cosine similarity between task gradients. Pushes back when similarity drops below target.
+
+**Mapping to Ekalavya:**
+- Each teacher channel's loss = an "objective" in multi-objective optimization
+- Gradient conflict between teachers is the CORE failure mode we're trying to prevent
+- Nash-MTL or PCGrad would replace our current "direct sum of losses + optimizer step" with a conflict-aware aggregation
+
+**Concrete experiment — PCGrad for Teacher Losses:**
+```python
+# Cheapest conflict-aware method (no extra hyperparams):
+# 1. Compute gradient of each teacher's loss separately
+# 2. For each pair (i,j): if cos(grad_i, grad_j) < 0:
+#    grad_i = grad_i - (grad_i . grad_j / ||grad_j||^2) * grad_j
+# 3. Sum the (possibly projected) gradients
+# 4. Optimizer step
+#
+# Cost: N extra backward passes (N = number of teachers, so 2-3)
+# This is 3-4x slower per step but prevents gradient warfare
+#
+# Diagnostic: log cos_sim(grad_i, grad_j) every 100 steps
+# If conflict is rare (<5% of steps), PCGrad is unnecessary overhead
+# If conflict is frequent (>20%), PCGrad is essential
+```
+**Cost:** 3-4x per-step slowdown (3 backward passes instead of 1). For a 3K probe this means ~2hr instead of ~40min.
+
+**What this changes:** Currently we assume teacher gradients are approximately orthogonal (update different weight subspaces). If that's true, PCGrad is a no-op. If it's false, PCGrad prevents the "gradient warfare" that could make multi-teacher worse than single-teacher. The diagnostic (cos_sim logging) tells us which regime we're in WITHOUT running the full PCGrad experiment.
+
+---
+
+### 4. STATISTICAL MECHANICS / ENSEMBLE THEORY
+
+**Key mechanism: Free energy minimization as the unifying objective, with teacher signals as constraints.**
+
+The thermodynamic analogy: the student model minimizes a "free energy" F = E - TS, where:
+- E = energy = training loss (CE + KD losses) = how well the model fits the data and teachers
+- T = temperature = a meta-parameter controlling exploration vs exploitation
+- S = entropy = diversity/flexibility of the student's learned representations
+
+Each teacher adds a CONSTRAINT to the free energy landscape: "the student's representations must look like mine in this specific way." Multiple constraints from diverse teachers create a MORE constrained optimization landscape, which paradoxically can be EASIER to optimize (fewer local minima, the intersection of constraint sets is smaller).
+
+The ensemble theory connection via stacking: in classical ML, stacking uses a META-LEARNER that takes base model predictions as features and learns optimal combination weights. The meta-learner is trained on held-out data to avoid overfitting to any single base model.
+
+**Diversity Prediction Theorem (formal):** For squared error, Collective Error = Mean Individual Error - Diversity. This is a mathematical identity (holds for any Bregman divergence). It says: the more diverse your teachers are, the better the ensemble, REGARDLESS of individual teacher quality. An ensemble of 3 mediocre but diverse models beats an ensemble of 3 excellent but correlated models.
+
+**Mapping to Ekalavya:**
+- Student = system being annealed
+- Teachers = external constraints on the energy landscape
+- Temperature schedule = learning rate schedule (already have WSD)
+- "Phase transition" = the sudden improvement at WSD decay (already observed with TAID!)
+- The WSD consolidation phase is literally "cooling" — the system locks into the lowest-energy state consistent with all constraints
+
+**Concrete experiment — Temperature-Coupled Teacher Annealing:**
+```python
+# Hypothesis: teacher influence should be COUPLED to LR schedule
+# During warmup (high LR = high temperature): HIGH teacher alpha
+#   (teacher signal provides constraint, preventing random walk)
+# During stable phase (medium LR): MEDIUM teacher alpha
+#   (student explores within teacher-constrained landscape)
+# During WSD decay (low LR = low temperature): LOW teacher alpha
+#   (student consolidates its OWN representations, teachers release)
+#
+# Implementation:
+#   alpha_i(t) = alpha_i_base * cosine_anneal(t, total_steps)
+#   where cosine_anneal goes from 1.5 → 0.5 over training
+#
+# This is the OPPOSITE of TAID's beta ramp (which INCREASES teacher weight)
+# Theory says: teachers should CONSTRAIN early, RELEASE late
+```
+**Cost:** Zero extra compute. Just a different alpha schedule.
+
+**What this changes:** Currently alpha is fixed throughout training. TAID ramps teacher influence UP (beta: 0->1). The thermodynamic analogy suggests the OPPOSITE: start with strong teacher constraint, gradually release to let the student find its own equilibrium. This directly contradicts TAID's approach and is testable head-to-head.
+
+---
+
+### 5. PEDAGOGY: CURRICULUM LEARNING AND DESIRABLE DIFFICULTIES
+
+**Key mechanism: Zone of Proximal Development + desirable difficulties + interleaving.**
+
+Vygotsky's ZPD: learning happens in the zone between "what the student can do alone" and "what the student can do with guidance." Tasks too easy = no learning. Tasks too hard = confusion and no learning. The teacher must dynamically adjust difficulty to keep the student in the ZPD.
+
+Bjork's Desirable Difficulties: counterintuitively, making learning HARDER (interleaving topics, spacing practice, retrieval testing) improves long-term retention. Key findings:
+- **Interleaving** (switching between topics) beats blocked practice by 43 percentage points (63% vs 20% correct on delayed test)
+- **Spacing** produces 10-30% better retention (Cepeda et al. meta-analysis, 254 studies)
+- **Retrieval practice** improves recall by 50% vs restudying (Roediger & Karpicke 2006)
+
+The scaffolding model: teacher provides maximum support when the task is new, then gradually withdraws as the student gains competence ("I do, we do, you do").
+
+**Mapping to Ekalavya:**
+- **ZPD:** The student can currently predict next tokens with BPT ~3.65. Teachers whose knowledge is "just beyond" this level are in the ZPD. A teacher whose knowledge is at BPT ~2.0 (far beyond student) may be TOO difficult — the gradient signal is noise.
+- **Interleaving teachers = desirable difficulty:** Instead of using all teachers every step, ROTATE between them. Step 1: Qwen logit only. Step 2: Gemma semantic only. Step 3: LFM state only. Step 4: CE only. This forces the student to recall and apply each teacher's knowledge independently.
+- **Scaffolding = teacher annealing:** Start with the EASIEST teacher (closest to student capacity), add harder teachers later.
+
+**Concrete experiment — Teacher Interleaving:**
+```python
+# Instead of: loss = CE + alpha_1*L_qwen + alpha_2*L_gemma + alpha_3*L_lfm (every step)
+# Do:         loss = CE + alpha_i*L_teacher_i  (where i cycles: 1,2,3,1,2,3,...)
+#
+# Variant A: Round-robin (each teacher gets every 3rd step)
+# Variant B: Weighted random (teacher selected with p proportional to alpha)
+# Variant C: Difficulty-ordered (easy teacher first N steps, then harder)
+#
+# Control: all-teachers-every-step (current approach)
+#
+# Measure: BPT at 1K steps for each variant
+# If interleaving wins: the "desirable difficulty" of forced context-switching helps
+# If simultaneous wins: the gradient diversity per step matters more than spacing
+```
+**Cost:** Same compute as baseline (actually slightly less — only 1 teacher loaded per step in the interleaving variants, saving VRAM).
+
+**What this changes:** Currently we load all teachers every step and sum losses. Interleaving would mean each step focuses on ONE teacher signal. This is cheaper (less VRAM), forces the student to develop robust representations (can't "cheat" by satisfying only the current teacher), and creates a natural curriculum if teachers are ordered by difficulty. The downside: each teacher gets 1/3 the gradient signal, so convergence might be slower per teacher.
+
+**Concrete experiment — ZPD-Based Teacher Scheduling:**
+```python
+# Sequence teachers by "proximity to student":
+# Phase 1 (steps 0-500): CE only (student learns basic language modeling)
+# Phase 2 (steps 500-1500): CE + Qwen logit (closest architecture, same tokenizer family)
+# Phase 3 (steps 1500-2500): CE + Qwen + Gemma semantic (add cross-architecture signal)
+# Phase 4 (steps 2500-3000): CE + Qwen + Gemma + LFM state (add the most alien signal last)
+#
+# The logic: don't overwhelm a student who can barely do language modeling
+# with SSM state representations. Build foundation first, then add complexity.
+```
+**Cost:** Zero extra compute (just a scheduling change).
+
+**What this changes:** Currently all teachers start at step 0. ZPD scheduling delays harder teachers, giving the student time to build a foundation. The TAID beta ramp is a crude version of this (ramping teacher weight from 0 to 1), but ZPD scheduling applies to WHICH teachers activate, not just how strongly.
+
+---
+
+### 6. IMMUNOLOGY: AFFINITY MATURATION IN GERMINAL CENTERS
+
+**Key mechanism: Dark zone / light zone cycling with competitive selection.**
+
+The immune system's germinal center has a two-phase cycle:
+1. **Dark zone (mutation):** B cells rapidly proliferate and undergo random mutations to their antibody genes (somatic hypermutation). This is BLIND — mutations are random, most are deleterious.
+2. **Light zone (selection):** Mutated B cells compete for antigen presented by follicular dendritic cells. ONLY the highest-affinity B cells survive. Low-affinity clones die by apoptosis.
+3. **Cycle repeats:** Surviving B cells re-enter the dark zone for more mutation and division.
+
+Three key features:
+- **Iterative improvement:** Not one round of mutation+selection, but MANY rounds. Each round starts from the best of the previous round.
+- **Competitive selection:** B cells don't just need to be "good enough" — they compete against EACH OTHER. Only the relatively best survive.
+- **Diverse pathways:** Recent research (2025, Immunity journal) shows that under conditions of limited competition, B cells can generate de novo antigen recognition through diverse mutational pathways. The immune system finds MULTIPLE solutions to the same problem.
+- **Affinity-proportional mutation rate:** Higher-affinity antibodies get FEWER mutations (fine-tuning), lower-affinity ones get MORE mutations (exploration). This is the opposite of uniform mutation — it's an adaptive mutation rate.
+
+**Mapping to Ekalavya:**
+- **Dark zone = training steps** (parameter updates = mutations)
+- **Light zone = evaluation** (measure BPT/benchmarks = selection)
+- **Multiple B cell clones = multiple KD configurations** running in parallel
+- **Competitive selection = pick the best configuration, kill the rest**
+- **Affinity-proportional mutation = adjust hyperparameters proportional to how far from target**
+- **Key insight: the immune system doesn't optimize a single antibody. It maintains a POPULATION of diverse antibodies and iteratively improves the whole population.**
+
+**Concrete experiment — Population-Based KD Hyperparameter Search (Germinal Center Protocol):**
+```python
+# Round 1 (Dark Zone): Spawn 4 KD configs (500 steps each, same checkpoint):
+#   Config A: alpha_qwen=0.02, alpha_gemma=0.01, no teacher scheduling
+#   Config B: alpha_qwen=0.01, alpha_gemma=0.02, interleaved
+#   Config C: alpha_qwen=0.03, alpha_gemma=0.005, reliability-weighted
+#   Config D: alpha_qwen=0.02, alpha_gemma=0.01, PCGrad
+#
+# Round 1 (Light Zone): Evaluate BPT at step 500. Kill bottom 2.
+#
+# Round 2 (Dark Zone): Take top 2, spawn 2 variants of each (mutate alphas by ±25%):
+#   Winner1 -> W1a (alphas * 0.75), W1b (alphas * 1.25)
+#   Winner2 -> W2a (alphas * 0.75), W2b (alphas * 1.25)
+#   Run 500 more steps each.
+#
+# Round 2 (Light Zone): Evaluate at step 1000. Kill bottom 2.
+#
+# Round 3: Repeat. Run survivors to 3K total.
+#
+# This is Population Based Training (PBT) but framed as immunological selection.
+```
+**Cost:** 4 parallel 500-step runs per round (can run sequentially on 1 GPU in ~2hr per round). Total ~6-8 GPU hours for 3 rounds. More expensive than a single probe, but explores the hyperparameter space adaptively instead of grid search.
+
+**What this changes:** Currently we'd pick ONE config and run it for 3K steps. The germinal center approach runs a POPULATION of configs for short bursts, kills the losers, mutates the winners, and iterates. This finds good hyperparameters faster because it adapts — bad regions are abandoned early, good regions are explored more. The "affinity-proportional mutation rate" means: configs close to the target get fine-tuned (small alpha changes), configs far away get large changes.
+
+---
+
+### 7. RECENT MULTI-TEACHER KD PAPERS (2024-2026)
+
+**Key methods beyond routing/averaging:**
+
+**A. MTKD-RL (AAAI 2025 Oral) — RL-Based Teacher Weighting:**
+Formulates multi-teacher KD as a reinforcement learning problem. An RL agent observes:
+- Teacher performance on current batch
+- Teacher-student gap (feature distance, KL divergence)
+- Student's recent learning progress
+The agent outputs per-teacher weights. Reward = student validation improvement.
+This is the most sophisticated adaptive weighting method — but it adds a second optimization loop.
+
+**B. MoVE-KD (CVPR 2025) — Mixture of Visual Encoders:**
+Uses token-level teacher weighting based on attention patterns. Each teacher's weight varies PER TOKEN based on where the teacher model attends. Maps to: weight Qwen's logit signal more on tokens where Qwen is confident, weight Gemma's semantic signal more on tokens where the semantic structure is complex.
+
+**C. Entropy-Based Decoupled Multi-Teacher (DE-MKD, 2024):**
+Decomposes teacher knowledge into "target class" and "non-target class" components. Combines teachers differently for each component. Low-entropy (confident) teacher predictions get higher weight on target class. High-entropy (uncertain) predictions get higher weight on non-target (dark knowledge). This is an information-theoretic version of reliability weighting.
+
+**D. Multi-Level Optimal Transport (AAAI 2025) — Cross-Tokenizer:**
+Uses optimal transport to align logit distributions at both token and sequence levels. Eliminates the need for shared tokenizer or dimensional correspondence. Directly relevant to our Byte-Span Bridge problem — OT provides a principled way to match distributions without explicit token alignment.
+
+**E. Task-Agnostic Multi-Teacher Distillation (2025):**
+Key finding: task-agnostic representations from multi-teacher distillation transfer BETTER than task-specific ones. This suggests: don't specialize teacher signals to "logit" vs "state" vs "semantic" — let the student learn task-agnostic representations from ALL teachers simultaneously.
+
+**F. Teacher Annealing (Staged KD, multiple papers 2024-2025):**
+Temperature annealing (T=5 -> T=1) combined with adaptive loss weights based on teacher confidence. 25% reduction in convergence time, +1.6% accuracy. L2M-KD (2025) uses curriculum that ranks samples easy-to-hard, with adaptive KD loss that transitions from KLD to skew KLD.
+
+**G. Dynamic Curriculum KD (DCKD, 2025-2026):**
+Measures task difficulty automatically and adjusts teacher weights in early training stages. Guides student to focus on low-noise tasks first. The "Crescendo Adversarial Distillation" component gradually increases difficulty.
+
+**Concrete experiments from this survey:**
+
+**Experiment 7A — Entropy-Based Teacher Weighting:**
+```python
+# For Qwen logit KD (the only logit-level teacher):
+# Compute per-token entropy of Qwen's output distribution
+# H_token = -sum(p_i * log(p_i)) for each token position
+#
+# Low entropy tokens (Qwen is confident): increase logit KD weight
+# High entropy tokens (Qwen is uncertain): decrease logit KD weight
+#   alpha_token = alpha_base * sigmoid(H_threshold - H_token)
+#
+# Intuition: trust the teacher when it's confident, ignore when uncertain
+# This is the information-theoretic version of reliability weighting (#1 above)
+```
+**Cost:** One entropy computation per token (trivial — already have logits).
+
+**Experiment 7B — Optimal Transport for Cross-Tokenizer Alignment:**
+```python
+# Replace byte-span pooling with OT-based alignment for cross-tokenizer teachers:
+# Instead of: pool student logits to teacher byte spans, then KL
+# Do: compute Wasserstein distance between student and teacher logit distributions
+#     using Sinkhorn algorithm (differentiable, GPU-friendly)
+#
+# This is more principled than byte-span pooling because:
+# 1. No ad hoc span boundary decisions
+# 2. Handles partial token overlaps naturally
+# 3. Has theoretical guarantees (OT is a proper metric on distributions)
+#
+# But: Sinkhorn is O(n^2 log n) where n = vocab size. May need top-K truncation.
+```
+**Cost:** Moderate — Sinkhorn is well-optimized but adds per-step overhead.
+
+---
+
+### SYNTHESIS: What the Cross-Domain Research Tells Us
+
+**Converging principles across ALL 7 domains:**
+
+1. **RELIABILITY-WEIGHTED COMBINATION is universal.** Brains do it (inverse variance). Crowds do it (expertise weighting). Immune systems do it (affinity-proportional selection). Ensembles do it (stacking meta-learner). Fixed alpha weights are ALWAYS suboptimal.
+
+2. **DIVERSITY is mathematically valuable.** The Diversity Prediction Theorem is a mathematical identity, not an empirical observation. Our 3 architecturally diverse teachers (decoder + hybrid + encoder) should beat 3 decoders of different sizes, even if the 3 decoders are individually better.
+
+3. **CONFLICT DETECTION before integration.** The brain uses causal inference to decide whether to integrate or segregate signals. Nash-MTL uses bargaining. PCGrad uses gradient surgery. The common principle: DETECT conflict first, then resolve it. Don't blindly sum.
+
+4. **TEMPORAL SEQUENCING matters.** Pedagogy says: easy before hard (ZPD). Immunology says: many short rounds beat one long run (germinal center cycling). Thermodynamics says: constrain early, release late (annealing). All agree: the ORDER of teacher signals matters, not just the combination.
+
+5. **POPULATION-BASED SEARCH beats single-trajectory.** The immune system maintains diverse antibody populations. Ensembles use diverse base learners. Even wisdom of crowds requires independence. Running multiple KD configs in parallel and selecting winners is more robust than picking one config and hoping.
+
+**PRIORITY ORDER FOR EXPERIMENTS:**
+
+| Priority | Experiment | Cost | Domain | What it tests |
+|----------|-----------|------|--------|---------------|
+| **1** | Marginal Contribution Scoring | 4 x 1K probes (~2hr) | Cognitive Science | Is multi-teacher even useful? Which teachers add marginal value? |
+| **2** | Gradient Conflict Diagnostic | 1 x 500-step probe (~30min) | Game Theory | Do teacher gradients actually conflict? How often? |
+| **3** | Reliability-Weighted Alpha | 1 x 3K probe (~40min) | Neuroscience | Does dynamic reliability weighting beat fixed alpha? |
+| **4** | Teacher Interleaving vs Simultaneous | 3 x 1K probes (~1.5hr) | Pedagogy | Is rotating teachers better than simultaneous? |
+| **5** | ZPD-Based Teacher Scheduling | 1 x 3K probe (~40min) | Pedagogy | Does delaying harder teachers help? |
+| **6** | Temperature-Coupled Annealing | 1 x 3K probe (~40min) | Stat Mech | Should teacher weight decrease (not increase) during WSD? |
+| **7** | Entropy-Based Token Weighting | 1 x 3K probe (~40min) | Info Theory/KD | Does per-token confidence weighting help? |
+| **8** | Population-Based Config Search | 4 configs x 3 rounds (~8hr) | Immunology | Can adaptive search find better hyperparameters? |
+| **9** | PCGrad for Teacher Losses | 1 x 3K probe (~2hr) | Game Theory | Does gradient surgery improve BPT? (Only if #2 shows conflict) |
+| **10** | OT Cross-Tokenizer | Implementation + probe | KD Literature | Is OT better than byte-span pooling? (Deferred — high implementation cost) |
+
+**The first 3 experiments can run in <4 hours total and answer the most critical questions:**
+1. Does adding teachers help at all? (marginal contribution)
+2. Do teachers fight each other? (gradient conflict)
+3. Should weights be dynamic? (reliability weighting)
+
+**WHAT THIS CHANGES ABOUT OUR CURRENT APPROACH:**
+- Fixed alpha weights → dynamic, reliability-weighted alpha (Domain 1)
+- All teachers every step → possibly interleaved or sequenced (Domain 5)
+- Direct sum of losses → possibly PCGrad or Nash-MTL aggregation (Domain 3)
+- Single config, long run → possibly population-based search (Domain 6)
+- TAID beta ramp (increasing teacher weight) → possibly OPPOSITE schedule (Domain 4)
+- Per-step uniform teacher weight → possibly per-token, entropy-weighted (Domain 7)
+
+---
+
+## STRATEGIC PIVOT: Direct Signal Translation, No Routing (2026-03-30)
+
+**Devansh's insight:** "Different teachers teach different THINGS. Why route? Just translate each teacher's signal and sum the losses."
+
+**Core argument:** Routing assumes teachers CONFLICT on the same tokens/features. But if teachers teach different ASPECTS of intelligence (language modeling, temporal dynamics, semantic structure), they naturally update different parameter subspaces. Routing is premature optimization — add it only when empirical evidence shows conflict.
+
+**Analogy: Multi-task learning.** MTL uses multiple loss heads on a shared backbone with no routing between tasks. Gradient descent naturally balances the learning. Same principle applies: each teacher IS a task. The "translation layer" per teacher type converts the teacher's signal into a loss on the student.
+
+**Translation taxonomy:**
+| Teacher Type | Signal | Translation | Loss |
+|---|---|---|---|
+| Decoder LLM (Qwen3-1.7B) | Logits (V_t) + Hidden (D_t) | Cross-tok via shared vocab + byte-span pool | KL on logits + CKA on hiddens |
+| SSM Hybrid (LFM2.5-1.2B) | Hidden (D_t), maybe logits | Byte-span pool (arch-agnostic) | CKA on hiddens + relational Gram |
+| Encoder (EmbeddingGemma-300M) | Embeddings (D_t) | Mean-pool + project | Relational Gram matching |
+| Non-neural (SVM, tree) | Predictions/confidence | Soft labels | Weighted CE with teacher confidence |
+
+**What this changes about R7:**
+- No routing mechanism in first multi-teacher probe
+- All teachers loaded simultaneously (11-13GB / 24GB = fits)
+- Combined loss: `L = α_CE*CE + Σ_teacher(α_i * L_i(teacher_i))`
+- TAID applies only to logit signals from decoder teachers
+- State/semantic KD is inherently architecture-agnostic (byte-span bridge)
+
+**Open questions for Codex R7:**
+1. Initial α weights for each teacher's loss terms?
+2. Should we monitor per-teacher gradient norms for dynamic reweighting?
+3. Is gradient conflict a real risk or theoretical concern?
+4. What's the simplest multi-teacher probe that tests the "no conflict" hypothesis?
+
+**Key realization:** TAID is a single-teacher-logit mechanism. In multi-teacher, it applies to ONE teacher's logit signal. CKA/relational losses handle the rest. Clean decomposition.
+
+**Gradient conflict analysis (theoretical):**
+
+Why conflict MIGHT NOT happen:
+- Logit KD updates embedding layer + LM head weights primarily
+- CKA/state KD updates intermediate transformer blocks (representation layers)
+- Semantic/relational KD updates mean-pooling projections (sequence-level features)
+- These target different weight matrices → orthogonal gradients → no conflict
+
+Why conflict MIGHT happen:
+- ALL losses backprop through the same shared transformer blocks
+- The feed-forward networks and attention layers receive combined gradients
+- If logit KD wants token X to look like "dog" and CKA wants the hidden state to look like the encoder's representation of "animal," these could pull layer 12's FFN in different directions
+- Loss magnitude imbalance: KL divergence (logit KD) can be 100x larger than CKA (0-1 bounded) → logit KD dominates, other signals drowned out
+
+**Cheap diagnostic to include in first probe:**
+```python
+# After computing per-teacher gradients but before optimizer step:
+# 1. For each teacher, compute gradient on shared params (model.parameters())
+# 2. Measure: ||grad_teacher_i|| for each teacher (magnitude comparison)
+# 3. Measure: cos(grad_teacher_i, grad_teacher_j) for each pair (conflict detection)
+# 4. Log these every 100 steps
+# Cost: one extra backward pass per teacher — 2-3x slower but DIAGNOSTIC ONLY
+```
+
+Decision: Run the first probe WITHOUT gradient logging (speed), then if results are ambiguous, rerun a 500-step diagnostic version WITH gradient logging to understand the dynamics.
+
+**Signal Channel Architecture (draft concept):**
+
+The novelty isn't any single teacher or any single loss. It's the FRAMEWORK:
+
+```
+Teacher_i → [Extract_i] → Signal_i → [Project_i] → Loss_i(student_hidden)
+                                                         ↓
+                                              ∂L_i/∂θ_student
+                                                         ↓
+                                              Σ α_i · ∂L_i/∂θ → optimizer step
+```
+
+Each "Signal Channel" is a (extractor, projector, loss) triple:
+- **Extractor**: what to pull from the teacher (logits, hiddens, pooled, state)
+- **Projector**: how to align teacher→student space (linear, byte-span pool, learned MLP)
+- **Loss**: how to convert alignment error to gradient (KL, CKA, relational, cosine)
+
+The beauty: adding a new teacher = adding a new signal channel. No routing changes. No architecture changes. Just plug in (extractor, projector, loss) and add α_new.
+
+This is the composability story for O3 (Democratized Development):
+- A researcher who has a good chemistry model can contribute a signal channel
+- They specify: extractor, projector, loss, and suggested α
+- The community tests their channel against existing ones
+- If it improves BPT/benchmarks without degrading others, it's merged
+
+**This IS the Ekalavya Protocol.** Not routing. Not gating. SIGNAL CHANNELS.
+
+**For Codex R7:** Ask whether this "signal channel" framing is the right abstraction, and what interface contract each channel should satisfy.
+
+**Draft multi-teacher probe config (for Codex to refine):**
+```json
+{
+  "name": "multi_3t_direct_3k",
+  "init_from": "results/checkpoints_197m_control/step-60000.pt",
+  "total_steps": 3000,
+  "batch_size": 8,
+  "grad_accum": 4,
+  "lr": 1e-4,
+  "min_lr": 1e-5,
+  "warmup": 200,
+  "eval_every": 500,
+  "seq_len": 512,
+  "n_spans": 16,
+  "signal_channels": [
+    {
+      "teacher": "Qwen/Qwen3-0.6B",
+      "channels": [
+        {"type": "logit_kd", "alpha": 0.02, "taid_beta_ramp": 2000, "tau": 2.0, "top_k": 64},
+        {"type": "state_kd", "alpha": 0.1, "loss": "cka", "n_spans": 16}
+      ]
+    },
+    {
+      "teacher": "LiquidAI/LFM2-1.2B",
+      "channels": [
+        {"type": "state_kd", "alpha": 0.1, "loss": "cka", "n_spans": 16},
+        {"type": "semantic_kd", "alpha": 0.05, "loss": "relational_gram"}
+      ]
+    },
+    {
+      "teacher": "google/embedding-gemma-300m",
+      "channels": [
+        {"type": "semantic_kd", "alpha": 0.05, "loss": "relational_gram"}
+      ]
+    }
+  ],
+  "ce_alpha": 1.0,
+  "monitor": ["per_channel_loss", "bpt", "kurtosis"]
+}
+```
+
+**Success criteria:**
+- Gate A (viable): final BPT ≤ 3.5856 (matches TAID 3K single-teacher winner)
+- Gate B (improvement): final BPT ≤ 3.5547 (matches CE 6K baseline at HALF the steps)
+- Gate C (multi-teacher bonus): outperforms single-teacher TAID at same step count
+- Failure: any single channel's loss diverges, or BPT > CE 3K control (3.6378)
+
+**NOT implementing yet — this is the proposal for Codex R7 to evaluate and refine.**
+
+## EmbeddingGemma-300M Signal Probe Results (2026-03-30, CPU)
+
+**Architecture match:** EmbeddingGemma is 768d, 24 layers — identical to student. No projection needed.
+
+**Per-layer CKA (diagonal, student L_i vs gemma L_i):**
+```
+L0-L21: High CKA (0.71-0.95) — shared early/mid representations
+L11-L13: Peak CKA (0.90-0.95) — maximum representational agreement
+L22: CKA drops to 0.38 — representations begin diverging
+L23: CKA = 0.17 — STRONG DIVERGENCE at final layer
+```
+
+**Interpretation:** Student and encoder share syntactic/semantic foundations (layers 0-21). Final layers diverge because:
+- Student L23 is specialized for next-token prediction (causal LM head)
+- Gemma L24 is specialized for bidirectional semantic representation
+- The encoder's final layer encodes semantic structure the student HASN'T learned
+- This is exactly the complementary signal we want for O4 (Data Efficiency)
+
+**Full 24x24 CKA heatmap (byte-span pooled, 64 eval windows):**
+```
+Diagonal CKA (student L_i vs gemma L_i):
+L0=0.793  L6=0.936  L12=0.946  L18=0.743
+L1=0.898  L7=0.901  L13=0.949* L19=0.645
+L2=0.871  L8=0.906  L14=0.887  L20=0.694
+L3=0.879  L9=0.875  L15=0.863  L21=0.347**
+L4=0.913  L10=0.888 L16=0.875  L22=0.480
+L5=0.885  L11=0.942 L17=0.834  L23=0.589
+* = peak agreement  ** = maximum divergence
+```
+
+**Exit layer cross-layer analysis:**
+| Student Exit | Diagonal CKA | Best Teacher Match | CKA |
+|---|---|---|---|
+| L7 (early) | 0.901 | Teacher L4 | 0.930 |
+| L15 (mid) | 0.863 | Teacher L8 | 0.897 |
+| L23 (final) | 0.589 | Teacher L13 | 0.890 |
+
+**Critical finding: Teacher L13 is "universal attractor"** — best match for 18/24 student layers.
+Student L23 diagonal CKA is low (0.589) but matches teacher L13 at 0.890. This means:
+- Student final layer has NOT learned encoder's final-layer knowledge (L23 vs L23 = 0.589)
+- Student final layer IS similar to encoder's mid-depth representation (L23 vs L13 = 0.890)
+- Maximum complementary signal is at late layers (L18-L23 diagonal drops sharply)
+- For KD: target the DIVERGENCE ZONE (L18-23), not the agreement zone (L0-17)
+
+**Representation geometry:**
+- Student: eff_rank=6.94, avg_cos_sim=0.63 (moderate diversity)
+- Gemma: eff_rank=5.88, avg_cos_sim=0.88 (more clustered, high internal similarity)
+
+**Signal quality verdict: STRONG POSITIVE.** EmbeddingGemma provides genuinely complementary information (late-layer divergence zone L18-23) built on a shared foundation (high agreement L0-17). Teacher L13 is the universal best-match layer. The signal is structured, not noise.
+
+## Loss Calibration Probe Results (2026-03-30, CPU)
+
+**Raw loss magnitudes (32 eval windows):**
+| Loss Type | Teacher | Mean | Median | Range |
+|---|---|---|---|---|
+| State CKA | EmbeddingGemma | 0.075 | 0.064 | 0.035-0.125 |
+| Semantic Gram | EmbeddingGemma | 0.187 | 0.205 | 0.001-0.358 |
+| Logit KL (cross-tok) | Qwen3-0.6B | 3.571 | 2.990 | 2.115-6.278 |
+
+**Alpha equivalence (equal gradient pressure as logit KD at α=0.02):**
+- alpha_state_equiv = 0.93 (state CKA is 47x smaller than logit KD)
+- alpha_semantic_equiv = 0.29 (semantic Gram is 15x smaller than logit KD)
+
+**CRITICAL INSIGHT:** These are NOT the recommended starting alphas. Start MUCH lower:
+- Codex warned: representation losses are "dense" (all tokens, all layers). Logit KD is "sparse" (top-K, shared vocab). Equal norm ≠ equal impact.
+- Codex also flagged: bidirectional encoder CKA can leak future context. alpha_state=0.0 until prefix-safe audit.
+
+**Recommended starting config:**
+- alpha_ce = 1.0
+- alpha_qwen_logit = 0.02 (validated)
+- alpha_gemma_semantic = 0.01 (conservative)
+- alpha_gemma_state = 0.0 (leakage risk)
+- Sweep alpha_gemma_semantic: [0.005, 0.01, 0.02] in probe
+
+---
+
 ## q06_taid_3k RESULT: FIRST VALIDATED POSITIVE KD (2026-03-29)
 
 **TAID BEATS MATCHED CE BY 0.052 BPT AT STEP 3000.**
@@ -100,6 +1117,348 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 4. WSD consolidation is critical for KD to work — both TAID and Plain lose at mid-run
 
 **NEXT: Extend winning TAID config to 6K for fair comparison with CE 6K (3.5547).**
+
+---
+
+## WSD Schedule Mismatch Analysis (2026-03-29)
+
+**CRITICAL: The 3K TAID vs CE comparison is NOT a fair schedule comparison.**
+
+The WSD schedule uses `decay_start = int(max_steps * 0.8)`:
+- 3K run: decay starts at step 2400 (steps 2400-3000 are decay)
+- 6K run: decay starts at step 4800 (steps 4800-6000 are decay)
+
+At step 3000:
+- TAID (3K run): IN WSD DECAY, step 600/600 of decay. LR has dropped from 1e-4 to 1e-5. Fully consolidated.
+- CE (6K run): IN STABLE-LR, step 3000 of 6000. LR is still 1e-4. Mid-training noise.
+- Plain (3K run): IN WSD DECAY, same as TAID.
+
+**This means the 0.052 BPT advantage (TAID vs CE at step 3000) is inflated.** TAID benefits from WSD consolidation at its terminal step, while CE at step 3000 is mid-training in a 6K run.
+
+Evidence of CE instability in stable-LR:
+- CE@2000: 3.6174 (best during stable-LR)
+- CE@2500: 3.6215 (+0.004 regression)
+- CE@3000: 3.6378 (+0.020 regression — back to step-500 level!)
+- CE@3500: 3.6302 (still in stable-LR, noisy)
+- CE@4000: 3.6404 (worst CE point in the entire run)
+- CE@4500: 3.6011 (WSD decay starts ~step 4800, but approaching decay region)
+- CE@5500: 3.5781 (well into decay, rapidly improving)
+- CE@6000: 3.5547 (fully consolidated)
+
+**The REAL comparison is TAID@6K vs CE@6K (3.5547). Both will have WSD decay in steps 4800-6000.**
+
+**What we CAN conclude from 3K data:**
+1. TAID 3K (3.5856) already matches CE at ~step 5000-5500 quality — a 2-2.5K step efficiency gain
+2. Both TAID and Plain consolidate knowledge during WSD better than standalone CE during its WSD
+3. The teacher signal creates something that WSD decay uniquely amplifies
+4. The alpha=0.02 effect is real (both TAID and Plain beat their matched CE at 3K endpoint)
+
+**What we CANNOT conclude:**
+1. Whether the 0.052 gap persists at 6K (it almost certainly shrinks)
+2. Whether TAID maintains its edge over Plain at 6K (the 0.021 gap may grow or shrink)
+3. Whether the teacher signal accelerates WSD consolidation or just creates a different loss landscape that WSD navigates better
+
+**Prediction for TAID 6K:**
+- CE 6K: 3.5547 (known)
+- TAID 6K prediction: 3.50-3.54 (if WSD consolidation amplifies, as it did at 3K scale)
+- TAID 6K failure scenario: 3.55-3.57 (if the extended stable-LR tax at alpha=0.02 overwhelms WSD benefit)
+
+The TAID 6K run is the make-or-break experiment. Running now (step ~50 of 6000).
+
+---
+
+## Research Findings: KD Divergence Alternatives (2026-03-29)
+
+### TAID Paper (Sakana AI, ICLR 2025 Spotlight)
+- **Paper:** "TAID: Temporally Adaptive Interpolated Distillation" (arxiv 2501.16937)
+- **Formulation:** `p_t = softmax((1-t)*stopgrad(z_s) + t*z_t)` then `L = KL(p_t, q_s)` (forward KL)
+- **Our implementation matches** — we use the same formula with linear beta ramp
+- **Their beta is ADAPTIVE** (momentum-based): `delta = (J_prev - J_curr)/(J_prev + eps)`, `m = beta*m + (1-beta)*delta`, `t += alpha*sigmoid(m)` — aggressive early, gradual later
+- **Key result:** Pythia 0.4B student: TAID 3.05 MT-Bench vs standard KL 2.74 (+11.3%)
+- **Capacity gap:** "monotonic improvement as teacher size increases" — unlike standard KL which degrades
+- **Comparison:** Standard FKL suffers mode-averaging. TAID avoids by interpolating. Lower variance during training.
+- **IMPLICATION FOR US:** Our linear ramp is a simpler version. Consider adaptive schedule. Our 3K results (+0.052 BPT) are consistent with their findings.
+
+### AKL Paper (COLING 2025)
+- **Paper:** "Rethinking Kullback-Leibler Divergence in Knowledge Distillation for LLMs" (arxiv 2404.02657)
+- **Formulation:** `AKL = (g_head/(g_head+g_tail))*FKL + (g_tail/(g_head+g_tail))*RKL`
+- **Key insight:** FKL focuses on HEAD (easy/high-prob tokens), RKL focuses on TAIL (hard/low-prob tokens) in early training
+- **Both converge to same objective** after sufficient epochs, but differ in early behavior
+- **Result:** AKL beats FKL, RKL, and equal-weight FKL+RKL across all tasks
+- **IMPLICATION FOR US:** Our forward KL + hard-token gating is a crude version of what AKL does naturally. If hard-token gating works, switching to AKL would be a principled upgrade. The easy-token tax we observe is EXACTLY what the AKL paper predicts — FKL wastes gradient on easy tokens.
+
+### Synthesis: Three Options for Reducing Easy-Token Tax
+1. **Hard-token gating** (our current plan): Binary mask, only distill high-entropy positions. Crude but simple.
+2. **AKL**: Replace forward KL with adaptive mix of FKL+RKL. Principled, modest implementation cost.
+3. **Reverse KL only**: Focus naturally on tail/hard tokens. But risk: mode collapse, less diverse generations.
+4. **TAID + adaptive beta**: Replace linear ramp with momentum-based schedule. Low implementation cost, may accelerate convergence.
+
+### Rethinking Selective KD (arxiv 2602.01395, 2025)
+- **Student entropy top-20% is the BEST token selection signal** — 64.8% vs 64.4% for full KD
+- **Teacher entropy/CE UNDERPERFORMS** — counterintuitive
+- **Student-entropy gating improves BOTH accuracy (64.8 vs 64.4) AND perplexity (6.9 vs 7.3)**
+- **Reduces computational overhead** while improving quality
+- **Top-20% is optimal** — our top-25% is close, may want to test 20% too
+- **Caveat:** Task-specific (GSM8K) showed different patterns
+- **IMPLICATION:** Our hard_token_frac=0.25 probe is well-designed and should work. Student entropy is the right gating signal (not teacher entropy).
+
+### Synthesis: Three Options for Reducing Easy-Token Tax
+1. **Hard-token gating** (our current plan): Binary mask, top-20-25% student entropy. VALIDATED by literature. Simple.
+2. **AKL**: Replace forward KL with adaptive FKL+RKL. Principled, naturally focuses on hard tokens via RKL component.
+3. **Reverse KL only**: Focus on tail/hard tokens. Risk: mode collapse.
+4. **TAID + adaptive beta**: Momentum-based ramp instead of linear. May accelerate convergence.
+
+**Recommendation:** Run hard-token gating probe first (already coded). If it confirms the easy-token tax hypothesis, then implement AKL as the principled upgrade. Consider adaptive TAID beta as independent improvement.
+
+**POTENTIAL BUG in hard-token gating:** Current implementation computes student entropy over `s_at_topk` (student logits at teacher's top-K=64 shared vocab positions), not over full student vocabulary. This is NOT the student's true entropy — it's entropy restricted to teacher's high-prob token subset. The "Rethinking Selective KD" paper likely uses full-vocab student entropy. For 3K probe, this approximation may be close enough (top-64 captures most mass), but for production, should use `student_logits[:, :, :]` before vocab restriction. Flag for Codex audit.
+
+---
+
+## 2-Teacher Routed Sidecar Design Sketch (for step 6)
+
+**Context:** After single-teacher Q0.6 TAID is validated at 15K, add LFM as routed sidecar.
+
+**Core idea:** Q0.6 runs on ALL tokens (primary teacher). LFM runs only on HARD tokens (sidecar).
+
+**Config format change needed:** Per-teacher alpha and hard_token_frac:
+```json
+"teachers": [
+    {"name": "Qwen/Qwen3-0.6B-Base", "surfaces": ["logit"], "alpha_logit": 0.02, "hard_token_frac": null},
+    {"name": "liquid/lfm-2.5-1.2B", "surfaces": ["logit"], "alpha_logit": 0.005, "hard_token_frac": 0.25}
+]
+```
+
+**Code changes:**
+1. In teacher loop (line ~4768), read `teacher_cfg.get("alpha_logit", None)` and `teacher_cfg.get("hard_token_frac", None)` — if present, override variant-level settings for this teacher
+2. Pass per-teacher hard_token_frac to `compute_cross_tok_logit_kd()`
+3. Use per-teacher alpha instead of `sa_logit / n_logit_teachers`
+4. Teacher TAID beta: Q0.6 uses standard TAID ramp, LFM should start with beta=1.0 (no interpolation needed since it's only on hard tokens where student is uncertain)
+
+**VRAM:** Student(800MB) + Q0.6(1.2GB) + LFM(2.4GB) + opt(2GB) + act(6GB) = ~12.4GB. Fits easily.
+
+**Key question:** Should LFM share the same TAID target interpolation, or use pure teacher target (beta=1.0)? Hypothesis: on hard tokens, the student IS uncertain, so interpolation with stopgrad(z_s) adds noise. Pure teacher target may be better for the sidecar.
+
+**NOT implementing yet.** This is step 6 in R6 sequence, after positive 15K single-teacher result.
+
+---
+
+## TAID 6K Live Tracking (2026-03-30)
+
+| Step | TAID 6K BPT | TAID 3K BPT | CE 6K BPT | vs CE | Notes |
+|------|-------------|-------------|-----------|-------|-------|
+| 500  | 3.6257 | 3.6274 | 3.6382 | -0.013 | Ahead (TAID ramp beta=0.25) |
+| 1000 | 3.6572 | 3.6393 | 3.6358 | +0.021 | TAX PHASE — behind CE |
+| 1500 | 3.6503 | 3.6993 | 3.6272 | +0.023 | TAX LIGHTER THAN 3K! |
+| 2000 | 3.6572 | 3.6367 | 3.6174 | +0.040 | Beta=1.0, ramp complete |
+| 2500 | 3.6562 | 3.6257 | 3.6215 | +0.035 | FLAT CONFIRMED, kurtosis 3033 |
+
+**Step 1000 analysis:** Tax larger than 3K (0.021 vs 0.004). Beta=0.5 at step 1000 (same as 3K). Kurtosis=946.7, max_act=372.2.
+
+**Step 1500 analysis:** BPT=3.6503 — MUCH better than TAID 3K@1500 (3.6993). Tax halved vs 3K. Kurtosis dropped to 498.5.
+
+**Step 2000 analysis:** BPT=3.6572 — SAME as step 1000, no improvement. Beta reached 1.0 (end of ramp). Tax gap widened to +0.040 vs CE. Kurtosis spiked to 1592.2 — beta completion causes a kurtosis shock. TAID 3K@2000 was 3.6367 (0.020 better than 6K@2000).
+
+**Critical observation:** The 6K TAID trajectory is FLATTER than 3K between steps 1000-2000. The 3K run went 3.6393→3.6993→3.6367 (V-shape, big tax peak at 1500). The 6K run went 3.6572→3.6503→3.6572 (flat line around 3.657). The beta ramp is absorbed more smoothly in the longer schedule.
+
+**Concern:** The flat BPT at 3.657 during steps 1000-2000 means the student is NOT improving during this phase — it's maintaining but not learning. The real learning happens during WSD (steps 4800-6000). This makes steps 2000-4800 a DEAD ZONE for BPT improvement.
+
+**Key question:** Will BPT stay flat at ~3.657 through step 4800, or will it slowly drift worse? If flat, the 0.10+ BPT recovery needed during WSD is achievable (TAID 3K recovered 0.051 in 600 steps; 6K has 1200 steps). If drift worse, recovery may be insufficient.
+
+**R6 gates:** Gate 1 pass: ≤3.5447. Gate 2 (promote to 15K): ≤3.5347. CE 6K final: 3.5547.
+
+**Step 2500 confirms FLAT scenario (BPT=3.6562, stable at ~3.656 for 1500 steps).**
+
+**Step 3000: TAID BREAKS OUT OF FLAT ZONE AND LEADS CE!**
+- **BPT=3.6359** — dropped 0.020 from 3.6562 at step 2500
+- **Kurtosis=104.5** — COLLAPSED from 3033 (29x reduction, transient spike confirmed)
+- **vs CE@3000: 3.6378** — TAID ahead by 0.002 BPT for FIRST TIME
+
+**CE kurtosis comparison at step 3000:** CE=1853.5 vs TAID=104.5 — TAID has 18x LOWER kurtosis here.
+
+**Revised trajectory and prediction (post-3000):**
+| Step | TAID 6K BPT | CE 6K BPT | Gap | TAID kurtosis | CE kurtosis |
+|------|-------------|-----------|-----|---------------|-------------|
+| 500  | 3.6257 | 3.6382 | -0.013 | 1117 | 824 |
+| 1000 | 3.6572 | 3.6358 | +0.021 | 947 | 314 |
+| 1500 | 3.6503 | 3.6272 | +0.023 | 499 | 57 |
+| 2000 | 3.6572 | 3.6174 | +0.040 | 1592 | 180 |
+| 2500 | 3.6562 | 3.6215 | +0.035 | 3033 | 2232 |
+| 3000 | **3.6359** | 3.6378 | **-0.002** | **105** | 1854 |
+| 3500 | **3.6291** | 3.6302 | **-0.001** | 600 | 232 |
+
+**Pattern:** TAID had a prolonged tax phase (steps 1000-2500) where it trailed CE by 0.02-0.04. But during the post-ramp stable phase (beta=1.0 since step 2000), TAID is now improving while CE is regressing. The crossover happened between steps 2500-3000.
+
+**New prediction (more optimistic):**
+- TAID is improving (-0.020 per 500 steps at step 3000)
+- CE continues regressing (3.6215→3.6378→3.6404 at steps 2500→3000→4000)
+- Steps 3000-4800: TAID may reach ~3.62-3.63, CE stays at ~3.64
+- WSD (4800-6000): CE drops from ~3.64 to 3.5547 (delta=-0.085). TAID from ~3.62 to ???
+- If TAID consolidates with same WSD delta: 3.62-0.085 = 3.535. **GATE 2 PASSES.**
+- If TAID consolidates with LARGER delta (teacher knowledge amplifies WSD): ~3.52.
+- If TAID consolidates with SMALLER delta: ~3.55. **GATE 1 LIKELY PASSES.**
+- **GATE 1 (≤3.5447): 65% probability.** Up from 40%. TAID leading at mid-run is very positive.
+- **GATE 2 (≤3.5347): 35% probability.** Up from 15%. If TAID maintains/extends lead pre-WSD.
+
+**Kurtosis insight:** The 3033→105 collapse confirms kurtosis spikes are transient, not structural. CE also shows wild variation (57→2232→1854). Neither approach has a kurtosis problem at this stage. WSD decay will further reduce kurtosis in both cases.
+
+---
+
+## Codex R6 Output Summary (2026-03-30)
+
+**Status: RECEIVED. Executing probe sequence.**
+
+### Confidence Scores (R5 → R6)
+| Outcome | R5 | R6 | Delta |
+|---------|-----|-----|-------|
+| O1 Intelligence | 6 | 7 | +1 |
+| O2 Improvability | 8 | 8 | = |
+| O3 Democratization | 7 | 7 | = |
+| O4 Data Efficiency | 5 | 7 | +2 |
+| O5 Inference Efficiency | 6 | 7 | +1 |
+
+### R6 Execution Sequence (MANDATORY ORDER)
+1. **Finish q06_taid_6k** (RUNNING ~step 900)
+   - Gate 1: ≤3.5447 → mechanism validated
+   - Gate 2: ≤3.5347 → promote to 15K single-teacher
+2. **Run q06_hard25_taid_3k** — hard-token gating probe. Success: shrink 1000-2000 tax, keep final ≤3.5856
+3. **Run miniplm_ce_6k** — offline teacher data efficiency. Success: ≤3.5547 or benchmark/gen gain
+4. **Run taid_tail_6k** — schedule probe: warmup→0.02→decay→0.005 before WSD, optional 0.002 tail. Success: within 0.01 BPT of TAID best, improved kurtosis
+5. **If TAID 6K passes**: run q06_taid_15k_prod — single-teacher production run
+6. **Only after positive 15K**: test q06+lfm_routed_sidecar_3k — LFM as low-alpha sidecar on hard tokens only
+
+### R6 Key Design Decisions
+- **Alpha schedule for 15K/24K**: warmup → low flat (0.02) → explicit decay before WSD → optional small tail (0.002)
+- **Beta ramp**: 2000 for 6K; 3000-4000 for 15K/24K (NOT proportional to total steps)
+- **LFM**: routed sidecar only (alpha ≤0.005-0.01, hard tokens/windows), NEVER equal logit teacher
+- **Kurtosis path**: TAID-early + tiny late plain-KD tail (temporal separation, not inherent tradeoff)
+- **Process rule reaffirmed**: Single-teacher validated → 15K gate → THEN multi-teacher
+
+### R6 Assumption Challenges (key)
+- 3K win ≠ multi-teacher ready (need 6K+15K validation first)
+- alpha=0.02 is the right PEAK, but schedule-shaped for production
+- Hard-token gating should NOT be skipped — it's the highest-value falsifier for easy-token tax
+- Q0.6 is primary but LFM may still add value as routed hard-token sidecar
+- TAID/Plain kurtosis gap is NOT inherent — temporal separation can decouple
+
+### R6 Research Gaps
+- No published TAID + cross-tokenizer pre-training paper exists
+- DistiLLM's skew KL is the strongest off-policy alternative
+- Layer selection "doesn't matter much" — don't over-engineer
+- Learning-to-defer framework maps to token-level KD gating
+
+---
+
+## Research: WSD River Valley + Kurtosis/Outlier Features (2026-03-30)
+
+**Two key papers explain our TAID 6K observations:**
+
+### 1. River Valley Framework (ICLR 2025, arxiv 2410.05192)
+- WSD loss landscape has "river valley" geometry: flat manifold (river direction) + sharp curvature (mountain direction)
+- **During stable-LR phase:** iterates oscillate in mountain direction while progressing along river. Loss stays ELEVATED but the model IS learning (internal progress along river)
+- **During decay phase:** LR drops → oscillations damp → iterate descends to river bottom → loss drops sharply
+- **IMPLICATION FOR TAID 6K:** The flat BPT at ~3.657 from steps 1000-2500 is EXPECTED. The model IS making progress along the river direction (learning teacher knowledge), but this progress only becomes visible during WSD decay (steps 4800-6000). The "dead zone" is not dead — it's the model exploring.
+
+### 2. Outlier Features & Kurtosis (NeurIPS 2024, arxiv 2405.19279)
+- **Kurtosis measures outlier features (OFs)** — neurons with activation magnitudes far above average
+- **Root cause:** poor signal propagation → rank collapse → individual neurons develop extreme magnitudes to preserve discriminative information
+- **LR directly drives kurtosis:** higher LR = more kurtosis. AdamW's per-parameter adaptivity amplifies this.
+- **Kurtosis can be reduced without hurting performance:** Outlier Protected (OP) block + SOAP optimizer → 4 orders of magnitude kurtosis reduction with SAME or BETTER perplexity
+- **OP block design:** remove LayerNorm from sub-blocks, downweight residual connections with beta=O(1/sqrt(depth)), add QK-Norm
+- **Practical fix with AdamW:** increase epsilon from 1e-8 to 1e-5, use smaller LR
+
+### Synthesis for TAID 6K Kurtosis Pattern (UPDATED with step 3000 + CE comparison)
+| Step | TAID Kurtosis | CE Kurtosis | Beta | Interpretation |
+|------|---------------|-------------|------|---------------|
+| 500  | 1117 | 824 | 0.25 | Both similar |
+| 1000 | 947 | 314 | 0.5  | TAID higher during ramp |
+| 1500 | 499 | 57 | 0.75 | Both at minimum |
+| 2000 | 1592 | 180 | 1.0  | Beta=1.0 spike |
+| 2500 | 3033 | 2232 | 1.0  | Both spike! CE too! |
+| 3000 | **105** | 1854 | 1.0  | TAID collapses 29x! CE stays high! |
+| 6000 | ??? | 4292 | 1.0  | CE final is highest of all |
+
+**REVISED HYPOTHESIS:** Kurtosis spikes are a GENERAL property of WSD training, not specific to KD. The step 2500 spike in TAID (3033) was alarming in isolation, but CE also spiked to 2232 at the same step. By step 3000, TAID kurtosis collapsed to 105 while CE remained at 1854.
+
+**The kurtosis concern is RESOLVED:** The spike was transient. TAID at step 3000 has LOWER kurtosis than CE. The teacher signal may actually help REGULARIZE activations during the post-ramp stable phase.
+
+**R7 Question (revised):** Kurtosis is not a KD-specific problem. The OP block + SOAP optimizer recommendations from the NeurIPS 2024 paper remain valid for Outcome 5 but are architecture-level changes for future consideration, not urgent TAID fixes.
+
+---
+
+## Zero-Cost Teacher Diversity Probe Design (R7 Q5)
+
+**Goal:** Measure whether LFM adds independent signal vs Q0.6 WITHOUT training.
+
+**Method:** Run both teachers on the same eval data (10-20 batches from eval shard), compare outputs.
+
+**Metrics:**
+1. **Top-1 agreement rate:** For each token position, do Q0.6 and LFM agree on highest-prob token? Need to project to shared vocab first. If >80%, teachers are redundant. If <60%, high diversity.
+2. **Entropy correlation (Pearson r):** When Q0.6 is uncertain, is LFM also uncertain? Low r = high diversity = good for ensemble.
+3. **Soft prediction KL:** KL(Q0.6 || LFM) on shared vocab — higher = more diverse predictions.
+4. **Hard-token conditioned agreement:** On tokens where student entropy > 75th percentile (the tokens we'd route to LFM), what's the Q0.6 vs LFM agreement? Low agreement on hard tokens = LFM provides complementary signal exactly where we need it.
+5. **Accuracy complementarity:** On eval set, count tokens where Q0.6 top-1 = gold BUT LFM top-1 ≠ gold, vs where LFM top-1 = gold BUT Q0.6 top-1 ≠ gold. If LFM captures cases Q0.6 misses, that's the diversity signal.
+
+**Implementation sketch:**
+```python
+# Load both teachers (Q0.6: 1.2GB, LFM: 2.4GB, total ~3.6GB VRAM)
+# Can run on GPU when training stops, or with student for quick test
+# Process 20 eval batches
+# Compute shared vocab mapping (already have byte_span_pool infrastructure)
+# Report: agreement_rate, entropy_pearson_r, mean_kl, hard_token_agreement, complementarity_count
+```
+
+**Cost:** ~5 min GPU time, zero training cost. Can run immediately after TAID 6K completes (before starting next probe).
+
+**Decision tree:**
+- If agreement >80%: LFM is redundant, skip 2-teacher entirely
+- If agreement 60-80%: LFM adds moderate diversity, proceed with routed sidecar cautiously
+- If agreement <60%: LFM adds strong diversity, prioritize 2-teacher probe
+- If hard-token agreement < all-token agreement: routing is justified (LFM is MOST diverse where student is uncertain)
+
+---
+
+## Codex R7 Output Summary (2026-03-30)
+
+**Status: RECEIVED. Audit executed. Multi-teacher training IN PROGRESS.**
+
+### R7 Confidence Scores (R6 → R7)
+| Outcome | R6 | R7 | Delta |
+|---------|-----|-----|-------|
+| O1 Intelligence | 7 | 6 | -1 (TAID 6K failed Gate 1/2) |
+| O2 Improvability | 8 | 8 | = |
+| O3 Democratization | 7 | 7 | = |
+| O4 Data Efficiency | 7 | 6 | -1 (no multi-teacher result yet) |
+| O5 Inference Efficiency | 7 | 7 | = |
+
+### R7 Key Design Decisions
+- **Signal channel abstraction:** `c = (teacher, surface, extractor, aligner, projector, loss, schedule, audit)`
+- **First probe:** One teacher per surface, direct-sum, no routing
+- **LFM dropped from logit** — keep as state-only teacher (CKA compatibility 0.865 vs Q0.6's 0.736)
+- **Gemma semantic-only** — no state CKA until prefix-safe audit
+- **Calibrated fixed weights:** α_qlogit=0.02, α_lstate=0.01, α_gsem=0.01 (NOT equal, NOT learned)
+- **Gradient conflict protocol:** audit every 250 steps, conflict trigger: median cos < -0.05 or >20% below -0.10
+- **Routing earns its keep:** only after 3 conditions met (teacher helps subset + direct-sum underperforms + persistent conflict)
+- **TAID 6K verdict:** FAIL Gate 1 and Gate 2. Single-teacher alone is not the production answer.
+
+### R7 Execution (partially executed)
+1. **multisignal_init_audit_64w** ✅ DONE — Found LFM-Gemma gradient conflict (cos=-0.104)
+2. **multi_2surface_direct_3k** 🔄 RUNNING — Dropped LFM, running Qwen logit + Gemma semantic
+   - Step 500: BPT=3.6187 (beats TAID 3.6274, CE 3.6382)
+   - Step 1000: BPT=3.6281 (beats TAID 3.6393, plain 3.6688)
+   - Success criterion: BPT ≤ 3.5856 at step 3000
+3. **Pending:** gemma_prefix_safe_audit, lfm_state_calib_b8 (deprioritized for now)
+
+### R7 Assumption Challenges (key)
+- 3K proved viability, not readiness → need multi-teacher to prove composability
+- α=0.02 is the right PEAK logit weight, not universal answer
+- Direct-sum works for disjoint-surface design; routing needed only with same-surface overlap
+- TAID beta ramp should NOT scale proportionally with total steps (keep 2000 fixed for logit)
+- Each teacher naturally updates different subspaces: PARTIALLY true, must be measured
+
+### Bug Found During Execution
+- **AMP autocast override:** Teacher forward() inside student's bf16 autocast overrides fp32 teachers. FIXED in code but current training run launched BEFORE fix. Semantic Gram loss still functional (uses normalized vectors).
+
+**NOT implementing yet — just the design. T+L R7 decides whether to run this.**
 
 ---
 
@@ -5318,3 +6677,642 @@ INTEGRATED BIOLOGICAL KD PIPELINE:
 - PM-1 (RG Flow) = SCALE at which BIO-3 niche partitioning operates
 - PM-4 (Kuramoto) = DYNAMICS of how BIO-4 consensus emerges
 - PM-5 (Free Energy) = OBJECTIVE that BIO-2 tolerance optimizes
+
+---
+
+## HYPOTHESIS: WARM-START BASIN LOCKING (2026-03-31)
+
+**The fundamental question nobody has asked:** Is the problem with KD that the student is BASIN-LOCKED?
+
+After 60K steps of pure CE training, the student's parameters have settled into a loss basin. This basin was shaped ENTIRELY by CE gradients. The basin's geometry encodes the student's learned representation structure.
+
+**When we add KD:** The teacher signal is a perturbation on top of the CE basin. If the KD loss landscape's preferred basin overlaps significantly with the CE basin, the perturbation produces a smooth improvement. If the basins are DISJOINT or poorly aligned, the KD perturbation tries to push the student toward a different basin but the CE gradient (3 orders of magnitude stronger) pulls it back. Result: noise-level oscillation around the CE basin.
+
+**Evidence FOR basin-locking:**
+1. KD signal is ~0.003 while CE is ~2.8. The "force" ratio is 1:1000. No perturbation this weak can escape a basin.
+2. ALL KD variants converge to within 0.03 BPT of CE regardless of schedule, alpha, temperature, teacher. This is characteristic of being trapped in the same basin with small perturbations.
+3. The WSD decay phase is the only time KD shows any effect (multi-2T recovery, WSD-alpha recovery). WSD decay LOWERS the LR, which REDUCES the CE basin's "restoring force." This is when KD perturbations can actually move the parameters.
+
+**Evidence AGAINST basin-locking (must be tested):**
+1. The student at 60K is NOT at a local minimum — BPT is still improving with more CE steps. So there's room to move.
+2. KD gains at larger scales (billion-param models) also use warm-starts. If basin-locking were universal, KD would never work with warm-starts.
+3. The issue might simply be insufficient KD alpha, not basin topology.
+
+**If basin-locking is real, implications are enormous:**
+1. **No warm-start KD will ever show decisive margins** — the student MUST be trained with KD from the start (or very early) to shape the basin geometry.
+2. **Alpha scheduling is a dead end** — you can't schedule your way out of a basin. You need to be in the RIGHT basin from the beginning.
+3. **The correct approach is FULL KD pre-training from scratch**, not warm-start continuation. This directly contradicts our "warm-start default" rule, but the physics is compelling.
+4. **Or: KD needs to be applied during a RESET phase** — temporarily increase LR to "melt" the basin (like annealing in metallurgy), then cool WITH KD active, reshaping the basin with teacher constraints.
+
+**Test 1: LR spike + KD.** From the 60K checkpoint, temporarily INCREASE LR 10x for 500 steps (to "melt" the basin), then decay back to normal LR WITH KD active. If this produces larger KD signal than normal warm-start KD, basin-locking is confirmed.
+
+**Test 2: KD from step 0.** Train a 197M student from random init with KD from step 0 (using pre-computed Q1.7B logits). Compare against CE-only from step 0. If KD from scratch shows 5-7pp improvement while warm-start shows noise, basin-locking is confirmed.
+
+**Test 3: Intermediate checkpoint KD.** Apply KD from step 5K, 15K, 30K, and 60K checkpoints. Plot KD gain vs starting step. If gain monotonically decreases with more pre-training, the basin is "hardening" over time and KD must start early.
+
+**This is the most important hypothesis to test. If true, it redirects ALL of our KD strategy.**
+
+---
+
+## HYPOTHESIS: FULL-VOCABULARY KD IS NECESSARY (2026-03-31)
+
+**Our top-64 cached logits are PROVABLY biased (ACL 2025, Sparse Logit Sampling).** But the real question is: is the bias small enough to ignore, or is it destroying the teacher signal?
+
+At 16K vocabulary with top-64 logits, we're preserving 64/16384 = 0.39% of the distribution. The remaining 99.6% is set to uniform/zero. For a well-calibrated teacher, the top-64 captures most of the probability mass (>99% for confident tokens). But for UNCERTAIN tokens (high teacher entropy), the top-64 may capture only 40-60% of the mass, and the missing tail contains the "dark knowledge" that matters most.
+
+**The RSKD paper (ACL 2025) shows:** Importance sampling on sparse logits can recover unbiased gradients. But importance sampling requires knowing the full distribution to compute weights — which defeats the purpose of caching sparse logits.
+
+**Alternative: Full-vocabulary online KD for a SHORT burst.** Instead of cached sparse logits over 6K steps, load the teacher live and do full-vocabulary KD for 1-2K steps. This:
+1. Eliminates bias entirely
+2. Gives the teacher signal maximum fidelity
+3. Costs more VRAM but is shorter duration
+4. Can be combined with the LR-spike test above
+
+**VRAM budget for full-vocab online Q1.7B KD:**
+- Student (197M): ~0.4GB + optimizer ~1.5GB + activations ~3GB = ~5GB
+- Teacher (Q1.7B FP16): ~3.4GB + activations ~2GB = ~5.4GB
+- Total: ~10.4GB. Fits easily in 24GB with room for batch size.
+
+**This is worth testing. If full-vocab online KD shows dramatically larger signal than top-64 cached, the caching itself is the bottleneck.**
+
+---
+
+## PARADIGM SHIFT: ABANDON GRADIENT-BASED KD? (2026-03-31)
+
+**All existing KD methods share one assumption:** knowledge is transferred via gradient signal. The teacher provides a loss, the loss produces a gradient, the gradient updates the student. This means:
+1. Teacher signal competes with CE gradient (ratio problem: 0.003 vs 2.8)
+2. The student must simultaneously optimize two objectives (CE + KD) that may conflict
+3. The effective KD signal is proportional to alpha × KD_loss_magnitude — always small
+
+**What if we bypassed gradients entirely?**
+
+### Alternative 1: Weight Projection ("Knowledge Surgery")
+Instead of training the student to BECOME more like the teacher, directly INJECT teacher knowledge into student weights.
+
+**Method:** For each student layer l with weight W_s^l, find the closest matching teacher layer m with weight W_t^m. Project W_t^m into student dimensions: W_injected = Proj_down(W_t^m). Then: W_s^l_new = (1-beta) * W_s^l + beta * W_injected.
+
+This is NOT weight averaging (which fails across different architectures). This is a LEARNED projection: train a small projector (W_t → W_s) on the CKA-aligned representation pairs, then use it to transfer weights.
+
+**Advantages:** No gradient competition. No alpha scheduling. Direct parameter-level transfer.
+**Risks:** Weight spaces may not be linearly compatible even if representations are similar (CKA measures representation similarity, not weight compatibility).
+
+### Alternative 2: Data Augmentation from Teacher
+Use the teacher to GENERATE training data for the student, not to provide loss signals during training.
+
+**Method:**
+1. Run Q1.7B on a large text corpus → generate soft labels (full distributions), confidence scores, attention patterns
+2. Use these to create an ENRICHED dataset: each training example gets teacher metadata (soft labels, difficulty score, key attention positions)
+3. Train student on enriched data using a specialized loss that reads teacher metadata
+4. Teacher is never loaded during training — its knowledge is baked into the dataset
+
+**Advantages:** Zero VRAM overhead during training. Full-vocabulary logits (no top-K bias). Teacher knowledge can be cached and reused across multiple students.
+**Risks:** Static teacher signal (can't adapt to student's evolving state). Requires substantial disk space.
+
+**This is similar to our offline sparse replay but MUCH more aggressive — pre-compute EVERYTHING offline, then train purely from the enriched data.**
+
+### Alternative 3: Representation Transplant via Adapter
+**Method:**
+1. Train a small adapter network A that maps teacher representations to student representations (using CKA on a held-out set)
+2. During student training, periodically (every 1K steps):
+   a. Freeze student, run teacher on a batch, collect representations at all layers
+   b. Transform teacher representations through adapter: R_projected = A(R_teacher)
+   c. Directly SET student hidden states to (1-beta) * R_student + beta * R_projected for a few gradient steps
+   d. Unfreeze student and continue normal training
+3. This "imprints" teacher representations directly into the student's state space
+
+**This is inspired by biological memory consolidation:** during sleep, the hippocampus "replays" experiences to the neocortex, directly transferring representations. The student's normal training (CE) is "waking learning," and the periodic transplant is "sleep consolidation."
+
+### Alternative 4: Latent Space Alignment via Contrastive Learning
+**Method:** Instead of matching logits or individual representations, align the GEOMETRY of student and teacher latent spaces.
+
+For each training batch:
+1. Student processes text, produces hidden states at layer L: H_s (B, T, D_s)
+2. Teacher processes same text, produces hidden states at matched layer: H_t (B, T, D_t)
+3. Contrastive loss: for each token position i, the student's representation should be CLOSER to the teacher's representation of the same token (positive) than to the teacher's representation of different tokens (negatives)
+4. This aligns the GEOMETRY (relative distances) without requiring dimensional correspondence
+
+**SimCLR for KD.** The contrastive loss doesn't compete with CE the same way KL divergence does — it operates on a different axis (representation geometry vs prediction accuracy).
+
+### Priority Assessment
+| Alternative | Novelty | Feasibility | Expected Signal | Priority |
+|-------------|---------|-------------|-----------------|----------|
+| 1. Weight Projection | Medium | Hard (weight spaces differ) | Unknown | LOW — too speculative |
+| 2. Data Augmentation | Low | High (already have offline infra) | Medium | HIGH — easy to test |
+| 3. Rep Transplant | High | Medium (need adapter training) | Unknown | MEDIUM — novel, needs probe |
+| 4. Contrastive Alignment | Medium | Medium (well-studied) | Medium | HIGH — principled |
+
+**WAIT FOR CODEX R11 before implementing any of these.** These are theory explorations, not execution plans.
+
+---
+
+## CKA ANALYSIS: WHY LOGIT KD FAILS (2026-03-31)
+
+**Data source:** `results/embeddinggemma_layer_cka.json` — 24x24 CKA heatmap between EmbeddingGemma-300M and Sutra-24A-197M at 60K checkpoint.
+
+### Three Zones of Alignment
+
+| Zone | Layers | Mean CKA | Interpretation |
+|------|--------|----------|---------------|
+| HIGH | 0-14 | 0.898 | Shared linguistic features. Transfer should work here. |
+| MODERATE | 15-20 | 0.776 | Beginning to diverge. Task-specific features emerging. |
+| VERY LOW | 21-23 | 0.472 | Catastrophically misaligned. Layer 21 = 0.347. |
+
+### Key Pattern: `best_teacher_layer_per_student_layer`
+Almost ALL student layers (0-17) align best with teacher layer 13 (peak CKA 0.949). Student layers 18-23 align best with teacher layer 12. The student's representation space is "compressed" relative to the teacher — many student layers map to the same teacher layer.
+
+### Implications for KD Strategy
+
+1. **Logit KD operates on layer 23** — in the WORST alignment zone (CKA=0.589). The student's output representation has diverged so far from any teacher's representation that logit matching is trying to align fundamentally incompatible spaces. No wonder it produces noise.
+
+2. **Representation KD should target layers 6-14** — peak alignment zone (CKA 0.936-0.949). The geometric similarity here means small perturbations can meaningfully improve alignment. This is where teacher knowledge is most COMPATIBLE with student representations.
+
+3. **The "basin-locking" hypothesis gets CKA support:** After 60K CE-only steps, the student's final layers have specialized entirely for next-token prediction. Their geometry is incompatible with any teacher's intermediate representations. KD tries to push these specialized layers toward teacher-compatible geometry, but 60K steps of CE have hardened the basin.
+
+4. **Multi-depth matching is essential:** Don't just match final outputs. Match at layers where CKA is naturally high (6, 12, 14) AND at divergence points (18, 21) where the student needs the most correction.
+
+5. **"Probing" the student with teacher representations:** Instead of loss-based KD, could we directly PROBE student layers with teacher-projected representations? At layer 12 (CKA=0.946), the spaces are nearly identical — we could literally inject teacher signal as additional input features.
+
+### This CKA Was With EmbeddingGemma — What About Q1.7B?
+Need to run the same analysis with Qwen3-1.7B (our actual logit teacher). If the pattern is similar (high CKA early, low late), it confirms the diagnostic. If Q1.7B shows HIGHER CKA at final layers, then the EmbeddingGemma pattern is architecture-specific and logit KD might work with a better-aligned teacher.
+
+**PROBE NEEDED: Compute Q1.7B layer CKA when GPU is free.**
+
+---
+
+## CODEX R11 OUTPUT SUMMARY: Ekalavya-RKP (2026-03-31)
+
+**Full output: results/tl_ekalavya_r11_output.md** (to be deleted after full ingestion)
+
+### Root Cause Diagnosis
+"KD fails because the project is trying to push a sparse, capability-specific teacher advantage through a weak, lossy, whole-trunk logit channel on mostly irrelevant windows. The student is not at its global capacity frontier. It is at the frontier of what small-alpha, dense, random-window, logit-only continuation can do."
+
+### Design: Ekalavya-RKP (Routed Knowledge Ports)
+1. **Teacher-specific low-rank ports** at layers 8, 16, 24. Formula: h_{l+1} = f_l(h_l) + sum_m g_m(x) A_{l,m}(h_l), with A = W_up * sigma(W_down * h), rank r=64-96.
+2. **Router** picks one primary teacher per batch (near one-hot). Based on rolling utility + conflict penalty.
+3. **Data curriculum**: 70% full-corpus CE, 20% teacher-advantage windows, 10% capability bank.
+4. **Transfer surfaces per teacher type**:
+   - Decoders (Q0.6B, Q1.7B): DSKD cross-tokenizer + skew reverse KL + SE-KD token masking
+   - Hybrid (LFM): FDD (Feature Dynamics Distillation) — layer transition patterns
+   - Embeddings: relational geometry (Gram matrix matching)
+   - Intermediate: DistillLens JSD on routed decoder batches
+5. **Capability bank + Probe-KD**: The most plausible path to 5-7pp. Teacher probes on cached hidden states for benchmark-shaped tasks.
+6. **3-stage schedule**: Stage 0 (0-1K) freeze L0-15, easy→medium; Stage 1 (1K-4K) unfreeze L8-23, medium→hard; Stage 2 (4K-6K) unfreeze all, decay KD, consolidate.
+7. **Gradient conflict**: one structural teacher per batch, semantic every 4th batch, PCGrad across loss buckets not teachers.
+
+### Key Decisions
+- **Abandon dense logit KD as mainline.** Use it as ONE sparse decoder surface inside ported system.
+- **Architecture: backbone unchanged.** Add training-time ports/adapters.
+- **Without ports/adapters, the teacher has nowhere safe to write.**
+- **If no capability bank variant, don't expect >2-3pp.**
+
+### Confidence Scores
+| Outcome | Score | Rationale |
+|---------|-------|-----------|
+| O1 Intelligence | 5 | KD-driven intelligence unproven |
+| O2 Improvability | 7 | Code has separable surfaces, ports fit naturally |
+| O3 Democratization | 6 | Ports are clean extension points but unproven |
+| O4 Data Efficiency | **2** | Brutal: every KD variant failed. No new data justifies higher. |
+| O5 Inference Efficiency | 7 | Ports are training-time only, inference unchanged |
+
+### Probe Ordering (EXECUTE IN THIS ORDER)
+1. **Evaluation suite on existing checkpoints** (cheapest, highest info density)
+2. **Routed knowledge ports, single teacher** (decisive test of port mechanism). Kill: <1pp by 3K.
+3. **LFM feature-dynamics only** (FDD)
+4. **Embedding teacher only** (relational + contrastive)
+5. **Capability bank + Probe-KD** (path to 5-7pp)
+6. **Full Ekalavya routed stack** (only after 2-5 show positive signal)
+
+### Kill Criteria
+- Single-surface port: <1pp average benchmark by 3K → kill
+- Router: must beat static family-per-batch
+- Full stack: <2pp by 3K or <5pp by final → kill
+
+---
+
+## PROBE 1 RESULT: KD EVAL SUITE (2026-03-31)
+
+**Ran entropy, ECE, token-type BPT on 4 checkpoints. Results: results/kd_eval_suite.json**
+
+| Metric | CE-60K | CE+6K | Q0.6 TAID 6K | Q1.7 AKL 3K |
+|--------|--------|-------|-------------|-------------|
+| BPT | 3.573 | **3.555** | 3.574 | 3.593 |
+| Entropy mean | 2.596 | 2.572 | **2.617** | 2.577 |
+| Entropy std | 2.058 | 2.057 | **2.030** | 2.043 |
+| ECE | **0.004** | 0.006 | 0.006 | 0.006 |
+| ECE overconf | **0.002** | 0.004 | 0.003 | **0.005** |
+| BPT common | 2.178 | **2.165** | 2.192 | 2.186 |
+| BPT rare | 5.840 | **5.815** | **5.817** | 5.885 |
+| BPT high_ent | **7.959** | 7.970 | **7.936** | 8.002 |
+| BPT low_ent | 0.826 | **0.813** | 0.832 | 0.850 |
+
+**VERDICT: Dense logit KD is DEAD.** CE+6K wins on every sub-metric. No hidden signal in entropy, calibration, or token-type decomposition.
+
+**One micro-signal:** Q0.6 TAID has slightly better high-entropy BPT (7.936 vs 7.970) and higher mean entropy / lower std — consistent with NeurIPS 2025 precision-recall tradeoff. But the magnitude (0.034 BPT on hard tokens) is negligible, and it HURTS on easy/low-entropy tokens more than it helps.
+
+**This confirms Codex R11's diagnosis:** "Dense, low-amplitude, whole-trunk logit KD on random pretraining windows is the wrong transport." Moving to Ekalavya-RKP (Routed Knowledge Ports).
+
+---
+
+## DEEP CROSS-DOMAIN RESEARCH: Mechanisms for Fundamentally Better Knowledge Transfer (2026-03-31)
+
+**Problem Statement:** ALL standard KD approaches on our 197M student (logit KD, TAID, multi-teacher, WSD-alpha, offline replay, entropy-based selection) produce noise-level improvements (<=0.03 BPT, zero benchmark signal). The 0.6B teacher is 3x larger. The 1.7B teacher is 9x larger. The transfer signal SHOULD be strong (5-7pp). Something fundamental is wrong with how we're transferring knowledge.
+
+**Hypothesis:** Standard KD treats knowledge transfer as a LOSS MINIMIZATION problem (minimize distance between teacher and student outputs). But every successful cross-system knowledge transfer mechanism in nature uses a fundamentally different architecture: the receiving system does not try to MATCH the source system. It SELECTS, TRANSFORMS, and INTEGRATES specific components that fit its own internal structure.
+
+**The five domains below all converge on this insight.**
+
+---
+
+### DOMAIN 1: NEUROSCIENCE -- Multi-Sensory Integration and Predictive Coding
+
+#### 1.1 The Core Mechanism: Predictive Coding with Precision-Weighted Prediction Errors
+
+The brain does NOT fuse raw sensory signals. It maintains an internal GENERATIVE MODEL of the world and updates it using PREDICTION ERRORS -- the difference between what it predicted and what it received. Each sensory modality produces prediction errors weighted by their PRECISION (inverse variance of noise). The update rule:
+
+```
+posterior = prior + Sum_modality(precision_i * prediction_error_i)
+```
+
+This is NOT "weighted average of teacher signals." The critical difference: the brain updates its OWN model using ERRORS relative to its OWN prediction, not relative to the teacher's output. The prediction error is `teacher_signal - brain_prediction_of_teacher_signal`, NOT `teacher_signal - student_output`.
+
+**Why this matters for KD:** Standard KD computes `KL(teacher || student)` -- distance between teacher OUTPUT and student OUTPUT. But the brain computes the distance between teacher signal and what the brain EXPECTED the teacher signal to be. This is a second-order signal: "I already predicted this teacher would say X. The teacher actually said Y. The surprise is Y-X." Tokens where the student already predicted the teacher's behavior produce ZERO update. Only genuine surprises produce learning.
+
+#### 1.2 The Thalamic Gating Mechanism
+
+The thalamus is not a simple relay. Two-thirds of all synapses on a thalamocortical relay neuron come from cortical FEEDBACK (top-down), not sensory input (bottom-up). The thalamus acts as a SELECTIVE AMPLIFIER: cortical feedback tells it what signals to pass and what to suppress.
+
+The loop: (1) Cortex predicts sensory input, (2) Thalamus receives raw input, (3) Thalamus compares prediction vs input, (4) Only the MISMATCH passes through, (5) Cortex updates model.
+
+Higher-order thalamic nuclei (mediodorsal, pulvinar) mediate CORTICO-CORTICAL communication. Visual cortex does not talk directly to prefrontal cortex -- the signal goes through the thalamus, which gates it based on attentional state. Cross-region knowledge transfer is GATED by a third party that decides relevance.
+
+#### 1.3 Dendritic Two-Compartment Integration
+
+Layer 5 pyramidal neurons have:
+- **Basal dendrites** (near cell body): receive LOCAL, bottom-up input
+- **Apical dendrites** (far from cell body): receive DISTANT, top-down input
+- Two compartments are electrotonically SEPARATED -- compute independently
+- Neuron fires burst only when BOTH compartments active (coincidence detection)
+- Apical tuft has different ion channels enabling PLATEAU POTENTIALS
+
+This is MULTIPLICATIVE gating, not weighted averaging. Top-down signal (teacher) only influences the neuron when it COINCIDES with bottom-up evidence (data).
+
+#### 1.4 Inverse Effectiveness
+
+Multisensory enhancement is LARGEST when individual modalities are WEAKEST. Two weak subthreshold signals, combined, can push past the nonlinearity (superadditivity). Two strong near-saturation signals gain little from combination.
+
+**Mapping:** Confident student tokens (low entropy) gain little from teacher signal (near saturation). Uncertain student tokens (high entropy) can combine with teacher signals superadditively.
+
+#### 1.5 Actionable KD Mechanism: Predictive Coding Distillation (PCD)
+
+```
+For each teacher T_i:
+  1. Student predicts teacher output:
+     pred_teacher_i = ProjectionHead_i(student_hidden)  # learned linear map
+  2. Teacher outputs actual signal:
+     actual_teacher_i = T_i(input)
+  3. Prediction error:
+     error_i = actual_teacher_i - pred_teacher_i
+  4. Precision (learned, per-teacher, per-token):
+     precision_i = sigmoid(PrecisionHead_i(student_hidden))
+  5. Update signal:
+     update_i = precision_i * error_i
+  6. Loss: L_PCD = Sum_i ||update_i||^2
+```
+
+**Key differences from standard KD:**
+- Student learns to PREDICT teacher outputs, not MATCH them. Develops internal model of each teacher.
+- Precision-weighted (learned, not fixed alpha). Student learns WHERE each teacher is reliable.
+- When student already predicts teacher correctly, gradient is ZERO. No wasted gradient on agreement.
+- Projection heads are CHEAP (~768x1024 = 768K params per teacher). Discarded at inference.
+- Precision heads also cheap (768x1 per teacher per token). LEARNED thalamic gating.
+
+**Multiplicative gating (dendritic analogy):**
+```python
+student_uncertainty = entropy(student_logits[token])  # "bottom-up"
+teacher_surprise = norm(error_i[token])               # "top-down"
+gate = sigmoid(student_uncertainty * teacher_surprise - threshold)
+update_i[token] = gate * precision_i * error_i[token]
+```
+
+Ensures: (a) confident student tokens not perturbed by teacher noise, (b) uncertain student tokens with no useful teacher signal also skipped, (c) only uncertain tokens WITH genuine teacher information get updated.
+
+**Estimated impact:** By concentrating gradient on ~10-15% of tokens where genuine transfer can occur, effective signal strength increases 7-10x vs uniform KD.
+
+---
+
+### DOMAIN 2: IMMUNOLOGY -- Germinal Center Affinity Maturation
+
+#### 2.1 Multi-Signal Integration System
+
+The germinal center requires B cells to satisfy MULTIPLE criteria simultaneously:
+1. **Antigen binding affinity** -- does the antibody fit?
+2. **T cell help availability** -- can you get community support?
+3. **Metabolic fitness** -- can you sustain energy cost?
+4. **Thermodynamic stability** -- does the structure fold correctly?
+
+This is NOT multi-objective Pareto optimization. It is THRESHOLD-BASED multi-constraint satisfaction. Any single failure is lethal.
+
+#### 2.2 Dark Zone / Light Zone Cycle
+
+- **Dark Zone:** Rapid division + somatic hypermutation. Mutations are BLIND. Pure exploration.
+- **Light Zone:** Competitive selection. Only highest-affinity survive. Harsh.
+- **Re-entry:** Winners get MORE divisions but LOWER per-division mutation rate. High-affinity = fine-tune. Low-affinity = large random changes.
+
+This is ADAPTIVE mutation rate: explore broadly when far, exploit narrowly when close.
+
+#### 2.3 Conflicting Signals: Thresholds, Not Averages
+
+B cell improves binding but loses stability -> DIES. No weighted average. Hard thresholds on each criterion independently.
+
+Mutation rate REGULATED by affinity (Nature 2025): higher-affinity B cells mutate LESS. Prevents overshooting. Biological LOCAL LEARNING RATE DECAY.
+
+#### 2.4 Actionable KD Mechanism: Threshold-Gated Multi-Teacher Distillation
+
+```
+For each training step:
+  1. Compute each teacher's loss: L_1, L_2, ..., L_N
+  2. Rolling percentile thresholds per teacher (last 500 steps)
+  3. Adaptive alpha:
+     L_i > 75th percentile -> effective_alpha * 2.0 (explore broadly)
+     L_i < 25th percentile -> effective_alpha * 0.3 (fine-tune only)
+     else -> effective_alpha * 1.0
+  4. CONFLICT GATE:
+     cos(grad_i, grad_j) < -0.5 -> zero BOTH teachers this step
+  5. Apply remaining gradients
+```
+
+Different from reliability weighting (uses LOSS MAGNITUDE vs student history, not variance), different from PCGrad (REJECTS conflicts vs projecting them).
+
+---
+
+### DOMAIN 3: STATISTICAL MECHANICS -- Renormalization Group as Knowledge Compression
+
+#### 3.1 Relevant vs Irrelevant Degrees of Freedom
+
+RG identifies which degrees of freedom affect macroscopic behavior (RELEVANT, flow to fixed points) vs which only affect microscopic details (IRRELEVANT, flow to zero).
+
+**For KD:** Teacher has both relevant info (language structure, reasoning) and irrelevant info (memorized examples, architectural artifacts, tokenizer patterns). Standard KD matches EVERYTHING. Student wastes capacity on irrelevant teacher artifacts.
+
+#### 3.2 Bath Coupling: Maximum Entropy Under Constraints
+
+Small system coupled to large bath develops its OWN microstate CONSISTENT WITH bath's macroscopic properties. The equilibrium maximizes entropy subject to bath constraints.
+
+**For KD:** Student should not COPY teacher states. It should adopt the LEAST COMMITTED configuration consistent with teacher's macroscopic behavior. MAXIMIZE STUDENT ENTROPY subject to TEACHER CONSTRAINTS -- fundamentally different from minimizing KL divergence.
+
+#### 3.3 Phase Transitions and Timing
+
+At phase transitions, systems are maximally sensitive to perturbations. WSD decay creates analogous cooling. Teacher influence should be STRONGEST during the critical transition (onset of WSD decay), not during warm/stable phase.
+
+#### 3.4 Actionable KD Mechanism: RG-Inspired Multi-Scale Distillation (RG-KD)
+
+```
+Step 1: Identify teacher's "renormalization flow."
+  Probe each teacher layer. Layers where probing accuracy jumps = relevant.
+
+Step 2: Map teacher relevant layers to student layers by functional role.
+
+Step 3: Match ONLY at mapped layers.
+  L_RG = Sum_k CKA(teacher[relevant_k], student[mapped_k])
+
+Step 4: Compute relevant subspace per matched pair.
+  SVD on teacher hiddens. Keep top-K singular vectors that affect
+  downstream probing. Match ONLY in relevant subspace.
+
+Step 5: In IRRELEVANT subspace, MAXIMIZE student entropy.
+  Don't constrain student in dimensions teacher uses for noise.
+```
+
+**Connection to existing CKA data:** EmbeddingGemma analysis: layers 6-14 have CKA >0.9 (match here), layers 22-23 have CKA <0.4 (skip). Logit KD matches at layer 23 = worst alignment zone. RG-KD does the OPPOSITE.
+
+---
+
+### DOMAIN 4: ECONOMICS -- Market-Based Information Aggregation
+
+#### 4.1 Price Discovery
+
+Multiple traders with PRIVATE information trade. Market price aggregates heterogeneous beliefs. Key: traders with stronger signals trade more aggressively. Equilibrium price is SUFFICIENT STATISTIC for all private information (Kyle 1985).
+
+#### 4.2 Logarithmic Opinion Pool (Externally Bayesian)
+
+LMSR with CARA agents is equivalent to:
+
+```
+ln(p_market) = Sum_i w_i * ln(p_trader_i) + constant
+```
+
+This log pool is EXTERNALLY BAYESIAN: if traders have independent evidence, the pool IS the Bayesian posterior given ALL evidence. The linear pool (standard multi-teacher KD) is NOT Bayesian.
+
+#### 4.3 Actionable KD Mechanism: Market Scoring Distillation (MSD)
+
+```
+Step 1: Geometric mean aggregate:
+  log p_aggregate[t] = Sum_i w_i * log p_teacher_i[t] / Z
+
+Step 2: Distill from aggregate:
+  L_MSD = KL(p_aggregate || p_student)
+
+Step 3: Learn w_i via meta-objective (minimize validation loss)
+
+Step 4: Track Kyle lambda (permanent impact per teacher)
+  lambda_i = d(val_loss)/d(w_i). Prune when near zero.
+```
+
+**Why strong:** Externally Bayesian. Single clean target. Agreement reinforces multiplicatively. Disagreement cancels. Automatic noise suppression.
+
+**Cross-tokenizer:** For different-tokenizer teachers, options: (a) geometric mean only for same-tokenizer, separate losses for cross-tokenizer; (b) byte-level distributions first; (c) OT alignment to common space.
+
+---
+
+### DOMAIN 5: ECOLOGY -- Horizontal Gene Transfer as Cross-Architecture KD
+
+#### 5.1 HGT Pipeline
+
+Foreign DNA must: enter cell -> survive quality control -> integrate at compatible site -> express correctly -> provide fitness advantage. Success rate ~0.01-1%. But that fraction drives ALL adaptation.
+
+#### 5.2 Restriction-Modification: Structural Compatibility Gate
+
+R-M systems (found in >95% bacteria) evaluate STRUCTURAL COMPATIBILITY (methylation pattern), not content quality. Compatible format passes. Incompatible format destroyed regardless of content.
+
+**Deep insight:** Quality control is about FORMAT MATCHING, not VALUE judgment. Good content in wrong format is destroyed.
+
+#### 5.3 Epistatic Selection
+
+Foreign DNA navigates cross-lineage fitness landscape. Negative epistasis (disrupts host networks) eliminated. Positive epistasis (creates new favorable hybrid networks) amplified. Sequential integration, not en masse.
+
+#### 5.4 CRISPR: Learned Memory-Based Filter
+
+Stores memories of previously harmful foreign sequences. Blocks known threats. Allows novel patterns through. ADAPTIVE quality control that learns from experience.
+
+#### 5.5 Actionable KD Mechanism: Horizontal Knowledge Transfer Protocol (HKT)
+
+```
+Stage 1: ENTRY -- Cross-architecture translation to universal space
+Stage 2: RESTRICTION -- Compatibility filter
+  cos_sim(entry_i, student_hidden) in Goldilocks zone (not too alien, not too familiar)
+  Running percentile thresholds (adaptive)
+Stage 3: INTEGRATION -- Epistatic fitness test
+  cos_sim(grad_KD_i, grad_CE) > -0.3 required (must not fight CE)
+  Positive epistasis -> amplify. Negative -> reject.
+Stage 4: EXPRESSION -- CRISPR-like fitness memory
+  Rolling mean of per-teacher contribution. Harmful -> reduce. Helpful -> increase. Noise -> prune.
+```
+
+---
+
+### SYNTHESIS: Five Converging Principles
+
+**Principle 1: PREDICTION-DRIVEN, not matching.** Update from surprises, not agreements.
+
+**Principle 2: COMPATIBILITY GATING before integration.** Filter incompatible and redundant signals.
+
+**Principle 3: EPISTATIC CONFLICT DETECTION.** Reject signals that fight primary learning.
+
+**Principle 4: ADAPTIVE signal strength.** Dynamic alpha based on uncertainty + reliability, not fixed.
+
+**Principle 5: RELEVANT SUBSPACE transfer.** Match functional dimensions only, give freedom in others.
+
+---
+
+### THREE CONCRETE PROPOSALS
+
+| Proposal | Source | Cost | Expected Impact | Complexity |
+|----------|--------|------|-----------------|------------|
+| **A: PCD** | Neuroscience | Low (+1 proj head/teacher) | 7-10x SNR improvement | LOW |
+| **B: MSD** | Economics | Medium (geometric mean + bilevel) | Optimal Bayesian aggregation | MEDIUM |
+| **C: HKT** | Ecology | High (~3x per-step) | Eliminates 50-70% wasted gradient | HIGH |
+
+**Order:** PCD first, MSD second, HKT stages as needed. All three can be combined.
+
+---
+
+### ROOT CAUSE: WHY STANDARD KD FAILS ON OUR STUDENT
+
+Standard KD violates ALL FIVE principles simultaneously:
+
+1. **No prediction-driven learning.** Equal gradient to all tokens. ~90% wasted on agreement.
+2. **No compatibility gating.** CKA=0.17 at final layer. Logit KD aligns incompatible spaces.
+3. **No epistatic conflict detection.** KD and CE gradients fight; both applied; net zero.
+4. **Fixed alpha.** Noise and signal treated identically.
+5. **Wholesale copying.** All dimensions matched including memorization and architectural artifacts.
+
+**Fixing even ONE of these should improve signal dramatically. Fixing all five is the path to decisive margins.**
+
+---
+
+## PARADIGM SHIFT: FROM-SCRATCH KD IS THE ONLY PATH (2026-03-31)
+
+### Ekalavya-RKP FAILED (Probe 2, both variants)
+
+- **v1** (alpha=0.7, LR=3e-4): Eval BPT 3.6712 at step 500. +0.098 above baseline. Killed — alpha too high.
+- **v2** (alpha=0.3, LR=1e-4): Eval BPT 3.5766 at step 1000. +0.004 above baseline. Killed — noise.
+- KnowledgePorts, frozen bottom layers, reverse KL, SE-KD masking — all noise.
+- **THIS IS NOW 8 FAILED WARM-START KD EXPERIMENTS.**
+
+### Literature is UNAMBIGUOUS
+
+| Paper | Gain | Method |
+|-------|------|--------|
+| Gemma 2 | **+7.4pp** | From-scratch logit KD, 2B from 7B, 500B tokens |
+| ACL 2025 Design Space | **+8.0pp** | From-scratch, alpha=0.9, WSD for KD weight, tau=0.5 |
+| MobileLLM-Pro | **+4.4pp** | From-scratch, 1B from Llama4-Scout, 1.4T tokens |
+| BabyLlama-2 | **+8.1pp** | Ensemble from-scratch, 345M from TWO 345M teachers, 9.5M words |
+
+**Every large gain uses from-scratch KD. Warm-start KD is confirmed dead by both our experiments AND the literature.**
+
+### Key Technical Parameters (from literature)
+
+- **Alpha**: 0.9 (90% KD, 10% CE) works best from scratch (ACL 2025)
+- **Temperature**: tau=0.5 with top-p-k truncation (not tau=2.0)
+- **Schedule**: WSD for both LR and KD weight
+- **Ensemble**: BabyLlama-2 shows multi-teacher from scratch beats single teacher
+- **From scratch means FROM STEP 0.** Not warm-start. Not partial reset. Fresh student.
+
+### FROM-SCRATCH CROSS-TOKENIZER KD: ALSO DEAD (2026-03-31)
+
+**Definitive 5-experiment test series killed cross-tokenizer logit KD at ALL alpha levels.**
+
+| Config | 3K Eval BPT | vs CE-WSD | Status |
+|--------|------------|-----------|--------|
+| CE flat-LR (no WSD) | 5.3904 | — | Old baseline |
+| **CE-WSD (no KD)** | **4.9703** | baseline | WSD gives -0.42 |
+| alpha=0.3 tau=0.5 KD | 4.9507 | -0.02 (noise) | DEAD |
+| alpha=0.9 tau=1.0 KD | 8.8844 (1K) | +2.10 worse | CATASTROPHIC |
+| alpha=0.9 tau=0.5 KD | 9.0226 (1K) | +2.24 worse | CATASTROPHIC |
+
+**Key findings:**
+1. alpha=0.9 cross-tok KD is **catastrophically bad** — 2+ BPT behind at step 1000
+2. alpha=0.3 cross-tok KD is **noise-level** — 0.02 BPT difference from CE at 3K (within random seed variance)
+3. The entire alpha=0.3 "improvement" over flat-LR CE-only (4.95 vs 5.39) was from the **WSD schedule**, not KD
+4. CE-WSD control (alpha=0.0, same WSD) matched the KD test at every eval checkpoint
+
+**Root cause:** DSKD ETA cross-tokenizer alignment (byte-offset + shared-vocab top-k) is too noisy. Only 92.6% vocab overlap, and the byte-level alignment introduces mismatches. The KD signal through this pipeline is more noise than information.
+
+**CRITICAL:** The literature gains (Gemma 2 +7.4pp, ACL 2025 +8.0pp) ALL use same-tokenizer KD. Cross-tokenizer KD has never been shown to produce comparable gains from scratch.
+
+**What this kills:** ALL logit-level cross-tokenizer KD approaches. No alpha schedule or temperature will fix the fundamental alignment noise.
+
+**What this does NOT kill:**
+1. **Hidden-state KD** — representation matching bypasses vocabulary entirely
+2. **Same-tokenizer KD** — if we had a teacher with our tokenizer, logit KD would likely work
+3. **Feature-level distillation** — matching intermediate representations through learned projections
+4. **Multi-source learning** — absorbing knowledge through methods OTHER than logit KD
+
+### Bonus finding: WSD schedule
+
+WSD scheduling (LR decay in last 20% of training) gave a -0.42 BPT improvement at 3K steps (4.97 vs 5.39). This is FREE improvement with no extra cost. **The 60K production run should use WSD scheduling regardless of KD approach.**
+
+### R13: HIDDEN-STATE CONTRASTIVE KD PIVOT (2026-03-31)
+
+**Codex R13 designed a vocabulary-independent KD approach: byte-span-pooled InfoNCE cosine.**
+
+**Core idea:** Instead of matching logit distributions (which requires vocab alignment), match intermediate hidden-state representations through learned projections. Pool both student and teacher hidden states into 32 equal byte spans per window, project student spans to teacher dimension, then use InfoNCE contrastive loss where same-position spans are positives.
+
+**Design (from R13 output):**
+- Student layers [7, 15, 23] → Teacher layers [8, 16, 24] (Qwen3-1.7B has 28 layers)
+- 3 independent linear projectors: 768→2048, bias=False, LR=6e-4, WD=0.01
+- Loss: `L = L_CE + alpha_state * sum(depth_weight[i] * L_state[i])` (ADDITIVE, not mixture)
+- Depth weights: [0.30, 0.50, 0.20] — middle layer gets most weight
+- Alpha schedule: 0.06→0.30 (ramp, steps 1-400), hold at 0.30 (401-2200), decay 0.30→0.03 (2201-3000)
+- InfoNCE temperature: 0.07 (standard contrastive learning)
+- n_spans=32 (byte-span pool, vocabulary independent)
+
+**Why this should work where logit KD failed:**
+1. No vocabulary dependency — byte spans bridge the tokenizer gap
+2. Representation-level transfer captures structural knowledge, not just output distributions
+3. Additive loss preserves CE objective — KD is auxiliary guidance, not a replacement
+4. Contrastive loss is more flexible than MSE or CKA — matched spans are pulled together, unmatched pushed apart
+5. Low alpha (max 0.30) prevents KD from dominating the loss
+
+**Expected 3K BPT: 4.65-4.78. Kill threshold: >4.82. CE-WSD baseline: 4.9703.**
+
+**STATUS: COMPLETE** — 3K smoke test finished 2026-04-01.
+
+**RESULT: BPT=4.8576 vs CE-WSD 4.9703 — FIRST POSITIVE KD RESULT (-0.113 BPT)**
+
+| Step | CE-WSD | State KD | Delta |
+|------|--------|----------|-------|
+| 500  | 7.6915 | 7.5780   | -0.114 |
+| 1000 | 6.7860 | 6.4738   | -0.312 (peak) |
+| 1500 | 6.0502 | 6.0146   | -0.036 (compressed) |
+| 2000 | 5.7261 | 5.4598   | -0.266 (reopened) |
+| 2500 | 5.3518 | 5.1334   | -0.218 |
+| 3000 | 4.9703 | 4.8576   | -0.113 |
+
+**Key observations:**
+1. This is the FIRST time any KD approach produced measurable improvement from scratch (11 logit KD experiments all showed 0.00)
+2. Gap profile is NOT head-start — it reopened after temporary compression at step 1500
+3. Peak improvement -0.312 at step 1000 suggests hidden-state KD has strongest effect early
+4. Improvement is consistent across all exits (exit7: -0.080, exit15: -0.089, final: -0.113)
+5. Lower kurtosis (0.71 vs 0.85) — healthier activations
+
+**However: 4.8576 > 4.82 kill threshold from R13 design. Marginal result.**
+
+**The question for Codex R14:** The method works but the effect size is small. Is it worth optimizing (higher alpha, longer run, different temperature)? Or should we pivot to same-tokenizer teacher or entirely different approach?
+
+**Possible improvements to try:**
+- Higher alpha_max (0.30 was conservative — try 0.50?)
+- Longer hold phase (the gap compressed during hold, maybe the ramp was too fast)
+- Different projector architecture (MLP instead of linear?)
+- Different span count (32 might be too fine — try 16?)
+- MSE loss instead of InfoNCE (simpler but possibly more stable)
+- Combine hidden-state KD with logit KD from same tokenizer

@@ -18,7 +18,8 @@ Usage:
   python code/dense_baseline.py --det-eval results/checkpoints_edsr_98m/step_5000.pt
 """
 
-import sys, os, math, json, time, gc
+import sys, os, math, json, time, gc, random
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
@@ -1160,6 +1161,63 @@ class NgramMemoryFusion(nn.Module):
         return gate * mem_proj
 
 
+class KnowledgePort(nn.Module):
+    """Low-rank residual adapter for teacher-specific knowledge injection.
+
+    Ekalavya-RKP (Codex R11): Teachers write into dedicated ports rather than
+    the whole trunk. Each port is a low-rank bottleneck that produces a
+    residual added to the hidden state after a specific layer.
+
+    h_out = h_in + gate * W_up(SiLU(W_down(h_in)))
+
+    Args:
+        dim: model hidden dimension
+        rank: bottleneck rank (default 64)
+        n_teachers: number of teacher slots (each gets independent W_down/W_up)
+    """
+
+    def __init__(self, dim, rank=64, n_teachers=1):
+        super().__init__()
+        self.dim = dim
+        self.rank = rank
+        self.n_teachers = n_teachers
+        # Per-teacher low-rank adapters
+        self.down = nn.ModuleList([nn.Linear(dim, rank, bias=False) for _ in range(n_teachers)])
+        self.up = nn.ModuleList([nn.Linear(rank, dim, bias=False) for _ in range(n_teachers)])
+        # Initialize up projection to zero so ports start as identity
+        for up in self.up:
+            nn.init.zeros_(up.weight)
+
+    def forward(self, h, teacher_idx=0):
+        """Apply port for a specific teacher.
+
+        Args:
+            h: (B, T, D) hidden state
+            teacher_idx: which teacher's adapter to use
+        Returns:
+            residual: (B, T, D) to be added to h
+        """
+        r = self.down[teacher_idx](h)
+        r = F.silu(r)
+        r = self.up[teacher_idx](r)
+        return r
+
+    def forward_weighted(self, h, weights):
+        """Apply weighted combination of all teacher ports.
+
+        Args:
+            h: (B, T, D) hidden state
+            weights: (n_teachers,) or (B, n_teachers) teacher weights
+        Returns:
+            residual: (B, T, D)
+        """
+        out = torch.zeros_like(h)
+        for i in range(self.n_teachers):
+            w = weights[i] if weights.dim() == 1 else weights[:, i:i+1].unsqueeze(-1)
+            out = out + w * self.forward(h, i)
+        return out
+
+
 class DenseTransformer(nn.Module):
     def __init__(self, vocab_size=VOCAB_SIZE, dim=DIM, n_layers=N_LAYERS,
                  n_heads=N_HEADS, ff_dim=FF_DIM, max_seq_len=MAX_SEQ_LEN,
@@ -1285,7 +1343,44 @@ class DenseTransformer(nn.Module):
         self.register_buffer("rope_cos", cos)
         self.register_buffer("rope_sin", sin)
 
+        # Knowledge ports (Ekalavya-RKP, Codex R11) — added dynamically
+        self.knowledge_ports = nn.ModuleDict()  # layer_idx -> KnowledgePort
+        self.port_layers = []  # which layers have ports
+
         self._init_weights()
+
+    def add_knowledge_ports(self, port_layers=None, rank=64, n_teachers=1):
+        """Add teacher-specific knowledge ports at specified layers.
+
+        Called AFTER loading base checkpoint. Ports start at zero (identity).
+
+        Args:
+            port_layers: list of 0-indexed layers AFTER which to inject ports.
+                Default: [7, 15, 23] (matching exit layers).
+            rank: bottleneck rank per port.
+            n_teachers: number of teacher slots per port.
+        """
+        if port_layers is None:
+            port_layers = [7, 15, 23]
+        self.port_layers = sorted(port_layers)
+        for layer_idx in self.port_layers:
+            self.knowledge_ports[str(layer_idx)] = KnowledgePort(
+                self.dim, rank=rank, n_teachers=n_teachers
+            ).to(next(self.parameters()).device)
+        n_port_params = sum(p.numel() for p in self.knowledge_ports.parameters())
+        print(f"  Added {len(self.port_layers)} knowledge ports "
+              f"(rank={rank}, teachers={n_teachers}): "
+              f"{n_port_params/1e6:.2f}M params")
+        return n_port_params
+
+    def port_parameters(self):
+        """Return only knowledge port parameters (for separate optimizer group)."""
+        return self.knowledge_ports.parameters()
+
+    def trunk_parameters(self):
+        """Return non-port parameters."""
+        port_ids = set(id(p) for p in self.knowledge_ports.parameters())
+        return (p for p in self.parameters() if id(p) not in port_ids)
 
     def _init_weights(self, resumed_ckpt=None):
         # Collect modules to skip (MTP and Memory have their own zero-init)
@@ -1302,13 +1397,16 @@ class DenseTransformer(nn.Module):
             elif isinstance(m, nn.Embedding):
                 nn.init.normal_(m.weight, std=0.02)
 
-    def forward(self, x, return_exits=False, return_hidden=False):
+    def forward(self, x, return_exits=False, return_hidden=False,
+                teacher_idx=0, port_weights=None):
         """
         Args:
             return_exits: if True, return dict with exit logits and gain predictions.
             return_hidden: if True, include pre-norm final hidden state in output dict.
                 Also includes per-exit normed hidden states ('exit_hidden') and
                 input embeddings ('h_input') for halting controller.
+            teacher_idx: which teacher's port to activate (int, default 0).
+            port_weights: optional (n_teachers,) weights for weighted port combination.
         Returns:
             If return_exits=False and return_hidden=False: final logits (B, T, V)
             If return_exits=True or return_hidden=True: dict {
@@ -1335,6 +1433,14 @@ class DenseTransformer(nn.Module):
             # Inject n-gram memory after this layer?
             if self.memory is not None and i in self.memory_layers:
                 h = h + self.memory(x, h)
+
+            # Inject knowledge port after this layer? (Ekalavya-RKP)
+            if str(i) in self.knowledge_ports:
+                port = self.knowledge_ports[str(i)]
+                if port_weights is not None:
+                    h = h + port.forward_weighted(h, port_weights)
+                else:
+                    h = h + port(h, teacher_idx)
 
             # Early exit at this layer?
             if return_exits and i in self.exit_layers and i < self.n_layers - 1:
@@ -1491,12 +1597,13 @@ class TeacherAdapter:
         print(f"    {n_params/1e6:.1f}M params, ~{vram_mb:.0f}MB VRAM, hidden={self.hidden_dim}")
 
     @torch.no_grad()
-    def forward(self, texts, max_length=512):
+    def forward(self, texts, max_length=512, kd_layers=None):
         """Run teacher forward pass on raw text strings.
 
         Returns dict with:
             'logits': (B, T_teacher, V_teacher) or None for encoders
             'hidden': (B, T_teacher, D_teacher) final layer hidden states
+            'kd_hidden': {layer_idx: (B, T_teacher, D_teacher)} if kd_layers specified
             'token_ids': (B, T_teacher) teacher token IDs
             'byte_offsets': list of (start, end) byte offsets per token per batch item
         """
@@ -1524,9 +1631,15 @@ class TeacherAdapter:
             out = self.model(input_ids=input_ids, attention_mask=attention_mask)
             logits = out.logits
             hidden = out.hidden_states[-1] if hasattr(out, "hidden_states") and out.hidden_states else None
+            kd_hidden = {}
+            if kd_layers and hasattr(out, "hidden_states") and out.hidden_states:
+                for li in kd_layers:
+                    if li < len(out.hidden_states):
+                        kd_hidden[li] = out.hidden_states[li]
             return {
                 "logits": logits,
                 "hidden": hidden,
+                "kd_hidden": kd_hidden,
                 "token_ids": input_ids,
                 "attention_mask": attention_mask,
                 "byte_offsets": offsets,
@@ -1645,6 +1758,50 @@ def compute_state_kd_loss(student_hidden, teacher_hidden, student_offsets, teach
     return 1.0 - compute_cka(S_s_flat, S_t_flat)
 
 
+def compute_span_infonce_loss(student_hidden, teacher_hidden,
+                              student_offsets, teacher_offsets,
+                              student_mask, teacher_mask,
+                              projector, n_spans=32, temperature=0.07):
+    """Contrastive hidden-state KD via byte-span-pooled InfoNCE cosine.
+
+    Pools student and teacher into n_spans byte spans, projects student to teacher dim,
+    then uses InfoNCE where matching (same-position) spans are positives.
+    Vocabulary-independent — works across different tokenizers.
+
+    Args:
+        student_hidden: (B, T_s, D_s)
+        teacher_hidden: (B, T_t, D_t)
+        student/teacher_offsets: (B, T, 2) byte offsets
+        student/teacher_mask: (B, T) attention masks
+        projector: nn.Linear(D_s, D_t)
+        n_spans: number of byte spans to pool into
+        temperature: InfoNCE temperature (0.07 standard)
+
+    Returns:
+        loss: scalar InfoNCE loss
+    """
+    S_s = byte_span_pool(student_hidden, student_offsets, student_mask, n_spans)  # (B, M, D_s)
+    S_t = byte_span_pool(teacher_hidden, teacher_offsets, teacher_mask, n_spans)  # (B, M, D_t)
+
+    B, M, D_s = S_s.shape
+    N = B * M  # total number of spans
+
+    # Project student to teacher dim and flatten
+    S_s_proj = projector(S_s.reshape(N, D_s))  # (N, D_t)
+    S_t_flat = S_t.reshape(N, -1)              # (N, D_t)
+
+    # L2 normalize for cosine similarity
+    S_s_proj = F.normalize(S_s_proj, dim=-1)
+    S_t_flat = F.normalize(S_t_flat.float(), dim=-1)
+
+    # Cosine similarity matrix: (N, N)
+    sim = S_s_proj @ S_t_flat.T / temperature
+
+    # Positives are the diagonal (matching spans at same position)
+    labels = torch.arange(N, device=sim.device)
+    return F.cross_entropy(sim, labels)
+
+
 def compute_semantic_kd_loss(student_hidden, teacher_hidden, student_mask, teacher_mask,
                              projector):
     """Semantic KD via relational loss on pooled representations.
@@ -1724,6 +1881,7 @@ def compute_cross_tok_logit_kd(
     confidence_gating=False,
     taid_beta=None,     # TAID interpolation: 0=pure student, 1=pure teacher. None=standard KD
     hard_token_frac=None,  # If set, only apply KD to top-frac highest student entropy tokens
+    kl_mode="forward",  # "forward" (mean-seeking), "reverse" (mode-seeking), or "jsd"
 ):
     """Cross-tokenizer logit-level KD via vocabulary overlap (DSKDv2 ETA).
 
@@ -1813,9 +1971,23 @@ def compute_cross_tok_logit_kd(
         target_probs = F.softmax(interp_logits / temperature, dim=-1)
     else:
         target_probs = F.softmax(topk_vals / temperature, dim=-1)
-    s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
     # Per-token KL: sum over vocab dim, then average over valid positions
-    per_token_kl = F.kl_div(s_log_probs, target_probs, reduction="none").sum(dim=-1)  # (B, T_s)
+    if kl_mode == "reverse":
+        # Reverse KL(S||T): mode-seeking — student concentrates on teacher's peaks
+        s_probs = F.softmax(s_at_topk / temperature, dim=-1)
+        t_log_probs = torch.log(target_probs + 1e-8)
+        per_token_kl = F.kl_div(t_log_probs, s_probs, reduction="none").sum(dim=-1)  # (B, T_s)
+    elif kl_mode == "jsd":
+        # Jensen-Shannon divergence: symmetric, bounded
+        s_probs = F.softmax(s_at_topk / temperature, dim=-1)
+        m_probs = 0.5 * (target_probs + s_probs)
+        m_log_probs = torch.log(m_probs + 1e-8)
+        per_token_kl = (0.5 * F.kl_div(m_log_probs, target_probs, reduction="none").sum(dim=-1) +
+                        0.5 * F.kl_div(m_log_probs, s_probs, reduction="none").sum(dim=-1))  # (B, T_s)
+    else:
+        # Forward KL(T||S): mean-seeking (default)
+        s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
+        per_token_kl = F.kl_div(s_log_probs, target_probs, reduction="none").sum(dim=-1)  # (B, T_s)
     # Confidence gating: scale per-token KD by teacher confidence over full distribution
     if confidence_gating:
         conf_w = torch.where(full_p_max > 0.5, 1.5,
@@ -2018,7 +2190,7 @@ def compute_mtp_loss(model, hidden, input_tokens, target_tokens):
     return mtp_loss
 
 
-def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, init_from=None):
+def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, init_from=None, shard_dir_override=None, reset_step=False):
     # Select config
     if from_ckpt:
         # Load config from checkpoint — used for 200M and custom models
@@ -2029,6 +2201,15 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
         n_heads = cfg.get("n_heads", 12)
         ff_dim = cfg.get("ff_dim", 2048)
         exit_layers = cfg.get("exit_layers", [3, 7, 11])
+        # Extended config for GQA, norm, block schedule
+        _norm_type = cfg.get("norm_type", "rmsnorm")
+        _block_schedule = cfg.get("block_schedule")
+        _conv_kernel_size = cfg.get("conv_kernel_size", 64)
+        _head_dim = cfg.get("head_dim", 64)
+        _n_q_heads = cfg.get("n_q_heads")
+        _n_kv_heads = cfg.get("n_kv_heads")
+        _d_attn = cfg.get("d_attn")
+        _d_conv = cfg.get("d_conv")
         lr, min_lr = 3e-4, 1e-5
         warmup = 500
         # Adjust batch size for larger models
@@ -2037,7 +2218,13 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
         else:
             batch_size, grad_accum = 8, 4
         lr_schedule = "wsd"
-        mode_name = f"Custom-{sum(p.numel() for p in DenseTransformer(dim=dim, n_layers=n_layers, n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers).parameters())/1e6:.0f}M"
+        _tmp_model = DenseTransformer(dim=dim, n_layers=n_layers, n_heads=n_heads,
+                                       ff_dim=ff_dim, exit_layers=exit_layers,
+                                       norm_type=_norm_type, block_schedule=_block_schedule,
+                                       conv_kernel_size=_conv_kernel_size, head_dim=_head_dim,
+                                       n_q_heads=_n_q_heads, n_kv_heads=_n_kv_heads)
+        mode_name = f"Custom-{sum(p.numel() for p in _tmp_model.parameters())/1e6:.0f}M"
+        del _tmp_model
         del _ckpt  # Free memory before training
     elif edsr:
         dim, n_layers, n_heads, ff_dim = 768, 12, 12, 2048
@@ -2065,17 +2252,23 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
     print(f"  Batch: {batch_size}x{grad_accum}={batch_size*grad_accum}, seq={SEQ_LEN}")
     print(f"  Device: {DEVICE}, dtype: bf16")
 
-    model = DenseTransformer(
-        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
-        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers
-    ).to(DEVICE)
+    # Build model — use extended config if from_ckpt provided full config
+    model_kwargs = dict(vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+                        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers)
+    if from_ckpt:
+        model_kwargs.update(norm_type=_norm_type, block_schedule=_block_schedule,
+                            conv_kernel_size=_conv_kernel_size, head_dim=_head_dim,
+                            n_q_heads=_n_q_heads, n_kv_heads=_n_kv_heads,
+                            d_attn=_d_attn, d_conv=_d_conv)
+    model = DenseTransformer(**model_kwargs).to(DEVICE)
     print(f"  Params: {model.count_params():,}")
     print("=" * 60)
 
-    # Data — use 16K retokenized shards
-    shard_dir = REPO / "data" / "shards_16k"
-    if not shard_dir.exists() or len(list(shard_dir.glob("*.pt"))) < 64:
-        print(f"ERROR: Need >=64 shards in {shard_dir}. Currently: {len(list(shard_dir.glob('*.pt')))}")
+    # Data — use 16K retokenized shards (or override for curated runs)
+    shard_dir = Path(shard_dir_override) if shard_dir_override else REPO / "data" / "shards_16k"
+    min_shards = 1 if shard_dir_override else 64
+    if not shard_dir.exists() or len(list(shard_dir.glob("*.pt"))) < min_shards:
+        print(f"ERROR: Need >={min_shards} shards in {shard_dir}. Currently: {len(list(shard_dir.glob('*.pt')))}")
         sys.exit(1)
     dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
     if weight_file:
@@ -2127,14 +2320,22 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
         # Initialize from another run's checkpoint (for A/B tests)
         init_ckpt = torch.load(init_from, weights_only=False, map_location=DEVICE)
         init_model_key = "model_state_dict" if "model_state_dict" in init_ckpt else "model"
-        init_opt_key = "optimizer_state_dict" if "optimizer_state_dict" in init_ckpt else "optimizer"
         model.load_state_dict(init_ckpt[init_model_key])
-        opt.load_state_dict(init_ckpt[init_opt_key])
-        if "scaler" in init_ckpt:
-            scaler.load_state_dict(init_ckpt["scaler"])
-        start_step = init_ckpt.get("step", 0)
+        # Load optimizer state only if compatible (same number of param groups)
+        if not reset_step:
+            init_opt_key = "optimizer_state_dict" if "optimizer_state_dict" in init_ckpt else "optimizer"
+            try:
+                opt.load_state_dict(init_ckpt[init_opt_key])
+                if "scaler" in init_ckpt:
+                    scaler.load_state_dict(init_ckpt["scaler"])
+            except ValueError as e:
+                print(f"  WARNING: Optimizer state incompatible ({e}), using fresh optimizer")
+        else:
+            print("  Skipping optimizer state (reset_step=True, fresh LR schedule)")
+        start_step = 0 if reset_step else init_ckpt.get("step", 0)
         best_bpt = init_ckpt.get("best_bpt", float("inf"))
-        print(f"Initialized from {Path(init_from).name} at step {start_step}")
+        print(f"Initialized from {Path(init_from).name} at step {start_step}" +
+              (" (step reset to 0)" if reset_step else ""))
         del init_ckpt
 
     step = start_step
@@ -2213,17 +2414,19 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
 
         # Checkpoint (save early at step 100 for safety, then every ROLLING_SAVE)
         if step % ROLLING_SAVE == 0 or (step == 100 and start_step < 100):
+            save_cfg = dict(vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+                            n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers)
+            if from_ckpt:
+                save_cfg.update(norm_type=_norm_type, block_schedule=_block_schedule,
+                                conv_kernel_size=_conv_kernel_size, head_dim=_head_dim,
+                                n_q_heads=_n_q_heads, n_kv_heads=_n_kv_heads)
             ckpt = {
                 "model": model.state_dict(),
                 "optimizer": opt.state_dict(),
                 "scaler": scaler.state_dict(),
                 "step": step,
                 "best_bpt": best_bpt,
-                "config": {
-                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
-                    "n_heads": n_heads, "ff_dim": ff_dim,
-                    "exit_layers": exit_layers,
-                }
+                "config": save_cfg,
             }
             # Atomic save: write to temp file, then rename
             tmp = rolling.with_suffix('.tmp')
@@ -2249,17 +2452,19 @@ def train(run_name="dense_f4", edsr=False, from_ckpt=None, weight_file=None, ini
 
     print(f"Training complete at step {step}")
     # Final save
+    save_cfg = dict(vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+                    n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers)
+    if from_ckpt:
+        save_cfg.update(norm_type=_norm_type, block_schedule=_block_schedule,
+                        conv_kernel_size=_conv_kernel_size, head_dim=_head_dim,
+                        n_q_heads=_n_q_heads, n_kv_heads=_n_kv_heads)
     ckpt = {
         "model": model.state_dict(),
         "optimizer": opt.state_dict(),
         "scaler": scaler.state_dict(),
         "step": step,
         "best_bpt": best_bpt,
-        "config": {
-            "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
-            "n_heads": n_heads, "ff_dim": ff_dim,
-            "exit_layers": exit_layers,
-        }
+        "config": save_cfg,
     }
     tmp = rolling.with_suffix('.tmp')
     torch.save(ckpt, tmp)
@@ -4465,6 +4670,7 @@ def train_kd(config_path, variant_filter=None):
         v_tau_schedule = variant.get("tau_schedule", None)
         v_taid_beta_schedule = variant.get("taid_beta_schedule", None)
         v_hard_token_frac = variant.get("hard_token_frac", None)
+        v_kl_mode = variant.get("kl_mode", "forward")
 
         print(f"\n{'='*60}")
         print(f"KD VARIANT: {tag}")
@@ -4509,7 +4715,8 @@ def train_kd(config_path, variant_filter=None):
         teachers = []
         projectors = nn.ModuleDict()  # trainable projectors for state/semantic KD
         for t_cfg in v_teachers_cfg:
-            teacher = TeacherAdapter(t_cfg["name"], device=DEVICE, dtype=torch.float16)
+            t_dtype = torch.float32 if t_cfg.get("dtype", "float16") == "float32" else torch.float16
+            teacher = TeacherAdapter(t_cfg["name"], device=DEVICE, dtype=t_dtype)
             teacher.surfaces = t_cfg.get("surfaces", ["state"])
             teachers.append(teacher)
 
@@ -4727,7 +4934,11 @@ def train_kd(config_path, variant_filter=None):
                                                if "logit" in t.surfaces)
 
                         for teacher in teachers:
-                            with torch.no_grad():
+                            # fp32 teachers must run outside AMP autocast
+                            # to avoid bf16 downcast (e.g. EmbeddingGemma overflows in fp16)
+                            use_native_dtype = (teacher.dtype == torch.float32)
+                            ctx = torch.amp.autocast("cuda", enabled=False) if use_native_dtype else nullcontext()
+                            with torch.no_grad(), ctx:
                                 t_out = teacher.forward(texts, max_length=seq_len)
 
                             safe_name = (teacher.name.replace("/", "_")
@@ -4783,6 +4994,7 @@ def train_kd(config_path, variant_filter=None):
                                     confidence_gating=v_confidence_gating,
                                     taid_beta=step_taid_beta,
                                     hard_token_frac=v_hard_token_frac,
+                                    kl_mode=v_kl_mode,
                                 )
                                 kd_loss = kd_loss + (sa_logit / max(n_logit_teachers, 1)) * logit_kd
 
@@ -4953,6 +5165,658 @@ def train_kd(config_path, variant_filter=None):
         final = res["metrics"][-1] if res["metrics"] else {}
         print(f"  {tag}: BPT={final.get('bpt', '?')}, teachers={res['teachers']}")
     print(f"{'='*60}")
+
+
+class ReplayCacheLoader:
+    """Loads curated shard tokens + pre-computed teacher logits for offline KD.
+
+    Keeps one shard pair (tokens + logits) hot at a time. Serves random windows.
+    Peak RAM: one curated shard + its logit cache.
+    """
+
+    def __init__(self, curated_dir, logit_cache_dir, seq_len=512):
+        self.curated_dir = Path(curated_dir)
+        self.logit_cache_dir = Path(logit_cache_dir)
+        self.seq_len = seq_len
+
+        # Build index: match curated shards to logit caches
+        self.shard_pairs = []
+        for shard_path in sorted(self.curated_dir.glob("*.pt")):
+            cache_path = self.logit_cache_dir / f"{shard_path.stem}_logits.pt"
+            if cache_path.exists():
+                self.shard_pairs.append((shard_path, cache_path))
+
+        if not self.shard_pairs:
+            raise FileNotFoundError(
+                f"No matching shard+cache pairs in {curated_dir} / {logit_cache_dir}")
+
+        # Count total windows
+        self.total_windows = 0
+        self.shard_windows = []
+        for sp, cp in self.shard_pairs:
+            tokens = torch.load(sp, weights_only=True)
+            n = len(tokens) // seq_len
+            self.shard_windows.append(n)
+            self.total_windows += n
+
+        # Hot cache
+        self._hot_idx = -1
+        self._hot_tokens = None
+        self._hot_cache = None
+
+        print(f"  ReplayCacheLoader: {len(self.shard_pairs)} shard pairs, "
+              f"{self.total_windows} windows")
+
+    def _load_shard(self, idx):
+        """Load a shard pair into hot cache."""
+        if idx == self._hot_idx:
+            return
+        sp, cp = self.shard_pairs[idx]
+        self._hot_tokens = torch.load(sp, weights_only=True)
+        self._hot_cache = torch.load(cp, weights_only=False)
+        self._hot_idx = idx
+
+    def sample_batch(self, batch_size, device="cuda"):
+        """Sample a random batch of replay windows with cached teacher logits.
+
+        Returns:
+            inp: (B, seq_len) student token IDs
+            tgt: (B, seq_len) target token IDs (shifted by 1)
+            t_topk_vals: (B, T_teacher, K) cached teacher top-K logit values
+            t_topk_ids: (B, T_teacher, K) cached teacher top-K vocab indices
+            t_byte_offsets: (B, T_teacher, 2) teacher byte offsets
+            t_attn_mask: (B, T_teacher) teacher attention mask
+        """
+        # Pick a random shard (weighted by number of windows)
+        shard_idx = random.choices(
+            range(len(self.shard_pairs)),
+            weights=self.shard_windows, k=1)[0]
+        self._load_shard(shard_idx)
+
+        n_windows = self.shard_windows[shard_idx]
+        window_ids = random.sample(range(n_windows), min(batch_size, n_windows))
+
+        # Extract student tokens (seq_len + 1 for input/target split)
+        inps, tgts = [], []
+        t_vals, t_ids, t_offs, t_masks = [], [], [], []
+
+        for wid in window_ids:
+            start = wid * self.seq_len
+            window = self._hot_tokens[start:start + self.seq_len + 1]
+            if len(window) < self.seq_len + 1:
+                # Pad if needed (shouldn't happen for proper curated shards)
+                window = F.pad(window, (0, self.seq_len + 1 - len(window)))
+            inps.append(window[:self.seq_len])
+            tgts.append(window[1:self.seq_len + 1])
+
+            # Teacher cache for this window
+            t_vals.append(self._hot_cache["topk_vals"][wid])
+            t_ids.append(self._hot_cache["topk_ids"][wid])
+            t_offs.append(self._hot_cache["byte_offsets"][wid])
+            t_masks.append(self._hot_cache["attn_mask"][wid])
+
+        inp = torch.stack(inps).to(device)
+        tgt = torch.stack(tgts).to(device)
+        t_topk_vals = torch.stack(t_vals).to(device).float()
+        t_topk_ids = torch.stack(t_ids).to(device).long()
+        t_byte_offsets = torch.stack(t_offs).to(device)
+        t_attn_mask = torch.stack(t_masks).to(device)
+
+        return inp, tgt, t_topk_vals, t_topk_ids, t_byte_offsets, t_attn_mask
+
+
+def compute_offline_kd_loss(
+    student_logits,     # (B, T_s, V_s) — student forward output
+    student_offsets,    # (B, T_s, 2) — student byte offsets
+    t_topk_vals,        # (B, T_t, K) — cached teacher top-K logit values
+    t_topk_ids,         # (B, T_t, K) — cached teacher top-K vocab indices (teacher vocab)
+    t_byte_offsets,     # (B, T_t, 2) — teacher byte offsets from cache
+    t_attn_mask,        # (B, T_t) — teacher attention mask
+    shared_s_ids,       # (N_shared,) — student vocab indices for shared tokens
+    shared_t_ids,       # (N_shared,) — teacher vocab indices for shared tokens
+    temperature=2.0,
+    hard_token_frac=0.10,
+    kl_mode="reverse",
+):
+    """Offline KD loss using pre-computed teacher top-K logits.
+
+    Like compute_cross_tok_logit_kd but reads from cache instead of live teacher.
+    Key difference: teacher logits are already top-K filtered, so we need to
+    intersect cached top-K teacher IDs with shared vocabulary.
+
+    All computation in float32 to avoid AMP backward NaN from masked softmax.
+    """
+    # Cast everything to float32 to avoid AMP NaN in backward pass
+    student_logits = student_logits.float()
+    t_topk_vals = t_topk_vals.float()
+
+    B, T_s, V_s = student_logits.shape
+    T_t = t_topk_vals.shape[1]
+    K = t_topk_vals.shape[2]
+    device = student_logits.device
+
+    # Step 1: Causal char-end alignment (same as online version)
+    stu_ends = student_offsets[:, :, 1].float()   # (B, T_s)
+    tea_ends = t_byte_offsets[:, :, 1].float()    # (B, T_t)
+    tea_ends_masked = tea_ends.masked_fill(~t_attn_mask.bool(), -1.0)
+
+    signed_diff = stu_ends.unsqueeze(2) - tea_ends_masked.unsqueeze(1)  # (B, T_s, T_t)
+    signed_diff = signed_diff.masked_fill(signed_diff < 0, 1e9)
+    signed_diff = signed_diff.masked_fill(
+        ~t_attn_mask.bool().unsqueeze(1).expand(-1, T_s, -1), 1e9)
+    aligned_idx = signed_diff.argmin(dim=2)  # (B, T_s)
+    valid_mask = signed_diff.min(dim=2).values < 1e8  # (B, T_s)
+    del signed_diff
+
+    # Step 2: Gather aligned teacher top-K vals and IDs
+    # aligned_idx: (B, T_s) -> index into T_t dimension
+    gather_k = aligned_idx.unsqueeze(-1).expand(-1, -1, K)  # (B, T_s, K)
+    aligned_vals = t_topk_vals.gather(1, gather_k)  # (B, T_s, K) teacher logits
+    aligned_ids = t_topk_ids.gather(1, gather_k)     # (B, T_s, K) teacher vocab IDs
+
+    # Step 3: Reproject teacher top-K into shared-vocab space, then use the
+    # same approach as the online version (top-K in shared space, gather student
+    # from shared-vocab slice). This avoids gather-scatter NaN from non-shared entries.
+
+    N_shared = shared_s_ids.shape[0]
+    if N_shared == 0:
+        return torch.tensor(0.0, device=device, requires_grad=True)
+
+    # Extract aligned teacher logits in the FULL shared vocab space.
+    # Build teacher-ID-to-shared-index mapping
+    max_t_id = max(shared_t_ids.max().item(), aligned_ids.max().item()) + 1
+    t_id_to_shared_idx = torch.full((max_t_id,), -1, dtype=torch.long, device=device)
+    t_id_to_shared_idx[shared_t_ids] = torch.arange(N_shared, device=device)
+
+    # For each cached teacher top-K entry, find its shared-vocab index
+    flat_t_ids = aligned_ids.reshape(-1).clamp(0, max_t_id - 1)
+    flat_shared_idx = t_id_to_shared_idx[flat_t_ids]
+    shared_idx = flat_shared_idx.reshape(B, T_s, K)  # -1 for non-shared
+    shared_mask = (shared_idx >= 0)  # which top-K entries are in shared vocab
+
+    # Scatter cached teacher logits into a (B, T_s, N_shared) tensor
+    # Only scatter shared entries; non-shared are left at a large negative
+    t_shared_logits = torch.full((B, T_s, N_shared), -1e4, device=device, dtype=aligned_vals.dtype)
+    shared_idx_safe = shared_idx.clamp(min=0)
+    # Use scatter to place teacher logits at correct shared-vocab positions
+    t_shared_logits.scatter_(-1, shared_idx_safe * shared_mask.long(),
+                             aligned_vals * shared_mask.float())
+    # Fix: scatter placed garbage at index 0 for non-shared; re-mask
+    # Actually scatter with mask: only scatter where shared
+    t_shared_logits = torch.full((B, T_s, N_shared), -1e4, device=device, dtype=aligned_vals.dtype)
+    for k in range(K):
+        idx_k = shared_idx[:, :, k]  # (B, T_s)
+        val_k = aligned_vals[:, :, k]  # (B, T_s)
+        mask_k = shared_mask[:, :, k]  # (B, T_s)
+        valid_idx = idx_k.clamp(min=0)
+        # Only write where mask_k is True
+        t_shared_logits.scatter_(-1, valid_idx.unsqueeze(-1),
+                                 torch.where(mask_k.unsqueeze(-1),
+                                            val_k.unsqueeze(-1),
+                                            torch.tensor(-1e4, device=device)))
+
+    # Now do top-K in shared space (same as online version)
+    K_eff = min(64, N_shared)
+    topk_vals_shared, topk_idx_shared = t_shared_logits.topk(K_eff, dim=-1)  # (B, T_s, K_eff)
+
+    # Teacher softmax over top-K shared entries (no masking needed — all in shared space)
+    target_probs = F.softmax(topk_vals_shared / temperature, dim=-1)
+
+    # Student logits: extract shared vocab, then gather at top-K positions
+    s_shared = student_logits[:, :, shared_s_ids]  # (B, T_s, N_shared) — has gradient
+    s_at_topk = s_shared.gather(-1, topk_idx_shared)  # (B, T_s, K_eff) — clean gather, no non-shared
+
+    # KL divergence (all positions are valid, no masking needed on the K dimension)
+    if kl_mode == "reverse":
+        s_probs = F.softmax(s_at_topk / temperature, dim=-1)
+        t_log_probs = torch.log(target_probs + 1e-8)
+        per_token_kl = F.kl_div(t_log_probs, s_probs, reduction="none").sum(dim=-1)
+    elif kl_mode == "jsd":
+        s_probs = F.softmax(s_at_topk / temperature, dim=-1)
+        m_probs = 0.5 * (target_probs + s_probs)
+        m_log_probs = torch.log(m_probs + 1e-8)
+        per_token_kl = (0.5 * F.kl_div(m_log_probs, target_probs, reduction="none").sum(dim=-1) +
+                        0.5 * F.kl_div(m_log_probs, s_probs, reduction="none").sum(dim=-1))
+    else:
+        s_log_probs = F.log_softmax(s_at_topk / temperature, dim=-1)
+        per_token_kl = F.kl_div(s_log_probs, target_probs, reduction="none").sum(dim=-1)
+
+    # Hard-token gating
+    if hard_token_frac is not None and hard_token_frac < 1.0:
+        with torch.no_grad():
+            s_ent = -(F.softmax(s_at_topk / temperature, dim=-1) *
+                      F.log_softmax(s_at_topk / temperature, dim=-1)).sum(dim=-1)
+            n_keep = max(1, int(hard_token_frac * T_s))
+            threshold = s_ent.topk(n_keep, dim=1).values[:, -1:]
+            hard_mask = (s_ent >= threshold).float()
+        per_token_kl = per_token_kl * hard_mask
+
+    per_token_kl = per_token_kl * valid_mask.float()
+    n_valid = valid_mask.float().sum().clamp(min=1.0)
+    kl = per_token_kl.sum() / n_valid
+    return temperature * temperature * kl
+
+
+def train_kd_offline(config_path):
+    """Offline sparse replay KD training — no teacher in VRAM.
+
+    Uses pre-computed teacher logits from cache. Mixes random CE batches
+    with curated replay batches at a configurable ratio.
+
+    Config JSON:
+    {
+        "name": "q17_offline_sparse_replay_6k",
+        "init_from": "path/to/student_checkpoint.pt",
+        "total_steps": 6000,
+        "batch_size": 8,
+        "grad_accum": 4,
+        "lr": 1e-4,
+        "min_lr": 1e-5,
+        "warmup": 500,
+        "eval_every": 500,
+        "seq_len": 512,
+        "replay_frac": 0.125,
+        "replay_dir": "data/shards_miniplm_top20",
+        "logit_cache_dir": "data/teacher_logits_q17",
+        "teacher_name": "Qwen/Qwen3-1.7B-Base",
+        "logit_temperature": 2.0,
+        "alpha_logit": 0.12,
+        "hard_token_frac": 0.10,
+        "kl_mode": "reverse",
+        "alpha_schedule": {
+            "warmup_steps": 300,
+            "start_frac": 0.0,
+            "decay_start_step": 4800,
+            "decay_end_frac": 0.0,
+            "zero_start_step": 6000
+        },
+        "kill_criteria": {
+            "step_1500_max_bpt": 3.64,
+            "step_3000_max_gap": 0.005
+        }
+    }
+    """
+    from tokenizers import Tokenizer
+    from transformers import AutoTokenizer
+
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    init_checkpoint = cfg["init_from"]
+    total_steps = cfg.get("total_steps", 6000)
+    batch_size = cfg.get("batch_size", 8)
+    grad_accum = cfg.get("grad_accum", 4)
+    lr = cfg.get("lr", 1e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 500)
+    eval_every = cfg.get("eval_every", 500)
+    seq_len = cfg.get("seq_len", 512)
+    replay_frac = cfg.get("replay_frac", 0.125)
+    replay_dir = REPO / cfg.get("replay_dir", "data/shards_miniplm_top20")
+    logit_cache_dir = REPO / cfg.get("logit_cache_dir", "data/teacher_logits_q17")
+    teacher_name = cfg.get("teacher_name", "Qwen/Qwen3-1.7B-Base")
+    logit_temp = cfg.get("logit_temperature", 2.0)
+    alpha_logit = cfg.get("alpha_logit", 0.12)
+    hard_token_frac = cfg.get("hard_token_frac", 0.10)
+    kl_mode = cfg.get("kl_mode", "reverse")
+    alpha_schedule = cfg.get("alpha_schedule", None)
+    kill_criteria = cfg.get("kill_criteria", {})
+    save_at_steps = set(cfg.get("save_at", []))
+
+    print(f"\n{'='*60}")
+    print(f"OFFLINE SPARSE REPLAY KD: {run_name}")
+    print(f"  Student init: {init_checkpoint}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  LR: {lr} -> {min_lr}, warmup={warmup}")
+    print(f"  Replay: {replay_frac*100:.1f}% from {replay_dir.name}")
+    print(f"  Teacher cache: {logit_cache_dir.name} ({teacher_name})")
+    print(f"  KD: alpha={alpha_logit}, tau={logit_temp}, hard={hard_token_frac}, mode={kl_mode}")
+    print(f"{'='*60}")
+
+    # Student tokenizer
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # Teacher tokenizer (for shared vocab computation only — NO teacher model loaded)
+    teacher_tokenizer = AutoTokenizer.from_pretrained(teacher_name)
+
+    # Shared vocabulary overlap
+    shared_s_ids, shared_t_ids, n_shared = compute_vocab_overlap(
+        student_tokenizer, teacher_tokenizer, device=DEVICE)
+    print(f"  Vocab overlap: {n_shared}/{VOCAB_SIZE} ({100*n_shared/VOCAB_SIZE:.1f}%)")
+    del teacher_tokenizer  # no longer needed
+
+    # Datasets
+    ce_dataset = ShardedDataset(shard_dir=str(REPO / "data" / "shards_16k"))
+    replay_loader = ReplayCacheLoader(replay_dir, logit_cache_dir, seq_len=seq_len)
+
+    # Eval cache
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = ce_dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+
+    # Load student
+    init_ckpt = torch.load(init_checkpoint, weights_only=False, map_location="cpu")
+    stu_cfg = init_ckpt.get("config", {})
+    dim = stu_cfg.get("dim", 512)
+    n_layers = stu_cfg.get("n_layers", 24)
+    n_heads = stu_cfg.get("n_heads", 8)
+    ff_dim = stu_cfg.get("ff_dim", 1536)
+    exit_layers = stu_cfg.get("exit_layers", [7, 15, 23])
+
+    model = DenseTransformer(
+        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+        norm_type=stu_cfg.get("norm_type", "rmsnorm"),
+        block_schedule=stu_cfg.get("block_schedule", None),
+        conv_kernel_size=stu_cfg.get("conv_kernel_size", 64),
+        d_attn=stu_cfg.get("d_attn", None),
+        d_conv=stu_cfg.get("d_conv", None),
+        n_q_heads=stu_cfg.get("n_q_heads", None),
+        n_kv_heads=stu_cfg.get("n_kv_heads", None),
+        head_dim=stu_cfg.get("head_dim", 64),
+    ).to(DEVICE)
+
+    init_key = "model_state_dict" if "model_state_dict" in init_ckpt else "model"
+    model.load_state_dict(init_ckpt[init_key])
+    start_step = init_ckpt.get("step", 0)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  Student: {n_params:,} params, warm-start from step {start_step}")
+    del init_ckpt
+
+    # Optimizer
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1)
+    scaler = torch.amp.GradScaler("cuda")
+
+    # Training state
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"{run_name}_log.txt"
+    metrics_log = []
+    running_ce = 0.0
+    running_kd = 0.0
+    running_replay_count = 0
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+
+    # Resume from rolling checkpoint
+    resume_step = 0
+    rolling_path = ckpt_dir / f"{run_name}_rolling.pt"
+    if rolling_path.exists():
+        try:
+            rckpt = torch.load(rolling_path, weights_only=False, map_location=DEVICE)
+            model.load_state_dict(rckpt["model_state_dict"])
+            opt.load_state_dict(rckpt["optimizer_state_dict"])
+            if "scaler" in rckpt:
+                scaler.load_state_dict(rckpt["scaler"])
+            if "metrics" in rckpt:
+                metrics_log = rckpt["metrics"]
+            resume_step = rckpt.get("step", 0) - start_step
+            print(f"  RESUMED from rolling checkpoint at step {resume_step}")
+        except Exception as e:
+            print(f"  WARNING: rolling checkpoint failed ({e}), starting fresh")
+            resume_step = 0
+
+    print(f"  Starting training from step {resume_step + 1}...\n")
+
+    model.train()
+    killed = False
+    for step in range(resume_step + 1, total_steps + 1):
+        current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+        for pg in opt.param_groups:
+            pg["lr"] = current_lr
+
+        # Alpha schedule
+        if alpha_schedule:
+            ws = alpha_schedule.get("warmup_steps", 300)
+            sf = alpha_schedule.get("start_frac", 0.0)
+            ds = alpha_schedule.get("decay_start_step", int(total_steps * 0.8))
+            ef = alpha_schedule.get("decay_end_frac", 0.0)
+            zs = alpha_schedule.get("zero_start_step", total_steps)
+            if step <= ws:
+                alpha_frac = sf + (1.0 - sf) * (step / ws)
+            elif step <= ds:
+                alpha_frac = 1.0
+            elif step <= zs:
+                alpha_frac = 1.0 - (1.0 - ef) * ((step - ds) / max(zs - ds, 1))
+            else:
+                alpha_frac = 0.0
+            sa_logit = alpha_logit * alpha_frac
+        else:
+            sa_logit = alpha_logit
+            alpha_frac = 1.0
+
+        opt.zero_grad()
+        step_ce = 0.0
+        step_kd = 0.0
+        bad_step = False
+        step_replay = 0
+
+        for ga in range(grad_accum):
+            # Decide: CE batch or replay batch
+            is_replay = (random.random() < replay_frac) and (sa_logit > 0)
+
+            if is_replay:
+                # Replay batch with cached teacher logits
+                inp, tgt, t_vals, t_ids, t_offs, t_mask = \
+                    replay_loader.sample_batch(batch_size, device=DEVICE)
+                step_replay += 1
+            else:
+                # Standard CE batch from full corpus
+                inp, tgt = ce_dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                out = model(inp, return_exits=True, return_hidden=False)
+                base_loss, loss_metrics = compute_edsr_loss(
+                    out, tgt, exit_weights=actual_exit_weights)
+                ce_val = loss_metrics["ce_final"]
+
+                kd_loss = torch.tensor(0.0, device=DEVICE)
+
+                if is_replay and sa_logit > 0:
+                    # Compute student byte offsets for alignment
+                    actual_bs = inp.shape[0]
+                    stu_offsets = torch.zeros(
+                        actual_bs, inp.shape[1], 2,
+                        device=DEVICE, dtype=torch.long)
+                    for b_idx in range(actual_bs):
+                        text = student_tokenizer.decode(inp[b_idx].tolist())
+                        enc_s = student_tokenizer.encode(text)
+                        n_tok = min(len(enc_s.offsets), inp.shape[1])
+                        for ti in range(n_tok):
+                            stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                            stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
+                    # Compute KD in float32 to avoid masked-softmax NaN
+                    with torch.amp.autocast("cuda", enabled=False):
+                        kd_loss = compute_offline_kd_loss(
+                            student_logits=out["logits"].float(),
+                            student_offsets=stu_offsets,
+                            t_topk_vals=t_vals,
+                            t_topk_ids=t_ids,
+                            t_byte_offsets=t_offs,
+                            t_attn_mask=t_mask,
+                            shared_s_ids=shared_s_ids,
+                            shared_t_ids=shared_t_ids,
+                            temperature=logit_temp,
+                            hard_token_frac=hard_token_frac,
+                            kl_mode=kl_mode,
+                        )
+                    kd_loss = sa_logit * kd_loss
+
+                total_loss = (base_loss + kd_loss) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                opt.zero_grad()
+                bad_step = True
+                break
+
+            scaler.scale(total_loss).backward()
+            step_ce += ce_val / grad_accum
+            step_kd += kd_loss.item() / grad_accum
+
+        if bad_step:
+            continue
+
+        scaler.unscale_(opt)
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in model.parameters() if p.grad is not None], GRAD_CLIP)
+        scaler.step(opt)
+        scaler.update()
+
+        running_ce += step_ce
+        running_kd += step_kd
+        running_replay_count += step_replay
+
+        # Logging
+        if step % LOG_EVERY == 0:
+            avg_ce = running_ce / LOG_EVERY
+            avg_kd = running_kd / LOG_EVERY
+            avg_replay = running_replay_count / LOG_EVERY
+            bpt = avg_ce / math.log(2)
+            msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                   f"KD={avg_kd:.4f} LR={current_lr:.2e} "
+                   f"replay={avg_replay:.2f}/ga aF={alpha_frac:.2f}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            running_ce = 0.0
+            running_kd = 0.0
+            running_replay_count = 0
+
+        # Eval
+        if step % eval_every == 0 or step == total_steps:
+            model.eval()
+            det = deterministic_eval_dense(model, cache_path)
+            kurt = measure_activation_kurtosis(model, ce_dataset, DEVICE)
+            entry = {
+                "step": step, "tag": run_name,
+                "bpt": det["bpt"],
+                "avg_kurtosis": round(
+                    sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+                "max_kurtosis": round(max(kurt["kurtosis"].values()), 2),
+                "max_activation": round(max(kurt["max_activation"].values()), 2),
+            }
+            for k, v in det.items():
+                if k.startswith("bpt_exit"):
+                    entry[k] = v
+            metrics_log.append(entry)
+            msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
+                   f"kurtosis_max={entry['max_kurtosis']:.1f} "
+                   f"max_act={entry['max_activation']:.1f}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            model.train()
+            torch.cuda.empty_cache()
+
+            # Kill criteria
+            bpt_now = det["bpt"]
+            max_1500 = kill_criteria.get("step_1500_max_bpt")
+            max_3000_gap = kill_criteria.get("step_3000_max_gap")
+            if max_1500 and step == 1500 and bpt_now > max_1500:
+                print(f"\n  KILL: BPT {bpt_now:.4f} > {max_1500} at step 1500")
+                killed = True
+            if max_3000_gap and step == 3000:
+                # Compare vs CE at MATCHED step, not final step
+                # CE 6K trajectory: step 2500=3.6215, step 3500=3.6302
+                ce_matched_bpt = 3.626  # CE at ~step 3000 (interpolated)
+                gap = bpt_now - ce_matched_bpt
+                if gap > max_3000_gap:
+                    print(f"\n  KILL: gap {gap:.4f} > {max_3000_gap} vs CE-matched at step 3000")
+                    killed = True
+            if killed:
+                break
+
+        # Rolling checkpoint
+        if step % ROLLING_SAVE == 0:
+            ckpt = {
+                "step": start_step + step,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "scaler": scaler.state_dict(),
+                "config": stu_cfg,
+                "metrics": metrics_log,
+            }
+            rolling = ckpt_dir / f"{run_name}_rolling.pt"
+            tmp = rolling.with_suffix(".tmp")
+            torch.save(ckpt, tmp)
+            os.replace(str(tmp), str(rolling))
+
+        # Named checkpoints
+        if step in save_at_steps:
+            ckpt = {
+                "step": start_step + step,
+                "model_state_dict": model.state_dict(),
+                "config": stu_cfg,
+                "metrics": metrics_log,
+            }
+            save_path = ckpt_dir / f"{run_name}_step{step}.pt"
+            torch.save(ckpt, save_path)
+            print(f"  Saved named checkpoint: {save_path}")
+
+    # Final generation check
+    model.eval()
+    generations = []
+    prompts = ["The meaning of life is", "In a distant future",
+               "def fibonacci(n):\n"]
+    for prompt_text in prompts:
+        input_ids = student_tokenizer.encode(prompt_text).ids
+        gen_inp = torch.tensor([input_ids], device=DEVICE)
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+            for _ in range(64):
+                logits = model(gen_inp)
+                if isinstance(logits, dict):
+                    logits = logits["logits"]
+                next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                if gen_inp.size(1) > seq_len:
+                    break
+        gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+        generations.append({"prompt": prompt_text, "generation": gen_text})
+
+    # Final checkpoint
+    final_step = min(step, total_steps) if not killed else step
+    torch.save({
+        "step": start_step + final_step,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": opt.state_dict(),
+        "scaler": scaler.state_dict(),
+        "config": stu_cfg,
+        "metrics": metrics_log,
+    }, ckpt_dir / f"{run_name}_step{final_step}.pt")
+    print(f"  Saved checkpoint: {ckpt_dir / f'{run_name}_step{final_step}.pt'}")
+
+    # Save results
+    output = {
+        "name": run_name,
+        "config": cfg,
+        "metrics": metrics_log,
+        "generations": generations,
+        "killed": killed,
+        "final_step": final_step,
+    }
+    out_path = REPO / "results" / f"kd_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    final_bpt = metrics_log[-1]["bpt"] if metrics_log else "?"
+    print(f"\n{'='*60}")
+    print(f"OFFLINE KD {'KILLED' if killed else 'COMPLETE'}: {run_name}")
+    print(f"  Final BPT: {final_bpt}")
+    print(f"  Results: {out_path}")
+    print(f"{'='*60}")
+
+    del model, opt, scaler
+    torch.cuda.empty_cache()
+    gc.collect()
 
 
 def train_kd_phased(config_path):
@@ -5154,7 +6018,8 @@ def train_kd_phased(config_path):
         """Load teachers specified by phase config."""
         teachers = []
         for t_cfg in phase.get("teachers", []):
-            teacher = TeacherAdapter(t_cfg["name"], device=DEVICE, dtype=torch.float16)
+            t_dtype = torch.float32 if t_cfg.get("dtype", "float16") == "float32" else torch.float16
+            teacher = TeacherAdapter(t_cfg["name"], device=DEVICE, dtype=t_dtype)
             teacher.surfaces = t_cfg.get("surfaces", ["state"])
             teachers.append(teacher)
         return teachers
@@ -5246,7 +6111,9 @@ def train_kd_phased(config_path):
                                          if "semantic" in t.surfaces)
 
                     for teacher in current_teachers:
-                        with torch.no_grad():
+                        use_native_dtype = (teacher.dtype == torch.float32)
+                        ctx = torch.amp.autocast("cuda", enabled=False) if use_native_dtype else nullcontext()
+                        with torch.no_grad(), ctx:
                             t_out = teacher.forward(texts, max_length=seq_len)
 
                         safe_name = (teacher.name.replace("/", "_")
@@ -5431,6 +6298,1144 @@ def train_kd_phased(config_path):
     gc.collect()
 
 
+def train_rkp_probe(config_path):
+    """Ekalavya-RKP Probe 2: Single-teacher routed knowledge ports.
+
+    Codex R11 design. Decisive test of port mechanism:
+    - KnowledgePorts at layers 7/15/23 (zero-init, so starts as identity)
+    - Freeze layers 0-15, train only layers 16-23 + ports + lm_head
+    - Cross-tokenizer logit KD (DSKD ETA) with reverse KL + SE-KD masking
+    - WSD-alpha: KD weight decays from alpha_max to alpha_min
+    - Kill: <1pp benchmark improvement by 3K steps
+
+    Config JSON:
+    {
+        "name": "rkp_probe_q17",
+        "init_from": "results/checkpoints_kd_197m_60k_gate/control_197m_60k_step60000.pt",
+        "teacher": "Qwen/Qwen3-1.7B",
+        "total_steps": 6000,
+        "batch_size": 4,
+        "grad_accum": 8,
+        "lr": 3e-4,
+        "min_lr": 1e-5,
+        "warmup": 200,
+        "eval_every": 500,
+        "seq_len": 512,
+        "port_layers": [7, 15, 23],
+        "port_rank": 64,
+        "freeze_below": 16,
+        "alpha_max": 0.7,
+        "alpha_min": 0.1,
+        "temperature": 2.0,
+        "kl_mode": "reverse",
+        "hard_token_frac": 0.2,
+        "top_k": 64
+    }
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    init_checkpoint = cfg["init_from"]
+    teacher_name = cfg["teacher"]
+    total_steps = cfg.get("total_steps", 6000)
+    batch_size = cfg.get("batch_size", 4)
+    grad_accum = cfg.get("grad_accum", 8)
+    lr = cfg.get("lr", 3e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 200)
+    eval_every = cfg.get("eval_every", 500)
+    seq_len = cfg.get("seq_len", 512)
+    port_layers = cfg.get("port_layers", [7, 15, 23])
+    port_rank = cfg.get("port_rank", 64)
+    freeze_below = cfg.get("freeze_below", 16)
+    alpha_max = cfg.get("alpha_max", 0.7)
+    alpha_min = cfg.get("alpha_min", 0.1)
+    temperature = cfg.get("temperature", 2.0)
+    kl_mode = cfg.get("kl_mode", "reverse")
+    hard_token_frac = cfg.get("hard_token_frac", 0.2)
+    top_k = cfg.get("top_k", 64)
+
+    print(f"\n{'='*60}")
+    print(f"EKALAVYA-RKP PROBE: {run_name}")
+    print(f"  Teacher: {teacher_name}")
+    print(f"  Student init: {init_checkpoint}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  Ports: layers={port_layers}, rank={port_rank}")
+    print(f"  Freeze: layers 0-{freeze_below - 1}")
+    print(f"  Alpha: {alpha_max} -> {alpha_min} (WSD decay)")
+    print(f"  KL mode: {kl_mode}, temperature: {temperature}")
+    print(f"  SE-KD: hard_token_frac={hard_token_frac}, top_k={top_k}")
+    print(f"{'='*60}")
+
+    # ---- Load student tokenizer ----
+    from tokenizers import Tokenizer
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # ---- Dataset ----
+    shard_dir = REPO / "data" / "shards_16k"
+    weight_file = cfg.get("weight_file", None)
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+
+    # ---- Eval cache ----
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+
+    # ---- Load student from CE-60K checkpoint ----
+    ckpt = torch.load(init_checkpoint, weights_only=False, map_location="cpu")
+    stu_cfg = ckpt.get("config", {})
+    dim = stu_cfg.get("dim", 768)
+    n_layers = stu_cfg.get("n_layers", 24)
+    n_heads = stu_cfg.get("n_heads", 12)
+    ff_dim = stu_cfg.get("ff_dim", 2048)
+    exit_layers = stu_cfg.get("exit_layers", [7, 15, 23])
+
+    model = DenseTransformer(
+        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+        norm_type=stu_cfg.get("norm_type", "rmsnorm"),
+        block_schedule=stu_cfg.get("block_schedule", None),
+        conv_kernel_size=stu_cfg.get("conv_kernel_size", 64),
+        d_attn=stu_cfg.get("d_attn", None),
+        d_conv=stu_cfg.get("d_conv", None),
+        n_q_heads=stu_cfg.get("n_q_heads", None),
+        n_kv_heads=stu_cfg.get("n_kv_heads", None),
+        head_dim=stu_cfg.get("head_dim", 64),
+    ).to(DEVICE)
+
+    init_key = "model_state_dict" if "model_state_dict" in ckpt else "model"
+    model.load_state_dict(ckpt[init_key])
+    del ckpt
+    torch.cuda.empty_cache()
+
+    # ---- Add knowledge ports (zero-init → starts as identity) ----
+    model.add_knowledge_ports(port_layers=port_layers, rank=port_rank, n_teachers=1)
+    port_params = sum(p.numel() for p in model.port_parameters())
+    print(f"  Student: {sum(p.numel() for p in model.parameters()):,} params "
+          f"(+{port_params:,} port params)")
+
+    # ---- Freeze layers 0 to freeze_below-1 + embeddings ----
+    for i in range(min(freeze_below, n_layers)):
+        for p in model.layers[i].parameters():
+            p.requires_grad = False
+    for p in model.emb.parameters():
+        p.requires_grad = False
+    # Exit norms for frozen layers: freeze too
+    for layer_idx in exit_layers:
+        if layer_idx < freeze_below and str(layer_idx) in model.exit_norms:
+            for p in model.exit_norms[str(layer_idx)].parameters():
+                p.requires_grad = False
+
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    print(f"  Trainable: {trainable:,} | Frozen: {frozen:,}")
+
+    # ---- Load teacher ----
+    teacher = TeacherAdapter(teacher_name, device=DEVICE, dtype=torch.float16)
+
+    # ---- Compute vocab overlap (DSKD ETA) ----
+    shared_s_ids, shared_t_ids, n_shared = compute_vocab_overlap(
+        student_tokenizer, teacher.tokenizer, device=DEVICE)
+    print(f"  Shared vocab: {n_shared}/{VOCAB_SIZE} student, "
+          f"{n_shared}/{teacher.vocab_size} teacher")
+
+    # ---- Optimizer: separate groups for trunk vs ports ----
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+    trunk_trainable = [p for p in model.trunk_parameters() if p.requires_grad]
+    port_trainable = list(model.port_parameters())
+    param_groups = [
+        {"params": trunk_trainable, "lr": lr},
+        {"params": port_trainable, "lr": lr * 3, "is_port": True},  # ports learn faster
+    ]
+    opt = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=0.1)
+    scaler = torch.amp.GradScaler("cuda")
+
+    # ---- Training state ----
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"rkp_{run_name}_log.txt"
+    metrics_log = []
+    running_ce = 0.0
+    running_kd = 0.0
+
+    print(f"  Exit weights: {actual_exit_weights}")
+    print(f"  Starting training...\n")
+
+    model.train()
+    for step in range(1, total_steps + 1):
+        # ---- LR schedule (WSD) ----
+        current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+        for pg in opt.param_groups:
+            if pg.get("is_port", False):
+                pg["lr"] = current_lr * 3
+            else:
+                pg["lr"] = current_lr
+
+        # ---- Alpha schedule: WSD-alpha (start high, decay) ----
+        # Peng et al. ACL 2025: decreasing teacher weight beats increasing by 3.7x
+        decay_start = int(total_steps * 0.3)
+        if step < decay_start:
+            alpha = alpha_max
+        else:
+            progress = (step - decay_start) / max(total_steps - decay_start, 1)
+            alpha = alpha_max - progress * (alpha_max - alpha_min)
+
+        opt.zero_grad()
+        step_ce = 0.0
+        step_kd = 0.0
+        bad_step = False
+
+        for _ in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                # Student forward with ports active (teacher_idx=0)
+                out = model(inp, return_exits=True, teacher_idx=0)
+                base_loss, loss_metrics = compute_edsr_loss(
+                    out, tgt, exit_weights=actual_exit_weights)
+                ce_val = loss_metrics["ce_final"]
+
+                # ---- Cross-tokenizer logit KD ----
+                # Decode student tokens to text for teacher re-tokenization
+                texts = [student_tokenizer.decode(inp[b].tolist())
+                         for b in range(inp.size(0))]
+
+                # Student byte offsets
+                stu_offsets = torch.zeros(
+                    inp.shape[0], inp.shape[1], 2,
+                    device=DEVICE, dtype=torch.long)
+                for b_idx, text in enumerate(texts):
+                    enc_s = student_tokenizer.encode(text)
+                    n_tok = min(len(enc_s.offsets), inp.shape[1])
+                    for ti in range(n_tok):
+                        stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                        stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
+                # Teacher forward (no grad)
+                with torch.no_grad():
+                    t_out = teacher.forward(texts, max_length=seq_len)
+
+                # Cross-tokenizer logit KD with reverse KL + SE-KD masking
+                kd_loss = compute_cross_tok_logit_kd(
+                    student_logits=out['logits'],
+                    teacher_logits=t_out['logits'],
+                    student_offsets=stu_offsets,
+                    teacher_offsets=t_out['byte_offsets'],
+                    teacher_mask=t_out['attention_mask'],
+                    shared_s_ids=shared_s_ids,
+                    shared_t_ids=shared_t_ids,
+                    temperature=temperature,
+                    top_k=top_k,
+                    kl_mode=kl_mode,
+                    hard_token_frac=hard_token_frac,
+                )
+
+                # Combined loss: (1-alpha)*CE + alpha*KD
+                total_loss = ((1.0 - alpha) * base_loss + alpha * kd_loss) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                opt.zero_grad()
+                bad_step = True
+                break
+
+            scaler.scale(total_loss).backward()
+            step_ce += ce_val / grad_accum
+            step_kd += kd_loss.item() / grad_accum
+
+        if bad_step:
+            continue
+
+        scaler.unscale_(opt)
+        all_params = [p for p in model.parameters() if p.requires_grad]
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in all_params if p.grad is not None], GRAD_CLIP)
+        scaler.step(opt)
+        scaler.update()
+
+        running_ce += step_ce
+        running_kd += step_kd
+
+        # ---- Logging ----
+        if step % LOG_EVERY == 0:
+            avg_ce = running_ce / LOG_EVERY
+            avg_kd = running_kd / LOG_EVERY
+            bpt = avg_ce / math.log(2)
+            msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                   f"KD={avg_kd:.4f} alpha={alpha:.3f} LR={current_lr:.2e}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            running_ce = 0.0
+            running_kd = 0.0
+
+        # ---- Eval ----
+        if step % eval_every == 0 or step == total_steps:
+            model.eval()
+            det = deterministic_eval_dense(model, cache_path)
+            entry = {
+                "step": step,
+                "bpt": det["bpt"],
+                "alpha": round(alpha, 3),
+                "lr": round(current_lr, 6),
+            }
+            for k, v in det.items():
+                if k.startswith("bpt_exit"):
+                    entry[k] = v
+            metrics_log.append(entry)
+            msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} alpha={alpha:.3f}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            model.train()
+            torch.cuda.empty_cache()
+
+        # ---- Checkpoint ----
+        if step % ROLLING_SAVE == 0:
+            ckpt_data = {
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "config": stu_cfg,
+                "rkp_config": cfg,
+                "metrics": metrics_log,
+            }
+            rolling = ckpt_dir / f"rolling_step{step}.pt"
+            tmp = rolling.with_suffix(".tmp")
+            torch.save(ckpt_data, tmp)
+            os.replace(str(tmp), str(rolling))
+            # Keep only 2 most recent
+            rolling_files = sorted(ckpt_dir.glob("rolling_step*.pt"))
+            for old in rolling_files[:-2]:
+                old.unlink()
+
+    # ---- Final checkpoint ----
+    torch.save({
+        "step": total_steps,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": opt.state_dict(),
+        "config": stu_cfg,
+        "rkp_config": cfg,
+        "metrics": metrics_log,
+    }, ckpt_dir / f"final_step{total_steps}.pt")
+
+    # ---- Generation sanity check ----
+    model.eval()
+    generations = []
+    prompts = ["The meaning of life is", "In a distant future",
+               "def fibonacci(n):\n"]
+    for prompt_text in prompts:
+        input_ids = student_tokenizer.encode(prompt_text).ids
+        gen_inp = torch.tensor([input_ids], device=DEVICE)
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+            for _ in range(64):
+                logits = model(gen_inp)
+                if isinstance(logits, dict):
+                    logits = logits["logits"]
+                next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                if gen_inp.size(1) > seq_len:
+                    break
+        gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+        generations.append({"prompt": prompt_text, "generation": gen_text})
+
+    # ---- Save results ----
+    output = {
+        "name": run_name,
+        "config": cfg,
+        "metrics": metrics_log,
+        "generations": generations,
+        "shared_vocab": n_shared,
+    }
+    out_path = REPO / "results" / f"rkp_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"RKP PROBE COMPLETE: {run_name}")
+    print(f"Results: {out_path}")
+    if metrics_log:
+        final = metrics_log[-1]
+        print(f"  Final: BPT={final.get('bpt', '?')}, step={final.get('step', '?')}")
+    print(f"{'='*60}")
+
+    # Cleanup
+    del teacher.model, teacher
+    del model, opt, scaler
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
+def train_kd_scratch(config_path):
+    """From-scratch pre-training with online teacher KD.
+
+    Literature-backed protocol (Gemma 2 +7.4pp, ACL 2025 +8.0pp):
+    - Fresh student (random init)
+    - High alpha (0.9 = 90% KD, 10% CE)
+    - Cross-tokenizer logit KD via DSKD ETA
+    - WSD schedule for both LR and alpha
+    - Temperature = 0.5-1.0 (sharper than warm-start tau=2.0)
+    - Forward KL (mode-covering, standard for from-scratch)
+
+    Config JSON:
+    {
+        "name": "ekalavya_scratch_q17",
+        "teacher": "Qwen/Qwen3-1.7B-Base",
+        "total_steps": 60000,
+        "batch_size": 4,
+        "grad_accum": 8,
+        "lr": 3e-4,
+        "min_lr": 1e-5,
+        "warmup": 500,
+        "eval_every": 1000,
+        "seq_len": 512,
+        "alpha": 0.9,
+        "alpha_min": 0.0,
+        "temperature": 1.0,
+        "kl_mode": "forward",
+        "top_k": 64,
+        "hard_token_frac": null
+    }
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    teacher_name = cfg["teacher"]
+    total_steps = cfg.get("total_steps", 60000)
+    batch_size = cfg.get("batch_size", 4)
+    grad_accum = cfg.get("grad_accum", 8)
+    lr = cfg.get("lr", 3e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 500)
+    eval_every = cfg.get("eval_every", 1000)
+    seq_len = cfg.get("seq_len", 512)
+    alpha_max = cfg.get("alpha", 0.9)
+    alpha_min = cfg.get("alpha_min", 0.0)  # decay to 0 in WSD
+    temperature = cfg.get("temperature", 1.0)
+    kl_mode = cfg.get("kl_mode", "forward")
+    top_k = cfg.get("top_k", 64)
+    hard_token_frac = cfg.get("hard_token_frac", None)
+
+    # Architecture config (default: Sutra-24A-197M)
+    dim = cfg.get("dim", 768)
+    n_layers = cfg.get("n_layers", 24)
+    n_heads = cfg.get("n_heads", 12)
+    ff_dim = cfg.get("ff_dim", 2048)
+    exit_layers = cfg.get("exit_layers", [7, 15, 23])
+    norm_type = cfg.get("norm_type", "rmsnorm")
+    block_schedule = cfg.get("block_schedule", None)
+    n_q_heads = cfg.get("n_q_heads", None)
+    n_kv_heads = cfg.get("n_kv_heads", None)
+    head_dim = cfg.get("head_dim", 64)
+    conv_kernel_size = cfg.get("conv_kernel_size", 4)
+
+    print(f"\n{'='*60}")
+    print(f"EKALAVYA FROM-SCRATCH KD: {run_name}")
+    print(f"  Architecture: {n_layers}L / d={dim} / {n_heads}h / ff={ff_dim}")
+    print(f"  Teacher: {teacher_name}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  LR: {lr} -> {min_lr}, warmup={warmup}")
+    print(f"  Alpha: {alpha_max} -> {alpha_min} (WSD decay)")
+    print(f"  KL mode: {kl_mode}, temperature: {temperature}, top_k: {top_k}")
+    if hard_token_frac:
+        print(f"  SE-KD: hard_token_frac={hard_token_frac}")
+    print(f"{'='*60}")
+
+    # ---- Student tokenizer ----
+    from tokenizers import Tokenizer
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # ---- Dataset ----
+    shard_dir = REPO / "data" / "shards_16k"
+    weight_file = cfg.get("weight_file", None)
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+
+    # ---- Eval cache ----
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+
+    # ---- Fresh student (random init) ----
+    model = DenseTransformer(
+        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+        norm_type=norm_type, block_schedule=block_schedule,
+        n_q_heads=n_q_heads, n_kv_heads=n_kv_heads, head_dim=head_dim,
+        conv_kernel_size=conv_kernel_size,
+    ).to(DEVICE)
+
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  Student: {n_params:,} params (random init)")
+
+    # ---- Load teacher ----
+    teacher = TeacherAdapter(teacher_name, device=DEVICE, dtype=torch.float16)
+
+    # ---- Vocab overlap (DSKD ETA) ----
+    shared_s_ids, shared_t_ids, n_shared = compute_vocab_overlap(
+        student_tokenizer, teacher.tokenizer, device=DEVICE)
+    print(f"  Shared vocab: {n_shared}/{VOCAB_SIZE} student, "
+          f"{n_shared}/{teacher.vocab_size} teacher")
+
+    # ---- Optimizer ----
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.1)
+    scaler = torch.amp.GradScaler("cuda")
+
+    # ---- Resume support ----
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"kds_{run_name}_log.txt"
+
+    start_step = 0
+    rolling = ckpt_dir / "rolling_latest.pt"
+    if rolling.exists():
+        ckpt = torch.load(rolling, weights_only=False, map_location=DEVICE)
+        model.load_state_dict(ckpt["model_state_dict"])
+        opt.load_state_dict(ckpt["optimizer_state_dict"])
+        start_step = ckpt.get("step", 0)
+        print(f"  Resumed from step {start_step}")
+        del ckpt
+        torch.cuda.empty_cache()
+
+    metrics_log = []
+    running_ce = 0.0
+    running_kd = 0.0
+
+    print(f"  Exit weights: {actual_exit_weights}")
+    print(f"  Starting from step {start_step + 1}...\n")
+
+    model.train()
+    for step in range(start_step + 1, total_steps + 1):
+        # ---- LR schedule (WSD) ----
+        current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+        for pg in opt.param_groups:
+            pg["lr"] = current_lr
+
+        # ---- Alpha schedule (WSD: high during stable, decay during consolidation) ----
+        # ACL 2025: WSD for KD proportion. High alpha during training, decay in last 20%.
+        decay_start = int(total_steps * 0.8)
+        if step < decay_start:
+            alpha = alpha_max
+        else:
+            progress = (step - decay_start) / max(total_steps - decay_start, 1)
+            alpha = alpha_max - progress * (alpha_max - alpha_min)
+
+        opt.zero_grad()
+        step_ce = 0.0
+        step_kd = 0.0
+        bad_step = False
+
+        for _ in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                # Student forward
+                out = model(inp, return_exits=True)
+                base_loss, loss_metrics = compute_edsr_loss(
+                    out, tgt, exit_weights=actual_exit_weights)
+                ce_val = loss_metrics["ce_final"]
+
+                # ---- Cross-tokenizer logit KD ----
+                texts = [student_tokenizer.decode(inp[b].tolist())
+                         for b in range(inp.size(0))]
+
+                # Student byte offsets
+                stu_offsets = torch.zeros(
+                    inp.shape[0], inp.shape[1], 2,
+                    device=DEVICE, dtype=torch.long)
+                for b_idx, text in enumerate(texts):
+                    enc_s = student_tokenizer.encode(text)
+                    n_tok = min(len(enc_s.offsets), inp.shape[1])
+                    for ti in range(n_tok):
+                        stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                        stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
+                # Teacher forward
+                with torch.no_grad():
+                    t_out = teacher.forward(texts, max_length=seq_len)
+
+                # Cross-tokenizer logit KD
+                kd_loss = compute_cross_tok_logit_kd(
+                    student_logits=out['logits'],
+                    teacher_logits=t_out['logits'],
+                    student_offsets=stu_offsets,
+                    teacher_offsets=t_out['byte_offsets'],
+                    teacher_mask=t_out['attention_mask'],
+                    shared_s_ids=shared_s_ids,
+                    shared_t_ids=shared_t_ids,
+                    temperature=temperature,
+                    top_k=top_k,
+                    kl_mode=kl_mode,
+                    hard_token_frac=hard_token_frac,
+                )
+
+                # Combined: (1-alpha)*CE + alpha*KD
+                total_loss = ((1.0 - alpha) * base_loss + alpha * kd_loss) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                opt.zero_grad()
+                bad_step = True
+                break
+
+            scaler.scale(total_loss).backward()
+            step_ce += ce_val / grad_accum
+            step_kd += kd_loss.item() / grad_accum
+
+        if bad_step:
+            continue
+
+        scaler.unscale_(opt)
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in model.parameters() if p.grad is not None], GRAD_CLIP)
+        scaler.step(opt)
+        scaler.update()
+
+        running_ce += step_ce
+        running_kd += step_kd
+
+        # ---- Logging ----
+        if step % LOG_EVERY == 0:
+            avg_ce = running_ce / LOG_EVERY
+            avg_kd = running_kd / LOG_EVERY
+            bpt = avg_ce / math.log(2)
+            msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                   f"KD={avg_kd:.4f} alpha={alpha:.3f} LR={current_lr:.2e}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            running_ce = 0.0
+            running_kd = 0.0
+
+        # ---- Eval ----
+        if step % eval_every == 0 or step == total_steps:
+            model.eval()
+            det = deterministic_eval_dense(model, cache_path)
+            kurt = measure_activation_kurtosis(model, dataset, DEVICE)
+            entry = {
+                "step": step,
+                "bpt": det["bpt"],
+                "alpha": round(alpha, 3),
+                "lr": round(current_lr, 6),
+                "avg_kurtosis": round(
+                    sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+            }
+            for k, v in det.items():
+                if k.startswith("bpt_exit"):
+                    entry[k] = v
+            metrics_log.append(entry)
+            msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
+                   f"kurtosis={entry['avg_kurtosis']:.1f} alpha={alpha:.3f}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            model.train()
+            torch.cuda.empty_cache()
+
+        # ---- Checkpoint (rolling + milestone) ----
+        if step % ROLLING_SAVE == 0 or (step == 100 and start_step < 100):
+            ckpt_data = {
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim, "exit_layers": exit_layers,
+                    "norm_type": norm_type, "block_schedule": block_schedule,
+                    "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads, "head_dim": head_dim,
+                    "conv_kernel_size": conv_kernel_size,
+                },
+                "kd_config": cfg,
+                "metrics": metrics_log,
+            }
+            rolling_path = ckpt_dir / "rolling_latest.pt"
+            tmp = rolling_path.with_suffix(".tmp")
+            torch.save(ckpt_data, tmp)
+            os.replace(str(tmp), str(rolling_path))
+
+        # Milestone checkpoints at key steps
+        if step in [1000, 3000, 5000, 10000, 15000, 20000, 30000, 45000, 60000]:
+            torch.save({
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim, "exit_layers": exit_layers,
+                    "norm_type": norm_type, "block_schedule": block_schedule,
+                    "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads, "head_dim": head_dim,
+                },
+                "metrics": metrics_log,
+            }, ckpt_dir / f"step{step}.pt")
+
+    # ---- Generation check ----
+    model.eval()
+    generations = []
+    prompts = ["The meaning of life is", "In a distant future",
+               "def fibonacci(n):\n"]
+    for prompt_text in prompts:
+        input_ids = student_tokenizer.encode(prompt_text).ids
+        gen_inp = torch.tensor([input_ids], device=DEVICE)
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+            for _ in range(64):
+                logits = model(gen_inp)
+                if isinstance(logits, dict):
+                    logits = logits["logits"]
+                next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                if gen_inp.size(1) > seq_len:
+                    break
+        gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+        generations.append({"prompt": prompt_text, "generation": gen_text})
+
+    # ---- Save results ----
+    output = {
+        "name": run_name,
+        "config": cfg,
+        "metrics": metrics_log,
+        "generations": generations,
+        "shared_vocab": n_shared,
+    }
+    out_path = REPO / "results" / f"kds_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"FROM-SCRATCH KD COMPLETE: {run_name}")
+    print(f"Results: {out_path}")
+    if metrics_log:
+        final = metrics_log[-1]
+        print(f"  Final: BPT={final.get('bpt', '?')}, step={final.get('step', '?')}")
+    print(f"{'='*60}")
+
+    # Cleanup
+    del teacher.model, teacher
+    del model, opt, scaler
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
+def train_state_kd_scratch(config_path):
+    """From-scratch pre-training with hidden-state contrastive KD (R13 design).
+
+    Codex R13: Cross-tokenizer logit KD is dead (11 experiments, all failed).
+    Hidden-state KD via byte-span-pooled InfoNCE cosine is vocabulary-independent.
+
+    Design:
+    - 3 independent linear projectors (D_student -> D_teacher) for student layers
+    - Loss: L = L_CE + alpha_state * sum(depth_weight[i] * L_state[i])
+    - Alpha ramp schedule (not WSD): ramp up, hold, decay
+    - WSD for base LR (validated: -0.42 BPT free)
+    - Expected 3K BPT: 4.65-4.78, kill if > 4.82
+
+    Config JSON fields (beyond standard):
+        student_kd_layers: [7, 15, 23]
+        teacher_kd_layers: [8, 16, 24]
+        n_spans: 32
+        contrastive_temperature: 0.07
+        depth_weights: [0.30, 0.50, 0.20]
+        alpha_state_start/max/min: 0.06/0.30/0.03
+        alpha_state_ramp_end: 400
+        alpha_state_decay_start: 2200
+        alpha_state_decay_end: 3000
+        projector_lr: 6e-4
+        projector_weight_decay: 0.01
+    """
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    run_name = cfg["name"]
+    teacher_name = cfg["teacher"]
+    total_steps = cfg.get("total_steps", 3000)
+    batch_size = cfg.get("batch_size", 4)
+    grad_accum = cfg.get("grad_accum", 8)
+    lr = cfg.get("lr", 3e-4)
+    min_lr = cfg.get("min_lr", 1e-5)
+    warmup = cfg.get("warmup", 200)
+    eval_every = cfg.get("eval_every", 500)
+    seq_len = cfg.get("seq_len", 512)
+
+    # Architecture
+    dim = cfg.get("dim", 768)
+    n_layers = cfg.get("n_layers", 24)
+    n_heads = cfg.get("n_heads", 12)
+    ff_dim = cfg.get("ff_dim", 2304)
+    exit_layers = cfg.get("exit_layers", [7, 15, 23])
+    norm_type = cfg.get("norm_type", "ss_rmsnorm")
+    block_schedule = cfg.get("block_schedule", None)
+    n_q_heads = cfg.get("n_q_heads", 6)
+    n_kv_heads = cfg.get("n_kv_heads", 3)
+    head_dim = cfg.get("head_dim", 64)
+    conv_kernel_size = cfg.get("conv_kernel_size", 4)
+
+    # State KD config
+    student_kd_layers = cfg.get("student_kd_layers", [7, 15, 23])
+    teacher_kd_layers = cfg.get("teacher_kd_layers", [8, 16, 24])
+    n_spans = cfg.get("n_spans", 32)
+    temperature = cfg.get("contrastive_temperature", 0.07)
+    depth_weights = cfg.get("depth_weights", [0.30, 0.50, 0.20])
+
+    # Alpha state schedule (ramp up, hold, decay — NOT WSD)
+    alpha_start = cfg.get("alpha_state_start", 0.06)
+    alpha_max = cfg.get("alpha_state_max", 0.30)
+    alpha_min = cfg.get("alpha_state_min", 0.03)
+    ramp_end = cfg.get("alpha_state_ramp_end", 400)
+    decay_start = cfg.get("alpha_state_decay_start", 2200)
+    decay_end = cfg.get("alpha_state_decay_end", total_steps)
+
+    # Projector config
+    proj_lr = cfg.get("projector_lr", 6e-4)
+    proj_wd = cfg.get("projector_weight_decay", 0.01)
+
+    assert len(student_kd_layers) == len(teacher_kd_layers) == len(depth_weights), \
+        "student_kd_layers, teacher_kd_layers, and depth_weights must have same length"
+
+    print(f"\n{'='*60}")
+    print(f"HIDDEN-STATE CONTRASTIVE KD (R13): {run_name}")
+    print(f"  Architecture: {n_layers}L / d={dim} / {n_heads}h / ff={ff_dim}")
+    print(f"  Teacher: {teacher_name}")
+    print(f"  Steps: {total_steps}, BS={batch_size}x{grad_accum}={batch_size*grad_accum}")
+    print(f"  LR: {lr} -> {min_lr}, warmup={warmup} (WSD)")
+    print(f"  State KD: student layers {student_kd_layers} -> teacher layers {teacher_kd_layers}")
+    print(f"  n_spans={n_spans}, temperature={temperature}")
+    print(f"  Depth weights: {depth_weights}")
+    print(f"  Alpha: {alpha_start} -> {alpha_max} (ramp 1-{ramp_end}), "
+          f"hold ({ramp_end+1}-{decay_start}), "
+          f"decay {alpha_max} -> {alpha_min} ({decay_start+1}-{decay_end})")
+    print(f"  Projector LR={proj_lr}, WD={proj_wd}")
+    print(f"{'='*60}")
+
+    # ---- Student tokenizer ----
+    from tokenizers import Tokenizer
+    tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
+    student_tokenizer = Tokenizer.from_file(str(tok_path))
+
+    # ---- Dataset ----
+    shard_dir = REPO / "data" / "shards_16k"
+    weight_file = cfg.get("weight_file", None)
+    dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
+
+    # ---- Eval cache ----
+    cache_path = REPO / "results" / "eval_cache_16k.pt"
+    if not cache_path.exists():
+        print("Building eval cache...")
+        test_tokens = dataset.get_test_tokens()
+        windows = []
+        wlen = seq_len + 1
+        for start in range(0, len(test_tokens) - wlen, wlen):
+            windows.append(test_tokens[start:start + wlen])
+        torch.save({"windows": windows}, cache_path)
+
+    # ---- Fresh student (random init) ----
+    model = DenseTransformer(
+        vocab_size=VOCAB_SIZE, dim=dim, n_layers=n_layers,
+        n_heads=n_heads, ff_dim=ff_dim, exit_layers=exit_layers,
+        norm_type=norm_type, block_schedule=block_schedule,
+        n_q_heads=n_q_heads, n_kv_heads=n_kv_heads, head_dim=head_dim,
+        conv_kernel_size=conv_kernel_size,
+    ).to(DEVICE)
+
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  Student: {n_params:,} params (random init)")
+
+    # ---- Load teacher ----
+    teacher = TeacherAdapter(teacher_name, device=DEVICE, dtype=torch.float16)
+    teacher_dim = teacher.hidden_dim  # e.g. 2048 for Qwen3-1.7B
+
+    # ---- 3 independent linear projectors (student_dim -> teacher_dim) ----
+    projectors = nn.ModuleList([
+        nn.Linear(dim, teacher_dim, bias=False).to(DEVICE)
+        for _ in student_kd_layers
+    ])
+    # Initialize with small random values
+    for proj in projectors:
+        nn.init.normal_(proj.weight, std=0.02)
+
+    n_proj_params = sum(p.numel() for p in projectors.parameters())
+    print(f"  Projectors: {n_proj_params:,} params ({len(projectors)}x Linear({dim}->{teacher_dim}))")
+
+    # ---- Optimizer: separate param groups for model and projectors ----
+    actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
+    opt = torch.optim.AdamW([
+        {"params": model.parameters(), "lr": lr, "weight_decay": 0.1},
+        {"params": projectors.parameters(), "lr": proj_lr, "weight_decay": proj_wd},
+    ], betas=(0.9, 0.95))
+    scaler = torch.amp.GradScaler("cuda")
+
+    # ---- Resume support ----
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_file = REPO / "results" / f"state_kd_{run_name}_log.txt"
+
+    start_step = 0
+    rolling = ckpt_dir / "rolling_latest.pt"
+    if rolling.exists():
+        ckpt = torch.load(rolling, weights_only=False, map_location=DEVICE)
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "projectors_state_dict" in ckpt:
+            projectors.load_state_dict(ckpt["projectors_state_dict"])
+        opt.load_state_dict(ckpt["optimizer_state_dict"])
+        start_step = ckpt.get("step", 0)
+        print(f"  Resumed from step {start_step}")
+        del ckpt
+        torch.cuda.empty_cache()
+
+    metrics_log = []
+    running_ce = 0.0
+    running_state = 0.0
+
+    print(f"  Exit weights: {actual_exit_weights}")
+    print(f"  Starting from step {start_step + 1}...\n")
+
+    model.train()
+    projectors.train()
+    for step in range(start_step + 1, total_steps + 1):
+        # ---- LR schedule (WSD) for model params ----
+        current_lr = get_lr_wsd(step, warmup, total_steps, lr, min_lr)
+        opt.param_groups[0]["lr"] = current_lr
+        # Projector LR follows same WSD shape but from proj_lr
+        proj_current_lr = get_lr_wsd(step, warmup, total_steps, proj_lr, proj_lr * 0.01)
+        opt.param_groups[1]["lr"] = proj_current_lr
+
+        # ---- Alpha state schedule: ramp -> hold -> decay ----
+        if step <= ramp_end:
+            # Linear ramp from alpha_start to alpha_max
+            alpha_state = alpha_start + (alpha_max - alpha_start) * step / max(ramp_end, 1)
+        elif step <= decay_start:
+            alpha_state = alpha_max
+        elif step <= decay_end:
+            progress = (step - decay_start) / max(decay_end - decay_start, 1)
+            alpha_state = alpha_max - progress * (alpha_max - alpha_min)
+        else:
+            alpha_state = alpha_min
+
+        opt.zero_grad()
+        step_ce = 0.0
+        step_state = 0.0
+        bad_step = False
+
+        for _ in range(grad_accum):
+            inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
+
+            with torch.amp.autocast("cuda", dtype=DTYPE):
+                # Student forward — need exit_hidden for KD layers
+                out = model(inp, return_exits=True, return_hidden=True)
+                base_loss, loss_metrics = compute_edsr_loss(
+                    out, tgt, exit_weights=actual_exit_weights)
+                ce_val = loss_metrics["ce_final"]
+
+                # ---- Student byte offsets ----
+                texts = [student_tokenizer.decode(inp[b].tolist())
+                         for b in range(inp.size(0))]
+                stu_offsets = torch.zeros(
+                    inp.shape[0], inp.shape[1], 2,
+                    device=DEVICE, dtype=torch.long)
+                for b_idx, text in enumerate(texts):
+                    enc_s = student_tokenizer.encode(text)
+                    n_tok = min(len(enc_s.offsets), inp.shape[1])
+                    for ti in range(n_tok):
+                        stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                        stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+
+                stu_mask = torch.ones(inp.shape[0], inp.shape[1],
+                                      device=DEVICE, dtype=torch.long)
+
+                # ---- Teacher forward with hidden states ----
+                with torch.no_grad():
+                    t_out = teacher.forward(texts, max_length=seq_len,
+                                            kd_layers=teacher_kd_layers)
+
+                # ---- Compute per-layer state KD losses ----
+                state_loss_total = torch.tensor(0.0, device=DEVICE)
+                for pair_idx, (s_layer, t_layer) in enumerate(
+                        zip(student_kd_layers, teacher_kd_layers)):
+                    # Get student hidden at this layer
+                    s_hidden = out['exit_hidden'].get(s_layer)
+                    if s_hidden is None:
+                        continue
+                    # Get teacher hidden at this layer
+                    t_hidden = t_out['kd_hidden'].get(t_layer)
+                    if t_hidden is None:
+                        continue
+
+                    layer_loss = compute_span_infonce_loss(
+                        student_hidden=s_hidden,
+                        teacher_hidden=t_hidden,
+                        student_offsets=stu_offsets,
+                        teacher_offsets=t_out['byte_offsets'],
+                        student_mask=stu_mask,
+                        teacher_mask=t_out['attention_mask'],
+                        projector=projectors[pair_idx],
+                        n_spans=n_spans,
+                        temperature=temperature,
+                    )
+                    state_loss_total = state_loss_total + depth_weights[pair_idx] * layer_loss
+
+                # ADDITIVE loss: L = L_CE + alpha_state * L_state
+                # NOT mixture (1-alpha)*CE + alpha*KD — that's wrong for representation shaping
+                total_loss = (base_loss + alpha_state * state_loss_total) / grad_accum
+
+            if not torch.isfinite(total_loss):
+                print(f"  WARNING: NaN/Inf at step {step}, skipping")
+                opt.zero_grad()
+                bad_step = True
+                break
+
+            scaler.scale(total_loss).backward()
+            step_ce += ce_val / grad_accum
+            step_state += state_loss_total.item() / grad_accum
+
+        if bad_step:
+            continue
+
+        scaler.unscale_(opt)
+        all_params = list(model.parameters()) + list(projectors.parameters())
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in all_params if p.grad is not None], GRAD_CLIP)
+        scaler.step(opt)
+        scaler.update()
+
+        running_ce += step_ce
+        running_state += step_state
+
+        # ---- Logging ----
+        if step % LOG_EVERY == 0:
+            avg_ce = running_ce / LOG_EVERY
+            avg_state = running_state / LOG_EVERY
+            bpt = avg_ce / math.log(2)
+            msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
+                   f"StateKD={avg_state:.4f} alpha={alpha_state:.3f} LR={current_lr:.2e}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            running_ce = 0.0
+            running_state = 0.0
+
+        # ---- Eval ----
+        if step % eval_every == 0 or step == total_steps:
+            model.eval()
+            projectors.eval()
+            det = deterministic_eval_dense(model, cache_path)
+            kurt = measure_activation_kurtosis(model, dataset, DEVICE)
+            entry = {
+                "step": step,
+                "bpt": det["bpt"],
+                "alpha_state": round(alpha_state, 4),
+                "lr": round(current_lr, 6),
+                "avg_kurtosis": round(
+                    sum(kurt["kurtosis"].values()) / len(kurt["kurtosis"]), 2),
+            }
+            for k, v in det.items():
+                if k.startswith("bpt_exit"):
+                    entry[k] = v
+            metrics_log.append(entry)
+            msg = (f"  EVAL step {step}: BPT={det['bpt']:.4f} "
+                   f"kurtosis={entry['avg_kurtosis']:.1f} alpha_state={alpha_state:.3f}")
+            print(msg, flush=True)
+            with open(log_file, "a") as f:
+                f.write(msg + "\n")
+            model.train()
+            projectors.train()
+            torch.cuda.empty_cache()
+
+        # ---- Checkpoint (rolling + milestone) ----
+        if step % ROLLING_SAVE == 0 or (step == 100 and start_step < 100):
+            ckpt_data = {
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "projectors_state_dict": projectors.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim, "exit_layers": exit_layers,
+                    "norm_type": norm_type, "block_schedule": block_schedule,
+                    "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads, "head_dim": head_dim,
+                    "conv_kernel_size": conv_kernel_size,
+                },
+                "state_kd_config": cfg,
+                "metrics": metrics_log,
+            }
+            rolling_path = ckpt_dir / "rolling_latest.pt"
+            tmp = rolling_path.with_suffix(".tmp")
+            torch.save(ckpt_data, tmp)
+            os.replace(str(tmp), str(rolling_path))
+
+        # Milestone checkpoints
+        if step in [500, 1000, 1500, 2000, 2500, 3000, 5000, 10000, 15000]:
+            torch.save({
+                "step": step,
+                "model_state_dict": model.state_dict(),
+                "projectors_state_dict": projectors.state_dict(),
+                "config": {
+                    "vocab_size": VOCAB_SIZE, "dim": dim, "n_layers": n_layers,
+                    "n_heads": n_heads, "ff_dim": ff_dim, "exit_layers": exit_layers,
+                    "norm_type": norm_type, "block_schedule": block_schedule,
+                    "n_q_heads": n_q_heads, "n_kv_heads": n_kv_heads, "head_dim": head_dim,
+                },
+                "metrics": metrics_log,
+            }, ckpt_dir / f"step{step}.pt")
+
+    # ---- Generation check ----
+    model.eval()
+    generations = []
+    prompts = ["The meaning of life is", "In a distant future",
+               "def fibonacci(n):\n"]
+    for prompt_text in prompts:
+        input_ids = student_tokenizer.encode(prompt_text).ids
+        gen_inp = torch.tensor([input_ids], device=DEVICE)
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=DTYPE):
+            for _ in range(64):
+                logits = model(gen_inp)
+                if isinstance(logits, dict):
+                    logits = logits["logits"]
+                next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                gen_inp = torch.cat([gen_inp, next_token], dim=1)
+                if gen_inp.size(1) > seq_len:
+                    break
+        gen_text = student_tokenizer.decode(gen_inp[0].tolist())
+        generations.append({"prompt": prompt_text, "generation": gen_text})
+
+    # ---- Save results ----
+    output = {
+        "name": run_name,
+        "config": cfg,
+        "metrics": metrics_log,
+        "generations": generations,
+    }
+    out_path = REPO / "results" / f"state_kd_{run_name}_results.json"
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n{'='*60}")
+    print(f"HIDDEN-STATE KD COMPLETE: {run_name}")
+    print(f"Results: {out_path}")
+    if metrics_log:
+        final = metrics_log[-1]
+        print(f"  Final: BPT={final.get('bpt', '?')}, step={final.get('step', '?')}")
+    print(f"{'='*60}")
+
+    # Cleanup
+    del teacher.model, teacher
+    del model, opt, scaler, projectors
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Dense Transformer (F4 baseline / EDSR-98M)")
@@ -5471,12 +7476,24 @@ if __name__ == "__main__":
                         help="Initialize model+optimizer from another run's checkpoint (for A/B tests)")
     parser.add_argument("--ab-probe", type=str, default=None,
                         help="Run A/B probe from JSON config file")
+    parser.add_argument("--shard-dir", type=str, default=None,
+                        help="Override shard directory (for curated/MiniPLM training)")
+    parser.add_argument("--reset-step", action="store_true",
+                        help="Reset step counter to 0 when using --init-from (fresh LR schedule)")
     parser.add_argument("--kd-train", type=str, default=None,
                         help="Run RMFD KD training from JSON config file")
     parser.add_argument("--kd-variant", type=str, default=None,
                         help="Run only this variant tag from the KD config (skip others)")
+    parser.add_argument("--kd-offline", type=str, default=None,
+                        help="Run offline sparse replay KD training from JSON config")
     parser.add_argument("--kd-phased", type=str, default=None,
                         help="Run phase-aware RMFD production training from JSON config")
+    parser.add_argument("--rkp-probe", type=str, default=None,
+                        help="Run Ekalavya-RKP knowledge port probe from JSON config")
+    parser.add_argument("--kd-scratch", type=str, default=None,
+                        help="Run from-scratch pre-training with online teacher KD from JSON config")
+    parser.add_argument("--state-kd-scratch", type=str, default=None,
+                        help="Run from-scratch hidden-state contrastive KD (R13) from JSON config")
     parser.add_argument("--committee-map", type=str, default=None,
                         help="Run committee map audit on this student checkpoint (Ekalavya Probe 1)")
     parser.add_argument("--committee-windows", type=int, default=50,
@@ -5488,8 +7505,24 @@ if __name__ == "__main__":
     if args.max_steps is not None:
         MAX_TRAIN_STEPS = args.max_steps
 
+    if args.rkp_probe:
+        train_rkp_probe(args.rkp_probe)
+        sys.exit(0)
+
+    if args.kd_scratch:
+        train_kd_scratch(args.kd_scratch)
+        sys.exit(0)
+
+    if args.state_kd_scratch:
+        train_state_kd_scratch(args.state_kd_scratch)
+        sys.exit(0)
+
     if args.committee_map:
         probe_committee_map(args.committee_map, n_windows=args.committee_windows)
+        sys.exit(0)
+
+    if args.kd_offline:
+        train_kd_offline(args.kd_offline)
         sys.exit(0)
 
     if args.kd_phased:
@@ -5557,4 +7590,5 @@ if __name__ == "__main__":
 
     run_name = args.run_name or ("edsr_98m" if args.edsr else "dense_f4")
     train(run_name=run_name, edsr=args.edsr, from_ckpt=args.from_ckpt,
-          weight_file=args.weight_file, init_from=args.init_from)
+          weight_file=args.weight_file, init_from=args.init_from,
+          shard_dir_override=args.shard_dir, reset_step=args.reset_step)
