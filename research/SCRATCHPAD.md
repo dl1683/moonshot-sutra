@@ -6,7 +6,255 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
-## PCD R15 RUNNING — Predictive Coding Distillation (2026-04-01)
+## DIAGNOSTIC PROBES: ROOT CAUSE OF KD FAILURE (2026-04-01)
+
+**7 probes run on 60K student checkpoint (CPU-only, 38 seconds). FINDINGS ARE DEVASTATING.**
+
+### Probe 1: SVD Spectrum — Representation Structure
+| Layer | Eff Rank | Top-10 Var | Cond# | Notes |
+|-------|----------|------------|-------|-------|
+| 0 (emb) | 504/768 | 53.3% | 1200 | Embedding concentrated in low-dim subspace |
+| 1-7 | 573-593 | 17-20% | 45-80 | Moderate spread, highest rank at L7 |
+| **8** | **567** | **34.9%** | **98** | **SUDDEN compression after exit L7** |
+| 10-15 | 610-619 | 20-24% | 34-44 | Highest rank in model (middle layers) |
+| **16** | **549** | **42.0%** | **105** | **SUDDEN compression after exit L15** |
+| 17-24 | 543-568 | 36-42% | 53-90 | Progressive concentration toward output |
+
+**Pattern: Exit layers at 7 and 15 create compression bottlenecks. After each exit, representations collapse into lower-rank subspaces. This is a STRUCTURAL issue — the model is trained to produce "finished" representations at each exit, so the layers immediately after are working with pre-compressed inputs.**
+
+### Probe 2: Inter-layer CKA — NEAR-ZERO cross-layer similarity
+- CKA(embedding, any layer) ≈ 0.01-0.02
+- Adjacent layers: CKA ≈ 0.03-0.09
+- Non-adjacent layers: CKA ≈ 0.01-0.05
+
+**Each layer does something VERY different from the previous. No gradual refinement — each layer is a sharp transformation.** This means KD losses that align layers (e.g., CKA matching, hidden-state projection) face a moving target at every layer.
+
+### Probe 3: Exit CKA — THE SMOKING GUN
+- CKA(exit_7, exit_15) = **0.894**
+- CKA(exit_15, exit_23) = **0.978**
+- CKA(exit_7, exit_23) = **0.871**
+
+**Exit representations are almost IDENTICAL.** Layers 15→23 add ALMOST NOTHING (CKA 0.978). The model has "crystallized" its exit representations by layer 7, and layers 8-23 are fine-tuning at best. This means **the deep layers are underutilized** and KD targeting those layers is pushing into a near-dead subspace.
+
+### Probe 4: Entropy — Highly confident model
+- Mean entropy: 0.295 (normalized to [0,1])
+- 48.7% of tokens have entropy < 0.3 (very confident)
+- 0.0% have entropy > 0.8
+
+**Half the tokens are already "solved" by the student. KD can only help on the ~51% of tokens where the model is uncertain.** But our active-span selection (top 20% entropy) may be targeting the RIGHT tokens — just with the wrong mechanism.
+
+### Probe 5: Gradient Sensitivity — DEEP LAYER GRADIENT DEAD ZONE
+| Layer | |dL/dh| | Per-token |
+|-------|--------|-----------|
+| 0 | 0.0281 | 0.000678 |
+| 3 | 0.0202 | 0.000495 |
+| 7 | 0.0101 | 0.000243 |
+| 11 | 0.0063 | 0.000152 |
+| **15** | **0.0036** | **0.000084** |
+| 19 | 0.0031 | 0.000072 |
+| 23 | 0.0040 | 0.000092 |
+
+**Gradient at L15 is 7.8x SMALLER than at L0.** KD losses applied at layers 15/23 produce gradients that barely affect the weights. The deep layers are in a gradient dead zone. **This single fact explains why ALL deep-layer KD approaches (R5-R15) failed.**
+
+### Probe 6: Student-Teacher CKA — GAP BARELY EXISTS
+- CKA(student_L7, teacher_L8) = **0.927**
+- CKA(student_L15, teacher_L16) = **0.932**
+- CKA(student_L23, teacher_L24) = **0.780**
+
+**The student is ALREADY 93% similar to the teacher at layers 7 and 15.** There is almost no representation gap to close. KD is trying to push the student toward a target it has already nearly reached. The only meaningful gap is at L23 (78%), but that's also the deepest layer with the weakest gradients.
+
+### ROOT CAUSE SYNTHESIS
+
+**Why 15 rounds of KD failed — THREE interlocking causes:**
+
+1. **Near-zero representation gap (L7/L15 CKA ≈ 0.93):** The student's representations are already well-aligned with the teacher's. There is almost no "knowledge" left to transfer in the representation space. KD is trying to close a gap that barely exists.
+
+2. **Gradient dead zone in deep layers (|dL/dh| drops 7.8x from L0 to L15):** Even if there IS a gap (L23 at 0.78), the gradient from KD losses at deep layers barely reaches the weights. The signal drowns in noise.
+
+3. **Exit representation crystallization (CKA(exit_15, exit_23) = 0.978):** The model produces "finished" representations at each exit. Layers 15-23 do almost nothing — they're in the shadow of the earlier exits. KD into these layers is KD into a near-dead subspace.
+
+**Combined effect:** We've been applying small-gradient KD losses to nearly-aligned representations in underutilized layers. This is like trying to steer a parked car.
+
+### Probe 7b: 3K FROM-SCRATCH vs 60K — THE KILLER COMPARISON
+
+| Layer Pair | 3K Student-Teacher CKA | 60K Student-Teacher CKA | Delta |
+|------------|------------------------|-------------------------|-------|
+| L7 vs T_L8 | 0.907 | 0.927 | +0.020 |
+| L15 vs T_L16 | 0.933 | 0.932 | -0.001 |
+| L23 vs T_L24 | **0.918** | **0.780** | **-0.138** |
+
+**Exit crystallization at 3K:** CKA(exit_15, exit_23) = 0.992 (even MORE crystallized than 60K's 0.978).
+
+**INTERPRETATION:**
+1. After just 3K steps of pure CE, the student is ALREADY 90%+ aligned with the teacher. Representation alignment is a property of the ARCHITECTURE, not training.
+2. At 60K, the L23 representation has DIVERGED from the teacher (0.918 → 0.780). The student has specialized its deep layers for its own capacity — this is INTENTIONAL optimization, not a deficiency.
+3. We've been trying to "fix" something that's not broken (L7/L15) and fighting natural optimization at L23.
+
+### IMPLICATIONS FOR WHAT TO TRY NEXT
+
+The data says representation-matching KD is wrong. The alternatives fall into categories:
+
+**Category A: Fix WHERE we apply KD (not representations — something else)**
+1. **Logit-level KD on the OUTPUT distribution only.** Representations are aligned. The gap is in how the model USES those representations to predict tokens. But cross-tokenizer logit KD was catastrophic (R12a/b). Need same-tokenizer teacher or byte-level logit matching.
+2. **Attention pattern transfer.** Representations are similar but attention patterns may differ. Transfer HOW the model attends, not WHAT the representations look like.
+3. **Gradient direction transfer.** Instead of matching teacher states, match teacher gradient directions. If the teacher's gradient says "this token's embedding should move THIS way," propagate that signal to the student.
+
+**Category B: Fix WHAT we're transferring (not structure — function)**
+4. **Functional distillation.** Don't match internal states at all. Match the student's and teacher's BEHAVIOR on carefully chosen inputs. What predictions does the teacher get right that the student doesn't? Train on THOSE.
+5. **Contrastive behavior distillation.** Generate pairs of inputs where the teacher clearly distinguishes them but the student doesn't. Train on the discriminative signal, not the representation.
+
+**Category C: Fix the student architecture to BENEFIT from KD**
+6. **Add an explicit "teacher knowledge port" — a small auxiliary network that receives teacher signal and modulates early layers (0-7 where gradients are strong).**
+7. **Break the exit crystallization.** The exit CKA of 0.978 (L15→L23) means the deep layers are nearly dead. Remove early exits during KD training to force layers 8-23 to develop distinct features.
+8. **Pre-align the vocabulary.** Build a mapping from Qwen tokens to Sutra byte-tokens that preserves semantic similarity. The cross-tokenizer gap may be the primary bottleneck.
+
+**Category D: Abandon online KD entirely**
+9. **Synthetic data augmentation.** Use teachers to GENERATE training data (rephrasings, expansions, reasoning chains). No runtime KD overhead.
+10. **Data selection via teacher difficulty.** Use teacher perplexity to select training data: train on examples the student finds hard but the teacher finds easy (the knowledge gap is in DATA selection, not loss).
+
+**R13 reinterpretation:** InfoNCE cosine with byte-span pooling may have worked as a REGULARIZER that prevented the student from over-committing to its own representation geometry in early training. Not KD — just a better training signal.
+
+### Probe 8: R13 vs CE at 3K — WHY did InfoNCE work?
+
+**R13 had LESS exit crystallization:** CKA(exit_15, exit_23) = 0.976 vs CE's 0.989.
+**R13 had HIGHER effective rank at ALL exits:**
+
+| Exit | R13 eff_rank | CE eff_rank | R13 top10_var | CE top10_var |
+|------|-------------|-------------|---------------|-------------|
+| 7 | **537.4** | 524.4 | **0.262** | 0.299 |
+| 15 | **542.0** | 527.6 | **0.293** | 0.342 |
+| 23 | **526.3** | 516.0 | **0.352** | 0.376 |
+
+**INTERPRETATION:** InfoNCE acted as a DIVERSITY-PRESERVING REGULARIZER that prevented representation collapse into low-rank subspaces. The BPT improvement was from maintaining richer representations, not from teacher knowledge transfer. The "teacher signal" was incidental — what mattered was the contrastive structure of the loss.
+
+**This reframes the entire KD effort:** The value isn't in the teacher's knowledge (which the student can already approximate at 93% CKA). The value is in **auxiliary training signals that prevent the student from collapsing into degenerate solutions during training.**
+
+### THE REFRAME: Not Knowledge Transfer — Training Signal Enrichment
+
+If the core issue is representation collapse / degenerate training dynamics, then the solution is NOT "better KD" — it's **better training signals.** This opens up:
+1. **Contrastive objectives (no teacher needed):** SimCLR-style, barlow twins on byte spans
+2. **Spectral regularization:** Explicitly penalize low effective rank
+3. **Entropy maximization:** Maximum entropy principles on representation distribution
+4. **Multi-task auxiliary losses:** Grammar, coreference, NER, etc. as training signal enrichment
+5. **Stochastic depth / layer dropout:** Force layers to be individually useful, preventing crystallization
+
+### Probe 9: Token-Level Divergence — WHERE Does the Student Fail?
+
+**Student (60K) vs Teacher (Qwen3-1.7B):**
+| Metric | Student | Teacher |
+|--------|---------|---------|
+| Mean max prob | 0.485 | 0.654 |
+| Mean entropy (norm) | 0.301 | 0.123 |
+| Next-token accuracy | 50.7% | — |
+
+**Accuracy by entropy bin:**
+| Entropy | N tokens | Accuracy | Max P |
+|---------|----------|----------|-------|
+| [0.0, 0.1) | 183 (35.8%) | **95.6%** | 0.955 |
+| [0.1, 0.2) | 56 | 76.8% | 0.727 |
+| [0.2, 0.3) | 67 | 41.8% | 0.460 |
+| [0.3, 0.5) | 138 (27.0%) | 31.9% | 0.274 |
+| [0.5, 0.7) | 67 (13.1%) | **10.5%** | 0.135 |
+
+**Exit-level accuracy:**
+| Exit | Accuracy | Gap from Final |
+|------|----------|----------------|
+| 7 | 44.0% | -6.7pp |
+| 15 | 50.2% | -0.5pp |
+| 23 | 50.7% | — |
+
+**KEY INSIGHT:** Representations are 93% aligned with teacher (CKA), but predictions are NOT (student max_prob 0.485 vs teacher 0.654). The INFORMATION is there in the representations but the model can't DECODE it into good predictions. The bottleneck is in token-level prediction quality, not hidden-state geometry.
+
+Also: Exit 15 captures 99% of final accuracy. Layers 16-23 add only 0.5pp. Confirmed: the deep layers are nearly dead.
+
+### CODEX ROOT CAUSE ANALYSIS (2026-04-01)
+
+**Mathematical diagnosis (from Codex T+L session):**
+
+1. **Cross-tokenizer logit KD is formally ill-posed.** Only 73.6% of student positions have exact teacher boundary matches. 25.8% map many-to-one. Teacher-side vocab coverage is 14822/151669 = 9.8%. The projected distribution is destroyed before optimization begins.
+
+2. **Warm-start gradient conflict.** Qwen logit gradients are 6.35x CE norm with mean cosine -0.077 vs CE. Teacher gradient is nearly ORTHOGONAL to CE gradient. Small α does nothing; large α damages the CE basin.
+
+3. **R13 was geometric regularization.** InfoNCE on byte spans applies a weak manifold prior that improves early optimization — NOT strong knowledge transfer. The oscillation pattern is a two-timescale competition between KD (low-freq modes) and CE (token-boundary decisions).
+
+4. **Information-theoretic limit.** The student can absorb low-rate structure from the teacher, but NOT through the current lossy transport channel. The channel destroys too much information. The accessible residual is small.
+
+**Codex 5 radical directions (prioritized):**
+1. **Data-distribution transport** (HIGHEST EV) — MiniPLM/DoReMi reweighting, WRAP rewriting
+2. **Exact-channel KD** — use same-tokenizer teacher or byte-level teacher
+3. **Residual-only common-support KD** — only distill on exact-boundary positions
+4. **Low-rank subspace distillation** — distill top PCA/CCA/Fisher components only
+5. **Synthetic channel coding** — WRAP-style rewrites to lower student tokenizer entropy
+
+**Codex STOP recommendations:**
+- Kill warm-start KD immediately (mathematically dead)
+- Kill cross-tokenizer logit KD immediately
+- Stop treating R13 as evidence that KD is close to working
+
+**CPU probes before any GPU:** (1) boundary/support audit for candidate teachers, (2) low-rank span CCA/PCA at 7/15/23, (3) data-reweighting correlation.
+
+### CPU PROBE RESULTS (2026-04-01)
+
+**Boundary/Support Audit:**
+- Qwen3-1.7B: 72.4% boundary match (need >95%). FAIL.
+- Qwen3-0.6B: 73.5% boundary match. FAIL.
+- Teacher-side vocab coverage: 9.8%. FATAL for logit KD.
+- CONCLUSION: Cross-tokenizer logit KD is formally dead for ALL Qwen teachers.
+
+**Data-Reweighting Delta Probe (50 docs):**
+- Delta (student_NLL - teacher_NLL): mean=-0.356, std=0.419
+- NLLs not directly comparable across tokenizers (different vocab sizes)
+- Correlation(student_NLL, Delta) = 0.645 — strong positive
+- Kurtosis = 2.73 (borderline heavy-tailed)
+- CONCLUSION: Data reweighting MODERATELY viable. Teacher advantage is concentrated but signal needs BPT normalization.
+
+---
+
+## RADICAL EXPERIMENT PLAN (2026-04-01)
+
+### WHAT WE NOW KNOW (synthesized from 9 probes + Codex analysis):
+
+1. **Representation gap doesn't exist.** Student-teacher CKA = 0.93 at L7/L15. Even at 3K from scratch, CKA = 0.91+.
+2. **Cross-tokenizer logit KD is formally dead.** 72% boundary match, 10% teacher-side support.
+3. **R13 was regularization, not KD.** Higher effective rank at all exits, less crystallization.
+4. **The prediction gap is real.** Student max_prob=0.485, teacher=0.654. Information is in representations but can't be decoded.
+5. **Deep layers are dead.** CKA(exit_15, exit_23)=0.978. Layers 16-23 add 0.5pp accuracy.
+6. **Gradient dead zone at depth.** |dL/dh| at L15 is 7.8x smaller than L0.
+7. **Warm-start is immune.** 11 experiments, zero signal. Gradient conflict is orthogonal.
+8. **49% of tokens are solved.** Only high-entropy tokens need help.
+
+### THREE EXPERIMENT TRACKS (PRIORITIZED):
+
+**Track 1: Spectral Regularization (NO TEACHER) — COMPLETED 2026-04-01**
+- HYPOTHESIS: R13's improvement came from diversity preservation, not knowledge transfer.
+- MECHANISM: VICReg var+cov regularizer on exit hidden states (exits 7,15,23), weight=0.005.
+- RESULT: **BPT=4.914** (vs CE control 4.970, R13 4.858)
+- VERDICT: **PARTIAL CONFIRMATION.** Spectral reg beats control by 0.056 BPT, captures ~50% of R13's 0.113 advantage.
+- KEY FINDING: At step 2000, spectral reg matched R13 EXACTLY (5.4593 vs 5.4598). R13 pulled ahead during WSD cooldown phase — the InfoNCE teacher alignment term provides ~50% of the benefit, not 0%.
+- SIDE EFFECT: Kurtosis grew from 0.5 to 10.7 — the variance term creates increasingly sharp activations. May be limiting performance.
+- IMPLICATION: The teacher is NOT irrelevant. ~50% regularization + ~50% alignment. Future KD should focus on the alignment signal, not just diversity. But also: the diversity half is FREE (no teacher needed). Combine VICReg + teacher alignment for maximum effect.
+- CODEX AUDIT: Fixed cov normalization (was /D*(D-1), should be /D per VICReg). VRAM: 6.4 GiB (no teacher loaded).
+
+**Track 2: Data-Distribution Transport**
+- HYPOTHESIS: The teacher's value is in selecting/rewriting training data, not in runtime loss signals.
+- SUB-TRACK A: Teacher-scored data reweighting (MiniPLM/DoReMi style). Use teacher to score documents, upweight ones where student has most to learn.
+- SUB-TRACK B: WRAP-style rewriting. Teacher rewrites hard documents into forms more learnable by the student.
+- EXPERIMENT: CE training on reweighted/rewritten data, 3K-6K steps. Compare vs CE baseline.
+- SUCCESS: Decisive BPT improvement (>0.2) from data alone
+- GPU COST: One-time teacher scoring pass, then pure CE training
+
+**Track 3: Layer Utilization (Break Exit Crystallization)**
+- HYPOTHESIS: The deep layers (16-23) are underutilized because exit training crystallizes representations. Breaking this crystallization would give the model more effective capacity.
+- MECHANISM A: Stochastic depth / layer dropout during training
+- MECHANISM B: Auxiliary losses at intermediate layers (not KD — just auxiliary CE on random layers)
+- MECHANISM C: Remove early exits during first N steps, add them gradually
+- EXPERIMENT: Modified CE from scratch, 3K steps. Measure exit CKA and BPT.
+- SUCCESS: CKA(exit_15, exit_23) < 0.95 AND BPT improvement
+- FAILURE: No BPT change despite lower CKA
+
+---
+
+## PCD R15 DEAD — Predictive Coding Distillation (2026-04-01)
 
 **Codex R15 design.** FINAL KD mechanism experiment. If it fails at 3K gate, KD-mechanism work ends.
 

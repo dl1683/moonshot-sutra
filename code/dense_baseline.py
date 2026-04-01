@@ -6724,6 +6724,8 @@ def train_kd_scratch(config_path):
     kl_mode = cfg.get("kl_mode", "forward")
     top_k = cfg.get("top_k", 64)
     hard_token_frac = cfg.get("hard_token_frac", None)
+    spectral_reg = cfg.get("spectral_reg", 0.0)  # VICReg-style regularizer weight
+    skip_teacher = (alpha_max == 0.0 and alpha_min == 0.0)  # skip teacher entirely for pure CE
 
     # Architecture config (default: Sutra-24A-197M)
     dim = cfg.get("dim", 768)
@@ -6748,6 +6750,10 @@ def train_kd_scratch(config_path):
     print(f"  KL mode: {kl_mode}, temperature: {temperature}, top_k: {top_k}")
     if hard_token_frac:
         print(f"  SE-KD: hard_token_frac={hard_token_frac}")
+    if spectral_reg > 0:
+        print(f"  Spectral reg (VICReg): weight={spectral_reg}")
+    if skip_teacher:
+        print(f"  PURE CE MODE (alpha=0, no teacher loaded)")
     print(f"{'='*60}")
 
     # ---- Student tokenizer ----
@@ -6783,14 +6789,17 @@ def train_kd_scratch(config_path):
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  Student: {n_params:,} params (random init)")
 
-    # ---- Load teacher ----
-    teacher = TeacherAdapter(teacher_name, device=DEVICE, dtype=torch.float16)
-
-    # ---- Vocab overlap (DSKD ETA) ----
-    shared_s_ids, shared_t_ids, n_shared = compute_vocab_overlap(
-        student_tokenizer, teacher.tokenizer, device=DEVICE)
-    print(f"  Shared vocab: {n_shared}/{VOCAB_SIZE} student, "
-          f"{n_shared}/{teacher.vocab_size} teacher")
+    # ---- Load teacher (skip if pure CE mode) ----
+    teacher = None
+    shared_s_ids = shared_t_ids = n_shared = None
+    if not skip_teacher:
+        teacher = TeacherAdapter(teacher_name, device=DEVICE, dtype=torch.float16)
+        shared_s_ids, shared_t_ids, n_shared = compute_vocab_overlap(
+            student_tokenizer, teacher.tokenizer, device=DEVICE)
+        print(f"  Shared vocab: {n_shared}/{VOCAB_SIZE} student, "
+              f"{n_shared}/{teacher.vocab_size} teacher")
+    else:
+        print(f"  Teacher: SKIPPED (pure CE mode)")
 
     # ---- Optimizer ----
     actual_exit_weights = derive_exit_weights(exit_layers, n_layers) if exit_layers else EXIT_WEIGHTS
@@ -6816,6 +6825,7 @@ def train_kd_scratch(config_path):
     metrics_log = []
     running_ce = 0.0
     running_kd = 0.0
+    running_spec = 0.0
 
     print(f"  Exit weights: {actual_exit_weights}")
     print(f"  Starting from step {start_step + 1}...\n")
@@ -6839,54 +6849,78 @@ def train_kd_scratch(config_path):
         opt.zero_grad()
         step_ce = 0.0
         step_kd = 0.0
+        step_spec = 0.0
         bad_step = False
 
         for _ in range(grad_accum):
             inp, tgt = dataset.sample_batch(batch_size, seq_len, device=DEVICE)
 
             with torch.amp.autocast("cuda", dtype=DTYPE):
-                # Student forward
-                out = model(inp, return_exits=True)
+                # Student forward (get hidden states if spectral reg needed)
+                need_hidden = spectral_reg > 0
+                out = model(inp, return_exits=True, return_hidden=need_hidden)
                 base_loss, loss_metrics = compute_edsr_loss(
                     out, tgt, exit_weights=actual_exit_weights)
                 ce_val = loss_metrics["ce_final"]
 
-                # ---- Cross-tokenizer logit KD ----
-                texts = [student_tokenizer.decode(inp[b].tolist())
-                         for b in range(inp.size(0))]
+                kd_loss = torch.tensor(0.0, device=DEVICE)
 
-                # Student byte offsets
-                stu_offsets = torch.zeros(
-                    inp.shape[0], inp.shape[1], 2,
-                    device=DEVICE, dtype=torch.long)
-                for b_idx, text in enumerate(texts):
-                    enc_s = student_tokenizer.encode(text)
-                    n_tok = min(len(enc_s.offsets), inp.shape[1])
-                    for ti in range(n_tok):
-                        stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
-                        stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
+                if not skip_teacher and alpha > 0:
+                    # ---- Cross-tokenizer logit KD ----
+                    texts = [student_tokenizer.decode(inp[b].tolist())
+                             for b in range(inp.size(0))]
 
-                # Teacher forward
-                with torch.no_grad():
-                    t_out = teacher.forward(texts, max_length=seq_len)
+                    stu_offsets = torch.zeros(
+                        inp.shape[0], inp.shape[1], 2,
+                        device=DEVICE, dtype=torch.long)
+                    for b_idx, text in enumerate(texts):
+                        enc_s = student_tokenizer.encode(text)
+                        n_tok = min(len(enc_s.offsets), inp.shape[1])
+                        for ti in range(n_tok):
+                            stu_offsets[b_idx, ti, 0] = enc_s.offsets[ti][0]
+                            stu_offsets[b_idx, ti, 1] = enc_s.offsets[ti][1]
 
-                # Cross-tokenizer logit KD
-                kd_loss = compute_cross_tok_logit_kd(
-                    student_logits=out['logits'],
-                    teacher_logits=t_out['logits'],
-                    student_offsets=stu_offsets,
-                    teacher_offsets=t_out['byte_offsets'],
-                    teacher_mask=t_out['attention_mask'],
-                    shared_s_ids=shared_s_ids,
-                    shared_t_ids=shared_t_ids,
-                    temperature=temperature,
-                    top_k=top_k,
-                    kl_mode=kl_mode,
-                    hard_token_frac=hard_token_frac,
-                )
+                    with torch.no_grad():
+                        t_out = teacher.forward(texts, max_length=seq_len)
 
-                # Combined: (1-alpha)*CE + alpha*KD
-                total_loss = ((1.0 - alpha) * base_loss + alpha * kd_loss) / grad_accum
+                    kd_loss = compute_cross_tok_logit_kd(
+                        student_logits=out['logits'],
+                        teacher_logits=t_out['logits'],
+                        student_offsets=stu_offsets,
+                        teacher_offsets=t_out['byte_offsets'],
+                        teacher_mask=t_out['attention_mask'],
+                        shared_s_ids=shared_s_ids,
+                        shared_t_ids=shared_t_ids,
+                        temperature=temperature,
+                        top_k=top_k,
+                        kl_mode=kl_mode,
+                        hard_token_frac=hard_token_frac,
+                    )
+
+                # ---- Spectral regularizer (VICReg-style) ----
+                spec_loss = torch.tensor(0.0, device=DEVICE)
+                if spectral_reg > 0 and 'exit_hidden' in out:
+                    for eidx, h_exit in out['exit_hidden'].items():
+                        # h_exit: (B, T, D) — flatten to (B*T, D)
+                        h_flat = h_exit.reshape(-1, h_exit.shape[-1]).float()
+                        # Subsample for efficiency (max 512 tokens)
+                        if h_flat.shape[0] > 512:
+                            idx = torch.randperm(h_flat.shape[0], device=h_flat.device)[:512]
+                            h_flat = h_flat[idx]
+                        # Variance term: std of each dim, penalize if < 1
+                        std = h_flat.std(dim=0)
+                        var_loss = F.relu(1.0 - std).mean()
+                        # Covariance term: off-diagonal of cov matrix
+                        h_centered = h_flat - h_flat.mean(dim=0, keepdim=True)
+                        cov = (h_centered.T @ h_centered) / max(h_flat.shape[0] - 1, 1)
+                        D = cov.shape[0]
+                        off_diag = cov.pow(2).sum() - cov.diagonal().pow(2).sum()
+                        cov_loss = off_diag / D
+                        spec_loss = spec_loss + var_loss + cov_loss
+
+                # Combined: (1-alpha)*CE + alpha*KD + spectral_reg * spec_loss
+                total_loss = ((1.0 - alpha) * base_loss + alpha * kd_loss
+                              + spectral_reg * spec_loss) / grad_accum
 
             if not torch.isfinite(total_loss):
                 print(f"  WARNING: NaN/Inf at step {step}, skipping")
@@ -6897,6 +6931,7 @@ def train_kd_scratch(config_path):
             scaler.scale(total_loss).backward()
             step_ce += ce_val / grad_accum
             step_kd += kd_loss.item() / grad_accum
+            step_spec += spec_loss.item() / grad_accum
 
         if bad_step:
             continue
@@ -6909,19 +6944,24 @@ def train_kd_scratch(config_path):
 
         running_ce += step_ce
         running_kd += step_kd
+        running_spec += step_spec
 
         # ---- Logging ----
         if step % LOG_EVERY == 0:
             avg_ce = running_ce / LOG_EVERY
             avg_kd = running_kd / LOG_EVERY
+            avg_spec = running_spec / LOG_EVERY
             bpt = avg_ce / math.log(2)
             msg = (f"  Step {step:5d}: CE={avg_ce:.4f} BPT={bpt:.4f} "
                    f"KD={avg_kd:.4f} alpha={alpha:.3f} LR={current_lr:.2e}")
+            if spectral_reg > 0:
+                msg += f" SPEC={avg_spec:.4f}"
             print(msg, flush=True)
             with open(log_file, "a") as f:
                 f.write(msg + "\n")
             running_ce = 0.0
             running_kd = 0.0
+            running_spec = 0.0
 
         # ---- Eval ----
         if step % eval_every == 0 or step == total_steps:
