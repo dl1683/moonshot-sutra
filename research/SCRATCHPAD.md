@@ -30,6 +30,73 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Decision:** Option A (batched teacher) is the practical fix. 2x speedup for ~20 lines of code. Implement AFTER v2 validates the KD mechanism.
 
+## MULTI-TEACHER EKALAVYA DESIGN SKETCH (2026-04-12)
+
+**Context:** Field survey (RESEARCH.md §11.16) confirms NO existing work does multi-teacher + cross-tokenizer + byte-level + generative LM. We're first. This sketch designs the mechanism.
+
+**Why multi-teacher matters (the manifesto argument):**
+- Single teacher = single perspective. The student copies one model's mistakes.
+- Multiple diverse teachers = ensemble wisdom. Where teachers agree, the signal is strong. Where they disagree, the student learns what's uncertain.
+- Cross-architecture diversity (transformer + SSM + hybrid + looped) means each teacher has different inductive biases → richer soft labels.
+- This is the Ekalavya story: learn from many gurus, surpass them all.
+
+### Teacher Pool (4-bit quantized, ~2GB each)
+
+| Teacher | Params | Family | Architecture | BPB (our data) | Status |
+|---------|--------|--------|-------------|----------------|--------|
+| SmolLM2-1.7B | 1.7B | SmolLM | Transformer | 0.490 | ✅ Validated |
+| Pythia-1.4B | 1.4B | Pythia | Transformer | 0.534 | ✅ Validated |
+| Qwen3-1.7B | 1.7B | Qwen | Transformer | TBD | Available |
+| TinyLlama-1.1B | 1.1B | LLaMA | Transformer | TBD | Available |
+| Gemma-4-E2B | 2B | Gemma4 | PLE+sliding/global attn | TBD | Available (Apr 2026) |
+| Ouro-1.4B | 1.4B | LoopLM | Looped transformer | TBD | Need to check avail. |
+
+**VRAM budget:** 24GB - 9GB student overhead = 15GB available. At ~2GB/teacher (4-bit) = 7 teachers max. 5 practical (leave 5GB buffer).
+
+### Aggregation Strategy: Progressive Ensemble
+
+**Phase 1 (v2, now):** Single teacher (SmolLM2). Validate the byte KD mechanism works.
+
+**Phase 2 (v3, next):** 2 teachers — SmolLM2 + Pythia. Simple average of byte probabilities.
+```python
+# Simple: P_combined(byte) = 0.5 * P_smollm(byte) + 0.5 * P_pythia(byte)
+combined_probs = (teacher1_byte_probs + teacher2_byte_probs) / 2
+```
+
+**Phase 3 (v4):** 3-5 teachers with entropy-weighted averaging.
+```python
+# Entropy-weighted: confident teachers get more weight
+entropy_k = -sum(p_k * log(p_k))  # per teacher
+weight_k = softmax(-entropy_k / tau_mix)  # lower entropy → higher weight
+combined_probs = sum(weight_k * teacher_byte_probs_k)
+```
+
+**Phase 4 (v5+):** Learned MoE routing per byte position.
+```python
+# Lightweight router: 2-layer MLP on student hidden → teacher weights
+router_input = student_hidden[pos]  # d_model dim
+teacher_weights = softmax(MLP(router_input))  # [n_teachers]
+combined_probs = sum(teacher_weights * teacher_byte_probs)
+```
+
+### Key Design Questions (for T+L session)
+
+1. **Logit vs prob averaging?** Average log-probs (geometric mean) vs probs (arithmetic mean)? Geometric emphasizes agreement (both must assign probability). Arithmetic is more forgiving.
+2. **Teacher disagreement signal?** When teachers disagree strongly (high JS divergence), should we down-weight KD loss (student should learn from CE instead)? Or UP-weight (disagreement regions are where KD can add most value)?
+3. **Repr-level multi-teacher?** Currently repr KD matches student global states to teacher hidden. With multi-teacher, use CKA between student and each teacher? Or project all teachers to shared space?
+4. **Teacher curriculum?** Start with best teacher (SmolLM2), add weaker ones later? Or start with diverse weak teachers, add strong one as refinement?
+5. **Per-teacher alpha?** Different alpha weights per teacher? Based on quality gap (closer teacher → higher alpha)?
+
+### Implementation Complexity Estimate
+
+| Phase | Code Changes | Training Cost | VRAM |
+|-------|-------------|---------------|------|
+| Phase 2 (2 teachers) | ~50 lines: load 2nd teacher, avg byte probs | +~2s/step (2nd teacher forward) | 11GB |
+| Phase 3 (3-5 teachers) | ~100 lines: entropy weighting, teacher loop | +~6-10s/step | 13-17GB |
+| Phase 4 (MoE routing) | ~200 lines: router network, routing loss | +~10s/step + router grad | 15-19GB |
+
+**Decision: Wait for v2 results. If v2 shows clear BPB improvement over baseline, move to Phase 2 immediately. If v2 is marginal, fix single-teacher first.**
+
 ## MULTI-BYTE MARGINAL IDEA (Future Ekalavya Enhancement)
 
 The first-byte marginal loses information: token "the" → byte 116 ("t"), discarding "h" and "e".

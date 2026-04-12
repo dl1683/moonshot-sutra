@@ -54,13 +54,19 @@
 - **Byte Latent Transformer (BLT)** (Meta 2024): entropy-based dynamic patching, up to 50% FLOP reduction at inference
 - **Cross-Tokenizer Byte Distillation (BLD)** (2026, arXiv:2604.07466): Uses covering-based decomposition to convert teacher token logits to byte-level probabilities via beam search (K=10). Loss = token CE + byte CE + byte KL. Architecture: 10 parallel linear projections from hidden dim to byte vocab (260 tokens). **RESULTS ARE MIXED**: BPE-to-BPE works well but BPE-to-byte shows LARGE drops (~21pt MMLU, ~13pt ARC-C). No multi-teacher experiments. Authors conclude "CTD remains a largely open problem."
 - **ALM: Approximate Likelihood Matching** (NeurIPS 2025, arXiv:2503.20083): First principled cross-tokenizer distillation. Uses chunk-level probability matching with binarized f-divergence: identifies aligned token chunks encoding identical text, then matches chunk probabilities. Key innovation: enables PURE distillation (no auxiliary LM loss needed). Results: Llama 3B → byte = 53.8 avg (vs DSKD 47.6, MinED 46.9). Tested 1.5B-3.3B. Toolkit: `tokenkit` (github.com/bminixhofer/tokenkit, public byte-level checkpoints: Llama3-2-3B-IT-Byte, Gemma2-2B-IT-Byte). No multi-teacher support.
+- **ULD: Universal Logit Distillation** (Boizard et al., EMNLP 2024, arXiv:2402.12030): Wasserstein-1 distance between sorted probability distributions — no shared vocabulary needed. Loss = CE + 1.5×W₁. O(n log n) via sorting. Tested decoder→encoder-decoder cross-arch. **No multi-teacher.**
+- **MultiLevelOT** (AAAI 2025, arXiv:2412.14528): Extends ULD with sequence-level Sinkhorn distance. Token-level HAD + sequential SL + sequence-level SD. Outperforms ULD. **No multi-teacher.**
+- **CDM: Contextual Dynamical Mapping** (ACL 2025 Findings, arXiv:2502.11104): Entropy-weighted DTW for sequence alignment + context-aware Top-K vocabulary mapping (65%→87% coverage). Key insight: token importance is context-dependent. **No multi-teacher.**
 
 **Implications for Ekalavya (UPDATED 2026-04-12):**
 1. Byte-level KD from tokenized teachers is HARDER than initially assumed (BLD shows significant drops)
 2. Our advantage: Sutra IS already byte-level, so we're not converting a subword model TO bytes — we're using byte-level KD as additional training signal on a natively byte-level model. This avoids the worst degradation mode.
-3. Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL — neither BLD nor ALM tested it
+3. **Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL** — no existing work (BLD, ALM, ULD, CDM, MultiLevelOT) tests multi-teacher scenarios. ALL are single-teacher only. Multi-teacher acknowledged as "future work" across multiple papers.
 4. The covering-based probability conversion (BLD) is expensive (2 days on 4×RTX 3090). Our omega_ij bridge is simpler: direct hidden state projection via byte-span overlap weights.
 5. KEY RISK: if BLD with its sophisticated probability conversion still shows large drops, our simpler bridge may lose even more signal. Teacher profiling probe (2026-04-12) showed teachers have only ~40% top-1 accuracy on our data. The soft distribution quality matters more than top-1.
+6. **The byte interface eliminates the cross-tokenizer problem entirely.** ALL teacher outputs can be projected to byte probabilities regardless of tokenizer. We don't need OT, DTW, or likelihood matching — the byte marginal handles alignment. The open problem is multi-teacher AGGREGATION, not alignment.
+7. **Teacher diversity vs quality**: DiverseDistill suggests dynamic per-step weighting based on student understanding. DistillMoE uses MoE routing. For Ekalavya, start with entropy-weighted averaging (simple, no extra params), graduate to learned routing.
+8. **VRAM budget for multi-teacher**: 4-bit quantized ~2GB/teacher. With 9GB student overhead, ~15GB available → 5-7 teachers simultaneously. This is enough for meaningful diversity.
 
 **Ekalavya vs. SOTA cross-tokenizer KD (2026-04-12 analysis):**
 
@@ -4805,7 +4811,31 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 
 **v2 launch:** 2000 steps, alpha=0.10, beta=0.15, T=1.5, 4-bit teacher, all audit fixes applied.
 
-### 11.14 Cross-Domain Architecture Research (2026-04-12)
+### 11.14 Cross-Tokenizer Byte Distillation — Field Survey (2026-04-12)
+
+**BLD: Cross-Tokenizer LLM Distillation through a Byte-Level Interface** — [arXiv:2604.07466](https://arxiv.org/abs/2604.07466) (April 8, 2026)
+- Converts teacher token probs → byte probs, attaches byte decoder head to (token-level) student
+- Competitive with/surpasses more sophisticated CTD methods across 1B-8B
+- Key caveat: "consistent improvements across all tasks remain elusive — CTD is still an open problem"
+- **KL weight = 0.1** — independently validates our Codex-designed alpha=0.10
+- Uses full byte marginal (all tokenization coverings), not just first-byte. More info-rich but more expensive.
+- **Ekalavya advantage:** Our student IS byte-level natively — no extra head needed. Simpler, less information loss.
+
+**ALM: Universal Cross-Tokenizer Distillation via Approximate Likelihood Matching** — [arXiv:2503.20083](https://arxiv.org/abs/2503.20083) (NeurIPS 2025)
+- Principled likelihood matching across fundamentally different tokenizers
+- Enables "rapid transfer of subword models to byte-level"
+- Could replace our first-byte marginal if it proves too lossy
+
+**Cross-Tokenizer Likelihood Scoring** — [arXiv:2512.14954](https://arxiv.org/abs/2512.14954) (Dec 2025)
+- Uses BPE's recursive structure for probabilistic cross-tokenizer scoring
+- 12% memory reduction + 4% performance on Qwen2.5-1.5B
+
+**tokenkit** — [github.com/bminixhofer/tokenkit](https://github.com/bminixhofer/tokenkit)
+- Toolkit implementing advanced cross-tokenizer transfer methods
+
+**Strategic position:** Ekalavya is the ONLY approach that combines: (1) native byte-level student, (2) multi-teacher cross-architecture KD, (3) from-scratch training at 188M scale. Everyone else does token→token or token→byte-head.
+
+### 11.15 Cross-Domain Architecture Research (2026-04-12)
 
 **Gemma 4 (Google, April 2026)** — [blog](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/)
 - **Per-Layer Embeddings (PLE)**: Second embedding table feeding residual signal into every decoder layer. This independently validates our byte-residual bypass design — the same architectural pattern appears in a frontier model.
@@ -4828,3 +4858,103 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
   4. **Validates Intelligence=Geometry thesis** — 1.4B beating 4B through better computation structure, not more parameters
 
 **Combined insight**: Both Gemma 4 and Ouro independently validate architectural patterns we've chosen (residual bypass, adaptive compute). The field is converging on these ideas from multiple directions. Our unique contribution remains: byte-level + multi-teacher KD + from-scratch training. Nobody else is doing all three together.
+
+### 11.16 Multi-Teacher Cross-Tokenizer KD — Comprehensive Field Survey (2026-04-12)
+
+**Motivation:** Ekalavya's mission is multi-teacher cross-architecture KD at the byte level. v2 validates single-teacher mechanism. This survey maps ALL approaches to multi-teacher and cross-tokenizer KD to inform the production multi-teacher design.
+
+#### A. Cross-Tokenizer KD Methods (How to Bridge Different Vocabularies)
+
+**ULD: Universal Logit Distillation** — [arXiv:2402.12030](https://arxiv.org/abs/2402.12030) (Boizard et al., EMNLP 2024)
+- Uses Wasserstein-1 distance between sorted teacher/student probability distributions instead of KL divergence
+- Loss: ℒ_ULD = CE(target) + λ × W₁(p_student, q_teacher), λ=1.5
+- Efficient O(n log n) via sorting + absolute difference on sorted distributions
+- Handles sequence misalignment via min-length truncation
+- **No vocabulary mapping needed** — compares distribution shapes, not specific tokens
+- Tested: LLaMA→OPT/Pythia/Bloomz/MT0, including cross-arch (decoder→encoder-decoder)
+- Limitation: per-token comparison ignores sequence-level patterns
+
+**MultiLevelOT** — [AAAI 2025](https://arxiv.org/abs/2412.14528)
+- Extends ULD with sequence-level alignment: HAD (token-level) + SL (sequential log) + SD (Sinkhorn distance)
+- Loss: ℒ = CE + α(ℒ_HAD + β·ℒ_SL + γ·ℒ_SD)
+- Sequence-level ranking ensures consistent ordering across all positions
+- Outperforms ULD: +1.69 F1 on QED task
+- No byte-level discussion. No multi-teacher experiments.
+
+**CDM: Contextual Dynamical Mapping** — [ACL 2025 Findings](https://arxiv.org/abs/2502.11104)
+- Entropy-weighted Dynamic Time Warping for sequence alignment
+- Context-aware Top-K candidate matching for vocabulary mapping (65% → 87% coverage)
+- Outperforms ULD by ~0.88 ROUGE-L on instruction following
+- Key insight: token importance is context-dependent — mappings should be dynamic
+- Tested: Llama-3→Gemma-2, Llama-3→OPT, Phi3→Qwen2
+
+**ALM: Approximate Likelihood Matching** — [NeurIPS 2025](https://arxiv.org/abs/2503.20083) (Minixhofer et al.)
+- Principled likelihood matching across fundamentally different tokenizers
+- Enables rapid subword→byte-level transfer
+- SOTA cross-tokenizer results. Implementation in tokenkit.
+
+**Key insight for Ekalavya: The byte-level interface ELIMINATES the cross-tokenizer problem.** ALL teacher outputs can be converted to byte probabilities regardless of tokenizer. We don't need ULD's optimal transport, CDM's vocabulary mapping, or ALM's likelihood matching. We need: (1) good byte marginal per teacher, (2) multi-teacher aggregation strategy.
+
+#### B. Multi-Teacher KD Methods (How to Combine Multiple Teachers)
+
+**Knowledge Purification** — [OpenReview](https://openreview.net/forum?id=7pvJoB4aKO)
+- Consolidates rationales from multiple teacher LLMs into single rationale
+- Mitigates conflicts between teachers
+- For instruction-following, not logit-level KD
+
+**Unified Multi-Teacher Across Hybrid Architectures** — [ICLR 2026 submission](https://openreview.net/forum?id=1lHp49KdwW)
+- Learnable model token interacts with features from multiple teachers
+- Alternating intra-space (within teacher) and inter-space (across teachers) modules
+- Handles teacher heterogeneity via joint feature alignment
+- 1000x less training data than typical multi-teacher methods
+- **Vision-focused** but the architectural principle transfers: learn to mediate between teacher signals
+
+**DistillMoE** — [OpenReview](https://openreview.net/forum?id=VIYNWGb3TL)
+- MoE for multi-faceted sequence-level KD + DynamicCKA for token alignment
+- Each expert specializes: pointwise, contrastive, pairwise perspectives
+- For embedding models, not generative LMs
+- Key idea: different teachers provide different "perspectives" — route via MoE
+
+**MPMTD: Multi-Round Parallel Multi-Teacher Distillation** — [MDPI 2025](https://www.mdpi.com/2571-5577/8/5/146)
+- Explores loss-based vs. probability-distribution-based fusion
+- Adaptive strategies across distillation rounds
+
+**DiverseDistill** — (survey reference)
+- Teaching committee with dynamic weighting based on student's understanding of each teacher's expertise
+- Teacher weights change as student learns
+
+#### C. GAP ANALYSIS — What Exists vs. What Ekalavya Needs
+
+| Capability | Existing Work | Ekalavya Status |
+|------------|--------------|-----------------|
+| Cross-tokenizer single-teacher | BLD, ULD, CDM, ALM | ✅ SOLVED (byte marginal) |
+| Multi-teacher same-tokenizer | MPMTD, DiverseDistill | N/A (teachers differ) |
+| Multi-teacher cross-tokenizer | **NOBODY** | 🎯 OUR CONTRIBUTION |
+| Byte-level student native | **NOBODY** (BLD adds byte head to token student) | ✅ UNIQUE |
+| Multi-teacher + byte-level | **NOBODY** | 🎯 THE GAP |
+| Cross-architecture (trans+SSM+hybrid) | Unified (vision only) | 🎯 LANGUAGE FIRST |
+
+**THE OPPORTUNITY: No existing work combines multi-teacher + cross-tokenizer + byte-level + generative LM. Ekalavya is the first.**
+
+#### D. Design Implications for Ekalavya Multi-Teacher
+
+**Teacher pool (4-bit, ~2GB each, 15GB budget → 5-7 teachers):**
+- SmolLM2-1.7B (current, validated)
+- Pythia-1.4B (different architecture family, validated BPB=0.534)
+- Qwen3-1.7B (frontier family)
+- Gemma-4-E2B (2B, PLE architecture, Apr 2026)
+- Ouro-1.4B (LoopLM, "superior knowledge manipulation")
+- TinyLlama-1.1B (LLaMA family)
+
+**Aggregation strategies to test (from literature):**
+1. **Simple average** — Average byte probabilities across teachers. Baseline.
+2. **Entropy-weighted** — Weight teachers inversely by prediction entropy (confident teachers get more weight). From CDM/DiverseDistill.
+3. **Learned MoE** — Small router network selects teacher weights per-position. From DistillMoE.
+4. **Min-divergence mixture** — Find mixture weights that minimize KL from student to mixture. From ensemble distillation.
+5. **Progressive addition** — Start with 1 teacher, add more as student stabilizes. Our invention.
+
+**Open questions for T+L session:**
+- Does teacher diversity (architecture variety) help more than teacher quality (bigger models)?
+- Should repr-level KD also be multi-teacher or just logit-level?
+- Optimal scheduling: all teachers always, or teacher curriculum (easy→hard)?
+- Does multi-teacher help with the "inconsistent gains" problem BLD identified?
