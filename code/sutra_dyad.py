@@ -998,6 +998,10 @@ def train_s1(stage0_ckpt, cfg=None):
     if freeze_global:
         model.freeze_global()
 
+    unfreeze_layers = cfg.get("unfreeze_layers")
+    if unfreeze_layers:
+        model.unfreeze_global(layer_range=tuple(unfreeze_layers))
+
     params = model.count_params()
     print(f"Model params: {params['total']/1e6:.1f}M total, "
           f"{params['trainable']/1e6:.1f}M trainable, {params['frozen']/1e6:.1f}M frozen")
@@ -1040,17 +1044,41 @@ def train_s1(stage0_ckpt, cfg=None):
     log(f"Effective batch: {batch_size * grad_accum} sequences = "
         f"{batch_size * grad_accum * seq_bytes / 1e3:.0f}K bytes/step")
 
+    # Resume from S1 checkpoint if provided
+    start_step = 0
+    resume_ckpt = cfg.get("resume_ckpt")
+    if resume_ckpt:
+        rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
+        model.load_state_dict(rk["model"])
+        # Only restore optimizer if param groups match (may differ if unfreeze config changed)
+        saved_n_groups = len(rk["optimizer"]["param_groups"])
+        curr_n_groups = len(optimizer.param_groups)
+        if saved_n_groups == curr_n_groups:
+            try:
+                optimizer.load_state_dict(rk["optimizer"])
+                if "scaler" in rk:
+                    scaler.load_state_dict(rk["scaler"])
+                log(f"Restored optimizer state from checkpoint")
+            except Exception as e:
+                log(f"Optimizer state mismatch, starting fresh optimizer: {e}")
+        else:
+            log(f"Optimizer param groups changed ({saved_n_groups}->{curr_n_groups}), fresh optimizer")
+        start_step = rk["step"]
+        best_eval = rk.get("eval_loss", float('inf'))
+        log(f"Resumed from {resume_ckpt} at step {start_step}, best_eval={best_eval:.4f}")
+
     if DEVICE == "cuda":
         torch.cuda.reset_peak_memory_stats()
 
     model.train()
-    best_eval = float('inf')
-    step = 0
+    if not resume_ckpt:
+        best_eval = float('inf')
+    step = start_step
     t0 = time.time()
     running_loss = 0.0
     nan_count = 0
 
-    log(f"\nStarting Stage 1 training at {time.strftime('%H:%M:%S')}")
+    log(f"\nStarting Stage 1 training at {time.strftime('%H:%M:%S')} (step {step})")
 
     while step < max_steps:
         optimizer.zero_grad(set_to_none=True)
@@ -1180,17 +1208,21 @@ if __name__ == "__main__":
     parser.add_argument("--det-eval", type=str, default=None)
     parser.add_argument("--config", type=str, default=None, help="JSON config file")
     parser.add_argument("--stage0-ckpt", type=str, default=None, help="Stage 0 checkpoint for Stage 1")
+    parser.add_argument("--resume", type=str, default=None, help="Resume training from S1 checkpoint")
     parser.add_argument("--freeze-global", action="store_true", default=True,
                         help="Freeze global trunk (default: True for warm-start)")
     parser.add_argument("--no-freeze-global", dest="freeze_global", action="store_false",
                         help="Unfreeze global trunk")
+    parser.add_argument("--unfreeze-layers", type=int, nargs=2, default=None,
+                        metavar=("START", "END"),
+                        help="Partially unfreeze global layers [START, END) after initial freeze")
     args = parser.parse_args()
 
     if args.det_eval:
         det_eval(args.det_eval)
     elif args.stage == 1:
         if args.stage0_ckpt is None:
-            print("ERROR: --stage0-ckpt required for Stage 1")
+            print("ERROR: --stage0-ckpt required for Stage 1 (needed for anchor loss even when resuming)")
             sys.exit(1)
         cfg = {}
         if args.config:
@@ -1203,6 +1235,10 @@ if __name__ == "__main__":
         cfg.setdefault("freeze_global", args.freeze_global)
         if args.lr:
             cfg.setdefault("lr_local", args.lr)
+        if args.resume:
+            cfg["resume_ckpt"] = args.resume
+        if args.unfreeze_layers:
+            cfg["unfreeze_layers"] = args.unfreeze_layers
         train_s1(args.stage0_ckpt, cfg)
     else:
         cfg = {}
