@@ -1,0 +1,55 @@
+{
+  "profiles": {
+    "qwen3-1.7b": {
+      "model_id": "Qwen/Qwen3-1.7B-Base",
+      "hidden_dim": 2048,
+      "n_sequences": 20,
+      "avg_tokens_per_1k_bytes": 212.109375,
+      "mean_entropy": 2.9424159646034242,
+      "std_entropy": 0.46147660099105176,
+      "top1_accuracy": 0.3980111008325624,
+      "mean_correct_prob": 0.269717751725346,
+      "median_correct_prob": 0.11491870507597923
+    },
+    "pythia-1.4b": {
+      "model_id": "EleutherAI/pythia-1.4b",
+      "hidden_dim": 2048,
+      "n_sequences": 20,
+      "avg_tokens_per_1k_bytes": 215.52734375,
+      "mean_entropy": 3.003426694869995,
+      "std_entropy": 0.3550930347542858,
+      "top1_accuracy": 0.39644970414201186,
+      "mean_correct_prob": 0.26441371361851523,
+      "median_correct_prob": 0.10282696783542633
+    },
+    "smollm2-1.7b": {
+      "model_id": "HuggingFaceTB/SmolLM2-1.7B",
+      "hidden_dim": 2048,
+      "n_sequences": 20,
+      "avg_tokens_per_1k_bytes": 216.162109375,
+      "mean_entropy": 2.6878717720508574,
+      "std_entropy": 0.41941813313123216,
+      "top1_accuracy": 0.4379396414794645,
+      "mean_correct_prob": 0.3058380899062876,
+      "median_correct_prob": 0.15176108479499817
+    }
+  },
+  "cross_teacher_agreement": {
+    "qwen3-1.7b_vs_pythia-1.4b": {
+      "confidence_correlation": 0.03712748921276083,
+      "n_compared": 4324
+    },
+    "qwen3-1.7b_vs_smollm2-1.7b": {
+      "confidence_correlation": 0.007857637734566776,
+      "n_compared": 4324
+    },
+    "pythia-1.4b_vs_smollm2-1.7b": {
+      "confidence_correlation": 0.06658734679308927,
+      "n_compared": 4394
+    }
+  },
+  "config": {
+    "n_sequences": 20,
+    "max_bytes": 1024
+  }
+}

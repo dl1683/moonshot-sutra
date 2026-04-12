@@ -1,0 +1,9 @@
+{
+  "teacher": "EleutherAI/pythia-1.4b",
+  "n_eval_positions": 8848,
+  "first_byte_top1_accuracy": 0.8809900542495479,
+  "first_byte_top5_accuracy": 0.9802215189873418,
+  "byte_level_bpb": 0.5389344969365883,
+  "student_bpb": 1.415,
+  "teacher_student_gap": -0.8760655030634117
+}

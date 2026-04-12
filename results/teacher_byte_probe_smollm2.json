@@ -1,0 +1,14 @@
+{
+  "teacher": "HuggingFaceTB/SmolLM2-1.7B",
+  "n_sequences": 20,
+  "seq_len": 2048,
+  "n_eval_positions": 9285,
+  "first_byte_top1_accuracy": 0.8873451803984922,
+  "first_byte_top5_accuracy": 0.9819063004846527,
+  "mean_byte_nll": 0.3396083260613755,
+  "byte_level_bpb": 0.48995124785334854,
+  "student_bpb": 1.415,
+  "teacher_student_gap": -0.9250487521466515,
+  "entropy_mean": 0.3455953872028963,
+  "entropy_std": 0.5825239286764083
+}

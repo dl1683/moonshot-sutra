@@ -1,0 +1,38 @@
+{
+  "run_name": "ekalavya_smoke_500",
+  "stage": 1,
+  "phase": "ekalavya",
+  "final_eval_loss": 1.800904893875122,
+  "final_bpb": 2.5981565595063034,
+  "best_eval_loss": 1.8064868664741516,
+  "best_bpb": 2.6062096436933015,
+  "steps": 500,
+  "config": {
+    "max_steps": 500,
+    "batch_size": 8,
+    "grad_accum": 2,
+    "seq_bytes": 1536,
+    "lr_local": 0.00015,
+    "lr_global": 4e-05,
+    "min_lr_local": 1.5e-05,
+    "min_lr_global": 4e-06,
+    "warmup_steps": 50,
+    "run_name": "ekalavya_smoke_500",
+    "kd_alpha": 0.5,
+    "kd_beta": 0.15,
+    "kd_temperature": 2.0,
+    "kd_ramp_steps": 100,
+    "anchor_teacher": "HuggingFaceTB/SmolLM2-1.7B",
+    "aux_teacher": null,
+    "freeze_global": false
+  },
+  "params": {
+    "total": 188222208,
+    "unique_untied": 188058368,
+    "trainable": 188222208,
+    "frozen": 0
+  },
+  "proj_params": 2097152,
+  "anchor_teacher": "HuggingFaceTB/SmolLM2-1.7B",
+  "aux_teacher": null
+}

@@ -1,0 +1,13 @@
+{
+  "total_positions": 4180,
+  "both_correct": 3673,
+  "smol_only_correct": 131,
+  "pythia_only_correct": 58,
+  "both_wrong": 318,
+  "smol_bpb": 0.39841110812661845,
+  "pythia_bpb": 0.49422132847401584,
+  "oracle_bpb": 0.3442905296570582,
+  "oracle_gain_bpb": 0.05412057846956022,
+  "smol_win_rate": 0.6906698564593301,
+  "pythia_win_rate": 0.30933014354066984
+}
