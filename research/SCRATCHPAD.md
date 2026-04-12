@@ -32,17 +32,41 @@ KD mechanism signals:
 - Repr loss trajectory: [FILL — dropped from X to Y]
 - Did CE preservation hold? [FILL]
 
+=== CRITICAL: FIRST-BYTE MARGINAL IS TOO LOSSY ===
+Probe result (results/first_byte_marginal_info_loss.json):
+- Teacher token entropy: 3.485 bits → byte marginal entropy: 0.535 bits
+- **84% of teacher signal destroyed** (2.940 bits lost per position)
+- 58.3% of positions lose >2 bits, 72.6% lose >1 bit
+- ROOT CAUSE of weak KD signal. Not alpha, not teacher quality — the alignment mechanism.
+- Must fix byte alignment BEFORE scaling to multi-teacher. Options:
+  (a) Multi-byte joint P(b1,b2) — partial fix, still lossy for 3+ byte tokens
+  (b) Covering-based byte decomposition (BLD) — full information preservation
+  (c) ALM chunk matching — approximate byte-level likelihood
+  (d) Token-boundary-only KD — only supervise at token starts
+- THIS IS THE #1 DESIGN QUESTION: How to transfer teacher knowledge to byte-level student
+  without destroying 84% of the signal in the alignment step.
+
 === FIELD RESEARCH: MULTI-TEACHER KD LANDSCAPE ===
 (From RESEARCH.md §11.16 — Codex reads this directly)
 - NO existing work does multi-teacher + cross-tokenizer + byte-level + generative LM
 - 6 candidate teachers validated available: SmolLM2-1.7B, Pythia-1.4B, Qwen3-1.7B,
   TinyLlama-1.1B, Gemma-4-E2B, Ouro-1.4B
-- Most have d=2048 (Gemma has d=1536)
+- Most have d=2048 (Gemma has d=1536), 4 teachers share d=2048
 - VRAM budget: 5-7 teachers at 4-bit (~2GB each)
 - Aggregation strategies surveyed: simple average, entropy-weighted, learned MoE, 
   min-divergence mixture, progressive addition
 
 === SPECIFIC DESIGN QUESTIONS FOR CODEX ===
+
+0. **BYTE ALIGNMENT (HIGHEST PRIORITY):** The first-byte marginal destroys 84% of teacher
+   signal (2.94 bits of 3.49 bits lost). This is the #1 bottleneck. Design a byte alignment
+   that preserves significantly more teacher information. Options to evaluate:
+   (a) Multi-byte joint P(b1,b2) — 65K entries, partial fix
+   (b) Covering-based byte decomposition: P(token) → P(b1)×P(b2|b1)×...×P(bn|b1..bn-1)
+   (c) ALM approximate likelihood matching at byte level
+   (d) Hybrid: covering decomposition for KD + first-byte at non-boundaries
+   What is the information-theoretically optimal approach given our VRAM/compute budget?
+   Note: 150/256 bytes active, max 31,985 tokens map to same byte.
 
 1. TEACHER SELECTION: Which 3-5 teachers to use first? Diversity (different architectures)
    vs quality (strongest BPB)? We have transformer-only validated. Should we prioritize
@@ -267,17 +291,99 @@ The GEOMETRIC interpretation: teacher distributions are points on the probabilit
 
 **Status:** Theoretical sketch. Validate with T+L session. Key question for Codex: does the AM → GM curriculum improve over flat AM?
 
-## MULTI-BYTE MARGINAL IDEA (Future Ekalavya Enhancement)
+## COVERING-BASED BYTE DECOMPOSITION (BLD) — DESIGN SKETCH (2026-04-12)
 
-The first-byte marginal loses information: token "the" → byte 116 ("t"), discarding "h" and "e".
+**Motivation:** First-byte marginal destroys 84% of teacher signal. We need full information preservation.
 
-Could extract a joint distribution P(b1, b2) by mapping each token to its (first_byte, second_byte). From this:
-- P(b1) = marginal over b2 (current approach)
-- P(b2|b1) = P(b1, b2) / P(b1) — gives lookahead supervision
+**Core idea:** Decompose teacher's token distribution P(w) into autoregressive byte conditionals:
+```
+P(w = "the") = P(b1="t") × P(b2="h"|b1="t") × P(b3="e"|b1="t",b2="h")
+```
 
-The student predicting position k gets: P_teacher(byte_{k+1}) via first-byte marginal. But we ALSO have P_teacher(byte_{k+2} | byte_{k+1}). Could use this as auxiliary supervision on position k+1.
+For each byte position k within a teacher token at depth d:
+```
+P(byte_k = c | actual_prefix) = Σ_{w: w matches prefix, w[d]=c} P(w) / Σ_{w: w matches prefix} P(w)
+```
 
-**Status:** Theoretical sketch. Test only if single-byte KD plateaus.
+**Information preservation:** This is LOSSLESS — P(w) can be recovered from the product of conditionals. Zero information loss vs 84% loss with first-byte marginal.
+
+**Implementation approach:**
+1. Pre-build sparse prefix tables (once per teacher): `prefix_bytes → [(token_id, full_byte_seq)]`
+   - Level 0 (empty prefix): 150 non-empty entries → all tokens
+   - Level 1 (1-byte prefix): ~5K-10K non-empty entries
+   - Level 2+ (2+ bytes): very sparse, ~10K-20K entries total
+   - Only ~50K tokens, most 2-4 bytes → tables are small
+2. At each byte position during KD:
+   - Determine which teacher token this byte falls within (use byte_offsets)
+   - Look up prefix (actual bytes from token start to current position)
+   - Compute conditional: sum matching token probs, group by next byte, normalize
+3. Produces (T_bytes, 256) targets for EVERY byte position, not just token boundaries
+
+**vs current approach:**
+- Current: teacher signal at ~33% of byte positions (token boundaries only), 0.535 bits each
+- BLD: teacher signal at 100% of byte positions, preserving full 3.485 bits at boundaries + conditional info at non-boundaries
+
+**Computational cost:** Same as current (one teacher forward pass) + prefix table lookups (fast, CPU). The tables are precomputed. The per-position conditional computation is a dictionary lookup + vector sum.
+
+**Key question for Codex:** Is there a correctness issue with conditioning on actual bytes vs predicted bytes? At inference the student sees actual bytes, so conditioning on actual bytes is correct for the KD target. But during training, the student's prediction at position k-1 might differ from the actual byte — does this create a train-test mismatch?
+
+**Answer:** No — standard teacher forcing. Both CE and KD condition on actual bytes. The student is trained to predict next byte given actual prefix, same as standard LM training. KD just changes the target distribution from one-hot to teacher's soft conditional.
+
+**Empirical feasibility (SmolLM2-1.7B, 49K vocab):**
+- Token byte lengths: 0.2% 1-byte, 3.3% 2-byte, 9.2% 3-byte, 12.7% 4-byte, 13.5% 5-byte, 12.7% 6-byte, 11.6% 7-byte
+- Prefix table sizes: depth 0→1 entry, depth 1→150, depth 2→1838, depth 3→5672, depth 4→10807 = ~18K total entries (tiny)
+- **Disambiguation gain at depth 1: ~4.0 bits** (mean 16 distinct next bytes per prefix)
+- With covering: byte 1 gives 0.535 bits (same as now), byte 2 gives +4.0 bits, byte 3+ gives more
+- **Estimated total signal: ~20x more teacher information than first-byte marginal**
+- Computational overhead: prefix table lookups (dictionary, O(1)), no extra GPU compute
+
+**Literature validation (2026-04-12):**
+- **Vieira et al. (ICLR 2025)**: "Exact Byte-Level Probabilities from Tokenized LMs" — Byte-Token Representation Lemma: P(x₁ⁿ) = Σ_{t⃗ ∈ cover(x₁ⁿ)} P(t⃗). Full covering search algorithm. Our within-token decomposition is a correct simplification when teacher tokenization is known.
+- **BLD paper (arxiv 2604.07466, April 2026)**: Uses Vieira's covering with beam search (K=10, ε=0.01) for cross-tokenizer KD. Achieves JSD 0.0045 vs exact. Validates that covering decomposition is the state-of-the-art for token→byte probability conversion.
+- **Token→Byte distillation (arxiv 2602.01007, Feb 2026)**: Three-stage curriculum (embedding alignment → joint KD → boundary learning). Only supervises at token boundaries — misses non-boundary byte positions.
+- **Our simplification**: We know the teacher tokenization → within-token decomposition suffices. No beam search needed. O(|prefix_matches|) per byte position via dictionary lookup. Strictly simpler and faster than BLD.
+- **Multi-teacher advantage**: Different teachers tokenize differently → each gives different byte coverings → natural diversity in supervision signals. Example: Teacher A tokenizes "the" as one token (3-byte covering), Teacher B tokenizes as "th"+"e" (two tokens, different conditionals at byte 2). At each byte position, teachers provide COMPLEMENTARY estimates from different conditioning depths. The ensemble is richer than any single teacher — different tokenizations = different "views" of the byte sequence. This is a unique advantage of our byte-level architecture that NO token-level KD approach can exploit.
+
+**Status:** DESIGN SKETCH — validated by literature, needs Codex sign-off before implementation.
+
+## FIRST-BYTE MARGINAL INFORMATION LOSS ANALYSIS (2026-04-12)
+
+**Question:** How much teacher signal does the first-byte marginal destroy?
+
+**The concern:** If SmolLM2 assigns P("the")=0.15, P("that")=0.08, P("this")=0.03, P("them")=0.02 — all tokens starting with byte 116 ("t") — then our byte marginal sees P(byte=116) = 0.15+0.08+0.03+0.02 = 0.28. But it can't distinguish "the" from "that" — the fine-grained token-level information is lost.
+
+**Entropy analysis:**
+- Teacher token entropy: H_tok = -Σ P(tok) log P(tok) — typically 3-6 bits for LLMs
+- First-byte marginal entropy: H_byte = -Σ P(byte) log P(byte) — at most log(256) = 8 bits
+- But in practice: tokens starting with same byte have CORRELATED meaning (all start with "t"), so H_byte << H_tok often
+- Information loss: I_lost = H_tok - H_byte = mutual information between (token, remaining bytes | first byte)
+- If I_lost is large, teacher signal is severely degraded
+
+**PROBE RESULTS (2026-04-12, 30 sequences, 10,067 positions):**
+
+| Metric | Value |
+|--------|-------|
+| Mean token entropy (H_tok) | 3.485 bits |
+| Mean byte entropy (H_byte) | 0.535 bits |
+| **Mean information loss** | **2.940 bits (84% destroyed)** |
+| Max information loss | 12.065 bits |
+| Positions > 2 bits loss | 58.3% |
+| Positions > 1 bit loss | 72.6% |
+| **VERDICT** | **TOO_LOSSY** |
+
+**Structural cause:** 150/256 active bytes, max 31,985 tokens/byte, mean 327.7 tokens/byte. When hundreds of tokens collapse to one byte, almost all discriminative information is lost.
+
+**Implication:** First-byte marginal caps KD signal at ~0.5 bits per position. This is the ROOT CAUSE of weak KD signal — not alpha tuning, not teacher quality, not temperature. The alignment mechanism itself is the bottleneck.
+
+**Critical for T+L session:** Multi-teacher won't help if all teachers use first-byte marginal. Must fix alignment FIRST:
+- (a) Multi-byte marginal: P(b1,b2) joint → 65K entries, more info but still lossy for 3+ byte tokens
+- (b) Covering-based byte decomposition (BLD): full P(b1)×P(b2|b1)×...×P(bn|b1..bn-1), preserves ALL info
+- (c) ALM chunk matching: approximate likelihood at byte level
+- (d) Token-boundary-only KD: only supervise at byte positions matching token starts (wastes non-boundary positions)
+
+**WHY this makes KD nearly redundant with CE:** Teacher byte marginal entropy is 0.535 bits = nearly one-hot. The KD target is barely distinguishable from the CE target (actual next byte). So KD provides almost zero additional signal beyond what CE already gives. This is NOT just "weak signal" — it's "no signal." The covering decomposition fixes this by providing genuinely informative soft targets (multi-byte conditional distributions with much higher entropy).
+
+**Saved:** results/first_byte_marginal_info_loss.json
 
 ---
 

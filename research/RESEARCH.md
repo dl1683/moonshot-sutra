@@ -4821,6 +4821,20 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 - Uses full byte marginal (all tokenization coverings), not just first-byte. More info-rich but more expensive.
 - **Ekalavya advantage:** Our student IS byte-level natively — no extra head needed. Simpler, less information loss.
 
+**Vieira et al.: Exact Byte-Level Probabilities from Tokenized LMs** — [arXiv:2410.09303](https://arxiv.org/abs/2410.09303) (ICLR 2025)
+- Byte-Token Representation Lemma: P(byte_seq) = Σ_{covering token sequences} P(token_seq)
+- Cover encoding search algorithm for exact byte-level probability computation
+- Beam search approximation (K=10, ε=0.01) achieves JSD 0.0045 vs exact
+- Foundation used by BLD for token→byte probability conversion
+- **Ekalavya advantage:** Our within-token decomposition is a correct simplification (teacher tokenization known) — no beam search needed, O(|prefix_matches|) per position.
+
+**Distilling Token-Trained Models into Byte-Level Models** — [arXiv:2602.01007](https://arxiv.org/abs/2602.01007) (Feb 2026)
+- Three-stage curriculum: embedding alignment → joint distillation → boundary learning
+- Retains 97.2% of teacher performance with 6x data efficiency improvement
+- Only supervises at token boundaries — misses non-boundary byte positions
+- 125B bytes training data for Llama 3.2 3B distillation
+- **Limitation for Ekalavya:** boundary-only supervision wastes non-boundary positions where covering decomposition provides information
+
 **ALM: Universal Cross-Tokenizer Distillation via Approximate Likelihood Matching** — [arXiv:2503.20083](https://arxiv.org/abs/2503.20083) (NeurIPS 2025)
 - Principled likelihood matching across fundamentally different tokenizers
 - Enables "rapid transfer of subword models to byte-level"
@@ -4834,6 +4848,26 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 - Toolkit implementing advanced cross-tokenizer transfer methods
 
 **Strategic position:** Ekalavya is the ONLY approach that combines: (1) native byte-level student, (2) multi-teacher cross-architecture KD, (3) from-scratch training at 188M scale. Everyone else does token→token or token→byte-head.
+
+### 11.17 First-Byte Marginal Information Loss (2026-04-12)
+
+**CRITICAL FINDING:** Empirical probe (30 sequences, 10,067 positions, SmolLM2-1.7B) shows:
+- Mean teacher token entropy: 3.485 bits
+- Mean first-byte marginal entropy: 0.535 bits
+- **Mean information loss: 2.940 bits (84% of teacher signal destroyed)**
+- 58.3% of positions lose >2 bits, 72.6% lose >1 bit
+- Root cause: 150 active bytes, max 31,985 tokens per byte, mean 327.7 tokens/byte
+
+**Implication:** First-byte marginal makes KD targets nearly one-hot → KD ≈ CE → no additional signal from teacher. This is the ROOT CAUSE of weak KD signal, not alpha tuning or teacher quality.
+
+**Solution: Within-token covering decomposition** (validated by Vieira et al. ICLR 2025, used by BLD):
+- Decompose P(token) into byte conditionals: P(b₁)×P(b₂|b₁)×...
+- Preserves ALL information (lossless)
+- ~20x more teacher signal (all byte positions supervised, full entropy preserved)
+- Prefix tables are small (~18K entries total) and precomputed
+- Our case simpler than full Vieira covering: teacher tokenization known → no beam search
+
+Saved: results/first_byte_marginal_info_loss.json
 
 ### 11.15 Cross-Domain Architecture Research (2026-04-12)
 
