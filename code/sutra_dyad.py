@@ -578,7 +578,7 @@ class SutraDyadS1(nn.Module):
                     p.requires_grad = True
             print(f"Global layers {start}-{end-1} unfrozen")
 
-    def forward(self, byte_ids, targets=None, return_anchor=False):
+    def forward(self, byte_ids, targets=None, return_anchor=False, return_internals=False):
         B, T = byte_ids.shape
         P = self.patch_size
 
@@ -648,8 +648,22 @@ class SutraDyadS1(nn.Module):
             if return_anchor:
                 anchor_loss = self.compute_anchor_loss(byte_ids, patch_emb)
                 return ce_loss, anchor_loss
+            if return_internals:
+                return ce_loss, {
+                    "logits": logits[:, :T, :],
+                    "global_out": global_out,        # (B, N, d_global) pre-shift
+                    "global_shifted": global_shifted, # (B, N, d_global) post-shift
+                    "global_local": global_local,    # (B, N, d_local) post-projection bottleneck
+                }
             return ce_loss
 
+        if return_internals:
+            return logits[:, :T, :], {
+                "logits": logits[:, :T, :],
+                "global_out": global_out,
+                "global_shifted": global_shifted,
+                "global_local": global_local,
+            }
         return logits[:, :T, :]
 
     def count_params(self):
@@ -1399,6 +1413,566 @@ def train_s1(stage0_ckpt, cfg=None):
         json.dump(results, f, indent=2)
 
 
+# ---- Ekalavya: Multi-Teacher Knowledge Distillation ----
+
+def _build_first_byte_map(tokenizer, vocab_size, device='cpu'):
+    """Map each token ID to its first UTF-8 byte. Returns tensor of shape (vocab_size,)."""
+    fb = torch.zeros(vocab_size, dtype=torch.long, device=device)
+    for tok_id in range(min(tokenizer.vocab_size, vocab_size)):
+        try:
+            decoded = tokenizer.decode([tok_id])
+            if decoded:
+                fb[tok_id] = decoded.encode('utf-8', errors='replace')[0]
+        except Exception:
+            pass
+    return fb
+
+
+def _teacher_byte_probs(logits, first_byte_map):
+    """Convert teacher token logits to byte-level probabilities via first-byte marginal.
+
+    Args:
+        logits: (T_tok, V) raw teacher logits
+        first_byte_map: (V,) mapping token_id -> first byte value
+
+    Returns:
+        byte_probs: (T_tok, 256) normalized byte probability distribution
+    """
+    probs = F.softmax(logits.float(), dim=-1)
+    bp = torch.zeros(probs.shape[0], 256, device=probs.device, dtype=torch.float32)
+    for b in range(256):
+        mask = (first_byte_map == b)
+        if mask.any():
+            bp[:, b] = probs[:, mask].sum(dim=-1)
+    bp = bp / (bp.sum(dim=-1, keepdim=True) + 1e-10)
+    return bp
+
+
+def _get_teacher_targets(teacher, tokenizer, first_byte_map, raw_bytes, device,
+                         temperature=2.0, extract_hidden=True):
+    """Run teacher forward pass and extract byte-level targets.
+
+    Returns dict with:
+        byte_probs: (T_bytes, 256) soft byte targets at token boundaries
+        byte_mask: (T_bytes,) bool, True at positions where teacher makes a prediction
+        hidden: (N_tok, d_teacher) last-layer hidden states (if extract_hidden)
+        token_offsets: list of byte offsets for each token boundary
+    """
+    text = bytes(raw_bytes).decode('utf-8', errors='replace')
+    tokens = tokenizer.encode(text, return_tensors='pt').to(device)
+
+    with torch.inference_mode():
+        outputs = teacher(tokens, output_hidden_states=extract_hidden, use_cache=False)
+        logits = outputs.logits[0]  # (T_tok, V)
+
+    # Byte-level probabilities with temperature
+    scaled_logits = logits / temperature
+    byte_probs_tok = _teacher_byte_probs(scaled_logits, first_byte_map)  # (T_tok, 256)
+
+    # Get byte offsets at token boundaries
+    token_texts = [tokenizer.decode([t]) for t in tokens[0].tolist()]
+    byte_offsets = []
+    pos = 0
+    for txt in token_texts:
+        byte_offsets.append(pos)
+        pos += len(txt.encode('utf-8', errors='replace'))
+
+    # Scatter teacher predictions to byte positions.
+    # Teacher predicts next-token at position i → byte at offset byte_offsets[i+1].
+    # Student_logits[k] predicts byte k+1, so teacher target for byte k aligns to
+    # student_logits[k-1]. We store at k-1 so the KL loss compares matching positions.
+    n_bytes = len(raw_bytes)
+    byte_probs = torch.zeros(n_bytes, 256, device=device, dtype=torch.float32)
+    byte_mask = torch.zeros(n_bytes, dtype=torch.bool, device=device)
+
+    for i in range(len(byte_offsets) - 1):
+        target_off = byte_offsets[i + 1]
+        student_pos = target_off - 1  # align teacher "byte k" → student_logits[k-1]
+        if 0 <= student_pos < n_bytes:
+            byte_probs[student_pos] = byte_probs_tok[i]
+            byte_mask[student_pos] = True
+
+    result = {
+        "byte_probs": byte_probs,
+        "byte_mask": byte_mask,
+        "token_offsets": byte_offsets,
+    }
+
+    if extract_hidden:
+        # Last-layer hidden states at each token position
+        hidden = outputs.hidden_states[-1][0]  # (T_tok, d_teacher)
+        result["hidden"] = hidden.float()
+        result["n_tokens"] = tokens.shape[1]
+
+    return result
+
+
+def train_ekalavya(s1_ckpt, cfg=None):
+    """Ekalavya Phase C: Multi-teacher knowledge distillation for Sutra-Dyad.
+
+    Distills from SmolLM2-1.7B (anchor) + optional Pythia-1.4B (auxiliary) into the
+    pruned 188.2M byte-level student. Two surfaces targeted:
+    1. Byte logits: KL divergence between teacher byte probs and student byte probs
+    2. Global representations: Cosine distance between projected teacher hidden and student global states
+
+    Design validated by 2 independent Codex T+L sessions + empirical teacher probes.
+    """
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+    if cfg is None:
+        cfg = {}
+
+    # Training config
+    max_steps = cfg.get("max_steps", 5000)
+    batch_size = cfg.get("batch_size", 24)
+    grad_accum = cfg.get("grad_accum", 6)
+    seq_bytes = cfg.get("seq_bytes", SEQ_BYTES)
+    lr_local = cfg.get("lr_local", 1.5e-4)
+    min_lr_local = cfg.get("min_lr_local", 1.5e-5)
+    warmup = cfg.get("warmup_steps", 200)
+    run_name = cfg.get("run_name", "ekalavya_phase_c")
+
+    # KD config
+    kd_alpha = cfg.get("kd_alpha", 0.5)      # Byte logit KD weight
+    kd_beta = cfg.get("kd_beta", 0.15)       # Repr alignment weight
+    kd_temperature = cfg.get("kd_temperature", 2.0)
+    kd_ramp_steps = cfg.get("kd_ramp_steps", 500)  # Ramp KD weights from 0 over this many steps
+
+    # Teacher config
+    anchor_id = cfg.get("anchor_teacher", "HuggingFaceTB/SmolLM2-1.7B")
+    aux_id = cfg.get("aux_teacher", None)  # None = anchor only
+    aux_frequency = cfg.get("aux_frequency", 4)  # Run auxiliary every N steps
+
+    # Freeze config
+    freeze_global = cfg.get("freeze_global", False)  # Default: full unfreeze for Ekalavya
+    unfreeze_layers = cfg.get("unfreeze_layers", None)
+
+    print(f"\n{'='*60}")
+    print(f"EKALAVYA PHASE C -- Multi-Teacher Knowledge Distillation")
+    print(f"{'='*60}")
+
+    # Dataset
+    dataset = ByteShardedDataset()
+    print(f"Dataset: {dataset.total_bytes / 1e9:.1f}B est bytes, {len(dataset.index)} shards")
+
+    # Student model
+    print(f"\nLoading student from: {s1_ckpt}")
+    ckpt = torch.load(s1_ckpt, map_location='cpu', weights_only=False)
+    model = SutraDyadS1(max_seq_bytes=seq_bytes)
+    model.load_state_dict(ckpt["model"], strict=False)
+    s1_step = ckpt.get("step", "?")
+
+    # Progressive unfreeze schedule (Codex design):
+    # Phase 0 (step 0-400): only local + bridge + global 8-11
+    # Phase 1 (step 400-1200): + global 4-7
+    # Phase 2 (step 1200+): + global 0-3 (all unfrozen)
+    unfreeze_phase1_step = cfg.get("unfreeze_phase1_step", 400)
+    unfreeze_phase2_step = cfg.get("unfreeze_phase2_step", 1200)
+
+    # Start with global 0-7 frozen, 8-11 + global_norm unfrozen
+    model.freeze_global()
+    model.unfreeze_global(layer_range=(8, 12))  # top 4 global layers
+    model.global_norm.weight.requires_grad = True  # norm goes with top layers
+
+    params = model.count_params()
+    print(f"Student: {params['total']/1e6:.1f}M total, "
+          f"{params['trainable']/1e6:.1f}M trainable, {params['frozen']/1e6:.1f}M frozen")
+    model = model.to(DEVICE)
+
+    # Teacher projection heads (linear maps from teacher hidden dim to student global dim)
+    # These are the ONLY new trainable parameters
+    # 4-bit quantization config for teachers (Codex VRAM budget: ~2GB per teacher)
+    bnb_cfg = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4",
+    )
+
+    print(f"\nLoading anchor teacher: {anchor_id} (4-bit)")
+    anchor_tok = AutoTokenizer.from_pretrained(anchor_id)
+    anchor_model = AutoModelForCausalLM.from_pretrained(
+        anchor_id, quantization_config=bnb_cfg, device_map=DEVICE)
+    anchor_model.eval()
+    anchor_d = anchor_model.config.hidden_size
+    anchor_fb = _build_first_byte_map(anchor_tok, anchor_model.config.vocab_size, DEVICE)
+    print(f"  Hidden dim: {anchor_d}, vocab: {anchor_model.config.vocab_size}")
+
+    # Repr projection: teacher_d -> student d_local (640, the global_local bottleneck)
+    repr_proj_anchor = nn.Linear(anchor_d, model.d_local, bias=False).to(DEVICE)
+    nn.init.normal_(repr_proj_anchor.weight, std=0.02)
+
+    aux_model, aux_tok, aux_fb, repr_proj_aux = None, None, None, None
+    if aux_id:
+        print(f"\nLoading auxiliary teacher: {aux_id} (4-bit)")
+        aux_tok = AutoTokenizer.from_pretrained(aux_id)
+        aux_model = AutoModelForCausalLM.from_pretrained(
+            aux_id, quantization_config=bnb_cfg, device_map=DEVICE)
+        aux_model.eval()
+        aux_d = aux_model.config.hidden_size
+        aux_fb = _build_first_byte_map(aux_tok, aux_model.config.vocab_size, DEVICE)
+        repr_proj_aux = nn.Linear(aux_d, model.d_local, bias=False).to(DEVICE)
+        nn.init.normal_(repr_proj_aux.weight, std=0.02)
+        print(f"  Hidden dim: {aux_d}, vocab: {aux_model.config.vocab_size}")
+
+    # Optimizer: layerwise LR groups per Codex spec
+    # bridge: patch_encoder, patch_pool, patch_proj, global_to_local
+    # local: byte_embed, bypass_proj, local_decoder, local_norm, output_head
+    # global_top: global_layers.8-11, global_norm
+    # global_mid: global_layers.4-7
+    # global_bot: global_layers.0-3
+    # proj: repr projection heads
+    lr_bridge = cfg.get("lr_bridge", 2e-4)
+    lr_global_top = cfg.get("lr_global_top", 7.5e-5)
+    lr_global_mid = cfg.get("lr_global_mid", 5e-5)
+    lr_global_bot = cfg.get("lr_global_bot", 3e-5)
+
+    # Include ALL params upfront so progressive unfreeze doesn't miss them.
+    # Frozen params get zero gradients -> optimizer step is a no-op for them.
+    groups = {"bridge": [], "local": [], "global_top": [], "global_mid": [], "global_bot": []}
+    for name, p in model.named_parameters():
+        if any(k in name for k in ['patch_encoder', 'patch_pool', 'patch_proj', 'global_to_local']):
+            groups["bridge"].append(p)
+        elif any(k in name for k in ['global_layers.8', 'global_layers.9', 'global_layers.10', 'global_layers.11', 'global_norm']):
+            groups["global_top"].append(p)
+        elif any(k in name for k in ['global_layers.4', 'global_layers.5', 'global_layers.6', 'global_layers.7']):
+            groups["global_mid"].append(p)
+        elif any(k in name for k in ['global_layers.0', 'global_layers.1', 'global_layers.2', 'global_layers.3']):
+            groups["global_bot"].append(p)
+        else:
+            groups["local"].append(p)
+
+    proj_params = list(repr_proj_anchor.parameters())
+    if repr_proj_aux is not None:
+        proj_params += list(repr_proj_aux.parameters())
+
+    param_groups = []
+    if groups["bridge"]:
+        param_groups.append({"params": groups["bridge"], "lr": lr_bridge, "name": "bridge"})
+    if groups["local"]:
+        param_groups.append({"params": groups["local"], "lr": lr_local, "name": "local"})
+    if groups["global_top"]:
+        param_groups.append({"params": groups["global_top"], "lr": lr_global_top, "name": "global_top"})
+    if groups["global_mid"]:
+        param_groups.append({"params": groups["global_mid"], "lr": lr_global_mid, "name": "global_mid"})
+    if groups["global_bot"]:
+        param_groups.append({"params": groups["global_bot"], "lr": lr_global_bot, "name": "global_bot"})
+    param_groups.append({"params": proj_params, "lr": lr_bridge, "name": "proj"})
+
+    optimizer = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=WD, fused=True)
+    scaler = torch.amp.GradScaler('cuda')
+
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_path = REPO / "results" / f"{run_name}.log"
+    log_f = open(log_path, "w", encoding="utf-8")
+
+    def log(msg):
+        print(msg)
+        log_f.write(msg + "\n")
+        log_f.flush()
+
+    proj_param_count = sum(p.numel() for p in proj_params)
+    log(f"Config: batch={batch_size}, grad_accum={grad_accum}, seq={seq_bytes}, "
+        f"lr_local={lr_local}, lr_bridge={lr_bridge}, lr_gtop={lr_global_top}, "
+        f"lr_gmid={lr_global_mid}, lr_gbot={lr_global_bot}, warmup={warmup}, max_steps={max_steps}")
+    log(f"KD: alpha={kd_alpha} (byte logits), beta={kd_beta} (repr), T={kd_temperature}, "
+        f"ramp={kd_ramp_steps}")
+    log(f"Anchor: {anchor_id}")
+    log(f"Auxiliary: {aux_id or 'NONE'} (every {aux_frequency} steps)")
+    log(f"Projection params: {proj_param_count/1e3:.1f}K")
+    log(f"Student checkpoint: {s1_ckpt} (step {s1_step})")
+
+    # Resume support
+    start_step = 0
+    resume_ckpt = cfg.get("resume_ckpt")
+    if resume_ckpt:
+        rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
+        model.load_state_dict(rk["model"], strict=False)
+        if "repr_proj_anchor" in rk:
+            repr_proj_anchor.load_state_dict(rk["repr_proj_anchor"])
+        if repr_proj_aux is not None and "repr_proj_aux" in rk:
+            repr_proj_aux.load_state_dict(rk["repr_proj_aux"])
+        if "optimizer" in rk:
+            optimizer.load_state_dict(rk["optimizer"])
+        if "scaler" in rk:
+            scaler.load_state_dict(rk["scaler"])
+        start_step = rk["step"]
+        # Restore unfreeze state based on resumed step
+        if start_step >= unfreeze_phase1_step:
+            model.unfreeze_global(layer_range=(4, 8))
+        if start_step >= unfreeze_phase2_step:
+            model.unfreeze_global(layer_range=(0, 4))
+        log(f"Resumed from {resume_ckpt} at step {start_step}")
+
+    if DEVICE == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
+    model.train()
+    repr_proj_anchor.train()
+    if repr_proj_aux:
+        repr_proj_aux.train()
+    best_eval = float('inf')
+    step = start_step
+    t0 = time.time()
+    running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
+    nan_count = 0
+
+    log(f"\nStarting Ekalavya training at {time.strftime('%H:%M:%S')} (step {step})")
+
+    while step < max_steps:
+        optimizer.zero_grad(set_to_none=True)
+        accum_ce, accum_kd, accum_repr, accum_total = 0.0, 0.0, 0.0, 0.0
+
+        # Phased KD weight schedule (Codex design):
+        # Phase 0 (0-500): ramp 0 -> base
+        # Phase 1 (500-1000): hold base
+        # Phase 2 (1000-4200): raise to peak
+        # Phase 3 (4200-6000): decay to floor
+        kd_ramp_end = kd_ramp_steps  # end of initial ramp (default 500)
+        kd_hold_end = kd_ramp_end + 500  # end of hold phase
+        kd_raise_end = int(max_steps * 0.7)  # raise until 70%
+        if step < kd_ramp_end:
+            ramp = step / max(kd_ramp_end, 1)
+            alpha_eff = kd_alpha * ramp
+            beta_eff = kd_beta * ramp
+        elif step < kd_hold_end:
+            alpha_eff = kd_alpha
+            beta_eff = kd_beta
+        elif step < kd_raise_end:
+            # Raise to 1.5x base
+            progress = (step - kd_hold_end) / max(kd_raise_end - kd_hold_end, 1)
+            alpha_eff = kd_alpha * (1.0 + 0.5 * progress)
+            beta_eff = kd_beta * (1.0 + 0.67 * progress)
+        else:
+            # Decay to 0.33x base
+            progress = (step - kd_raise_end) / max(max_steps - kd_raise_end, 1)
+            alpha_eff = kd_alpha * (1.5 - 1.17 * progress)
+            beta_eff = kd_beta * (1.67 - 1.07 * progress)
+        ramp = min(1.0, step / max(kd_ramp_end, 1))  # for logging
+
+        # NOTE: Auxiliary teacher (Pythia) integration deferred to Phase C.2.
+        # Plumbing exists above for loading; byte/repr merging not yet implemented.
+
+        # Progressive unfreeze
+        if step == unfreeze_phase1_step:
+            model.unfreeze_global(layer_range=(4, 8))
+            log(f"  >>> UNFREEZE global layers 4-7 at step {step}")
+        if step == unfreeze_phase2_step:
+            model.unfreeze_global(layer_range=(0, 4))
+            log(f"  >>> UNFREEZE global layers 0-3 at step {step} (all params trainable)")
+
+        for micro in range(grad_accum):
+            x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
+
+            # --- Teacher forward (no grad, before student) ---
+            # Process one sequence at a time for teacher (different tokenizer)
+            with torch.no_grad():
+                B_actual = x.shape[0]
+                all_byte_probs = []
+                all_byte_masks = []
+                all_teacher_hidden_patches = []  # per-patch teacher hidden states
+
+                for b in range(B_actual):
+                    raw = x[b].tolist()
+                    targets_t = _get_teacher_targets(
+                        anchor_model, anchor_tok, anchor_fb, raw, DEVICE,
+                        temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                    )
+                    all_byte_probs.append(targets_t["byte_probs"])
+                    all_byte_masks.append(targets_t["byte_mask"])
+
+                    if beta_eff > 0 and "hidden" in targets_t:
+                        # Causally-aligned teacher hidden per patch.
+                        # global_local[j] = global_shifted[j] = global_out[j-1],
+                        # which only sees bytes < j*P. So we must pick the last
+                        # teacher hidden whose next-token start <= j*P.
+                        offsets = targets_t["token_offsets"]
+                        hidden = targets_t["hidden"]  # (n_tok, d_teacher)
+                        P = model.patch_size
+                        N = (len(raw) + P - 1) // P
+                        patch_hidden = torch.zeros(N, anchor_d, device=DEVICE, dtype=torch.float32)
+                        patch_mask = torch.zeros(N, dtype=torch.bool, device=DEVICE)
+                        for j in range(N):
+                            boundary = j * P
+                            # Find last teacher token whose byte start <= boundary
+                            best_ti = -1
+                            for ti in range(len(offsets)):
+                                if offsets[ti] <= boundary:
+                                    best_ti = ti
+                                else:
+                                    break
+                            if best_ti >= 0 and best_ti < hidden.shape[0]:
+                                patch_hidden[j] = hidden[best_ti]
+                                patch_mask[j] = True
+                        all_teacher_hidden_patches.append((patch_hidden, patch_mask))
+
+                # Stack teacher targets
+                teacher_byte_probs = torch.stack(all_byte_probs)  # (B, T, 256)
+                teacher_byte_mask = torch.stack(all_byte_masks)   # (B, T)
+
+                if all_teacher_hidden_patches:
+                    teacher_patch_hidden = torch.stack([h for h, m in all_teacher_hidden_patches])  # (B, N, d_teacher)
+                    teacher_patch_mask = torch.stack([m for h, m in all_teacher_hidden_patches])    # (B, N)
+
+            # --- Student forward ---
+            with torch.amp.autocast('cuda', dtype=DTYPE):
+                ce_loss, internals = model(x, y, return_internals=True)
+                student_logits = internals["logits"]  # (B, T, 256)
+
+                # KD Loss 1: Byte-level KL divergence (float32 for numerical stability)
+                kd_loss = torch.tensor(0.0, device=DEVICE)
+                if alpha_eff > 0:
+                    # Compute in float32 outside autocast for log-space stability
+                    student_log_probs = F.log_softmax(student_logits.float() / kd_temperature, dim=-1)
+                    mask = teacher_byte_mask[:, :student_logits.shape[1]]
+                    if mask.any():
+                        t_probs = teacher_byte_probs[:, :student_logits.shape[1], :]
+                        t_log_probs = torch.log(t_probs + 1e-10)
+                        kl = F.kl_div(student_log_probs, t_log_probs, reduction='none', log_target=True)
+                        kl = kl.sum(dim=-1)  # (B, T)
+                        kl = (kl * mask.float()).sum() / mask.float().sum()
+                        kd_loss = kd_temperature ** 2 * kl
+
+                # KD Loss 2: Representation alignment (cosine on global_local bottleneck)
+                repr_loss = torch.tensor(0.0, device=DEVICE)
+                if beta_eff > 0 and all_teacher_hidden_patches:
+                    global_local = internals["global_local"]  # (B, N, d_local=640)
+                    proj_teacher = repr_proj_anchor(teacher_patch_hidden.to(DTYPE))  # (B, N, d_local)
+                    # Cosine distance, masked to only patches with causal teacher alignment
+                    gl_norm = F.normalize(global_local.float(), dim=-1)
+                    pt_norm = F.normalize(proj_teacher.float(), dim=-1)
+                    cos_sim = (gl_norm * pt_norm).sum(dim=-1)  # (B, N)
+                    pmask = teacher_patch_mask[:, :cos_sim.shape[1]]
+                    if pmask.any():
+                        repr_loss = ((1.0 - cos_sim) * pmask.float()).sum() / pmask.float().sum()
+
+                total_loss = ce_loss + alpha_eff * kd_loss + beta_eff * repr_loss
+                loss_scaled = total_loss / grad_accum
+
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                nan_count += 1
+                log(f"  [NaN/Inf at step {step}, micro {micro}] -- skipping")
+                if nan_count > 10:
+                    log("FATAL: >10 NaN losses, aborting")
+                    log_f.close()
+                    return
+                continue
+
+            scaler.scale(loss_scaled).backward()
+            accum_ce += ce_loss.item()
+            accum_kd += kd_loss.item()
+            accum_repr += repr_loss.item()
+            accum_total += total_loss.item()
+
+        # Per-group LR schedule (layerwise)
+        lr_map = {
+            "bridge": (lr_bridge, lr_bridge * 0.1),
+            "local": (lr_local, min_lr_local),
+            "global_top": (lr_global_top, lr_global_top * 0.1),
+            "global_mid": (lr_global_mid, lr_global_mid * 0.1),
+            "global_bot": (lr_global_bot, lr_global_bot * 0.1),
+            "proj": (lr_bridge, lr_bridge * 0.1),
+        }
+        for pg in optimizer.param_groups:
+            name = pg.get("name", "local")
+            max_lr, min_lr_pg = lr_map.get(name, (lr_local, min_lr_local))
+            pg['lr'] = get_lr(step, warmup, max_steps, max_lr, min_lr_pg)
+
+        scaler.unscale_(optimizer)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            list(model.parameters()) + list(repr_proj_anchor.parameters())
+            + (list(repr_proj_aux.parameters()) if repr_proj_aux else []),
+            GRAD_CLIP)
+        scaler.step(optimizer)
+        scaler.update()
+
+        avg_ce = accum_ce / grad_accum
+        avg_kd = accum_kd / grad_accum
+        avg_repr = accum_repr / grad_accum
+        avg_total = accum_total / grad_accum
+        running_ce += avg_ce
+        running_kd += avg_kd
+        running_repr += avg_repr
+        running_total += avg_total
+        step += 1
+
+        if step % LOG_EVERY == 0:
+            n = LOG_EVERY
+            elapsed = time.time() - t0
+            throughput = step * batch_size * grad_accum * seq_bytes / elapsed
+            bpb = running_ce / n / math.log(2)
+            vram = torch.cuda.max_memory_allocated() / 1e9 if DEVICE == "cuda" else 0
+            local_lr = optimizer.param_groups[0]['lr']
+            log(f"  step {step:>5d} | CE {running_ce/n:.4f} | KD {running_kd/n:.4f} | "
+                f"Repr {running_repr/n:.4f} | Total {running_total/n:.4f} | BPB {bpb:.3f} | "
+                f"lr {local_lr:.2e} | grad {grad_norm:.2f} | "
+                f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}")
+            running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
+
+        if step % EVAL_EVERY == 0:
+            el = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
+            bpb_eval = el / math.log(2)
+            log(f"  *** EVAL step {step}: loss={el:.4f}, BPB={bpb_eval:.3f}")
+            if el < best_eval:
+                best_eval = el
+                save_dict = {
+                    "step": step, "stage": 1,
+                    "model": model.state_dict(),
+                    "repr_proj_anchor": repr_proj_anchor.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scaler": scaler.state_dict(),
+                    "eval_loss": el, "config": cfg,
+                }
+                if repr_proj_aux:
+                    save_dict["repr_proj_aux"] = repr_proj_aux.state_dict()
+                torch.save(save_dict, ckpt_dir / "best.pt")
+                log(f"      New best! Saved to {ckpt_dir / 'best.pt'}")
+
+            prompt = b"The meaning of intelligence is"
+            try:
+                gen_ids = model.generate(list(prompt), max_new_bytes=128, temperature=0.8)
+                gen_text = bytes(gen_ids).decode('utf-8', errors='replace')
+                safe = gen_text.encode('ascii', errors='replace').decode('ascii')
+                log(f"      GEN: {safe[:200]}")
+            except Exception as e:
+                log(f"      GEN failed: {e}")
+
+        if step % ROLLING_SAVE == 0:
+            save_dict = {
+                "step": step, "stage": 1,
+                "model": model.state_dict(),
+                "repr_proj_anchor": repr_proj_anchor.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scaler": scaler.state_dict(),
+                "eval_loss": best_eval, "config": cfg,
+            }
+            if repr_proj_aux:
+                save_dict["repr_proj_aux"] = repr_proj_aux.state_dict()
+            torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+
+    final_loss = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
+    final_bpb = final_loss / math.log(2)
+    log(f"\n{'='*60}")
+    log(f"EKALAVYA TRAINING COMPLETE -- {max_steps} steps")
+    log(f"Final eval loss: {final_loss:.4f}, BPB: {final_bpb:.3f}")
+    log(f"Best eval loss: {best_eval:.4f}, BPB: {best_eval/math.log(2):.3f}")
+    log(f"{'='*60}")
+
+    log_f.close()
+
+    results = {
+        "run_name": run_name, "stage": 1, "phase": "ekalavya",
+        "final_eval_loss": final_loss, "final_bpb": final_bpb,
+        "best_eval_loss": best_eval, "best_bpb": best_eval / math.log(2),
+        "steps": max_steps, "config": cfg,
+        "params": params, "proj_params": proj_param_count,
+        "anchor_teacher": anchor_id,
+        "aux_teacher": aux_id,
+    }
+    with open(REPO / "results" / f"{run_name}_results.json", "w") as f:
+        json.dump(results, f, indent=2)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Sutra-Dyad")
@@ -1412,6 +1986,8 @@ if __name__ == "__main__":
     parser.add_argument("--ablate", type=str, default=None, help="Run ablation eval on S1 checkpoint")
     parser.add_argument("--profile-teachers", action="store_true",
                         help="Profile teacher models for Ekalavya KD (CPU-only)")
+    parser.add_argument("--ekalavya", type=str, default=None, metavar="S1_CKPT",
+                        help="Run Ekalavya KD from Stage 1 checkpoint")
     parser.add_argument("--config", type=str, default=None, help="JSON config file")
     parser.add_argument("--stage0-ckpt", type=str, default=None, help="Stage 0 checkpoint for Stage 1")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from S1 checkpoint")
@@ -1430,6 +2006,20 @@ if __name__ == "__main__":
         ablation_eval(args.ablate)
     elif args.profile_teachers:
         profile_teachers()
+    elif args.ekalavya:
+        cfg = {}
+        if args.config:
+            with open(args.config) as f:
+                cfg = json.load(f)
+        cfg.setdefault("max_steps", args.max_steps)
+        cfg.setdefault("batch_size", args.batch_size or 24)
+        cfg.setdefault("seq_bytes", args.seq_bytes)
+        cfg.setdefault("run_name", args.run_name or "ekalavya_phase_c")
+        if args.lr:
+            cfg.setdefault("lr_local", args.lr)
+        if args.resume:
+            cfg["resume_ckpt"] = args.resume
+        train_ekalavya(args.ekalavya, cfg)
     elif args.stage == 1:
         if args.stage0_ckpt is None:
             print("ERROR: --stage0-ckpt required for Stage 1 (needed for anchor loss even when resuming)")

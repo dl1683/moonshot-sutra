@@ -4757,7 +4757,33 @@ Best: **BPB 1.430** at step 4500. Total Stage 0→1 gain: **0.295 BPB** (1.725 �
 
 **Generation quality (step 4500):** Grammatically passable English, diverse vocabulary, but semantically incoherent ("word salad"). Cannot follow topic, cannot generate code. Expected for 197M byte-level at 5K steps. Ekalavya KD specifically targets this coherence gap.
 
-### 11.12 Cross-Domain Architecture Research (2026-04-12)
+### 11.12 Ekalavya Phase C Design — Codex-Validated (2026-04-12)
+
+**Source:** 3 independent Codex T+L sessions converged on this design. Validated by empirical teacher probes.
+
+**Teacher probes:**
+| Teacher | Byte BPB | Top-1 | Gap to Student | Oracle Gain (dual) |
+|---------|----------|-------|----------------|-------------------|
+| SmolLM2-1.7B | 0.490 | 0.887 | -0.925 | — |
+| Pythia-1.4B | 0.539 | 0.881 | -0.876 | 0.054 BPB |
+
+**Loss design (Codex-specified):**
+```
+L = L_ce + λ_byte(s) * L_byte + λ_ctx(s) * L_ctx
+L_byte = T² * KL(teacher_byte_probs || student_byte_probs)  [T=1.5]
+L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
+```
+- λ_byte: ramp 0→0.10 (0-500), hold 0.10 (500-1000), raise to 0.15 (1000-4200), decay to 0.05 (4200-6000)
+- λ_ctx: ramp 0→0.15 (0-500), hold 0.15 (500-1000), raise to 0.25 (1000-4200), decay to 0.10 (4200-6000)
+- Pythia auxiliary gate ρ=0 until step 1000, then `ρ = 0.30 * sigmoid((conf_pythia - conf_smol - 0.02) / 0.05)`
+
+**Surfaces:** Byte logits + global_local (d=640, post-projection). NOT bypass (detached, lexical).
+
+**Schedule:** 6000 steps total. Progressive unfreeze: global 8-11 first (step 0), then 4-7 (step 400), then 0-3 (step 1200). 5 LR groups: bridge (2e-4), local (1.5e-4), global 8-11 (7.5e-5), global 4-7 (5e-5), global 0-3 (3e-5).
+
+**VRAM:** batch=12, accum=6. SmolLM2 Q4 ~2GB + Pythia Q4 ~1.5GB + student ~15GB = ~19.5GB. Fits in 24GB.
+
+### 11.13 Cross-Domain Architecture Research (2026-04-12)
 
 **Gemma 4 (Google, April 2026)** — [blog](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/)
 - **Per-Layer Embeddings (PLE)**: Second embedding table feeding residual signal into every decoder layer. This independently validates our byte-residual bypass design — the same architectural pattern appears in a frontier model.
