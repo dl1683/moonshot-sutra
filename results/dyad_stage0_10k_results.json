@@ -1,0 +1,19 @@
+{
+  "run_name": "dyad_stage0_10k",
+  "final_eval_loss": 1.2103157258033752,
+  "final_bpb": 1.7461164955264559,
+  "best_eval_loss": 1.1953814109166463,
+  "best_bpb": 1.7245708335002978,
+  "steps": 10000,
+  "config": {
+    "max_steps": 10000,
+    "batch_size": 64,
+    "seq_bytes": 1536,
+    "lr": 0.0003,
+    "run_name": "dyad_stage0_10k"
+  },
+  "params": {
+    "total": 153683200,
+    "unique_untied": 153617664
+  }
+}

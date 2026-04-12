@@ -1,0 +1,23 @@
+{
+  "run_name": "dyad_s1_probe1",
+  "stage": 1,
+  "final_eval_loss": 1.259204363822937,
+  "final_bpb": 1.8166478911530934,
+  "best_eval_loss": 1.273760986328125,
+  "best_bpb": 1.8376486582534206,
+  "steps": 1000,
+  "config": {
+    "max_steps": 1000,
+    "batch_size": 24,
+    "seq_bytes": 1536,
+    "run_name": "dyad_s1_probe1",
+    "freeze_global": true
+  },
+  "params": {
+    "total": 196744448,
+    "unique_untied": 196580608,
+    "trainable": 45748480,
+    "frozen": 150995968
+  },
+  "stage0_ckpt": "results/checkpoints_dyad_stage0_10k/best.pt"
+}
