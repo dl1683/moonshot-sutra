@@ -6,6 +6,88 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## POST-V2 T+L SESSION — PREPARED TASK SECTION (2026-04-12)
+
+**Status:** DRAFT — Fill in v2 results when training completes, then fire.
+
+This is the TASK injection for a T+L Codex session after Ekalavya v2 completes. The session goal: validate v2 results + design multi-teacher mechanism for production.
+
+### Injected Context (Claude fills before invoking)
+
+```
+ADDITIONAL CONTEXT FOR THIS ROUND (paste after standard template Section 4):
+
+=== EKALAVYA V2 RESULTS (2000 steps, SmolLM2-1.7B single teacher) ===
+[PASTE v2 results table here: step | CE | KD | Repr | BPB | ramp]
+[PASTE eval BPB at step 500/1000/1500/2000]
+[PASTE generation samples at step 2000]
+
+Baseline comparison:
+- Phase B best (no KD): BPB 1.421 (step 4500, 1M eval pool)
+- v2 final: [FILL]
+- Delta: [FILL]
+
+KD mechanism signals:
+- KD loss trajectory: [FILL — dropped from X to Y]
+- Repr loss trajectory: [FILL — dropped from X to Y]
+- Did CE preservation hold? [FILL]
+
+=== FIELD RESEARCH: MULTI-TEACHER KD LANDSCAPE ===
+(From RESEARCH.md §11.16 — Codex reads this directly)
+- NO existing work does multi-teacher + cross-tokenizer + byte-level + generative LM
+- 6 candidate teachers validated available: SmolLM2-1.7B, Pythia-1.4B, Qwen3-1.7B,
+  TinyLlama-1.1B, Gemma-4-E2B, Ouro-1.4B
+- Most have d=2048 (Gemma has d=1536)
+- VRAM budget: 5-7 teachers at 4-bit (~2GB each)
+- Aggregation strategies surveyed: simple average, entropy-weighted, learned MoE, 
+  min-divergence mixture, progressive addition
+
+=== SPECIFIC DESIGN QUESTIONS FOR CODEX ===
+
+1. TEACHER SELECTION: Which 3-5 teachers to use first? Diversity (different architectures)
+   vs quality (strongest BPB)? We have transformer-only validated. Should we prioritize
+   adding Ouro (looped) or Gemma-4 (PLE/hybrid attn) for architectural diversity?
+
+2. AGGREGATION MECHANISM: How to combine byte probabilities from multiple teachers?
+   - Simple average: democratic, no extra params, but weak teachers dilute strong ones
+   - Entropy-weighted: confident teachers get more say, but entropy varies by domain
+   - Learned MoE router: adaptive, but adds params and complexity
+   - What does first-principles derivation suggest?
+
+3. REPR-LEVEL MULTI-TEACHER: Each teacher has different hidden geometry. Should we:
+   - Use separate repr_proj per teacher and average projected states?
+   - Use CKA-based alignment (match student to nearest teacher per patch)?
+   - Drop repr KD entirely and focus on logit-level only?
+
+4. TEACHER CURRICULUM: All teachers from step 0? Or start with 1 (best), add more
+   progressively? Literature (DiverseDistill) suggests dynamic per-step weighting
+   based on student's learning progress.
+
+5. CONFLICT RESOLUTION: When teachers disagree (high JS divergence), should KD loss
+   be down-weighted (defer to CE) or up-weighted (disagreement = learning opportunity)?
+
+6. PRODUCTION RUN CONFIG: Specify exact config for the multi-teacher production run:
+   - Batch size, grad accum, sequence length
+   - Number of steps (6K? 10K? 15K?)
+   - Alpha/beta schedule for multi-teacher
+   - LR schedule (5 groups from v2 or different?)
+   - Which eval checkpoints
+   - Stop rules
+
+7. BATCHED TEACHER OPTIMIZATION: Validate the batched teacher design (SCRATCHPAD)
+   for correctness. Any issues with padding, attention masking, or output extraction?
+```
+
+### Expected Codex Output
+- Validated/invalidated v2 conclusions (Evidence Gate)
+- Multi-teacher design with extreme granularity (equations, configs)
+- Teacher selection with justification
+- Production run config ready to execute
+- Research/probe requests if more data needed
+- Per-outcome confidence scores
+
+---
+
 ## EKALAVYA V2 THROUGHPUT OPTIMIZATION SKETCH (2026-04-12)
 
 **Problem:** Per-sequence teacher inference is the bottleneck. 72 sequential teacher forwards per optimizer step (batch=12, accum=6). Each step ~8.8s. 2000 steps = ~5 hours. Production 6000 steps = ~15 hours.
@@ -30,6 +112,44 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Decision:** Option A (batched teacher) is the practical fix. 2x speedup for ~20 lines of code. Implement AFTER v2 validates the KD mechanism.
 
+### Option A Implementation Sketch (Ready to Implement)
+
+Replace per-sequence loop in train_ekalavya (lines 1775-1807) with batched teacher call:
+
+```python
+def _get_teacher_targets_batched(teacher, tokenizer, first_byte_map, batch_raw_bytes, device,
+                                  temperature=2.0, extract_hidden=True):
+    """Batched teacher forward — single GPU call instead of B separate calls."""
+    B = len(batch_raw_bytes)
+    texts = [bytes(rb).decode('utf-8', errors='replace') for rb in batch_raw_bytes]
+    
+    # Batch tokenize with padding
+    encoded = tokenizer(texts, padding=True, return_tensors='pt', truncation=True)
+    input_ids = encoded['input_ids'].to(device)
+    attention_mask = encoded['attention_mask'].to(device)
+    
+    with torch.inference_mode():
+        outputs = teacher(input_ids, attention_mask=attention_mask,
+                         output_hidden_states=extract_hidden, use_cache=False)
+    
+    # Unpack per-sequence (scatter still needs per-seq byte offsets)
+    results = []
+    for b in range(B):
+        seq_len = attention_mask[b].sum().item()
+        logits_b = outputs.logits[b, :seq_len]
+        
+        scaled = logits_b / temperature
+        byte_probs_tok = _teacher_byte_probs(scaled, first_byte_map)
+        
+        # ... same byte offset + scatter logic as _get_teacher_targets ...
+        results.append(result)
+    return results
+```
+
+**Impact:** 12 teacher forwards → 1 per micro-batch. With padding overhead ~10%, net ~2x faster.
+**Risk:** Padding wastes compute on short sequences. Mitigate with sorted-by-length bucketing.
+**Multi-teacher ready:** Each teacher still called separately (different tokenizers), but each call is batched.
+
 ## MULTI-TEACHER EKALAVYA DESIGN SKETCH (2026-04-12)
 
 **Context:** Field survey (RESEARCH.md §11.16) confirms NO existing work does multi-teacher + cross-tokenizer + byte-level + generative LM. We're first. This sketch designs the mechanism.
@@ -42,14 +162,16 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ### Teacher Pool (4-bit quantized, ~2GB each)
 
-| Teacher | Params | Family | Architecture | BPB (our data) | Status |
-|---------|--------|--------|-------------|----------------|--------|
-| SmolLM2-1.7B | 1.7B | SmolLM | Transformer | 0.490 | ✅ Validated |
-| Pythia-1.4B | 1.4B | Pythia | Transformer | 0.534 | ✅ Validated |
-| Qwen3-1.7B | 1.7B | Qwen | Transformer | TBD | Available |
-| TinyLlama-1.1B | 1.1B | LLaMA | Transformer | TBD | Available |
-| Gemma-4-E2B | 2B | Gemma4 | PLE+sliding/global attn | TBD | Available (Apr 2026) |
-| Ouro-1.4B | 1.4B | LoopLM | Looped transformer | TBD | Need to check avail. |
+| Teacher | Params | d_model | Layers | Vocab | BPB (our data) | Status |
+|---------|--------|---------|--------|-------|----------------|--------|
+| SmolLM2-1.7B | 1.7B | 2048 | ? | ? | 0.490 | ✅ Validated |
+| Pythia-1.4B | 1.4B | 2048 | 24 | 50K | 0.534 | ✅ Validated |
+| Qwen3-1.7B | 1.7B | 2048 | 28 | 152K | TBD | Available, HF |
+| TinyLlama-1.1B | 1.1B | 2048 | 22 | 32K | TBD | Available, HF |
+| Gemma-4-E2B | 2.3B | 1536 | 35 | 262K | TBD | Available (multimodal, text backbone usable) |
+| Ouro-1.4B | 1.4B | 2048 | 24×4 | 49K | TBD | Available, HF. Note: `transformers<4.56.0` required |
+
+**Architecture insight:** 5 of 6 teachers have d_model=2048. Only Gemma-4-E2B differs (1536). Each needs its own repr_proj (different semantic spaces), but projection param cost is small (~1.3M each, ~6.5M for 5 teachers).
 
 **VRAM budget:** 24GB - 9GB student overhead = 15GB available. At ~2GB/teacher (4-bit) = 7 teachers max. 5 practical (leave 5GB buffer).
 
@@ -96,6 +218,54 @@ combined_probs = sum(teacher_weights * teacher_byte_probs)
 | Phase 4 (MoE routing) | ~200 lines: router network, routing loss | +~10s/step + router grad | 15-19GB |
 
 **Decision: Wait for v2 results. If v2 shows clear BPB improvement over baseline, move to Phase 2 immediately. If v2 is marginal, fix single-teacher first.**
+
+### Information-Theoretic Analysis of Multi-Teacher Aggregation
+
+**Core question:** Given N teacher distributions P₁(b), ..., Pₙ(b) over byte b at position k, what target distribution T(b) should the student match?
+
+**Option 1: Arithmetic Mean (AM)**
+T(b) = (1/N) Σᵢ Pᵢ(b)
+- Properties: Inclusive — any teacher's probability contributes. H(AM) ≥ max(H(Pᵢ)) (entropy never decreases). Creates SOFT targets (broad distributions). Preserves minority opinions.
+- Good when: Teachers are diverse, student is early in training, we want exploration.
+- Bad when: A weak teacher dilutes a strong one. The AM of "correct + garbage" is still somewhat garbage.
+
+**Option 2: Geometric Mean (GM, normalized)**
+T(b) ∝ ∏ᵢ Pᵢ(b)^(1/N)
+- Properties: Conservative — ALL teachers must assign probability. H(GM) ≤ min(H(Pᵢ)) if distributions overlap (entropy decreases). Creates SHARP targets. Unanimous agreement amplified.
+- Good when: We want confident, high-quality targets. Late in training. Teachers are high-quality.
+- Bad when: Teachers disagree on everything (GM collapses to uniform on non-overlapping supports).
+- Connection: This IS the Product of Experts (Hinton 2002), normalized.
+
+**Option 3: Entropy-Weighted Arithmetic Mean**
+wᵢ = softmax(-H(Pᵢ)/τ), T(b) = Σᵢ wᵢPᵢ(b)
+- Properties: Confident teachers dominate. H(Pᵢ) ≈ log(256) → teacher has no useful signal → low weight. Low entropy → teacher is confident → high weight.
+- Temperature τ controls sharpness of weighting. τ→0: winner-take-all, τ→∞: uniform.
+- Good when: Teacher quality varies by position. Some teachers have signal, others don't.
+
+**Option 4: JS-Divergence-Gated KD**
+When teachers agree: use AM (strong consensus signal).
+When teachers disagree: down-weight KD, up-weight CE.
+Measure: JS(P₁, ..., Pₙ) = H(AM) - (1/N)ΣH(Pᵢ)
+If JS > threshold → teachers conflict → student should trust its own CE.
+
+**FIRST-PRINCIPLES DERIVATION: Why Entropy-Weighted AM → GM**
+
+If teacher k has entropy H_k and we weight by exp(-H_k/τ):
+- As τ → 0: only the most confident teacher contributes (winner-take-all)
+- As τ → ∞: all teachers equal (uniform AM)
+- Intermediate τ: smooth interpolation
+
+Interestingly, the geometric mean CAN be derived as the limiting case of minimum-KL aggregation when we seek the distribution T that minimizes Σᵢ KL(Pᵢ || T). This is the **centroid in KL-divergence** — the geometric center of the teacher distributions in probability simplex space.
+
+The GEOMETRIC interpretation: teacher distributions are points on the probability simplex. The optimal aggregation is the GEOMETRIC centroid (for KL) or ARITHMETIC centroid (for Wasserstein). This connects directly to the project thesis: Intelligence = Geometry.
+
+**Proposed curriculum:**
+1. Steps 0-500: AM (explore) — τ_mix = ∞
+2. Steps 500-2000: Entropy-weighted AM — τ_mix = 2.0
+3. Steps 2000-4000: Entropy-weighted, τ_mix = 0.5 (sharper)
+4. Steps 4000+: Soft GM — τ_mix → 0 (converge on consensus)
+
+**Status:** Theoretical sketch. Validate with T+L session. Key question for Codex: does the AM → GM curriculum improve over flat AM?
 
 ## MULTI-BYTE MARGINAL IDEA (Future Ekalavya Enhancement)
 

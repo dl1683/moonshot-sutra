@@ -127,7 +127,7 @@ Sutra's vision: thousands of contributors worldwide, each improving the piece th
 1. Read `research/VISION.md` in full — every word. This is your bible. The 5 outcomes are defined there in complete detail. Internalize them deeply.
 2. Read `research/ARCHITECTURE.md` — the COMPLETE architecture reference with parameter budget, design decision audit (DERIVED/INHERITED/FALSIFIED classification for EVERY choice), benchmark tables, and falsification results. THIS IS WHERE YOU QUESTION INHERITED ASSUMPTIONS.
 3. Read `research/RESEARCH.md` — all findings, Chrome probe results, competitive analysis, and critically: FAILED APPROACHES (so you don't repeat dead ends).
-4. Read `code/dense_baseline.py` — current model architecture and training code (may be replaced by your design).
+4. Read `code/sutra_dyad.py` — current byte-level model architecture and training code including Ekalavya KD implementation.
 5. Run `nvidia-smi` to check current GPU status (what's running, VRAM usage).
 6. Check the latest checkpoint directory and inspect training logs for current training state.
 
@@ -240,10 +240,10 @@ This means:
   There are already Phi-4, Qwen3-4B, Gemma-3-1B, SmolLM2. We can't out-resource them.
 - We MUST do something EXCEPTIONALLY WEIRD that big labs haven't done.
 - The thing that makes us special: MULTI-TEACHER CROSS-ARCHITECTURE KNOWLEDGE
-  DISTILLATION (the Ekalavya Protocol). A 197M model that learns simultaneously
-  from transformers, hybrids, SSMs, and embedding models — using a novel
-  cross-tokenizer bridge (Byte-Span Bridge). Nobody has done this at edge scale
-  with architecturally diverse teacher families.
+  DISTILLATION (the Ekalavya Protocol). A 188M byte-level model that learns
+  simultaneously from transformers, hybrids, SSMs, and looped models — using
+  native byte-level probability marginals for cross-tokenizer alignment.
+  Nobody has done multi-teacher + cross-tokenizer + byte-level + generative LM.
 - If we crack multi-teacher KD, then:
   → Knowledge absorption from ANY model family becomes trivial
   → Data efficiency (O4) is solved — why train on trillions of tokens when you
@@ -251,12 +251,14 @@ This means:
   → Intelligence (O1) follows naturally from richer, more diverse knowledge
   → Everything else falls into place
 
-THIS IS THE SINGULAR PRIORITY. The architecture is LOCKED (24A-197M pure
-transformer). No more architecture search. All design energy goes to making
-Ekalavya Protocol work. The question is not "what architecture?" but "how do
-we make a 197M model absorb knowledge from 4+ architecturally diverse teachers
-simultaneously?" THAT is what will get attention, get cited, and make this
-project matter.
+THIS IS THE SINGULAR PRIORITY. The architecture is LOCKED (Sutra-Dyad-188.2M,
+byte-level model: 12-layer global transformer d=1024 + 4-layer local decoder
+d=640 with byte-residual bypass). No more architecture search. All design energy
+goes to making Ekalavya Protocol work. The question is not "what architecture?"
+but "how do we make a 188M byte-level model absorb knowledge from 4+
+architecturally diverse teachers simultaneously, translating their token-level
+knowledge through byte-level probability marginals?" THAT is what will get
+attention, get cited, and make this project matter.
 
 NO SPECIFIC MECHANISM IS SACRED — ONLY THE OUTCOME IS SACRED. The Byte-Span
 Bridge, DSKD, CKA loss, PCGrad — these are candidate mechanisms, not
@@ -323,10 +325,11 @@ STRATEGIC PRIORITIES — internalize these alongside Blue Lock:
   retraining everything?" then the simplification fails Outcome 3, no
   matter how good the BPT is.
 
-- THE BACKBONE ARCHITECTURE IS LOCKED (Sutra-24A-197M, pure 24-layer
-  transformer, 768d, 12h GQA, SwiGLU). See research/ARCHITECTURE.md for
-  details. 7 rounds of architecture search tested all hybrid variants —
-  none passed the kill rule. No further architecture search.
+- THE BACKBONE ARCHITECTURE IS LOCKED (Sutra-Dyad-188.2M, byte-level:
+  12-layer global transformer d=1024 16h GQA SwiGLU + 4-layer local decoder
+  d=640 with byte-residual bypass, cross-attn removed). See research/ARCHITECTURE.md
+  and code/sutra_dyad.py. Architecture evolved through 7+ rounds of search —
+  all alternatives exhausted. No further architecture search.
 
   THE OPEN DESIGN SPACE IS NOW: how to make Ekalavya Protocol work.
   This includes: teacher routing mechanisms, cross-tokenizer alignment,
