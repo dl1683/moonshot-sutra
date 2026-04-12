@@ -1,0 +1,140 @@
+{
+  "name": "spectral_reg_decoupled_wsd_3k",
+  "config": {
+    "name": "spectral_reg_decoupled_wsd_3k",
+    "teacher": "Qwen/Qwen3-1.7B-Base",
+    "total_steps": 3000,
+    "batch_size": 4,
+    "grad_accum": 8,
+    "lr": 0.0003,
+    "min_lr": 1e-05,
+    "warmup": 200,
+    "eval_every": 500,
+    "seq_len": 512,
+    "alpha": 0.0,
+    "alpha_min": 0.0,
+    "temperature": 0.5,
+    "kl_mode": "forward",
+    "top_k": 64,
+    "hard_token_frac": null,
+    "spectral_var_weight": 0.0015,
+    "spectral_cov_weight": 0.0035,
+    "spectral_var_decay_start": 2000,
+    "spectral_var_decay_end": 2400,
+    "spectral_cov_decay_start": 2400,
+    "spectral_cov_decay_end": 3000,
+    "spectral_cov_final_weight": 0.001,
+    "dim": 768,
+    "n_layers": 24,
+    "n_heads": 12,
+    "ff_dim": 2304,
+    "exit_layers": [
+      7,
+      15,
+      23
+    ],
+    "norm_type": "ss_rmsnorm",
+    "block_schedule": [
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A",
+      "A"
+    ],
+    "n_q_heads": 6,
+    "n_kv_heads": 3,
+    "head_dim": 64,
+    "conv_kernel_size": 4,
+    "_purpose": "Track 1b: Decoupled VICReg with scheduled decay. Var decays [2000,2400]->0 (fix kurtosis). Cov decays [2400,3000]->0.001 (keep anti-collapse through WSD). Tests if kurtosis pathology explains R13 gap."
+  },
+  "metrics": [
+    {
+      "step": 500,
+      "bpt": 7.4463,
+      "alpha": 0.0,
+      "lr": 0.0003,
+      "avg_kurtosis": 0.75,
+      "bpt_exit_7": 7.6431,
+      "bpt_exit_15": 7.4722
+    },
+    {
+      "step": 1000,
+      "bpt": 6.754,
+      "alpha": 0.0,
+      "lr": 0.0003,
+      "avg_kurtosis": 0.47,
+      "bpt_exit_7": 7.1282,
+      "bpt_exit_15": 6.8033
+    },
+    {
+      "step": 1500,
+      "bpt": 6.0653,
+      "alpha": 0.0,
+      "lr": 0.0003,
+      "avg_kurtosis": 0.82,
+      "bpt_exit_7": 6.8293,
+      "bpt_exit_15": 6.14
+    },
+    {
+      "step": 2000,
+      "bpt": 5.558,
+      "alpha": 0.0,
+      "lr": 0.0003,
+      "avg_kurtosis": 1.09,
+      "bpt_exit_7": 6.6614,
+      "bpt_exit_15": 5.6536
+    },
+    {
+      "step": 2500,
+      "bpt": 5.2566,
+      "alpha": 0.0,
+      "lr": 0.000252,
+      "avg_kurtosis": 1.56,
+      "bpt_exit_7": 6.4972,
+      "bpt_exit_15": 5.3404
+    },
+    {
+      "step": 3000,
+      "bpt": 4.9413,
+      "alpha": 0.0,
+      "lr": 1e-05,
+      "avg_kurtosis": 1.5,
+      "bpt_exit_7": 6.2264,
+      "bpt_exit_15": 5.0454
+    }
+  ],
+  "generations": [
+    {
+      "prompt": "The meaning of life is",
+      "generation": "The meaning of life is not a matter of fact.\n\nThe word \u201ccity\u201d is a word that is used to describe the word \u201ccity\u201d or \u201ccity\u201d or \u201ccity\u201d or \u201ccity\u201d or \u201ccity\u201d or \u201ccity\u201d or \u201ccity\u201d or \u201ccity\u201d or"
+    },
+    {
+      "prompt": "In a distant future",
+      "generation": "In a distant future, the\ndistinguished, and the old man, who had been a man of\ndistinguished, had been a man of the same kind, had been\ndistinguished, and had been a man of the same kind.\n\n\"I have been a man of the world,\""
+    },
+    {
+      "prompt": "def fibonacci(n):\n",
+      "generation": "def fibonacci(n):\n                                                                "
+    }
+  ],
+  "shared_vocab": null
+}

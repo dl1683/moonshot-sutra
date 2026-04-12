@@ -6774,9 +6774,17 @@ def train_kd_scratch(config_path):
     tok_path = REPO / "data" / "tokenizer_16k" / "tokenizer.json"
     student_tokenizer = Tokenizer.from_file(str(tok_path))
 
-    # ---- Dataset ----
-    shard_dir = REPO / "data" / "shards_16k"
+    # ---- Dataset (shard_dir override for curated/transport runs) ----
+    shard_dir_cfg = cfg.get("shard_dir", None)
+    if shard_dir_cfg:
+        shard_dir = Path(shard_dir_cfg)
+        if not shard_dir.is_absolute():
+            shard_dir = REPO / shard_dir
+    else:
+        shard_dir = REPO / "data" / "shards_16k"
     weight_file = cfg.get("weight_file", None)
+    if weight_file and not Path(weight_file).is_absolute():
+        weight_file = str(REPO / weight_file)
     dataset = ShardedDataset(shard_dir=str(shard_dir), weight_file=weight_file)
 
     # ---- Eval cache ----

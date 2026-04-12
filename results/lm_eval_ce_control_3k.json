@@ -1,0 +1,28 @@
+{
+  "arc_easy": {
+    "alias": "arc_easy",
+    "acc,none": 0.4583333333333333,
+    "acc_stderr,none": "N/A",
+    "acc_norm,none": 0.4095117845117845,
+    "acc_norm_stderr,none": "N/A"
+  },
+  "hellaswag": {
+    "alias": "hellaswag",
+    "acc,none": 0.2726548496315475,
+    "acc_stderr,none": "N/A",
+    "acc_norm,none": 0.2831109340768771,
+    "acc_norm_stderr,none": "N/A"
+  },
+  "piqa": {
+    "alias": "piqa",
+    "acc,none": 0.5908596300326442,
+    "acc_stderr,none": "N/A",
+    "acc_norm,none": 0.5832426550598476,
+    "acc_norm_stderr,none": "N/A"
+  },
+  "winogrande": {
+    "alias": "winogrande",
+    "acc,none": 0.5122336227308603,
+    "acc_stderr,none": "N/A"
+  }
+}

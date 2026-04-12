@@ -1,0 +1,147 @@
+{
+  "probe": "q17_akl_hard10_3k",
+  "config": {
+    "name": "q17_akl_hard10_3k",
+    "init_from": "results/checkpoints_kd_197m_60k_gate/control_197m_60k_step60000.pt",
+    "total_steps": 3000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 0.0001,
+    "min_lr": 1e-05,
+    "warmup": 500,
+    "eval_every": 500,
+    "seq_len": 512,
+    "n_spans": 16,
+    "logit_temperature": 2.0,
+    "logit_top_k": 64,
+    "variants": [
+      {
+        "tag": "q17_rkl_hard10",
+        "teachers": [
+          {
+            "name": "Qwen/Qwen3-1.7B-Base",
+            "surfaces": [
+              "logit"
+            ]
+          }
+        ],
+        "alpha_logit": 0.1,
+        "alpha_state": 0.0,
+        "alpha_semantic": 0.0,
+        "kl_mode": "reverse",
+        "hard_token_frac": 0.1,
+        "alpha_schedule": {
+          "warmup_steps": 200,
+          "start_frac": 0.0,
+          "decay_start_step": 2400,
+          "decay_end_frac": 0.0,
+          "zero_start_step": 3000
+        }
+      }
+    ]
+  },
+  "results": {
+    "q17_rkl_hard10": {
+      "params": 196707891,
+      "teachers": [
+        "Qwen/Qwen3-1.7B-Base"
+      ],
+      "alpha_state": 0.0,
+      "alpha_semantic": 0.0,
+      "metrics": [
+        {
+          "step": 500,
+          "tag": "q17_rkl_hard10",
+          "bpt": 3.6202,
+          "avg_kurtosis": 199.95,
+          "max_kurtosis": 3065.11,
+          "max_activation": 360.71,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 4.3185,
+          "bpt_exit_15": 3.7508
+        },
+        {
+          "step": 1000,
+          "tag": "q17_rkl_hard10",
+          "bpt": 3.6379,
+          "avg_kurtosis": 78.33,
+          "max_kurtosis": 627.24,
+          "max_activation": 359.5,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 4.3338,
+          "bpt_exit_15": 3.7662
+        },
+        {
+          "step": 1500,
+          "tag": "q17_rkl_hard10",
+          "bpt": 3.6578,
+          "avg_kurtosis": 70.38,
+          "max_kurtosis": 1027.73,
+          "max_activation": 314.7,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 4.3588,
+          "bpt_exit_15": 3.79
+        },
+        {
+          "step": 2000,
+          "tag": "q17_rkl_hard10",
+          "bpt": 3.6529,
+          "avg_kurtosis": 40.11,
+          "max_kurtosis": 351.74,
+          "max_activation": 251.54,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 4.3635,
+          "bpt_exit_15": 3.7864
+        },
+        {
+          "step": 2500,
+          "tag": "q17_rkl_hard10",
+          "bpt": 3.6706,
+          "avg_kurtosis": 28.29,
+          "max_kurtosis": 196.1,
+          "max_activation": 187.82,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 4.3685,
+          "bpt_exit_15": 3.7997
+        },
+        {
+          "step": 3000,
+          "tag": "q17_rkl_hard10",
+          "bpt": 3.5934,
+          "avg_kurtosis": 92.85,
+          "max_kurtosis": 1611.16,
+          "max_activation": 252.28,
+          "teachers": [
+            "Qwen/Qwen3-1.7B-Base"
+          ],
+          "bpt_exit_7": 4.3071,
+          "bpt_exit_15": 3.7284
+        }
+      ],
+      "generations": [
+        {
+          "prompt": "The meaning of life is",
+          "generation": "The meaning of life is that it is a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a way of life, a"
+        },
+        {
+          "prompt": "In a distant future",
+          "generation": "In a distant future, the world will be a place of peace and tranquility.\n\nThe world will be a place of peace and tranquility.\n\nThe world will be a place of peace and tranquility.\n\nThe world will be a place of peace and tranquility.\n"
+        },
+        {
+          "prompt": "def fibonacci(n):\n",
+          "generation": "def fibonacci(n):\n\ndef __init__(self, n):\nself.n = np.array([n, n+1])\nself.n = np.array([n, n+1])\nself.n = np.array([n,"
+        }
+      ]
+    }
+  }
+}

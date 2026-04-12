@@ -1,0 +1,117 @@
+{
+  "name": "q17_offline_sparse_replay_6k",
+  "config": {
+    "name": "q17_offline_sparse_replay_6k",
+    "init_from": "results/checkpoints_kd_197m_60k_gate/control_197m_60k_step60000.pt",
+    "total_steps": 6000,
+    "batch_size": 8,
+    "grad_accum": 4,
+    "lr": 0.0001,
+    "min_lr": 1e-05,
+    "warmup": 500,
+    "eval_every": 500,
+    "seq_len": 512,
+    "replay_frac": 0.125,
+    "replay_dir": "data/shards_miniplm_top20",
+    "logit_cache_dir": "data/teacher_logits_q17",
+    "teacher_name": "Qwen/Qwen3-1.7B-Base",
+    "logit_temperature": 2.0,
+    "alpha_logit": 0.12,
+    "hard_token_frac": 0.1,
+    "kl_mode": "reverse",
+    "alpha_schedule": {
+      "warmup_steps": 300,
+      "start_frac": 0.0,
+      "decay_start_step": 4800,
+      "decay_end_frac": 0.0,
+      "zero_start_step": 6000
+    },
+    "kill_criteria": {
+      "step_1500_max_bpt": 3.64,
+      "step_3000_max_gap": 0.005
+    },
+    "save_at": [
+      1500,
+      3000,
+      6000
+    ]
+  },
+  "metrics": [
+    {
+      "step": 500,
+      "tag": "q17_offline_sparse_replay_6k",
+      "bpt": 3.6259,
+      "avg_kurtosis": 167.91,
+      "max_kurtosis": 1768.8,
+      "max_activation": 307.87,
+      "bpt_exit_7": 4.3219,
+      "bpt_exit_15": 3.754
+    },
+    {
+      "step": 1000,
+      "tag": "q17_offline_sparse_replay_6k",
+      "bpt": 3.6327,
+      "avg_kurtosis": 38.13,
+      "max_kurtosis": 271.75,
+      "max_activation": 263.46,
+      "bpt_exit_7": 4.3373,
+      "bpt_exit_15": 3.7617
+    },
+    {
+      "step": 1500,
+      "tag": "q17_offline_sparse_replay_6k",
+      "bpt": 3.623,
+      "avg_kurtosis": 186.87,
+      "max_kurtosis": 2781.35,
+      "max_activation": 342.3,
+      "bpt_exit_7": 4.3293,
+      "bpt_exit_15": 3.7543
+    },
+    {
+      "step": 2000,
+      "tag": "q17_offline_sparse_replay_6k",
+      "bpt": 3.6399,
+      "avg_kurtosis": 170.26,
+      "max_kurtosis": 2860.45,
+      "max_activation": 312.78,
+      "bpt_exit_7": 4.3424,
+      "bpt_exit_15": 3.7667
+    },
+    {
+      "step": 2500,
+      "tag": "q17_offline_sparse_replay_6k",
+      "bpt": 3.6257,
+      "avg_kurtosis": 64.31,
+      "max_kurtosis": 998.56,
+      "max_activation": 356.28,
+      "bpt_exit_7": 4.3289,
+      "bpt_exit_15": 3.7569
+    },
+    {
+      "step": 3000,
+      "tag": "q17_offline_sparse_replay_6k",
+      "bpt": 3.6474,
+      "avg_kurtosis": 88.77,
+      "max_kurtosis": 715.0,
+      "max_activation": 255.07,
+      "bpt_exit_7": 4.3531,
+      "bpt_exit_15": 3.7783
+    }
+  ],
+  "generations": [
+    {
+      "prompt": "The meaning of life is",
+      "generation": "The meaning of life is not a matter of fact, but of fact.\n\nThe meaning of life is not a matter of fact, but of fact, but of fact.\n\nThe meaning of life is not a matter of fact, but of fact, but of fact.\n\nThe meaning of life is not a matter of fact"
+    },
+    {
+      "prompt": "In a distant future",
+      "generation": "In a distant future, the\n                                                             "
+    },
+    {
+      "prompt": "def fibonacci(n):\n",
+      "generation": "def fibonacci(n):\n                                                                "
+    }
+  ],
+  "killed": true,
+  "final_step": 3000
+}
