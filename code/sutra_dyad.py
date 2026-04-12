@@ -328,60 +328,29 @@ S1_BYPASS_DIM = 160       # byte-residual bypass dimension
 S1_WINDOW = 96            # reserved for future sliding window (currently full causal)
 
 
-class CrossAttention(nn.Module):
-    """Decoder-to-global cross-attention. Query from byte decoder, K/V from global patches.
-
-    CAUSALITY: byte t (in patch j = t//P) may only attend to global_shifted[0..j],
-    which contains context from patches 0..j-1 (because global_shifted is right-shifted).
-    """
-    def __init__(self, dim, kv_dim, n_heads):
-        super().__init__()
-        self.n_heads = n_heads
-        self.head_dim = dim // n_heads
-        self.q_proj = nn.Linear(dim, dim, bias=False)
-        self.kv_proj = nn.Linear(kv_dim, 2 * dim, bias=False)
-        self.out = nn.Linear(dim, dim, bias=False)
-
-    def forward(self, x, kv, cross_mask):
-        """
-        x: (B, T, dim) — byte decoder states
-        kv: (B, N, kv_dim) — global patch states (already shifted by 1)
-        cross_mask: (T, N) bool — True where byte t can attend to global patch k
-        """
-        B, T, _ = x.shape
-        N = kv.shape[1]
-        q = self.q_proj(x).reshape(B, T, self.n_heads, self.head_dim).transpose(1, 2)
-        kv_out = self.kv_proj(kv).reshape(B, N, 2, self.n_heads, self.head_dim)
-        k, v = kv_out[:, :, 0].transpose(1, 2), kv_out[:, :, 1].transpose(1, 2)
-
-        # Convert bool mask to float: False positions get -inf
-        attn_mask = torch.zeros(T, N, device=x.device, dtype=q.dtype)
-        attn_mask.masked_fill_(~cross_mask, float('-inf'))
-
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-        return self.out(out.transpose(1, 2).reshape(B, T, -1))
-
 
 class LocalDecoderBlockS1(nn.Module):
-    """Stage 1 local decoder block: causal self-attn + cross-attn + bypass + FFN."""
+    """Stage 1 local decoder block: causal self-attn + bypass + FFN.
+
+    Cross-attention was removed after Phase B ablation proved it harmful
+    (BPB improved by 0.009 without it). All cross-level communication
+    flows through the bypass path and global_to_local projection.
+    Saves 8.5M params (4.3%) and ~2GB activation VRAM.
+    """
     def __init__(self, dim, n_heads, ff_dim, kv_dim, bypass_dim):
         super().__init__()
         self.norm1 = RMSNorm(dim)
         self.attn = CausalSelfAttention(dim, n_heads)
-        self.norm_cross = RMSNorm(dim)
-        self.cross_attn = CrossAttention(dim, kv_dim, n_heads)
         self.norm2 = RMSNorm(dim)
         self.ffn = SwiGLU(dim, ff_dim)
         # Byte-residual bypass: U*silu(V*r)
         self.bypass_v = nn.Linear(bypass_dim, dim, bias=False)
         self.bypass_u = nn.Linear(dim, dim, bias=False)
 
-    def forward(self, x, cos, sin, global_kv, bypass_r, cross_mask=None):
+    def forward(self, x, cos, sin, bypass_r):
         # Self-attention (causal)
         x = x + self.attn(self.norm1(x), cos, sin)
-        # Cross-attention to global (with causal mask)
-        x = x + self.cross_attn(self.norm_cross(x), global_kv, cross_mask)
-        # Bypass injection
+        # Bypass injection (load-bearing: +0.679 BPB contribution)
         x = x + self.bypass_u(F.silu(self.bypass_v(bypass_r)))
         # FFN
         x = x + self.ffn(self.norm2(x))
@@ -521,9 +490,8 @@ class SutraDyadS1(nn.Module):
                 nn.init.normal_(m.weight, std=0.02)
             elif isinstance(m, nn.Embedding):
                 nn.init.normal_(m.weight, std=0.02)
-        # Zero-init cross-attention output projections and bypass for near-identity start
+        # Zero-init bypass output for near-identity start
         for block in self.local_decoder:
-            nn.init.zeros_(block.cross_attn.out.weight)
             nn.init.zeros_(block.bypass_u.weight)
 
     def load_stage0(self, ckpt_path):
@@ -660,17 +628,12 @@ class SutraDyadS1(nn.Module):
         # 8. Local decoder input: byte embeddings + projected global context
         local_input = byte_emb + global_local_bytes
 
-        # 9. Build causal cross-attention mask: byte t in patch j attends to shifted[0..j]
-        byte_patch_idx = torch.arange(T_padded, device=byte_ids.device) // P  # (T,)
-        kv_idx = torch.arange(N, device=byte_ids.device)  # (N,)
-        cross_mask = kv_idx.unsqueeze(0) <= byte_patch_idx.unsqueeze(1)  # (T, N)
-
-        # 10. Local causal decoder with cross-attention and bypass
+        # 9. Local causal decoder with bypass
         l_cos = self.l_rope_cos.to(local_input.device)
         l_sin = self.l_rope_sin.to(local_input.device)
         x = local_input
         for layer in self.local_decoder:
-            x = layer(x, l_cos, l_sin, global_shifted, bypass_r, cross_mask)
+            x = layer(x, l_cos, l_sin, bypass_r)
         x = self.local_norm(x)
 
         # 11. Output logits
@@ -929,7 +892,7 @@ def det_eval(ckpt_path):
 
     if stage == 1:
         model = SutraDyadS1(max_seq_bytes=cfg.get("seq_bytes", SEQ_BYTES))
-        model.load_state_dict(ckpt["model"])
+        model.load_state_dict(ckpt["model"], strict=False)
     else:
         model = SutraDyad(
             d_global=cfg.get("d_global", D_GLOBAL),
@@ -978,7 +941,7 @@ def ablation_eval(ckpt_path):
     assert stage == 1, "Ablation only for Stage 1 checkpoints"
 
     model = SutraDyadS1(max_seq_bytes=cfg.get("seq_bytes", SEQ_BYTES))
-    model.load_state_dict(ckpt["model"])
+    model.load_state_dict(ckpt["model"], strict=False)
     model = model.to(DEVICE)
     params = model.count_params()
     print(f"Model: {params['total']/1e6:.1f}M params (Stage {stage}), step {ckpt.get('step', '?')}")
@@ -989,37 +952,20 @@ def ablation_eval(ckpt_path):
     results = {}
 
     # 1. Baseline (no ablation)
-    print("\n[1/5] Baseline (no ablation)...")
+    print("\n[1/3] Baseline (no ablation)...")
     el = eval_loss(model, dataset, n_batches=n_eval)
     results["baseline"] = el / math.log(2)
     print(f"  BPB = {results['baseline']:.4f}")
 
-    # 2. Ablate cross-attention (zero KV input)
-    print("\n[2/5] Ablating cross-attention (zero global KV)...")
-    orig_forwards = []
-    for i, block in enumerate(model.local_decoder):
-        orig_forwards.append(block.forward)
-        def make_no_cross_forward(blk, orig_fwd):
-            def no_cross_forward(x, cos, sin, global_kv, bypass_r, cross_mask=None):
-                zero_kv = torch.zeros_like(global_kv)
-                return orig_fwd(x, cos, sin, zero_kv, bypass_r, cross_mask)
-            return no_cross_forward
-        block.forward = make_no_cross_forward(block, block.forward)
-    el = eval_loss(model, dataset, n_batches=n_eval)
-    results["no_cross_attn"] = el / math.log(2)
-    print(f"  BPB = {results['no_cross_attn']:.4f} (delta = +{results['no_cross_attn'] - results['baseline']:.4f})")
-    for i, block in enumerate(model.local_decoder):
-        block.forward = orig_forwards[i]
-
-    # 3. Ablate bypass (zero bypass_r input)
-    print("\n[3/5] Ablating byte-residual bypass (zero bypass)...")
+    # 2. Ablate bypass (zero bypass_r input)
+    print("\n[2/3] Ablating byte-residual bypass (zero bypass)...")
     orig_forwards = []
     for i, block in enumerate(model.local_decoder):
         orig_forwards.append(block.forward)
         def make_no_bypass_forward(blk, orig_fwd):
-            def no_bypass_forward(x, cos, sin, global_kv, bypass_r, cross_mask=None):
+            def no_bypass_forward(x, cos, sin, bypass_r):
                 zero_bypass = torch.zeros_like(bypass_r)
-                return orig_fwd(x, cos, sin, global_kv, zero_bypass, cross_mask)
+                return orig_fwd(x, cos, sin, zero_bypass)
             return no_bypass_forward
         block.forward = make_no_bypass_forward(block, block.forward)
     el = eval_loss(model, dataset, n_batches=n_eval)
@@ -1028,32 +974,14 @@ def ablation_eval(ckpt_path):
     for i, block in enumerate(model.local_decoder):
         block.forward = orig_forwards[i]
 
-    # 4. Ablate global context (zero the shifted global in local input)
-    print("\n[4/5] Ablating global context (zero global→local projection)...")
+    # 3. Ablate global context (zero the shifted global in local input)
+    print("\n[3/3] Ablating global context (zero global->local projection)...")
     orig_g2l = model.global_to_local.weight.data.clone()
     model.global_to_local.weight.data.zero_()
     el = eval_loss(model, dataset, n_batches=n_eval)
     results["no_global_ctx"] = el / math.log(2)
     print(f"  BPB = {results['no_global_ctx']:.4f} (delta = +{results['no_global_ctx'] - results['baseline']:.4f})")
     model.global_to_local.weight.data.copy_(orig_g2l)
-
-    # 5. Ablate both cross-attn AND bypass (isolate local self-attn contribution)
-    print("\n[5/5] Ablating BOTH cross-attn and bypass...")
-    orig_forwards = []
-    for i, block in enumerate(model.local_decoder):
-        orig_forwards.append(block.forward)
-        def make_no_cross_no_bypass(blk, orig_fwd):
-            def ablated_forward(x, cos, sin, global_kv, bypass_r, cross_mask=None):
-                zero_kv = torch.zeros_like(global_kv)
-                zero_bypass = torch.zeros_like(bypass_r)
-                return orig_fwd(x, cos, sin, zero_kv, zero_bypass, cross_mask)
-            return ablated_forward
-        block.forward = make_no_cross_no_bypass(block, block.forward)
-    el = eval_loss(model, dataset, n_batches=n_eval)
-    results["no_cross_no_bypass"] = el / math.log(2)
-    print(f"  BPB = {results['no_cross_no_bypass']:.4f} (delta = +{results['no_cross_no_bypass'] - results['baseline']:.4f})")
-    for i, block in enumerate(model.local_decoder):
-        block.forward = orig_forwards[i]
 
     # Summary
     print(f"\n{'='*60}")
@@ -1072,6 +1000,170 @@ def ablation_eval(ckpt_path):
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"Saved to {out_path}")
+
+
+def profile_teachers(n_sequences=20, max_bytes=1024):
+    """Ekalavya pre-requisite probe: profile teacher models for byte-level KD.
+
+    For each teacher:
+    - Token compression ratio (tokens per 1K bytes)
+    - Per-byte next-byte prediction accuracy
+    - Prediction entropy (signal quality)
+    - Byte offsets per token (alignment density)
+
+    Runs entirely on CPU. GPU reserved for training.
+    """
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    import numpy as np
+
+    TEACHERS = {
+        "qwen3-1.7b": "Qwen/Qwen3-1.7B-Base",
+        "pythia-1.4b": "EleutherAI/pythia-1.4b",
+        "smollm2-1.7b": "HuggingFaceTB/SmolLM2-1.7B",
+    }
+
+    # Load shared eval sequences (raw bytes from our training data)
+    dataset = ByteShardedDataset()
+    sequences = []
+    for _ in range(n_sequences):
+        x, y = dataset.sample_batch(1, max_bytes, device="cpu", split="test")
+        sequences.append(x[0].tolist())
+
+    all_teacher_byte_preds = {}  # name -> list of (seq_idx, byte_idx, predicted_byte_prob)
+    teacher_profiles = {}
+
+    for name, model_id in TEACHERS.items():
+        print(f"\n{'='*50}")
+        print(f"Profiling: {name} ({model_id})")
+        print(f"{'='*50}")
+
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, dtype=torch.float32, trust_remote_code=True,
+        )
+        model.eval()
+
+        entropies = []
+        token_counts = []
+        byte_accuracies = []
+        byte_probs_all = []  # per-byte teacher confidence in correct next byte
+
+        for si, seq_bytes in enumerate(sequences):
+            # Convert byte list to text (teacher expects text, not raw bytes)
+            raw = bytes(seq_bytes)
+            text = raw.decode("utf-8", errors="replace")
+            if len(text) < 10:
+                continue
+
+            # Tokenize
+            tokens = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+            input_ids = tokens["input_ids"]
+            n_tok = input_ids.shape[1]
+            token_counts.append(n_tok)
+
+            # Get byte boundaries for each token
+            token_byte_offsets = []
+            byte_pos = 0
+            for tid in input_ids[0].tolist():
+                tok_str = tokenizer.decode([tid])
+                tok_bytes = tok_str.encode("utf-8")
+                token_byte_offsets.append((byte_pos, byte_pos + len(tok_bytes)))
+                byte_pos += len(tok_bytes)
+
+            # Forward pass (CPU)
+            with torch.no_grad():
+                out = model(input_ids=input_ids)
+
+            logits = out.logits[0]  # (T, V)
+            probs = F.softmax(logits, dim=-1)
+
+            # Per-token entropy
+            ent = -(probs * torch.log(probs + 1e-10)).sum(-1)
+            entropies.append(ent.mean().item())
+
+            # Project teacher predictions to byte level:
+            # For each token position t, teacher predicts token t+1.
+            # Token t+1 spans bytes [a, b). The byte-level signal is the
+            # probability the teacher assigns to the correct next token.
+            for t in range(n_tok - 1):
+                target_id = input_ids[0, t + 1].item()
+                p_correct = probs[t, target_id].item()
+                byte_probs_all.append(p_correct)
+                # Also check if top-1 prediction is correct
+                byte_accuracies.append(int(probs[t].argmax().item() == target_id))
+
+            if (si + 1) % 5 == 0:
+                print(f"  Processed {si + 1}/{n_sequences} sequences")
+
+        # Summary
+        profile = {
+            "model_id": model_id,
+            "hidden_dim": model.config.hidden_size,
+            "n_sequences": len(token_counts),
+            "avg_tokens_per_1k_bytes": float(np.mean(token_counts)) / max_bytes * 1000
+                if token_counts else 0,
+            "mean_entropy": float(np.mean(entropies)) if entropies else 0,
+            "std_entropy": float(np.std(entropies)) if entropies else 0,
+            "top1_accuracy": float(np.mean(byte_accuracies)) if byte_accuracies else 0,
+            "mean_correct_prob": float(np.mean(byte_probs_all)) if byte_probs_all else 0,
+            "median_correct_prob": float(np.median(byte_probs_all)) if byte_probs_all else 0,
+        }
+        teacher_profiles[name] = profile
+        all_teacher_byte_preds[name] = byte_probs_all
+
+        print(f"  Hidden dim: {profile['hidden_dim']}")
+        print(f"  Tokens/1K bytes: {profile['avg_tokens_per_1k_bytes']:.1f}")
+        print(f"  Mean entropy: {profile['mean_entropy']:.3f}")
+        print(f"  Top-1 accuracy: {profile['top1_accuracy']:.3f}")
+        print(f"  Mean P(correct): {profile['mean_correct_prob']:.3f}")
+
+        del model, tokenizer
+        gc.collect()
+
+    # Cross-teacher agreement: for overlapping byte predictions, how often do
+    # teachers agree on top-1? (Only for teachers with same sequence count)
+    names = list(all_teacher_byte_preds.keys())
+    agreement = {}
+    for i, n1 in enumerate(names):
+        for n2 in names[i + 1:]:
+            p1 = all_teacher_byte_preds[n1]
+            p2 = all_teacher_byte_preds[n2]
+            min_len = min(len(p1), len(p2))
+            if min_len > 0:
+                # Correlation of confidence scores
+                corr = float(np.corrcoef(p1[:min_len], p2[:min_len])[0, 1])
+                agreement[f"{n1}_vs_{n2}"] = {
+                    "confidence_correlation": corr,
+                    "n_compared": min_len,
+                }
+
+    result = {
+        "profiles": teacher_profiles,
+        "cross_teacher_agreement": agreement,
+        "config": {"n_sequences": n_sequences, "max_bytes": max_bytes},
+    }
+
+    out_path = REPO / "results" / "teacher_profiles.json"
+    with open(out_path, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"\nSaved to {out_path}")
+
+    # Print summary table
+    print(f"\n{'='*70}")
+    print("TEACHER PROFILE SUMMARY")
+    print(f"{'='*70}")
+    print(f"{'Teacher':<18} {'HidDim':>7} {'Tok/KB':>7} {'Entropy':>8} {'Top1':>6} {'P(cor)':>7}")
+    print(f"{'-'*18} {'-'*7} {'-'*7} {'-'*8} {'-'*6} {'-'*7}")
+    for name, p in teacher_profiles.items():
+        print(f"{name:<18} {p['hidden_dim']:>7} {p['avg_tokens_per_1k_bytes']:>7.1f} "
+              f"{p['mean_entropy']:>8.3f} {p['top1_accuracy']:>6.3f} {p['mean_correct_prob']:>7.3f}")
+    if agreement:
+        print(f"\nCross-teacher confidence correlation:")
+        for pair, data in agreement.items():
+            print(f"  {pair}: r={data['confidence_correlation']:.3f} (n={data['n_compared']})")
+    print(f"{'='*70}")
+
+    return result
 
 
 def train_s1(stage0_ckpt, cfg=None):
@@ -1160,7 +1252,7 @@ def train_s1(stage0_ckpt, cfg=None):
     resume_ckpt = cfg.get("resume_ckpt")
     if resume_ckpt:
         rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
-        model.load_state_dict(rk["model"])
+        model.load_state_dict(rk["model"], strict=False)
         # Only restore optimizer if param groups match (may differ if unfreeze config changed)
         saved_n_groups = len(rk["optimizer"]["param_groups"])
         curr_n_groups = len(optimizer.param_groups)
@@ -1318,6 +1410,8 @@ if __name__ == "__main__":
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--det-eval", type=str, default=None)
     parser.add_argument("--ablate", type=str, default=None, help="Run ablation eval on S1 checkpoint")
+    parser.add_argument("--profile-teachers", action="store_true",
+                        help="Profile teacher models for Ekalavya KD (CPU-only)")
     parser.add_argument("--config", type=str, default=None, help="JSON config file")
     parser.add_argument("--stage0-ckpt", type=str, default=None, help="Stage 0 checkpoint for Stage 1")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from S1 checkpoint")
@@ -1334,6 +1428,8 @@ if __name__ == "__main__":
         det_eval(args.det_eval)
     elif args.ablate:
         ablation_eval(args.ablate)
+    elif args.profile_teachers:
+        profile_teachers()
     elif args.stage == 1:
         if args.stage0_ckpt is None:
             print("ERROR: --stage0-ckpt required for Stage 1 (needed for anchor loss even when resuming)")

@@ -106,3 +106,10 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 - Flat alpha KD at 1:19 ratio (harmful without scheduling)
 - Rep-only KD (head-start only, not persistent)
 - Multi-surface KD at extreme ratios (interference)
+
+## Phase 6: Sutra-Dyad Audit (2026-04-01)
+
+### sutra_dyad_perf_audit [DONE]
+**Purpose:** Tier-1 Performance Engineer audit for the new byte-level `Sutra-Dyad` runner.
+**Key finding:** NOT CLEAN. Current reduced config is safe (`~9.7 GB` steady-state peak), but the original `d_local=512 / 3 local layers / batch=64` setup was oversized for a 24 GB card (`~23.3 GB allocated / ~26.2 GB reserved` extrapolated steady-state peak).
+**What we learned:** The default path is already using memory-efficient SDPA. Biggest wins are model-side activation cleanup (`F.rms_norm`, optional global checkpointing, project-before-repeat) and fixing `ByteShardedDataset`, whose full-shard decode path takes `10-80 s` on real shards and can dominate wall-clock time.

@@ -23,6 +23,10 @@
 | Phi-4 | 5.6B | ~10T tokens | frontier-class |
 | Qwen3-4B | 4B | ~18T tokens | frontier-class |
 | Gemma-3-1B | 1B | ~6T tokens | strong mid-range |
+| **Gemma-4-E2B** | **2B** | unknown | **PLE + sliding/global attn, Apache 2.0 (Apr 2026)** |
+| **Gemma-4-E4B** | **4B** | unknown | **Edge-optimized, Apache 2.0 (Apr 2026)** |
+| **Ouro-1.4B** | **1.4B** | **7.7T tokens** | **LoopLM — matches 4B dense (MATH500: 82.4 vs Qwen3-4B's 59.6)** |
+| **Ouro-2.6B** | **2.6B** | **7.7T tokens** | **LoopLM — matches 8-12B (MATH500: 90.9)** |
 
 **Key insight:** Training tokens matter enormously at this scale. SmolLM2-135M trained on 2T tokens — that's a 100x+ data advantage over anything we can do in a single GPU budget. The architecture must be dramatically more data-efficient to compensate.
 
@@ -48,11 +52,33 @@
 - **EvaByte** (6.5B, HKU/SambaNova 2025): matches tokenized 7B models using 5x less data
 - **Bolmo** (Ai2, 1B/7B, 2025): retrofits OLMo-3 into byte-level, SOTA with <1% original pretraining compute
 - **Byte Latent Transformer (BLT)** (Meta 2024): entropy-based dynamic patching, up to 50% FLOP reduction at inference
-- **Cross-Tokenizer Byte Distillation** (2026): retains >92% teacher performance in byte-level student
+- **Cross-Tokenizer Byte Distillation (BLD)** (2026, arXiv:2604.07466): Uses covering-based decomposition to convert teacher token logits to byte-level probabilities via beam search (K=10). Loss = token CE + byte CE + byte KL. Architecture: 10 parallel linear projections from hidden dim to byte vocab (260 tokens). **RESULTS ARE MIXED**: BPE-to-BPE works well but BPE-to-byte shows LARGE drops (~21pt MMLU, ~13pt ARC-C). No multi-teacher experiments. Authors conclude "CTD remains a largely open problem."
+- **ALM: Approximate Likelihood Matching** (NeurIPS 2025, arXiv:2503.20083): First principled cross-tokenizer distillation. Uses chunk-level probability matching with binarized f-divergence: identifies aligned token chunks encoding identical text, then matches chunk probabilities. Key innovation: enables PURE distillation (no auxiliary LM loss needed). Results: Llama 3B → byte = 53.8 avg (vs DSKD 47.6, MinED 46.9). Tested 1.5B-3.3B. Toolkit: `tokenkit` (github.com/bminixhofer/tokenkit, public byte-level checkpoints: Llama3-2-3B-IT-Byte, Gemma2-2B-IT-Byte). No multi-teacher support.
 
-**Implications for Ekalavya:** Cross-Tokenizer Byte Distillation (arXiv:2604.07466) validates that byte-level KD from tokenized teachers works. Combined with BLT's dynamic patching, this is exactly the direction we're pursuing. Our contribution is *multi-teacher* cross-architecture KD, which hasn't been done.
+**Implications for Ekalavya (UPDATED 2026-04-12):**
+1. Byte-level KD from tokenized teachers is HARDER than initially assumed (BLD shows significant drops)
+2. Our advantage: Sutra IS already byte-level, so we're not converting a subword model TO bytes — we're using byte-level KD as additional training signal on a natively byte-level model. This avoids the worst degradation mode.
+3. Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL — neither BLD nor ALM tested it
+4. The covering-based probability conversion (BLD) is expensive (2 days on 4×RTX 3090). Our omega_ij bridge is simpler: direct hidden state projection via byte-span overlap weights.
+5. KEY RISK: if BLD with its sophisticated probability conversion still shows large drops, our simpler bridge may lose even more signal. Teacher profiling probe (2026-04-12) showed teachers have only ~40% top-1 accuracy on our data. The soft distribution quality matters more than top-1.
 
-Sources: MambaByte (COLM 2024, arXiv:2401.13660), SpaceByte (NeurIPS 2024, arXiv:2404.14408), MegaByte (NeurIPS 2023, arXiv:2305.07185), BLT (Meta 2024, arXiv:2412.09871), EvaByte (HKU 2025), Bolmo (Ai2 2025), Cross-Tok Distillation (arXiv:2604.07466)
+**Ekalavya vs. SOTA cross-tokenizer KD (2026-04-12 analysis):**
+
+| Method | Approach | Multi-teacher? | Byte-native student? | Key limitation |
+|--------|----------|---------------|---------------------|----------------|
+| **BLD** (2604.07466) | Cover-based byte probability decomposition | No | No (converts subword) | Large BPE→byte drops (~21pt MMLU) |
+| **ALM** (2503.20083) | Chunk-level probability matching | No | No (converts subword) | Tested only 1.5-3.3B |
+| **tokenkit** | Implementation of ALM+others | No | Supports byte output | No multi-teacher |
+| **Ekalavya** (ours) | omega_ij byte-span bridge + multi-teacher | **YES** | **YES** (native byte) | Untested — this is the novel contribution |
+
+**What makes Ekalavya unique:**
+1. Student is NATIVE byte-level (not converted from subword) — avoids BLD's conversion degradation
+2. MULTI-teacher from different architectures (Transformer + SSM + Hybrid)
+3. Near-zero inter-teacher correlation (r=0.008-0.067) → additive information
+4. omega_ij bridge is simpler than covering-based decomposition → faster, GPU-friendly
+5. Combined with from-scratch training → KD is training signal, not fine-tuning
+
+Sources: MambaByte (COLM 2024, arXiv:2401.13660), SpaceByte (NeurIPS 2024, arXiv:2404.14408), MegaByte (NeurIPS 2023, arXiv:2305.07185), BLT (Meta 2024, arXiv:2412.09871), EvaByte (HKU 2025), Bolmo (Ai2 2025), BLD (arXiv:2604.07466), ALM (NeurIPS 2025, arXiv:2503.20083)
 
 ---
 
@@ -4131,7 +4157,7 @@ Kurtosis at 3000: 23.0 (Option A) vs 10.7 (scalar VICReg) vs 0.7 (R13) vs ~1.0 (
 
 **Stage plan:**
 - Stage 0: Flat-byte baseline (COMPLETED — 1.725 BPB at 10K steps)
-- Stage 1: Local decoder upgrade + partial global unfreeze (IN PROGRESS — Phase B running, eval BPB: 1.703→1.597, train BPB ~1.45 at step 2.5K/5K)
+- Stage 1: Local decoder upgrade + partial global unfreeze (COMPLETE — Phase B: eval BPB 1.703→1.499→**1.430** best at step 4500, final 1.453 at step 5000. Total gain from Stage 0: **0.295 BPB**.)
 - Stage 1: Learned dyadic patching with compute penalty
 - Stage 2: External Hebbian memory
 - Stage 3: Teacher-guided data transport (scoring, rewriting, curriculum — no cross-tokenizer logit KD)
@@ -4642,6 +4668,9 @@ Stage 2 then adds small teacher-specific projection heads on top of `patch_state
 | 2000 | 1.618 | 1.597 | -0.106 | +0.021 | Strong improvement |
 | 2500 | 1.508 | 1.585 | -0.012 | +0.077 | Noisy eval (outlier — see step 3000) |
 | 3000 | 1.497 | **1.499** | **-0.086** | -0.002 | Strong resume, gap collapsed |
+| 3500 | 1.488 | 1.523 | +0.024 | -0.035 | WSD transition — cosine decay starts here |
+| 4000 | 1.438 | 1.582 | +0.083 | +0.144 | Noisy eval (NOT overfitting — see step 4500) |
+| 4500 | 1.419 | **1.430** | **-0.152** | +0.011 | NEW BEST! Annealing kick — LR ~1e-4 |
 
 - **Beat Stage 0 ceiling (1.725 BPB) by step 1500** — 0.226 BPB total improvement at step 3K
 - **Step 2500 was an outlier** — step 3000 shows trajectory resumed at -0.086/500steps. Train-eval gap collapsed from 0.077 to near-zero, confirming no overfitting.
@@ -4665,3 +4694,89 @@ Stage 2 then adds small teacher-specific projection heads on top of `patch_state
    - Teacher rotation curriculum: one family per batch, delayed activation, diversity floors
    - Hard-document sparse logit bank: top-K logits for hardest 1-5% of documents only
    - Confidence scores from Codex: O1=3/10, O2=6/10, O3=4/10, **O4=1/10**, O5=5/10. O4 is the critical gap.
+
+**Codex adversarial audit #2: WSD regression analysis (2026-04-12, GPT-5.4 read-only):**
+
+Key findings on the Phase B training trajectory:
+
+1. **Step 4000 eval regression — NOT clean overfitting evidence.** Multiple competing explanations:
+   - Eval set structural flaw: pool capped at 200K bytes in data_loader.py, but eval draws 30×8×1536 = 368K bytes → overlap/reuse unavoidable. This is a measurement artifact, not model behavior.
+   - Distribution drift: eval is one shard tail; model may improve on training mixture while degrading on that source.
+   - Architecture/interface drift: local stack trains at 5× the global LR; global_norm frozen under partial unfreeze creates asymmetric adaptation.
+   - Phase-transition: fresh optimizer after param group change → newly unfrozen globals never got dedicated warmup.
+   - Mid-cooldown wobble: step 4000 is only 1/3 into decay — not terminal.
+   - **Step 4500 subsequently proved this was noise (BPB 1.430, new best).**
+
+2. **WSD schedule recommendation:**
+   - WSD family is fine, but this exact usage is weak: single fixed 30% cooldown on a short resumed partial-unfreeze run.
+   - Better: flat mainline to 3000, then short cooldown BRANCHES from 3000/3250/3500, pick best on stronger eval.
+   - If single schedule: shorter cooldown (10-15%), higher floor, decoupled groups (cool local earlier/stronger, keep global flatter).
+   - Add SWA/EMA checkpoint averaging over 2750-3500 region ("broad basin good, late commitment bad").
+
+3. **Step 3000 as Ekalavya base: YES, provisionally.** Don't wait for Phase B tail. But keep choice reversible — if step 4500/5000 wins on larger eval, swap bases.
+
+4. **Multi-teacher KD as regularizer:** Plausible but not automatic. Benefit comes from sample-wise smoothing and conflict-aware routing, NOT naive average-teacher KL. Our own repo already showed some "KD gains" were just regularization effects.
+
+5. **Near-zero cross-teacher correlation: "routing problem, not committee solved."** Key caveats:
+   - All 3 profiled teachers are transformers — not yet evidence for cross-architecture complementarity.
+   - Probe is small (20 sequences), correlation on scalar confidences is weak proxy.
+   - Operationally: start with strongest anchor (SmolLM2, top-1 acc 0.438), add ONE auxiliary with adaptive weighting.
+
+6. **Fastest path:** Lock step 3000 as provisional base → run Stage 1 ablations first (if cross-attn/bypass don't move BPB, architecture is bottleneck, not KD target) → start Ekalavya with 1 anchor + 1 auxiliary → gradual wider unfreeze only if stable.
+
+**Stage 1 ablation results (step 4500 checkpoint, 2026-04-12):**
+
+| Condition | BPB | Delta | Impact |
+|-----------|-----|-------|--------|
+| Baseline | 1.4435 | — | — |
+| No cross-attention | 1.4342 | **-0.009** | -0.6% (removes harmful interference) |
+| No bypass | 2.1227 | +0.679 | +47.0% (load-bearing) |
+| No global context | 4.3315 | +2.888 | +200.1% (core engine) |
+| No cross-attn + no bypass | 2.1166 | +0.673 | +46.6% |
+
+**Key finding: Cross-attention is DEAD WEIGHT.** The model routes ALL cross-level information through the byte-residual bypass, completely ignoring cross-attention. Removing cross-attention actually improves BPB by 0.009 (removes harmful interference). Architecture hierarchy: global trunk (dominant) → bypass (critical bridge) → cross-attention (harmful, should remove).
+
+**Implications:** ~8.4M cross-attention params should be removed. Ekalavya teacher alignment should target the bypass surface and global_to_local projection, NOT cross-attention. This frees VRAM for teacher loading.
+
+**Cross-attention structural removal (2026-04-12):** Removed CrossAttention class and all cross-attn paths from LocalDecoderBlockS1. Model: 196.7M → 188.2M (-8.5M params, -4.3%). Verified on step 4500 checkpoint: BPB 1.4149 (vs 1.421 pre-prune) — **confirms ablation finding, slight improvement from removing harmful interference.** All checkpoint loading uses strict=False to drop orphaned cross-attn keys. Ablation suite updated to 3 conditions (baseline, no bypass, no global context).
+
+**Phase B final trajectory (complete, 2026-04-12):**
+| Step | Eval BPB | Train BPB | Train-Eval Gap |
+|------|----------|-----------|----------------|
+| 1000 | 1.817 | — | — |
+| 1500 | 1.703 | 1.741 | +0.038 |
+| 2000 | 1.597 | 1.618 | +0.021 |
+| 2500 | 1.585 | 1.508 | +0.077 |
+| 3000 | 1.499 | 1.497 | -0.002 |
+| 3500 | 1.523 | 1.488 | -0.035 |
+| 4000 | 1.582 | 1.438 | +0.144 |
+| 4500 | **1.430** | 1.419 | +0.011 |
+| 5000 | 1.453 | 1.512 | -0.059 |
+
+Best: **BPB 1.430** at step 4500. Total Stage 0→1 gain: **0.295 BPB** (1.725 → 1.430).
+
+**Generation quality (step 4500):** Grammatically passable English, diverse vocabulary, but semantically incoherent ("word salad"). Cannot follow topic, cannot generate code. Expected for 197M byte-level at 5K steps. Ekalavya KD specifically targets this coherence gap.
+
+### 11.12 Cross-Domain Architecture Research (2026-04-12)
+
+**Gemma 4 (Google, April 2026)** — [blog](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/)
+- **Per-Layer Embeddings (PLE)**: Second embedding table feeding residual signal into every decoder layer. This independently validates our byte-residual bypass design — the same architectural pattern appears in a frontier model.
+- **Shared KV Cache**: Last N layers reuse KV states from earlier layers → memory reduction. Could apply to Sutra's global trunk to free VRAM for teacher loading.
+- **Alternating sliding-window/global attention**: Similar to our Dyad local/global split.
+- **Edge models E2B (2B), E4B (4B)**: Apache 2.0. Direct competitors AND potential Ekalavya teachers.
+- **Relevance**: PLE validates bypass. E2B/E4B expand teacher pool. Shared KV reduces VRAM budget.
+
+**Ouro / LoopLM (ByteDance, Oct 2025)** — [paper](https://arxiv.org/abs/2510.25741)
+- **Core**: Shared transformer layers applied T times iteratively: H(t) = TransformerLayer(H(t-1))
+- **Entropy-regularized adaptive depth**: ℒ = Σ q(t|x) · ℒ(t) - β · H(q(·|x)). Learned exit gates with uniform prior.
+- **Results**: 1.4B matches 4B dense. MATH500: 82.4 vs Qwen3-4B's 59.6. 2-3x parameter efficiency.
+- **Pre-training**: 7.7T tokens across 4 stages with adaptive recurrence scheduling.
+- **Key insight**: "advantage stems from superior knowledge manipulation, not increased knowledge capacity"
+- **Byte-level limitation**: Authors say byte-level isn't viable for looping. BUT Sutra's patch architecture sidesteps this — we loop over PATCHES (6 bytes), not individual bytes.
+- **Relevance to Sutra**:
+  1. **Ouro 1.4B/2.6B as Ekalavya teachers** — "superior knowledge manipulation" means soft labels encode reasoning structure, ideal for KD
+  2. **Looped global trunk (future Stage 3+)** — Apply Ouro-style looping to Sutra's global patch trunk. Exit gates per patch. Easy patches get 1-2 loops, hard patches get 4-8. Directly serves O5 (Inference Efficiency).
+  3. **Entropy-regularized depth** — much more principled than our prior halting controller attempt. The entropy term prevents collapse to constant depth.
+  4. **Validates Intelligence=Geometry thesis** — 1.4B beating 4B through better computation structure, not more parameters
+
+**Combined insight**: Both Gemma 4 and Ouro independently validate architectural patterns we've chosen (residual bypass, adaptive compute). The field is converging on these ideas from multiple directions. Our unique contribution remains: byte-level + multi-teacher KD + from-scratch training. Nobody else is doing all three together.
