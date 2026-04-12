@@ -325,7 +325,7 @@ S1_FF_LOCAL = 1920       # SwiGLU ~3x
 S1_N_ENC_LAYERS = 2      # within-patch bidirectional encoder
 S1_N_DEC_LAYERS = 4      # byte decoder layers
 S1_BYPASS_DIM = 160       # byte-residual bypass dimension
-S1_WINDOW = 96            # sliding window for local self-attention
+S1_WINDOW = 96            # reserved for future sliding window (currently full causal)
 
 
 class CrossAttention(nn.Module):
@@ -363,7 +363,7 @@ class CrossAttention(nn.Module):
 
 
 class LocalDecoderBlockS1(nn.Module):
-    """Stage 1 local decoder block: sliding-window self-attn + cross-attn + bypass + FFN."""
+    """Stage 1 local decoder block: causal self-attn + cross-attn + bypass + FFN."""
     def __init__(self, dim, n_heads, ff_dim, kv_dim, bypass_dim):
         super().__init__()
         self.norm1 = RMSNorm(dim)
@@ -549,38 +549,42 @@ class SutraDyadS1(nn.Module):
         self.byte_embed.weight.data[:, :d_old].copy_(s0_embed)
         nn.init.normal_(self.byte_embed.weight.data[:, d_old:], std=0.005)
 
-        # Store Stage 0 patch_proj for anchor loss (concat P*d_old -> d_global)
+        # Store Stage 0 weights for anchor loss (frozen — never updated)
         self._s0_patch_proj_weight = s0['patch_proj.weight'].clone()  # (d_global, P*d_old)
+        self._s0_byte_embed = s0_embed.clone()  # (256, d_old) — frozen Stage 0 embeddings
         self._s0_d_old = d_old
 
         print(f"Loaded Stage 0 weights: global layers + byte_embed (expanded {d_old}->{self.d_local})")
         return ckpt.get('step', 0)
 
-    def compute_anchor_loss(self, byte_emb, patch_emb_new):
+    def compute_anchor_loss(self, byte_ids, patch_emb_new):
         """Compute anchor loss: ||patch_emb_new - patch_emb_stage0||^2.
 
         Encourages new patch encoding path to produce similar inputs to global trunk
         as the Stage 0 concat-and-project path. Only used during Phase A warm-start.
 
+        Uses FROZEN Stage 0 byte embeddings (stored at load time) so the target
+        never drifts as the live byte_embed trains.
+
         Args:
-            byte_emb: (B, T, d_local) from self.byte_embed
+            byte_ids: (B, T) raw byte IDs (used to look up frozen S0 embeddings)
             patch_emb_new: (B, N, d_global) from new encoder+pool+proj path
         Returns:
             scalar MSE loss
         """
         if not hasattr(self, '_s0_patch_proj_weight'):
-            return torch.tensor(0.0, device=byte_emb.device)
+            return torch.tensor(0.0, device=patch_emb_new.device)
 
-        B, T, _ = byte_emb.shape
+        B, T = byte_ids.shape
         P = self.patch_size
         N = T // P
         d_old = self._s0_d_old
 
-        # Compute Stage 0 patch embeddings using stored weights
-        # Stage 0: flatten first d_old dims of byte_embed, project with stored weight
-        byte_old = byte_emb[:, :, :d_old].detach()  # (B, T, d_old)
+        # Use frozen Stage 0 embeddings (never updated during training)
+        s0_embed = self._s0_byte_embed.to(byte_ids.device, dtype=patch_emb_new.dtype)
+        byte_old = F.embedding(byte_ids, s0_embed)  # (B, T, d_old)
         byte_flat = byte_old.reshape(B, N, P * d_old)  # (B, N, P*d_old)
-        w = self._s0_patch_proj_weight.to(byte_emb.device, dtype=byte_emb.dtype)
+        w = self._s0_patch_proj_weight.to(byte_ids.device, dtype=patch_emb_new.dtype)
         patch_emb_s0 = F.linear(byte_flat, w)  # (B, N, d_global)
 
         return F.mse_loss(patch_emb_new, patch_emb_s0.detach())
@@ -679,7 +683,7 @@ class SutraDyadS1(nn.Module):
                 ignore_index=-100,
             )
             if return_anchor:
-                anchor_loss = self.compute_anchor_loss(byte_emb, patch_emb)
+                anchor_loss = self.compute_anchor_loss(byte_ids, patch_emb)
                 return ce_loss, anchor_loss
             return ce_loss
 
@@ -1114,6 +1118,7 @@ def train_s1(stage0_ckpt, cfg=None):
                     "stage": 1,
                     "model": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
+                    "scaler": scaler.state_dict(),
                     "eval_loss": el,
                     "config": cfg,
                 }, ckpt_dir / "best.pt")
@@ -1133,6 +1138,7 @@ def train_s1(stage0_ckpt, cfg=None):
                 "step": step, "stage": 1,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
+                "scaler": scaler.state_dict(),
                 "eval_loss": best_eval, "config": cfg,
             }, ckpt_dir / f"step_{step}.pt")
 
@@ -1174,7 +1180,10 @@ if __name__ == "__main__":
     parser.add_argument("--det-eval", type=str, default=None)
     parser.add_argument("--config", type=str, default=None, help="JSON config file")
     parser.add_argument("--stage0-ckpt", type=str, default=None, help="Stage 0 checkpoint for Stage 1")
-    parser.add_argument("--freeze-global", action="store_true", default=False)
+    parser.add_argument("--freeze-global", action="store_true", default=True,
+                        help="Freeze global trunk (default: True for warm-start)")
+    parser.add_argument("--no-freeze-global", dest="freeze_global", action="store_false",
+                        help="Unfreeze global trunk")
     args = parser.parse_args()
 
     if args.det_eval:
