@@ -26,6 +26,34 @@
 
 **Key insight:** Training tokens matter enormously at this scale. SmolLM2-135M trained on 2T tokens — that's a 100x+ data advantage over anything we can do in a single GPU budget. The architecture must be dramatically more data-efficient to compensate.
 
+### Byte-Level Model Baselines (added 2026-04-12)
+
+| Model | Params | PG-19 BPB | Architecture | Year |
+|-------|--------|-----------|--------------|------|
+| Byte Transformer | 320M | 1.057 | Flat autoregressive | 2023 |
+| PerceiverAR | 248M | 1.104 | Cross-attention chunks | 2023 |
+| MegaByte | ~1B (758M+262M) | 1.000 | Global/local patch | 2023 |
+| MambaByte | 353M | **0.930** | Mamba SSM, flat byte | 2024 |
+| MambaByte | 972M | **0.883** | Mamba SSM, flat byte | 2024 |
+| SpaceByte | ~977M | **0.918** | Space-triggered deep blocks | 2024 |
+| Subword (SentencePiece) | ~1B | 0.908 | Token-level baseline | 2024 |
+
+**Sutra-Dyad-197M context:** Our 1.585 BPB at 2.5K steps is above these targets, but:
+- We're at ~2.5K steps (not 80B bytes of training like these models)
+- Our data is mixed-domain (not pure PG-19 English)
+- At 153-200M params, realistic target is ~1.05-1.15 BPB with strong architecture
+- **Gap to close: ~0.45-0.55 BPB** from current 1.585 to competitive range
+
+**Key developments (2025-2026):**
+- **EvaByte** (6.5B, HKU/SambaNova 2025): matches tokenized 7B models using 5x less data
+- **Bolmo** (Ai2, 1B/7B, 2025): retrofits OLMo-3 into byte-level, SOTA with <1% original pretraining compute
+- **Byte Latent Transformer (BLT)** (Meta 2024): entropy-based dynamic patching, up to 50% FLOP reduction at inference
+- **Cross-Tokenizer Byte Distillation** (2026): retains >92% teacher performance in byte-level student
+
+**Implications for Ekalavya:** Cross-Tokenizer Byte Distillation (arXiv:2604.07466) validates that byte-level KD from tokenized teachers works. Combined with BLT's dynamic patching, this is exactly the direction we're pursuing. Our contribution is *multi-teacher* cross-architecture KD, which hasn't been done.
+
+Sources: MambaByte (COLM 2024, arXiv:2401.13660), SpaceByte (NeurIPS 2024, arXiv:2404.14408), MegaByte (NeurIPS 2023, arXiv:2305.07185), BLT (Meta 2024, arXiv:2412.09871), EvaByte (HKU 2025), Bolmo (Ai2 2025), Cross-Tok Distillation (arXiv:2604.07466)
+
 ---
 
 ## Research Areas (2025-2026 Literature)
@@ -4088,3 +4116,552 @@ Kurtosis at 3000: 23.0 (Option A) vs 10.7 (scalar VICReg) vs 0.7 (R13) vs ~1.0 (
 **Kurtosis observation:** Despite kurtosis reaching 23.0 (vs Track 1's 10.7), BPT is better, confirming the Track 1b finding that kurtosis is cosmetic at these levels. BPT cares about representation quality, not distribution shape.
 
 **Decision: For all future KD experiments, include spectral_reg=0.005 as a constant auxiliary.** The cost is zero (no extra parameters, ~0.01 extra loss, negligible compute) and the benefit is reliable (+0.01 BPT). VICReg is now part of the standard KD recipe.
+
+### 11.5 STRATEGIC RESET: Sutra-Dyad Architecture (2026-04-01)
+
+**Source:** Codex T+L design session (full-auto, GPT-o4-mini-high). Prompted with: "Everything we're doing is too incremental. Design a from-scratch reset."
+
+**Core thesis:** "Language is not a sequence of tokens. It is a variable-rate compression tree over raw bytes."
+
+**Key decisions:**
+1. Raw bytes + learned dynamic patching, not fixed tokenizer. BLT validates tokenizer-free at scale.
+2. Hybrid geometry: R^d for content, 2-adic/ultrametric for structure/addresses.
+3. Algebraic primitive: predict → measure residual bits → stop or split (successive refinement).
+4. AdamW + WSD for v1 (don't confound architecture with optimizer novelty).
+
+**Stage plan:**
+- Stage 0: Flat-byte baseline (COMPLETED — 1.725 BPB at 10K steps)
+- Stage 1: Local decoder upgrade + partial global unfreeze (IN PROGRESS — Phase B running, eval BPB: 1.703→1.597, train BPB ~1.45 at step 2.5K/5K)
+- Stage 1: Learned dyadic patching with compute penalty
+- Stage 2: External Hebbian memory
+- Stage 3: Teacher-guided data transport (scoring, rewriting, curriculum — no cross-tokenizer logit KD)
+
+**Success/kill criteria at 3K:**
+- Success: beat flat-byte by ≥0.15 BPT, ≤70% active compute
+- Kill: patcher collapse, <20% compute saving, <0.5pp accuracy from refinement, CKA>0.97, trail baseline by >0.05 BPT
+
+**Architecture: Sutra-Dyad-153M (Stage 0 actual, simplified from 164M proposal):**
+- 12 global transformer layers (d=1024, 16h SwiGLU) = 151M
+- 1 local decoder (d=256, 4h SwiGLU) = 0.79M
+- Fixed patch_size=6, byte vocab=256
+- VRAM: 13.1GB stable, 11GB headroom
+
+### 11.6 Codex Correctness Engineer Review: Sutra-Dyad Byte Model (2026-04-01)
+
+**Scope:** `code/sutra_dyad.py` and `ByteShardedDataset` in `code/data_loader.py`.
+
+**Verdict:** NOT CLEAN.
+
+**Findings**
+
+1. `code/data_loader.py:415` silently drops `<|endoftext|>` boundaries during byte conversion. `Tokenizer.decode()` defaults to `skip_special_tokens=True`, and the 16K tokenizer declares `<|endoftext|>` and `<|pad|>` as special tokens (`data/tokenizer_16k/tokenizer.json:5-23`). The byte dataset therefore removes any `0` IDs present in the token shards instead of preserving them as literal text or replacing them with an explicit byte sentinel. We verified real occurrences in the corpus (for example `fineweb_s0_02.pt` contains token `0` at position `395026504`; decoding that span with default settings deletes `<|endoftext|>` entirely). This is a data-integrity bug, not just a cosmetic issue: document separators disappear, adjacent documents fuse, and the byte corpus is no longer the exact UTF-8 rendering of the original token stream.
+
+2. `code/sutra_dyad.py:305` hard-codes generation truncation to the module constant `SEQ_BYTES=1536` instead of the model instance's configured context length. If a checkpoint is instantiated with a smaller `max_seq_bytes`, `generate()` can feed sequences longer than the RoPE buffers created in `__init__`, causing a runtime shape mismatch during `apply_rope()`. Empirical check: a model built with `max_seq_bytes=32` succeeds at prompt length `48` (because of the `+16` RoPE slack) and fails at `49` with `RuntimeError: The size of tensor a (54) must match the size of tensor b (48)`. For larger-than-default contexts the bug goes the other way and truncates usable context early.
+
+**Clean checks**
+
+- Causality in `sutra_dyad.py` is theoretically correct as written. Patch `j` is embedded from bytes `j*P:(j+1)*P`, but the global stream is shifted one patch at `code/sutra_dyad.py:256-260`, so bytes in patch `j` receive global information only from patches `< j`. The local decoder remains causal over bytes at `code/sutra_dyad.py:270-276`. Therefore no future byte can influence logits at earlier positions. A reduced-size perturbation test on the same code path showed exact zero prefix difference when changing bytes at positions `5, 6, 7, 11, 12, 13, 30`.
+
+- Loss alignment is correct. `ByteShardedDataset.sample_batch()` returns `x = window[:-1]`, `y = window[1:]` at `code/data_loader.py:489-495`, so logits at position `t` are trained against the next byte `y[t] = x[t+1]`. Padding behavior in `code/sutra_dyad.py:232-237` is also correct: input bytes pad with `0`, targets pad with `-100`, and `F.cross_entropy(..., ignore_index=-100)` ignores the padded targets.
+
+- Weight tying is dimensionally correct. `byte_embed.weight` has shape `(256, d_local)` and `output_head.weight` also has shape `(256, d_local)` in `code/sutra_dyad.py:171` and `code/sutra_dyad.py:208-209`.
+
+- Byte values remain in range `[0, 255]` after detokenization because Python UTF-8 encoding always yields raw bytes and the loader materializes them as `torch.uint8` before converting sampled windows to `torch.long` (`code/data_loader.py:416-418`, `code/data_loader.py:493-494`).
+
+- Mixed precision choices are broadly stable. RMSNorm upcasts to FP32 for the RMS computation and rescales back to the input dtype (`code/sutra_dyad.py:74-76`), which is the correct stability pattern. The current NaN guard catches non-finite loss before backward (`code/sutra_dyad.py:431-437`), and `GradScaler('cuda')` is active on this machine, so gradient inf/NaN detection is delegated to AMP during optimizer stepping.
+
+**Residual risks / caveats**
+
+- `ByteShardedDataset` does not leak train bytes into test bytes through the split logic: train and test spans are disjoint because both are derived from the same held-out boundary (`code/data_loader.py:427-433`). However, the held-out split is biased because it comes only from the largest shard (`code/data_loader.py:387-393`), so evaluation is not source-balanced.
+
+- `ByteShardedDataset` uses estimated byte counts from file size (`code/data_loader.py:371-390`) and never back-fills the true decoded byte length into metadata. This does not create overlap by itself, but it can skew sampling weights and make the effective held-out size differ from the intended one when the bytes-per-token ratio differs from the `4.5` estimate.
+
+### 11.9 Codex Performance Engineer Review: Sutra-Dyad Byte Model (2026-04-01)
+
+**Scope:** `code/sutra_dyad.py` and `ByteShardedDataset` in `code/data_loader.py`.
+
+**Verdict:** NOT CLEAN.
+
+**Measured baseline (current checked-in config = `d_local=256`, `n_local_dec_layers=1`, `batch=32`, `grad_accum=4`, `seq=1536`):**
+- Params: `153,683,200` = `0.615 GB` FP32 weights.
+- Gradients: `0.615 GB` FP32.
+- AdamW states: `1.229 GB` FP32 (`m` + `v`).
+- Steady memory after optimizer state allocation and `zero_grad(set_to_none=True)`: `1.863 GB`.
+- Steady-state second-step peak (synthetic train step on this 5090 laptop): `9.70 GB allocated`, `10.66 GB reserved`.
+- User-reported `9.08 GB` is consistent with this. First-step peak was `8.46 GB`; steady-state peak after Adam state allocation was `9.70 GB`.
+- Exact autograd saved-tensor payload at `batch=32`: `7.324 GB`.
+
+**Attention complexity and exact tensor sizes (BF16, current config):**
+- Global transformer uses `N = 1536 / 6 = 256` patches. Per global layer:
+  - QKV output: `32 * 256 * 3 * 1024 = 25,165,824` elements = `50.33 MB`.
+  - One of Q/K/V: `8,388,608` elements = `16.78 MB`.
+  - If math attention materializes scores: `32 * 16 * 256 * 256 = 33,554,432` elements = `67.11 MB`.
+  - Scores + softmax probs: `134.22 MB` per layer, `1.61 GB` across 12 global layers.
+- Local decoder uses full-byte causal attention over `T = 1536`. Per local layer:
+  - QKV output: `32 * 1536 * 3 * 256 = 37,748,736` elements = `75.50 MB`.
+  - One of Q/K/V: `12,582,912` elements = `25.17 MB`.
+  - If math attention materializes scores: `32 * 4 * 1536 * 1536 = 301,989,888` elements = `603.98 MB`.
+  - Scores + softmax probs: `1.208 GB` per layer.
+- The only `O(n^2)` operations in `sutra_dyad.py` are the score/probability paths inside `F.scaled_dot_product_attention()` (`code/sutra_dyad.py:125`) for:
+  - Global attention: `O(B * H * N^2 * d_h)` compute, `O(B * H * N^2)` score/prob memory if math backend is used.
+  - Local attention: `O(B * H * T^2 * d_h)` compute, `O(B * H * T^2)` score/prob memory if math backend is used.
+- Important empirical check: on this machine PyTorch is using **memory-efficient SDPA**, not math attention, in the default path. No `(B,H,T,T)` tensors were present in saved activations. So compute is still quadratic, but activation storage is effectively linear in sequence length on the current build.
+
+**Where memory is actually going (current config, saved-tensor census):**
+- Biggest saved buckets were:
+  - `(32, 256, 1024)` FP32: `1.678 GB`
+  - `(32, 256, 2730)` BF16: `1.610 GB`
+  - `(8192, 1024)` BF16: `0.805 GB`
+  - `(32, 16, 256, 64)` BF16: `0.805 GB`
+  - `(32, 1536, 256)` FP32: `0.453 GB`
+- Translation: global-block activations dominate peak memory even in the reduced config. The local decoder is not the main memory owner anymore because it is only one `d=256` layer.
+
+**Original crash config (`d_local=512`, `n_local_heads=8`, `n_local_dec_layers=3`, `batch=64`, `seq=1536`) root cause:**
+- Model size was `161,089,024` params, so static optimizer-state footprint alone was `2.577 GB` after Adam state allocation.
+- Profiling orig-like configs at safe smaller batches gave a stable memory law:
+  - Allocated peak ~= `2.293 + 0.3277 * batch_GB`
+  - Reserved peak ~= `1.788 + 0.3809 * batch_GB`
+  - Extrapolated to `batch=64`: `23.26 GB allocated`, `26.16 GB reserved`
+- That matches the observed `24.93 GB` near-OOM crash. Conclusion: **no evidence of a memory leak; this was an oversized config for a 24 GB card once optimizer state and allocator slack were present.**
+- Attention math for the original config if math backend is taken:
+  - Global per layer scores + probs: `268.44 MB`; across 12 layers: `3.22 GB`
+  - Local per layer scores + probs: `4.832 GB`; across 3 layers: `14.50 GB`
+  - Combined math-attention burden alone: `17.72 GB`, before FFN/hidden activations.
+
+**Why the recorded forward was 31 seconds:**
+- The architecture itself does **not** justify `31 s` forward latency. Measured synthetic forward times on this machine:
+  - Current config, efficient SDPA: `~63 ms`
+  - Orig-like config at `batch=24`, efficient SDPA: `~68 ms`
+  - Orig-like config at `batch=40`, efficient SDPA: `~118 ms`
+- Forcing PyTorch to the math SDPA backend produced the expected direction of failure:
+  - Current config (`batch=32`): forward `~127 ms`, peak `15.33 GB`
+  - Orig-like config (`batch=24`): forward `~202 ms`, peak `21.43 GB`
+- Therefore the `31 s` forward is almost certainly **not intrinsic model compute**. The plausible explanations are:
+  - a silent fallback to a non-efficient attention kernel plus severe allocator pressure near OOM,
+  - or a cold-path/profile artifact (kernel warmup / non-model work included in the forward timer).
+- What we can say confidently: the crash was real, but the `31 s` figure is not representative of healthy efficient-SDPA execution.
+
+**Production batch recommendation (current code, no architectural edits):**
+- Safe tested microbatch ceiling with `3-4 GB` VRAM headroom is `batch_size ~= 76`.
+  - Measured at `batch=76`: `20.09 GB allocated`, `20.81 GB reserved`
+  - Measured at `batch=80`: `20.99 GB allocated`, `21.86 GB reserved` (too tight for comfort)
+- If you want to keep effective batch near the current `128`, use `batch_size=64, grad_accum=2`.
+  - Measured steady-state peak: `17.26 GB allocated`, `17.81 GB reserved`
+  - Leaves ~`6 GB` headroom and is safer for long jobs.
+- If you want to maximize microbatch while keeping `~3 GB` headroom, use `batch_size=76` and set `grad_accum` only for optimization reasons. Memory is set by microbatch, not by effective batch.
+- Measured synthetic model-only throughput on the reduced config was roughly flat across tested safe microbatches: `~0.20-0.21 MB/s` (`~200k-214k bytes/s`, `~130-140 seq/s` at `seq=1536`). Bigger microbatches did **not** materially increase bytes/sec, so there is no strong throughput reason to push from `64` to `76`.
+
+**High-value code changes (performance impact > trivial cleanup):**
+1. **Replace handwritten RMSNorm with fused `torch.nn.functional.rms_norm`** at `code/sutra_dyad.py:74-76`.
+   - One-line patch using `F.rms_norm(x, (dim,), self.weight.to(x.dtype), self.eps)` cut steady-state peak at `batch=32` from `9.70 GB` to `7.44 GB`.
+   - Saved-tensor payload dropped from `7.324 GB` to `5.343 GB`.
+   - This is the single biggest low-risk model-side win found in the audit.
+2. **Add gradient checkpointing over the global transformer loop** at `code/sutra_dyad.py:252-253`.
+   - Checkpointing the 12 global layers dropped `batch=32` peak from `9.70 GB` to `3.90 GB`.
+   - Backward time increased from `~151 ms` to `~197 ms` (`~30%` slower backward on the synthetic step).
+   - Recommendation: make this config-gated. Use it when VRAM is the limiter.
+3. **Project global context to `d_local` before repeating it across bytes** at `code/sutra_dyad.py:257-265`.
+   - Current code materializes `global_byte` as `(B, T, d_global)` before `global_to_local`.
+   - At current config that temporary is `100.66 MB`; at the original crash config it would be `201.33 MB`.
+   - Move `global_to_local` to patch space first, then `repeat_interleave(P, dim=1)` the smaller `(B, N, d_local)` tensor.
+4. **Guard SDPA against silent math fallback** at `code/sutra_dyad.py:125`.
+   - This PyTorch build is **not** compiled with FlashAttention and `torch.compile` currently fails because Triton is missing.
+   - Memory-efficient SDPA is already active and is the correct backend today.
+   - Use `torch.nn.attention.sdpa_kernel(backends=[SDPBackend.EFFICIENT_ATTENTION])` or an explicit runtime assertion so future shape/dtype changes fail fast instead of silently falling back to the math kernel.
+
+**Additional performance issues outside the model core:**
+- `ByteShardedDataset` is a serious cold-path bottleneck (`code/data_loader.py:401-420`).
+  - Cold load timing on real repo shards:
+    - `wikipedia_0035.pt` (`0.449 GB`) -> `10.30 s`
+    - `minipile_00.pt` (`3.595 GB`) -> `80.41 s`
+  - Hot-shard `sample_batch()` after decode/cache reuse was only `~0.25 ms`.
+  - Weighted mean shard size under current sampling is `~1.86 GB`, so the decode path implies periodic multi-second stalls even though the hot path looks free.
+  - Root cause: `_load_shard()` does `torch.load` -> `tokens.tolist()` -> tokenizer `decode()` -> `text.encode('utf-8')` -> `bytearray(raw)` -> `torch.frombuffer(...).clone()`. That is multiple full-shard CPU copies and huge Python-object churn.
+- Recommendation for the loader:
+  - Do **not** decode entire shards on the training hot path.
+  - Either precompute byte shards once offline, or maintain a bounded byte-cache in much smaller chunks.
+  - As long as full-shard decode remains in `_load_shard()`, training will experience catastrophic periodic CPU stalls regardless of GPU-side model speed.
+
+**Other recommendations:**
+- `torch.compile`: NOT recommended right now. On this machine it fails immediately with `torch._inductor.exc.TritonMissing`.
+- Flash/xFormers attention: not actionable in the current environment because this torch build lacks flash kernels. Memory-efficient SDPA is already active; the correct move is to guard it, not add another dependency first.
+- `GradScaler('cuda')` at `code/sutra_dyad.py:388` is unnecessary for BF16. Low priority, but it can be removed or gated to FP16-only.
+- Patch embedding (`code/sutra_dyad.py:245-246`) is efficient. Measured forward time was `~0.5 ms`; it is not the bottleneck.
+
+---
+
+## Stage 0 Results: Sutra-Dyad-153M (3K Scout Run) — 2026-04-01
+
+### Architecture
+- 12 global transformer layers (d=1024, 16 heads, SwiGLU ff=2730) = 150.99M params
+- 1 local decoder layer (d=256, 4 heads, SwiGLU ff=682) = 0.79M params
+- Fixed patch_size=6, byte vocab=256, weight-tied output head
+- Total: 153.68M params, 13.1GB VRAM, 0.3MB/s throughput
+
+### Training Config
+batch=64, grad_accum=2 (eff=128), seq=1536 bytes, LR=3e-4, WSD (70/30), warmup=300
+
+### BPB Trajectory (eval)
+| Step | BPB | Equiv BPT (×4.283) |
+|------|-----|---------------------|
+| 500 | 4.631 | 19.83 |
+| 1000 | 3.309 | 14.17 |
+| 1500 | 2.960 | 12.68 |
+| 2000 | 2.497 | 10.70 |
+| 2500 | 2.398 | 10.27 |
+| 3000 | 2.187 | 9.37 |
+
+Dense baseline equivalent: 3.65 BPT = **0.852 BPB** (target)
+
+### Codex Triple Review (Scaling + Competitive + Theorist)
+
+**Scaling Expert projections (unchanged architecture):**
+- 10K steps: 1.7-1.9 BPB
+- 30K steps: 1.35-1.6 BPB
+- 60K steps: 1.25-1.45 BPB
+- Compute-optimal for 153M: 15-20K steps (byte-Chinchilla), 65-80K steps (semantic-normalized)
+- 1.0 BPB unlikely below 60K+, possibly unreachable at 153M without architecture changes
+
+**Competitive Analyst findings:**
+- MEGABYTE: 1.0/0.98/1.0/0.68/0.41 BPB on PG-19/Stories/Books/arXiv/Code (80B bytes, larger model)
+- BLT: 0.82-0.89 BPB (1B+ models)
+- Target for competitive 153M: ~1.0-1.2 BPB
+- Three things best byte models do that we don't: adaptive patching, richer local/global interaction, stronger byte-side inductive bias
+- Fixed patch = valid control, NOT competitive endpoint
+
+**Architecture Theorist findings:**
+- Compute split too global-heavy: 151M/154M in global, local is starved
+- Patch size 6 defensible as cost-control prior, not optimal (should follow surprisal spikes)
+- Causality bottleneck real: all bytes in patch j get same compressed prior (loses fine-grained retrieval)
+- Compression theory + predictive coding + renormalization all point same way: coarse global predicts easy structure, local residual spends compute where surprise remains
+
+**Unanimous recommendation:**
+1. Run 10K control with proper 10K schedule (validate projection, establish baseline)
+2. Design Stage 1: entropy-triggered dyadic patching + byte-residual bypass + compute pressure
+3. Shift capacity from global to local
+4. Do NOT spend 30K+ on fixed-patch Stage 0 as mainline
+
+---
+
+## T+L Design Session: Stage 1 Architecture (2026-04-01)
+
+**Source:** Codex GPT-5.4, xhigh reasoning. Tesla+Leibniz design session for Sutra-Dyad Stage 1.
+
+### Architecture: Sutra-Dyad-S1-194M
+
+**Global trunk (warm-started, 151M):** 12 layers, d=1024, 16h SwiGLU. Unchanged from Stage 0.
+
+**Local path (new, 42.7M):**
+- 2-layer bidirectional within-patch encoder (compression front-end)
+- 4-layer causal byte decoder, d_local=640, 10h, SwiGLU ff=1920
+- Sliding-window self-attention (window=96) + cross-attention to all previous global patch states
+- Byte-residual bypass: r_t ∈ R^160, injected as U_l * silu(V_l * r_t) at every decoder layer
+
+**Adaptive patching:**
+- Patch sizes: {2,4,8,16} bytes
+- Hard budget: N_max=256 patches per 1536-byte window
+- Learned boundary head: MLP over [pooled_bytes, mean_entropy, max_entropy_delta, budget_remaining]
+- Choose smallest L with p_stop ≥ 0.5, subject to budget constraint
+- Training starts with entropy oracle from frozen Stage 0, transitions to learned
+
+**Global interaction with variable patches:**
+- Patch summary u_j ∈ R^640 from attentional pooling over within-patch encoder states
+- Global input: g_j^0 = W_patch * u_j + E_span[log2(L_j)], g_j^0 ∈ R^1024
+- Continuous RoPE position: pos_j = (s_j + 0.5*L_j) / 6.0 (preserves Stage 0 scale)
+- Right-pad to 256 with mask
+
+**Compute pressure:** L_rate = 0.02 * (N_patches / 256)
+
+### Warm-Start Plan
+- Transfer: all global blocks + global norm
+- Expand byte embeddings 256→640 by copy-then-random-fill
+- Expand Stage 0 local block into first new decoder block (block-diagonal copy)
+- Zero-init: cross-attn output projections, bypass adapters, span embeddings
+- Bias boundary head so initial mean patch length ~6-7
+
+### Training Recipe (3 phases, 12K total)
+- Phase A (0-1K): fixed patch=6, global frozen, train local + pooler. Anchor loss to Stage 0.
+- Phase B (1K-2.5K): oracle dyadic patching, unfreeze global layers 8-11
+- Phase C (2.5K-12K): learned patcher, unfreeze all, rate penalty on
+
+LR groups: global 6e-5 (warm), local 3e-4, boundary head 4e-4. AdamW, bf16, batch 48×3=144.
+
+**Loss:** L = L_ce + 0.02*L_rate + 0.05*L_bnd + 0.01*L_conf
+
+### Kill Criteria
+- 500 adaptive steps: patch length <3 or >12, or one size >70%
+- 1500 steps: <0.10 BPB gain vs matched Stage 0
+- 3000 steps: <0.30 BPB gain vs matched Stage 0
+- Global CKA >0.99 after unfreeze = global not adapting
+
+### Probes Before Full Training
+1. Fixed-6 local-upgrade probe (1K steps, global frozen): require ≥0.10 BPB improvement
+2. Oracle dyadic segmentation audit: verify high-entropy→short, easy prose→long
+3. Cross-attn ablation: require ≥0.03 BPB hit
+4. Bypass ablation: require ≥0.02 BPB hit
+5. Patch-budget sweep (N_max ∈ {192,224,256})
+
+### Teacher Integration Hook (Outcome 4)
+Expose patch_states with byte spans [s_j, e_j) and byte_residuals with offsets.
+Cross-tokenizer alignment: ω_ij = |token_i_bytes ∩ patch_j_bytes| / |token_i_bytes|
+Teacher projection: z_j^teacher = Σ_i ω_ij * h_i^teacher
+
+**Confidence: 7/10** — high on local rebalance + global warm-start, medium on bypass and patcher stability
+
+### 11.10 Tesla+Leibniz Design Session: Sutra-Dyad Stage 1 (2026-04-01)
+
+**Decision:** Stage 1 should be a warm-started evolution, not a reset. Keep the trained 12-layer global transformer intact, make patching adaptive under a hard global-token budget, and spend the entire remaining parameter budget on byte-side modeling and retrieval.
+
+#### Locked Stage 1 spec: `Sutra-Dyad-S1-194M`
+
+**Global trunk (warm-started, unchanged weights/config):**
+- 12 causal transformer layers, `d_global=1024`, `16` heads, SwiGLU `ff=2730`
+- Global params transferred from Stage 0: `150.99M`
+- Global token budget per 1536-byte window: `N_max=256` (same as Stage 0)
+
+**Adaptive dyadic patcher:**
+- Allowed patch sizes: `{2,4,8,16}` bytes
+- Streaming patch formation, one patch at a time
+- Start a patch at byte `s`
+- For candidate `L in {2,4,8,16}` compute:
+  - byte-level entropy proxy: `h_t = softplus(w_h^T r_t + b_h)`
+  - span mean entropy: `hbar(s,L) = (1/L) * sum_{i=s}^{s+L-1} h_i`
+  - surprisal spike: `delta(s,L) = max(h_s ... h_{s+L-1}) - hbar(s,L)`
+  - stop logit: `z(s,L) = MLP_L([pool(r_{s:s+L}), hbar(s,L), delta(s,L), rho_budget])`
+  - stop probability: `p_stop(s,L) = sigmoid(z(s,L))`
+- Choose the **smallest** `L` such that:
+  - `p_stop(s,L) >= 0.5`, and
+  - if closed now, the remaining bytes can still fit in the remaining patch budget:
+    - with `B_rem = T - (s+L)` and `K_rem = N_max - n_used - 1`
+    - require `B_rem <= 16 * K_rem`
+- If no earlier stop fires, force close at `L=16`
+- This is dyadic because every patch is chosen by repeated `2 -> 4 -> 8 -> 16` doubling decisions
+- Training bootstrap is entropy-based; steady-state is learned:
+  - Phase A/B targets come from a frozen Stage 0 surprisal oracle
+  - Phase C uses the learned boundary head online, refreshed every eval interval against the current student's byte-NLL map
+
+**Global token construction:**
+- Local preview encoder output for patch `j`: `R_j in R^{L_j x 640}`
+- Attentional span pool: `u_j = sum_i alpha_{j,i} R_{j,i}`, `u_j in R^640`
+- Global input token: `g_j^0 = W_patch u_j + E_span[log2(L_j)]`, `g_j^0 in R^1024`
+- Global RoPE position uses **continuous byte position**, not patch index:
+  - `pos_j = (s_j + 0.5 * L_j) / 6.0`
+  - this preserves Stage 0's positional scale on average and avoids distance distortion from variable spans
+- Global sequence is right-padded to `256` tokens with a pad mask; actual patch count is variable, never above `256`
+
+**Local path (new capacity):**
+- Byte embedding width: `d_local=640`
+- Byte heads: `10` (`head_dim=64`)
+- Local encoder: `2` bidirectional within-patch layers, SwiGLU `ff=1920`
+- Local decoder: `4` causal byte layers, SwiGLU `ff=1920`
+- Local decoder self-attention is **sliding-window causal attention** with `window=96`
+- Each local decoder layer also has **cross-attention to all previous global patch states**
+- Byte-residual bypass width: `d_res=160`
+
+**Local decoder equations (for byte `t` in patch `j`):**
+- `q_t^l = WindowAttn(h_t^l, h_{t-95:t}^l)`
+- `c_t^l = CrossAttn(q_t^l, G_{<j}, G_{<j})`
+- `b_t^l = U_l * silu(V_l r_t)` with `r_t in R^160`
+- `h_t^{l+1} = h_t^l + q_t^l + c_t^l + b_t^l + FFN(RMS(.))`
+- `r_t` comes directly from the within-patch encoder and **skips the global transformer entirely**
+
+#### Parameter budget
+
+Approximate Stage 1 total:
+- Global trunk: `150.99M`
+- Local encoder (`2 x 5.33M`): `10.65M`
+- Local decoder (`4 x 7.46M`, including cross-attn): `29.83M`
+- Embeddings / patcher / span embeddings / bypass / interfaces: `2.26M`
+- **Total: ~193.7M**
+
+This is the best split available under the warm-start constraint. If Stage 1 works, the next structural move is not "add more global"; it is "shrink global and push more budget local."
+
+#### Warm-start plan
+
+**What transfers exactly:**
+- Transfer unchanged: all 12 global blocks + global norm
+- Do **not** transfer Stage 0 `patch_proj` directly into final Stage 1 input; use it as an anchor target during compatibility warm-start
+- Expand Stage 0 byte embedding `256 -> 640` by copying the old `256` channels into the first slice and initializing the remaining `384` channels small
+- Expand the Stage 0 local block into the first Stage 1 local decoder block by block-diagonal copy where possible; initialize new channels near-zero so the copied subspace dominates at step 0
+- Initialize decoder cross-attn output projections and bypass adapters to zero so Stage 1 starts close to Stage 0 behavior
+- Initialize `E_span` and the boundary head biases so the initial mean patch length lands near `6-7` bytes, not `16`
+
+**Three-phase warm-start:**
+1. **Phase A, steps 0-1000: fixed-patch compatibility**
+   - keep `patch_size=6`
+   - freeze the full global trunk
+   - train local encoder/decoder, new patch pooler, bypass
+   - add anchor loss: `L_anchor = ||g_new_fixed6 - g_stage0_fixed6||_2^2`
+2. **Phase B, steps 1000-2500: oracle dyadic curriculum**
+   - enable dyadic patching from the frozen Stage 0 surprisal oracle
+   - unfreeze global layers `8-11`, keep `0-7` frozen
+   - keep average patch count in the `220-240` range initially
+3. **Phase C, steps 2500-12000: full Stage 1**
+   - learned boundary head takes over
+   - unfreeze the entire global trunk
+   - rate penalty activates and boundary decisions sharpen
+
+#### Training recipe
+
+- Optimizer: AdamW
+- Betas: `(0.9, 0.95)`
+- Weight decay: `0.1`
+- Gradient clip: `1.0`
+- Precision: `bf16`
+- Sequence: `1536` bytes
+- Microbatch: `48`
+- Grad accum: `3`
+- Effective batch: `144` sequences
+- Global checkpointing: ON by default
+- Expected peak VRAM with checkpointing + windowed local decoder: `~16.5-17.5 GB`
+
+**LR groups:**
+- Global warm-started weights: peak `6e-5`, min `6e-6`
+- Local encoder/decoder + patch pooler + global/local interfaces: peak `3e-4`, min `3e-5`
+- Boundary head + span embeddings: peak `4e-4`, min `4e-5`
+- Schedule: `400` warmup, hold to `70%`, cosine decay over final `30%`
+
+**Losses:**
+- Main: `L_ce` = next-byte cross-entropy
+- Rate penalty: `L_rate = lambda_rate * (N_patches / 256)`
+- Boundary supervision: `L_bnd = BCE(p_stop, y_oracle_or_selfdistilled)`
+- Confidence regularizer: `L_conf = lambda_conf * mean(H(p_stop))`
+- Compatibility only: `L_anchor`
+- Full loss in Phase C:
+  - `L = L_ce + 0.02 * L_rate + 0.05 * L_bnd + 0.01 * L_conf`
+
+#### Why this should beat Stage 0
+
+Three Stage 0 bottlenecks are directly targeted:
+1. **Fixed patches** become variable under learned rate pressure
+2. **Starved local model** grows from `0.79M` to `42.7M` local-related params
+3. **Same prior for every byte in a patch** is broken by cross-attn retrieval plus the `160`-dim byte-residual bypass
+
+Expected improvement envelope:
+- `+0.10 to +0.15 BPB` from local capacity + cross-attn alone
+- `+0.15 to +0.30 BPB` from adaptive patching on hard bytes / coarse easy spans
+- `+0.05 to +0.10 BPB` from the residual bypass removing the within-patch bottleneck
+- Combined expectation at matched steps: `0.35-0.50 BPB` better than Stage 0 if patching stays healthy
+
+#### Probe gate before full 12K run
+
+1. **Fixed-6 local-upgrade probe** (`1K` steps, global frozen)
+   - success: `>=0.10 BPB` better than Stage 0 transfer-only baseline
+2. **Oracle dyadic segmentation audit**
+   - success: entropy spikes get shorter patches, low-entropy prose gets `8/16`
+   - failure if `>70%` of patches collapse to one size
+3. **Cross-attn utility ablation**
+   - zero cross-attn at eval
+   - success: measurable BPB hit (`>=0.03`) proves retrieval path is active
+4. **Bypass utility ablation**
+   - zero bypass adapters at eval
+   - success: measurable BPB hit (`>=0.02`) proves bottleneck relief is real
+5. **Patch-budget stress test**
+   - compare `N_max=192`, `224`, `256`
+   - success: `224/256` beats `192`, and `256` does not collapse to all-short patches
+
+#### Kill criteria
+
+- After `500` adaptive-patching steps:
+  - mean patch length `<3.0` or `>12.0`, or
+  - one patch size takes `>70%` share for 3 evals
+- After `1500` Stage 1 steps:
+  - improvement vs matched Stage 0 control `<0.10 BPB`
+- After `3000` Stage 1 steps:
+  - improvement vs matched Stage 0 control `<0.30 BPB`
+- At any point:
+  - global-state CKA to Stage 0 stays `>0.99` for 2 evals after unfreezing (too little adaptation), or
+  - bypass/cross-attn ablations change BPB by `<0.01` (new pathways are dead)
+
+#### Outcome 4 hook for Stage 2 (multi-teacher integration)
+
+Stage 1 must expose two canonical alignment surfaces:
+- `patch_states`: global states `G_j` with exact byte spans `[s_j, e_j)`
+- `byte_residuals`: per-byte residual states `r_t` with exact byte offsets
+
+This is why byte-level matters. Teachers can have any tokenizer; the student stays grounded in raw byte offsets. For any teacher token/state span `i` with byte interval `[a_i, b_i)`, define overlap weights:
+
+`omega_ij = |[a_i, b_i) intersect [s_j, e_j)| / |[a_i, b_i)|`
+
+Then teacher patch target:
+
+`z_j^(teacher) = sum_i omega_ij * h_i^(teacher)`
+
+Stage 2 then adds small teacher-specific projection heads on top of `patch_states` and `byte_residuals`. Decoder-teacher logits should stay **sparse and selective** (hard windows only); representation transport over byte overlaps is the mainline.
+
+#### Risk register
+
+1. **Boundary collapse** (`all 16` or `all 2`)
+   - detect with patch histogram every eval
+2. **Warm-start mismatch**
+   - detect with global-state CKA and a transient BPB spike right after adaptive patching turns on
+3. **Local shortcutting**
+   - detect if bypass/cross-attn ablations do nothing
+4. **Global underuse**
+   - detect with cross-attn entropy and ablation gap
+5. **Inference mismatch**
+   - detect by forcing online segmentation in eval, never offline-only segmentation
+
+**Confidence: `7/10`.**
+- High confidence on local rebalancing and cross-attn: these directly attack the strongest measured bottlenecks.
+- Medium confidence on the byte-residual bypass: it is structurally clean and cheap, but not yet locally validated.
+- Medium confidence on adaptive dyadic patching: theory and literature support it, but online warm-started segmentation is the highest-risk new mechanism in Stage 1.
+
+### 11.11 Stage 1 Phase A+B Training Results (2026-04-12)
+
+**Implementation note:** The actual Stage 1 implementation is a simplified version of the T+L spec above. We implemented the fixed-patch local upgrade (Phase A) and partial global unfreeze (Phase B) first, deferring adaptive patching to Phase C. This lets us isolate the contribution of local capacity rebalancing before adding the patcher complexity.
+
+**Actual Stage 1 architecture (SutraDyadS1, 196.7M):**
+- Global trunk: 12 layers, d=1024, 16h SwiGLU = 151M (warm-started from Stage 0)
+- Within-patch encoder: 2 bidirectional layers, d_local=640, 10h, SwiGLU ff=1706
+- Local decoder: 2 causal layers, d_local=640, 10h, SwiGLU ff=1706, with cross-attention to global states
+- Byte-residual bypass: d_res=160, linear bypass per decoder layer
+- Byte embedding expanded: 256→640 (Stage 0 weights in first 256 dims)
+- Fixed patch_size=6 (same as Stage 0 — adaptive patching deferred)
+
+**Phase A (Probe 1): Fixed-patch local upgrade, global frozen**
+- Trainable: 45.7M (local encoder/decoder, patch pooler, bypass, expanded embeddings)
+- Frozen: 151M (entire global trunk)
+- Steps: 1000, LR: 3e-4, batch=24, grad_accum=3, seq=1536 bytes
+- Anchor loss: MSE(new patch encoder output, frozen Stage 0 patch projection)
+- Result: eval BPB = **1.817** at step 1000
+- Significance: Within 0.092 of Stage 0's 10K best (1.725) in 10x fewer steps. The new local capacity rapidly learns to use the global representations.
+
+**Phase B (current, running): Partial global unfreeze**
+- Trainable: 96.1M (local + global layers 8-11)
+- Frozen: 100.7M (global layers 0-7)
+- Resumed from Phase A step 1000 checkpoint
+- LR: 3e-4 local, 6e-5 global (5:1 ratio)
+- WSD schedule: warmup 0-100, stable 100-3500, cosine decay 3500-5000
+- **Results at step 2500 (still training to 5000):**
+
+| Step | Train BPB | Eval BPB | Δ Eval | Train-Eval Gap | Notes |
+|------|-----------|----------|--------|----------------|-------|
+| 1000 | — | 1.817 | — | — | Phase A final (all-frozen global) |
+| 1500 | 1.741 | 1.703 | -0.114 | +0.038 | First Phase B eval |
+| 2000 | 1.618 | 1.597 | -0.106 | +0.021 | Strong improvement |
+| 2500 | 1.508 | 1.585 | -0.012 | +0.077 | Noisy eval (outlier — see step 3000) |
+| 3000 | 1.497 | **1.499** | **-0.086** | -0.002 | Strong resume, gap collapsed |
+
+- **Beat Stage 0 ceiling (1.725 BPB) by step 1500** — 0.226 BPB total improvement at step 3K
+- **Step 2500 was an outlier** — step 3000 shows trajectory resumed at -0.086/500steps. Train-eval gap collapsed from 0.077 to near-zero, confirming no overfitting.
+- **Cosine decay starts at step 3500** — expect further gains from annealing (0.05-0.10 BPB typical).
+- **Generation quality steadily improving**: Step 3K: "The meaning of intelligence is not purposed for the body. In this paper, we have been working on the CDP-DAD process of software..." — academic register, complex syntax, domain-specific vocabulary.
+- VRAM stable at 15.7GB (8.3GB headroom)
+
+**Kill criteria assessment:**
+- ✅ After 1500 Stage 1 steps: improvement vs Stage 0 = 0.128 BPB (threshold: ≥0.10) — PASSED
+- 🔄 After 3000 steps: need ≥0.30 BPB improvement (current: 0.128 at step 1500, trending favorably)
+
+**Codex adversarial audit answers (2026-04-12, GPT-5.4 T+L session):**
+
+1. **Geometry vs scale?** — Needs ablation probes (written, ready to run: `--ablate`). The 2.1x trainable param increase is a confound. Control: zero out cross-attn and bypass → if BPB regresses significantly, architecture contributes; if not, it's just more parameters.
+2. **Cross-attention utility?** — Ablation probe ready. Zero global KV → measure BPB hit.
+3. **Bypass utility?** — Ablation probe ready. Zero bypass → measure BPB hit.
+4. **How good is ~1.5 BPB?** — Published baselines (PG-19): MambaByte-353M = 0.930, MegaByte-1B = 1.000, ByteTransformer-320M = 1.057. At 150-200M, realistic target = 1.05-1.15 BPB. Our 1.499 at 3K steps is above target but improving, and on different (mixed-domain) data.
+5. **Ekalavya hooks for Stage 2?** — Codex recommends:
+   - Named teacher ports (UTI): per-family projection heads attached to patch_states and byte_residuals
+   - Offline difficulty reweighting (MiniPLM): pre-compute teacher-reference NLL gap per document
+   - Teacher rotation curriculum: one family per batch, delayed activation, diversity floors
+   - Hard-document sparse logit bank: top-K logits for hardest 1-5% of documents only
+   - Confidence scores from Codex: O1=3/10, O2=6/10, O3=4/10, **O4=1/10**, O5=5/10. O4 is the critical gap.

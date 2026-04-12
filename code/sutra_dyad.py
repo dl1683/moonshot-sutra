@@ -963,6 +963,117 @@ def det_eval(ckpt_path):
         print(safe[:300])
 
 
+def ablation_eval(ckpt_path):
+    """Run ablation study: zero out each Stage 1 component and measure BPB impact.
+
+    Tests: cross-attention, bypass, global context, and encoder (vs raw embed).
+    Reports BPB for each ablation to quantify component contribution.
+    """
+    import functools
+
+    print(f"Loading checkpoint: {ckpt_path}")
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    cfg = ckpt.get("config", {})
+    stage = ckpt.get("stage", 0)
+    assert stage == 1, "Ablation only for Stage 1 checkpoints"
+
+    model = SutraDyadS1(max_seq_bytes=cfg.get("seq_bytes", SEQ_BYTES))
+    model.load_state_dict(ckpt["model"])
+    model = model.to(DEVICE)
+    params = model.count_params()
+    print(f"Model: {params['total']/1e6:.1f}M params (Stage {stage}), step {ckpt.get('step', '?')}")
+
+    dataset = ByteShardedDataset()
+    n_eval = 50  # batches for reliable estimate
+
+    results = {}
+
+    # 1. Baseline (no ablation)
+    print("\n[1/5] Baseline (no ablation)...")
+    el = eval_loss(model, dataset, n_batches=n_eval)
+    results["baseline"] = el / math.log(2)
+    print(f"  BPB = {results['baseline']:.4f}")
+
+    # 2. Ablate cross-attention (zero KV input)
+    print("\n[2/5] Ablating cross-attention (zero global KV)...")
+    orig_forwards = []
+    for i, block in enumerate(model.local_decoder):
+        orig_forwards.append(block.forward)
+        def make_no_cross_forward(blk, orig_fwd):
+            def no_cross_forward(x, cos, sin, global_kv, bypass_r, cross_mask=None):
+                zero_kv = torch.zeros_like(global_kv)
+                return orig_fwd(x, cos, sin, zero_kv, bypass_r, cross_mask)
+            return no_cross_forward
+        block.forward = make_no_cross_forward(block, block.forward)
+    el = eval_loss(model, dataset, n_batches=n_eval)
+    results["no_cross_attn"] = el / math.log(2)
+    print(f"  BPB = {results['no_cross_attn']:.4f} (delta = +{results['no_cross_attn'] - results['baseline']:.4f})")
+    for i, block in enumerate(model.local_decoder):
+        block.forward = orig_forwards[i]
+
+    # 3. Ablate bypass (zero bypass_r input)
+    print("\n[3/5] Ablating byte-residual bypass (zero bypass)...")
+    orig_forwards = []
+    for i, block in enumerate(model.local_decoder):
+        orig_forwards.append(block.forward)
+        def make_no_bypass_forward(blk, orig_fwd):
+            def no_bypass_forward(x, cos, sin, global_kv, bypass_r, cross_mask=None):
+                zero_bypass = torch.zeros_like(bypass_r)
+                return orig_fwd(x, cos, sin, global_kv, zero_bypass, cross_mask)
+            return no_bypass_forward
+        block.forward = make_no_bypass_forward(block, block.forward)
+    el = eval_loss(model, dataset, n_batches=n_eval)
+    results["no_bypass"] = el / math.log(2)
+    print(f"  BPB = {results['no_bypass']:.4f} (delta = +{results['no_bypass'] - results['baseline']:.4f})")
+    for i, block in enumerate(model.local_decoder):
+        block.forward = orig_forwards[i]
+
+    # 4. Ablate global context (zero the shifted global in local input)
+    print("\n[4/5] Ablating global context (zero global→local projection)...")
+    orig_g2l = model.global_to_local.weight.data.clone()
+    model.global_to_local.weight.data.zero_()
+    el = eval_loss(model, dataset, n_batches=n_eval)
+    results["no_global_ctx"] = el / math.log(2)
+    print(f"  BPB = {results['no_global_ctx']:.4f} (delta = +{results['no_global_ctx'] - results['baseline']:.4f})")
+    model.global_to_local.weight.data.copy_(orig_g2l)
+
+    # 5. Ablate both cross-attn AND bypass (isolate local self-attn contribution)
+    print("\n[5/5] Ablating BOTH cross-attn and bypass...")
+    orig_forwards = []
+    for i, block in enumerate(model.local_decoder):
+        orig_forwards.append(block.forward)
+        def make_no_cross_no_bypass(blk, orig_fwd):
+            def ablated_forward(x, cos, sin, global_kv, bypass_r, cross_mask=None):
+                zero_kv = torch.zeros_like(global_kv)
+                zero_bypass = torch.zeros_like(bypass_r)
+                return orig_fwd(x, cos, sin, zero_kv, zero_bypass, cross_mask)
+            return ablated_forward
+        block.forward = make_no_cross_no_bypass(block, block.forward)
+    el = eval_loss(model, dataset, n_batches=n_eval)
+    results["no_cross_no_bypass"] = el / math.log(2)
+    print(f"  BPB = {results['no_cross_no_bypass']:.4f} (delta = +{results['no_cross_no_bypass'] - results['baseline']:.4f})")
+    for i, block in enumerate(model.local_decoder):
+        block.forward = orig_forwards[i]
+
+    # Summary
+    print(f"\n{'='*60}")
+    print("ABLATION SUMMARY")
+    print(f"{'='*60}")
+    print(f"{'Condition':<25} {'BPB':>8} {'Delta':>8} {'% Impact':>10}")
+    print(f"{'-'*25} {'-'*8} {'-'*8} {'-'*10}")
+    base = results["baseline"]
+    for name, bpb in results.items():
+        delta = bpb - base
+        pct = (delta / base * 100) if base > 0 else 0
+        print(f"{name:<25} {bpb:>8.4f} {delta:>+8.4f} {pct:>+9.1f}%")
+    print(f"{'='*60}")
+
+    out_path = REPO / "results" / "ablation_s1_phase_b.json"
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"Saved to {out_path}")
+
+
 def train_s1(stage0_ckpt, cfg=None):
     """Train Sutra-Dyad Stage 1: expanded local path with cross-attention."""
     if cfg is None:
@@ -1206,6 +1317,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--det-eval", type=str, default=None)
+    parser.add_argument("--ablate", type=str, default=None, help="Run ablation eval on S1 checkpoint")
     parser.add_argument("--config", type=str, default=None, help="JSON config file")
     parser.add_argument("--stage0-ckpt", type=str, default=None, help="Stage 0 checkpoint for Stage 1")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from S1 checkpoint")
@@ -1220,6 +1332,8 @@ if __name__ == "__main__":
 
     if args.det_eval:
         det_eval(args.det_eval)
+    elif args.ablate:
+        ablation_eval(args.ablate)
     elif args.stage == 1:
         if args.stage0_ckpt is None:
             print("ERROR: --stage0-ckpt required for Stage 1 (needed for anchor loss even when resuming)")

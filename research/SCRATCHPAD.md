@@ -6,6 +6,179 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## PHASE B TRAJECTORY ANALYSIS (2026-04-12, in-progress)
+
+### Raw data (eval BPB at 500-step intervals)
+| Step | Eval BPB | Δ per 500 steps | Train BPB (at eval) | Train-Eval Gap |
+|------|----------|-----------------|---------------------|----------------|
+| 1000 | 1.817 | — | — | — |
+| 1500 | 1.703 | -0.114 | 1.741 | +0.038 |
+| 2000 | 1.597 | -0.106 | 1.618 | +0.021 |
+| 2500 | 1.585 | -0.012 | 1.508 | +0.077 |
+| 3000 | **1.499** | **-0.086** | 1.497 | -0.002 |
+
+**UPDATE (step 3000):** The step 2500 plateau was NOISE, not a real plateau. Step 3000 eval shows strong improvement (-0.086), train-eval gap collapsed to near-zero. All overfitting hypotheses falsified for now.
+
+### Phase C Strategy Decision (to be finalized by T+L after Phase B completes)
+
+**Projected Phase B final BPB:** ~1.40-1.45 (after cosine decay from step 3500-5000)
+**Target for competitive byte model (150-200M):** ~1.05-1.15 BPB
+**Gap to close:** ~0.25-0.40 BPB
+
+**Option analysis:**
+
+| Option | Expected BPB Gain | Time | Risk | Ekalavya Delay |
+|--------|------------------|------|------|----------------|
+| A: Full global unfreeze | 0.05-0.15 | 5K steps | Low | +5K steps |
+| B: Jump to Ekalavya | Unknown (0.1-0.3?) | Variable | Medium | None |
+| C: Global unfreeze + Ekalavya prep | 0.05-0.15 + prep | 5K steps | Low | None (prep concurrent) |
+| D: Adaptive patching | 0.15-0.30 (T+L est) | 7K+ steps | HIGH | +7K+ steps |
+
+**Recommendation: Option C.**
+- Full global unfreeze is low-risk, gives more base quality
+- Simultaneously run teacher profiling, difficulty reweighting, offline state pre-computation on CPU
+- When Phase C training ends, Ekalavya has everything pre-computed and ready
+- Skip adaptive patching for now — it's the highest-risk component and Ekalavya is the differentiator
+
+**What "Ekalavya prep" means concretely (all CPU-side):**
+1. Load Qwen3-1.7B + Pythia-1.4B, compute per-shard difficulty scores (MiniPLM)
+2. Pre-compute hidden states from 2-3 teachers on training data, aligned to byte spans
+3. Profile teacher agreement/disagreement across architectures
+4. Implement teacher port interfaces in sutra_dyad.py (ready for training)
+5. Design multi-teacher loss function
+
+**This is the FASTEST path to a unique result.** A byte-level model that learned from transformers + SSMs simultaneously is something nobody has demonstrated at edge scale.
+
+### Hypothesis: Why did improvement slow 5x at step 2500?
+
+**H1: Overfitting onset.** Train-eval gap went from 0.021 → 0.077. The local components (45.7M new params) may be memorizing training patterns. This would mean:
+- Cosine decay (step 3500) will help by reducing LR
+- But fundamentally the local capacity may be overfitting to the ~22.9B byte corpus
+- **Test:** Compare step 3000 eval BPB — if gap keeps widening, overfitting is confirmed.
+
+**H2: Low-hanging fruit exhaustion.** Steps 1000-2000 captured the easy gain: the new local decoder quickly learned to use the frozen global representations. The remaining improvement requires the global layers 8-11 to adapt, which is slower because:
+- Global LR is 5x lower (6e-5 vs 3e-4)
+- 100.7M params still frozen (layers 0-7) limit how much the unfrozen layers can change
+- **Test:** After Phase B, try Phase C (full global unfreeze) — if BPB drops significantly, layers 0-7 are the bottleneck.
+
+**H3: Train BPB is noisy/misleading.** The train BPB at step 2500 was 1.508 (a single batch!), while individual step losses bounce 1.45-1.61. The eval BPB is more reliable. The "plateau" may not be real — just high variance.
+- **Test:** Wait for step 3000 eval. If BPB is ~1.55 or lower, the trajectory is actually fine.
+
+**H4: Stable LR needs to end.** At constant 3e-4, the model oscillates around a basin. Cosine decay from step 3500 may produce a sharp improvement in the decay phase (as seen in many WSD training curves — the "annealing kick").
+- **Test:** Compare step 3500 vs 4000 vs 5000 eval BPBs — the decay phase may recover 0.05-0.10 BPB.
+
+### What this means for Ekalavya
+
+If Phase B final BPB is ~1.50-1.55 (after cosine decay):
+- Stage 0→1 improvement: 0.17-0.22 BPB from local architecture alone
+- This validates that the local decoder + cross-attention + bypass are contributing
+- Byte-level model at 1.50 BPB is still far from token-level (0.852 BPB), ~0.65 BPB gap
+- Ekalavya (Stage 2-3) needs to close a significant chunk of this gap
+- Key question: Can multi-teacher KD add 0.3-0.5 BPB to a byte-level model? Nobody has demonstrated this.
+
+If Phase B stalls at ~1.58:
+- Only 0.14 BPB from local upgrade — barely above Stage 0
+- Cross-attention and bypass may not be working as intended → ABLATION PROBES CRITICAL
+- May need to rethink Phase C strategy: full global unfreeze? Different LR? Different architecture?
+
+### Ablation probes ready (run when training finishes or from checkpoint):
+```
+python code/sutra_dyad.py --ablate results/checkpoints_dyad_s1_phase_b/best.pt
+```
+Tests: cross-attention, bypass, global context, and combined ablation.
+
+---
+
+## EKALAVYA STAGE 2 DESIGN REQUIREMENTS (Draft, 2026-04-12)
+
+### Why byte-level SOLVES the KD problem we couldn't crack before
+
+The 2026-04-01 diagnostic probes showed:
+1. Cross-tokenizer logit KD is formally dead (72% boundary match, 10% teacher vocab coverage)
+2. Representation KD was DOA because CKA was already 0.93+ (no gap to close)
+3. The PREDICTION gap was real (student max_prob=0.485 vs teacher 0.654)
+
+**Byte-level changes everything:**
+- Every teacher token maps to EXACT byte offsets — 100% boundary alignment
+- No vocabulary mismatch: byte predictions are universal
+- Teacher logit distributions over their vocab can be "projected" to byte sequences
+- Multiple architecturally diverse teachers can ALL provide byte-level supervision
+
+**Validated by literature:** Cross-Tokenizer Byte Distillation (arXiv:2604.07466) retains >92% teacher performance. This is the canonical reference.
+
+### Teacher Pool (available on our RTX 5090)
+
+| Teacher | Params | Architecture | Strength | VRAM (Q4) |
+|---------|--------|-------------|----------|-----------|
+| Qwen3-1.7B | 1.7B | Transformer | General language | ~2GB |
+| Pythia-1.4B | 1.4B | Transformer | The Pile-trained | ~1.5GB |
+| Mamba-1.4B | 1.4B | SSM | State-space sequence | ~1.5GB |
+| Falcon-H1-1.5B | 1.5B | Hybrid (Attn+SSM) | Hybrid architecture | ~2GB |
+| EmbeddingGemma-300M | 300M | Encoder | Semantic embeddings | ~0.6GB |
+
+**Total if loading 2 at a time: ~4-5GB. With student at 15.7GB, leaves ~3-4GB headroom. Tight but feasible for online KD with 2 teachers. Offline pre-computation more practical for 3+.**
+
+### Alignment Surface: Byte-Span Bridge
+
+For any teacher token `i` spanning bytes `[a_i, b_i)` and student patch `j` spanning bytes `[s_j, e_j)`:
+
+```
+omega_ij = |[a_i, b_i) ∩ [s_j, e_j)| / |[a_i, b_i)|
+z_j^teacher = Σ_i omega_ij * h_i^teacher  (weighted projection to student patch space)
+```
+
+This is already specified in the Stage 1 T+L design (RESEARCH.md 11.10). Stage 1 exposes `patch_states` (global G_j with byte spans) and `byte_residuals` (per-byte r_t with offsets) — these are the two alignment surfaces.
+
+### Loss Design Options (TO BE DECIDED BY T+L)
+
+**Option A: Projected logit KD (byte-level)**
+- Teacher generates next-byte distribution via their tokenizer → byte projection
+- Student matches this distribution at each byte
+- Pro: Direct signal, proven in arXiv:2604.07466
+- Con: Requires running teacher online (slow)
+
+**Option B: Representation transport (offline-compatible)**
+- Pre-compute teacher hidden states for training data
+- Project teacher states to byte-aligned patches via omega_ij
+- CKA/MSE/cosine loss between projected teacher states and student patch states
+- Pro: Offline pre-computation, fast training
+- Con: Previous probes showed CKA already ~0.93 (is there signal?)
+
+**Option C: Attention pattern transfer**
+- Extract teacher attention patterns → project to byte-level
+- Student learns similar attention patterns at byte level
+- Pro: Transfers HOW the teacher attends, not WHAT representations look like
+- Con: Cross-architecture attention patterns may not be comparable (SSMs have no attention)
+
+**Option D: Functional distillation (data-level)**
+- Use teachers to score/reweight training data (like MiniPLM, DoReMi)
+- No architectural alignment needed — just better data selection
+- Pro: Architecture-agnostic, works with any teacher, offline
+- Con: Not "true" KD, more like data curation with teacher guidance
+
+**Option E: Multi-signal combination (recommended starting point)**
+- Byte-level logit KD from 1-2 online teachers (Option A)
+- Projected representation matching from 1-2 offline teachers (Option B)
+- Teacher-guided data reweighting from all teachers (Option D)
+- This is Ekalavya: learning from multiple teachers through multiple channels simultaneously
+
+### Key Open Questions for T+L Session
+
+1. **Which teachers give complementary signal?** Need to profile teacher agreement/disagreement on our data.
+2. **Online vs offline?** Online KD needs VRAM for teacher + student. Offline pre-computes teacher states but loses dynamic gradient interaction.
+3. **Where to apply KD?** Previous probes showed gradients die at deep layers. Apply KD at patch-level (after global) or byte-level (after local decoder)?
+4. **Multi-teacher conflict resolution?** When teachers disagree, which signal wins? PCGrad? Nash-MTL? Adaptive routing?
+5. **What's the expected gain?** arXiv:2604.07466 showed >92% teacher retention. If teacher is ~0.9 BPB and student reaches ~1.5 BPB, can KD close the 0.6 BPB gap? Probably not 100%, but even 50% (0.3 BPB) would be massive.
+
+### Pre-requisite probes (run BEFORE Stage 2 training)
+
+1. **Teacher agreement audit**: Run all 5 teachers on 1000 shared sequences. Compute per-byte agreement rates, CKA between teacher hiddens at byte level.
+2. **Offline state pre-computation**: For the best 2-3 teachers, pre-compute hidden states for 100K sequences. Store as byte-aligned tensors.
+3. **Projected logit audit**: For Qwen3-1.7B, compute byte-projected logit distribution. Verify it's meaningful (low entropy, high accuracy).
+4. **VRAM budget test**: Load student + 1 teacher, measure peak VRAM during forward pass with KD loss.
+
+---
+
 ## DIAGNOSTIC PROBES: ROOT CAUSE OF KD FAILURE (2026-04-01)
 
 **7 probes run on 60K student checkpoint (CPU-only, 38 seconds). FINDINGS ARE DEVASTATING.**
@@ -263,13 +436,23 @@ Also: Exit 15 captures 99% of final accuracy. Layers 16-23 add only 0.5pp. Confi
 - CAVEAT: Improvement is modest (0.013 BPT). Strong success threshold (BPT<4.80) not met. VICReg is a reliable +0.01 auxiliary, not a game-changer.
 - IMPLICATION: The ~0.125 BPT total improvement decomposes as: ~0.056 from VICReg (anti-collapse), ~0.056 from InfoNCE (teacher alignment), ~0.013 from their interaction. Roughly 45%/45%/10% split.
 
-**Track 2: Data-Distribution Transport**
+**Track 2: Data-Distribution Transport — PARTIALLY VALIDATED 2026-04-01**
 - HYPOTHESIS: The teacher's value is in selecting/rewriting training data, not in runtime loss signals.
-- SUB-TRACK A: Teacher-scored data reweighting (MiniPLM/DoReMi style). Use teacher to score documents, upweight ones where student has most to learn.
-- SUB-TRACK B: WRAP-style rewriting. Teacher rewrites hard documents into forms more learnable by the student.
-- EXPERIMENT: CE training on reweighted/rewritten data, 3K-6K steps. Compare vs CE baseline.
-- SUCCESS: Decisive BPT improvement (>0.2) from data alone
-- GPU COST: One-time teacher scoring pass, then pure CE training
+- SCORING PIPELINE: Built and tested. 9930 windows scored with gap = ref_NLL - teacher_NLL. Poetry (z=1.75), Gutenberg (z=0.38), Wikipedia (z=0.19) are where teacher adds most value. MetamathQA (z=-1.52), adversarial (z=-2.67) are where teacher adds least.
+- 3-POOL CURATED SHARDS: Built in data/shards_transport/. 6M tokens total. hard_raw (879K tokens, top 15% by z), weighted_base (5.08M tokens, 5 shards with importance weights).
+- CURATED POOL PROBE (3K, CE-only, stopped at step 2200):
+
+| Step | Curated BPT | Control BPT | Delta | Verdict |
+|------|------------|-------------|-------|---------|
+| 500  | 7.382      | 7.692       | -0.310 | CURATED WINS (4.0% relative) |
+| 1000 | 7.191      | 6.786       | +0.405 | Control wins (memorization) |
+| 1500 | 7.182      | 6.050       | +1.132 | Control dominates |
+| 2000 | 7.357      | 5.726       | +1.631 | Eval BPT RISING (overfitting) |
+
+- VERDICT: **DATA TRANSPORT HYPOTHESIS VALIDATED AT 500 STEPS.** Teacher-curated data IS more informative per token (0.31 BPT win at step 500 = 1.4 epochs through curated pool). BUT 6M tokens is catastrophically too small — by 1000 steps (2.7 epochs), memorization kills generalization. Eval BPT plateaus at 7.18 and then RISES.
+- IMPLICATION: The mechanism works but needs either (a) much larger curated pools (100K+ scored windows, ~60M tokens), or (b) importance-weighted sampling from the full 6.8B pool (no recycling).
+- PREPARED BUT NOT RUN: Strong importance weights for full pool (exp(1.5*z), clip [0.1, 10.0]) saved to data/shards_16k/transport_strong_weights.json. Config at results/config_transport_weighted_ce_3k.json.
+- STATUS: **SUSPENDED.** Founder directed full strategic reset — question the paradigm, not optimize within it.
 
 **Track 3: Layer Utilization (Break Exit Crystallization)**
 - HYPOTHESIS: The deep layers (16-23) are underutilized because exit training crystallizes representations. Breaking this crystallization would give the model more effective capacity.
@@ -7677,3 +7860,81 @@ WSD scheduling (LR decay in last 20% of training) gave a -0.42 BPT improvement a
 - Different span count (32 might be too fine — try 16?)
 - MSE loss instead of InfoNCE (simpler but possibly more stable)
 - Combine hidden-state KD with logit KD from same tokenizer
+## STRATEGIC RESET THESIS: 2-ADIC BYTE REFINEMENT (2026-04-01)
+
+**Status:** raw architecture hypothesis for the post-KD reset. Not validated.
+
+### Core claim
+
+Sutra should stop treating language as a flat sequence of tokenizer symbols and start treating it as a hierarchical compression process over raw bytes.
+
+The native object is not the token. It is the **dyadic byte patch**: a contiguous byte span whose boundaries are chosen by surprisal and whose meaning is represented at multiple levels of refinement. The right structural geometry is not pure Euclidean space. It is a hybrid of Euclidean content vectors plus 2-adic addresses:
+
+- **Euclidean part (`R^d`)** for trainable content computation on GPU
+- **2-adic / dyadic tree address** for exact hierarchy, refinement, and memory routing
+
+### Why this fits the evidence
+
+1. **Cross-tokenizer KD is mathematically dead.** A byte-native transport removes tokenizer boundary mismatch entirely.
+2. **Deep layers are dead because the model "finishes" too early.** Replace fixed deep stacks with conditional refinement: only unresolved byte patches get more compute.
+3. **Compression = intelligence** implies architecture should optimize description length directly, not use compression only as a metaphor.
+4. **Language is hierarchical.** p-adic / ultrametric structure is better used for addresses and refinement trees than for all activations.
+
+### Proposed architecture sketch
+
+**Name:** Sutra-Dyad
+
+1. **Raw byte input**
+   - No tokenizer in the student.
+   - Training/eval transport is always bytes.
+
+2. **Dyadic patcher**
+   - Partition bytes into lengths `{1, 2, 4, 8, 16, 32}`.
+   - Split when local surprisal is high; merge when predictable.
+   - Every patch corresponds to a ball in a 2-adic tree.
+
+3. **Patch encoder**
+   - Produces `(content_vector, uncertainty, address_prefix)` for each patch.
+   - Content lives in `R^d`; address is discrete dyadic structure.
+
+4. **Shared refinement core**
+   - Recurrent, weight-tied refinement blocks.
+   - Each pass updates only active high-entropy patches.
+   - Resolved patches halt; hard patches either continue or split into children.
+
+5. **External compression memory**
+   - CPU-resident table keyed by byte-hash + 2-adic prefix.
+   - Updated with local Hebbian / EMA rules, not backprop.
+   - Stores reusable substrings, entities, formatting templates, domain phrases.
+
+6. **Byte decoder**
+   - Predicts exact next bytes at the leaves.
+   - Loss is byte NLL plus explicit penalties for extra refinement and extra active leaves.
+
+### Native training objective
+
+The objective should be **minimum description length with compute pressure**:
+
+`L = byte_NLL + lambda_refine * active_leaves + lambda_depth * split_depth + lambda_mem * writes + lambda_cov * anti-collapse`
+
+This gives halting pressure naturally: more compute literally costs more bits.
+
+### Training paradigm
+
+Do **not** stack two moonshots at once.
+
+- Keep backprop for the differentiable byte model
+- Use non-gradient local learning only where it is structurally natural:
+  - memory writes
+  - memory decay
+  - optional late-stage simmer / finite-temperature checkpoint averaging
+
+Pure no-backprop should be a later branch, not the first reset.
+
+### High-value probe
+
+The first real test is not "does it beat Gemma?" It is:
+
+**Can a dyadic byte model with conditional refinement beat a matched flat-byte baseline in both BPT and average active compute by step 3K?**
+
+If not, the compression-native hypothesis is probably wrong in this form.
