@@ -6,6 +6,44 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## EKALAVYA V2 THROUGHPUT OPTIMIZATION SKETCH (2026-04-12)
+
+**Problem:** Per-sequence teacher inference is the bottleneck. 72 sequential teacher forwards per optimizer step (batch=12, accum=6). Each step ~8.8s. 2000 steps = ~5 hours. Production 6000 steps = ~15 hours.
+
+**Option A: Batched teacher (2x speedup, easy)**
+- Tokenize all 12 sequences at once with padding
+- Single teacher forward per micro-batch instead of 12
+- Challenge: variable-length tokenization needs padding + attention mask
+- Est. 2x speedup → 2000 steps in ~2.5h, 6000 steps in ~7.5h
+
+**Option B: Pre-computed targets (20x speedup, medium effort)**
+- Offline pass: run teacher on all shards, save byte_probs + patch_hidden per shard
+- During training: load pre-computed targets alongside bytes
+- Challenge: storage (256 float16 per byte position = 512 bytes/position = 3.4TB for 6.6GB data)
+- Solution: store only top-32 byte probs per position → 128 bytes/position → ~846 GB — still too much
+- Better solution: chunk-based caching — pre-compute for current shard, keep in RAM
+
+**Option C: Shard-level teacher cache — INFEASIBLE**
+- CORRECTED: Full dataset = 6.6B bytes. At token boundaries (~1.1B positions), storing (256) float16 per position = 563 GB. Not viable.
+- Even top-32 sparse = 141 GB. Still infeasible for disk.
+- On-the-fly caching: random sampling means negligible cache hit rate.
+
+**Decision:** Option A (batched teacher) is the practical fix. 2x speedup for ~20 lines of code. Implement AFTER v2 validates the KD mechanism.
+
+## MULTI-BYTE MARGINAL IDEA (Future Ekalavya Enhancement)
+
+The first-byte marginal loses information: token "the" → byte 116 ("t"), discarding "h" and "e".
+
+Could extract a joint distribution P(b1, b2) by mapping each token to its (first_byte, second_byte). From this:
+- P(b1) = marginal over b2 (current approach)
+- P(b2|b1) = P(b1, b2) / P(b1) — gives lookahead supervision
+
+The student predicting position k gets: P_teacher(byte_{k+1}) via first-byte marginal. But we ALSO have P_teacher(byte_{k+2} | byte_{k+1}). Could use this as auxiliary supervision on position k+1.
+
+**Status:** Theoretical sketch. Test only if single-byte KD plateaus.
+
+---
+
 ## PHASE B TRAJECTORY ANALYSIS (2026-04-12, in-progress)
 
 ### Raw data (eval BPB at 500-step intervals)

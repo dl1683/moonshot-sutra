@@ -107,6 +107,30 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 - Rep-only KD (head-start only, not persistent)
 - Multi-surface KD at extreme ratios (interference)
 
+## Phase 7: Ekalavya Protocol — Byte-Level KD (2026-04-12 → ongoing)
+
+### ekalavya_smoke_v1 [DONE]
+**Purpose:** Validate byte-level KD mechanism with aggressive alpha=0.5, T=2.0.
+**Config:** batch=8, accum=2, alpha=0.5, T=2.0, 500 steps, SmolLM2-1.7B anchor (bf16).
+**Key finding:** KD mechanism works (KD loss -81%, repr loss -82%) but alpha=0.5 catastrophically disrupts CE. Final BPB 2.598 vs baseline 1.415.
+**What we learned:** Alpha=0.5 too aggressive. Need 5x lower alpha. Off-by-one alignment bug found by Codex audit.
+
+### ekalavya_v2_2k [RUNNING]
+**Purpose:** Corrected Ekalavya with all Codex audit fixes. Alpha=0.10, T=1.5, 4-bit teacher.
+**Config:** batch=12, accum=6, alpha=0.10, beta=0.15, T=1.5, 2000 steps, SmolLM2-1.7B (4-bit). Progressive unfreeze (8-11→4-7→0-3). 5 layerwise LR groups.
+**Fixes:** Off-by-one byte alignment, causal repr alignment, float32 KL, 4-bit quantization, resume + unfreeze logic.
+**Early signal (step 50):** CE 0.9997, BPB 1.442 — only +0.027 above baseline (vs +1.3 in v1). CE PRESERVED.
+**What we'll learn:** Whether corrected KD alignment + low alpha produces CE improvement over baseline.
+**Stop rule:** If CE doesn't improve through step 1000, reassess alpha/mechanism.
+
+### teacher_probes [DONE]
+**Purpose:** Validate byte-level teacher quality for KD.
+**Key finding:** SmolLM2-1.7B BPB 0.490 (gap 0.925 to student), Pythia-1.4B BPB 0.534. Oracle gain 0.054 BPB (dual-teacher justified).
+
+### cross_attn_removal [DONE]
+**Purpose:** Ablation proved cross-attention harmful. Structural removal: 196.7M → 188.2M.
+**Key finding:** BPB 1.4149 without cross-attn vs 1.4315 with. Simpler, smaller, better.
+
 ## Phase 6: Sutra-Dyad Audit (2026-04-01)
 
 ### sutra_dyad_perf_audit [DONE]

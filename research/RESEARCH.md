@@ -4783,7 +4783,29 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 
 **VRAM:** batch=12, accum=6. SmolLM2 Q4 ~2GB + Pythia Q4 ~1.5GB + student ~15GB = ~19.5GB. Fits in 24GB.
 
-### 11.13 Cross-Domain Architecture Research (2026-04-12)
+### 11.13 Ekalavya Smoke Test v1 + Codex Correctness Audit (2026-04-12)
+
+**Smoke v1 (500 steps, alpha=0.5, T=2.0):** BPB trajectory:
+| Step | CE | KD | Repr | BPB |
+|------|----|----|------|-----|
+| 50 | 1.266 | 6.497 | 0.968 | 1.827 |
+| 200 | 1.889 | 1.676 | 0.385 | 2.725 |
+| 400 | 1.780 | 1.184 | 0.165 | 2.568 |
+| 500 | 1.822 | 1.226 | 0.178 | 2.629 |
+
+**Verdict:** KD mechanism works (KD loss dropped 81%, repr loss dropped 82%) but alpha=0.5 is catastrophically aggressive. CE degraded from 1.415 baseline to 2.6 BPB.
+
+**Codex correctness audit found 6 issues (3 HIGH, 3 MEDIUM):**
+1. HIGH: Off-by-one byte KD alignment — student_logits[k] predicts byte k+1, so teacher target for byte k must align to student_logits[k-1]. **Fixed.**
+2. HIGH: Repr KD causality violation — teacher hidden states for patch j included future bytes. Must use last teacher state whose byte start <= j*P. **Fixed.**
+3. HIGH: Resume + progressive unfreeze — optimizer/scaler not loaded, `==` gates missed resumed steps. **Fixed.**
+4. MEDIUM: Auxiliary teacher plumbing not wired in loss. **Deferred to Phase C.2.**
+5. MEDIUM: KL should be float32 log-space. **Fixed.**
+6. MEDIUM: Per-sequence teacher is throughput bottleneck. **Optimization deferred.**
+
+**v2 launch:** 2000 steps, alpha=0.10, beta=0.15, T=1.5, 4-bit teacher, all audit fixes applied.
+
+### 11.14 Cross-Domain Architecture Research (2026-04-12)
 
 **Gemma 4 (Google, April 2026)** — [blog](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/)
 - **Per-Layer Embeddings (PLE)**: Second embedding table feeding residual signal into every decoder layer. This independently validates our byte-residual bypass design — the same architectural pattern appears in a frontier model.
