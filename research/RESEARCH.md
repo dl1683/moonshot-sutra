@@ -57,16 +57,20 @@
 - **ULD: Universal Logit Distillation** (Boizard et al., EMNLP 2024, arXiv:2402.12030): Wasserstein-1 distance between sorted probability distributions — no shared vocabulary needed. Loss = CE + 1.5×W₁. O(n log n) via sorting. Tested decoder→encoder-decoder cross-arch. **No multi-teacher.**
 - **MultiLevelOT** (AAAI 2025, arXiv:2412.14528): Extends ULD with sequence-level Sinkhorn distance. Token-level HAD + sequential SL + sequence-level SD. Outperforms ULD. **No multi-teacher.**
 - **CDM: Contextual Dynamical Mapping** (ACL 2025 Findings, arXiv:2502.11104): Entropy-weighted DTW for sequence alignment + context-aware Top-K vocabulary mapping (65%→87% coverage). Key insight: token importance is context-dependent. **No multi-teacher.**
+- **Token→Byte Distillation (H-Net)** (Feb 2026, arXiv:2602.01007): Three-stage curriculum: encoder alignment → joint KD → boundary learning. Uses Mamba2 encoder + teacher-initialized transformer core. Llama-3.2-3B→byte: ~2.8pt avg degradation, 125B bytes training. **Key limitation:** Only supervises at token BOUNDARIES — non-boundary bytes get no teacher signal. Our covering supervises ALL positions. **"Larger teacher doesn't help"** — supports multi-teacher diversity over single large teacher. **No multi-teacher.**
 
-**Implications for Ekalavya (UPDATED 2026-04-12):**
+- **Knowledge Purification in Multi-Teacher KD** (Feb 2026, arXiv:2602.01064): 5 methods for handling teacher conflicts: aggregation (GPT-4 synthesis), Plackett-Luce ranking, PLM classifier, similarity-based router, RL-based selection. **KEY FINDING: Routing > averaging at RATIONALE level** — selecting coherent single-teacher guidance beats averaging conflicting reasoning. Similarity-based router wins overall (+3.3% over baseline, best CMV). **However:** this operates at rationale level, not logit/byte level. At byte-probability level, arithmetic mean is well-founded (Bayesian model averaging) because probability distributions compose naturally. The insight for Ekalavya: start with AM at byte level (theoretically sound), but for repr-level KD (where hidden states encode reasoning), routing-based selection may outperform averaging. No byte-level or cross-tokenizer experiments.
+
+**Implications for Ekalavya (UPDATED 2026-04-13):**
 1. Byte-level KD from tokenized teachers is HARDER than initially assumed (BLD shows significant drops)
 2. Our advantage: Sutra IS already byte-level, so we're not converting a subword model TO bytes — we're using byte-level KD as additional training signal on a natively byte-level model. This avoids the worst degradation mode.
 3. **Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL** — no existing work (BLD, ALM, ULD, CDM, MultiLevelOT) tests multi-teacher scenarios. ALL are single-teacher only. Multi-teacher acknowledged as "future work" across multiple papers.
 4. The covering-based probability conversion (BLD) is expensive (2 days on 4×RTX 3090). Our omega_ij bridge is simpler: direct hidden state projection via byte-span overlap weights.
 5. KEY RISK: if BLD with its sophisticated probability conversion still shows large drops, our simpler bridge may lose even more signal. Teacher profiling probe (2026-04-12) showed teachers have only ~40% top-1 accuracy on our data. The soft distribution quality matters more than top-1.
-6. **The byte interface eliminates the cross-tokenizer problem entirely.** ALL teacher outputs can be projected to byte probabilities regardless of tokenizer. We don't need OT, DTW, or likelihood matching — the byte marginal handles alignment. The open problem is multi-teacher AGGREGATION, not alignment.
-7. **Teacher diversity vs quality**: DiverseDistill suggests dynamic per-step weighting based on student understanding. DistillMoE uses MoE routing. For Ekalavya, start with entropy-weighted averaging (simple, no extra params), graduate to learned routing.
+6. **The byte interface eliminates the cross-tokenizer ALIGNMENT problem entirely.** ALL teacher outputs can be projected to byte probabilities via covering decomposition regardless of tokenizer. The open problem is multi-teacher AGGREGATION — and we now know AM fails, routing works (see point 9).
+7. **Teacher diversity vs quality**: DiverseDistill suggests dynamic per-step weighting. DistillMoE uses MoE routing. **OUR FINDING (2026-04-13):** simple averaging is harmful for cross-tokenizer byte KD. Anchor-dominant confidence routing is the minimum viable aggregation. Next: uncertainty gating (per-position alpha modulation).
 8. **VRAM budget for multi-teacher**: 4-bit quantized ~2GB/teacher. With 9GB student overhead, ~15GB available → 5-7 teachers simultaneously. This is enough for meaningful diversity.
+9. **Byte-level aggregation: AM is theoretically sound BUT empirically harmful** (from Knowledge Purification, 2602.01064 + our own multi2_covering_3k results): At byte probability level, arithmetic mean is theoretically sound as Bayesian model averaging. HOWEVER, our empirical test (2026-04-13) showed AM is DESTRUCTIVE when teachers have different tokenizations: covering decomposition produces different byte conditional distributions at 68% of positions, and averaging these creates bimodal targets (+0.114 nats/position entropy injection). Result: BPB +0.044 above baseline with positive slope (getting worse). **Correction:** AM is only sound when teachers produce similar distributions. With cross-tokenizer covering, they often don't. **Solution:** Anchor-dominant confidence routing — use the anchor teacher's distribution by default, blend in auxiliary only where JSD>threshold AND auxiliary is more confident. Early data (step 20): routing KD loss 1.63 vs AM 4.05 (-60%), BPB 1.490 vs AM 1.564 (-0.074). At representation level, routing also beats averaging — teachers encode different reasoning strategies. Design implication: ROUTING for both byte probs and repr KD.
 
 **Ekalavya vs. SOTA cross-tokenizer KD (2026-04-12 analysis):**
 
@@ -4866,6 +4870,17 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 - ~20x more teacher signal (all byte positions supervised, full entropy preserved)
 - Prefix tables are small (~18K entries total) and precomputed
 - Our case simpler than full Vieira covering: teacher tokenization known → no beam search
+
+**Implementation (2026-04-12):**
+- Correct name: Phan et al. (Meta AI, ICLR 2025), NOT Vieira et al.
+- `_build_covering_tables()`: 100,254 prefixes for SmolLM2-1.7B (49K vocab) in 4.5s
+- Prefix depth distribution: depth 0=1, 1=150, 2=1838, 3=5672, 4=10807, 5=14622, 6=15220
+- Memory-optimized: index lists (~5MB) vs bool masks (~5GB)
+- CPU-verified: depth-0 entropy matches first-byte marginal exactly (1.962 bits)
+- Deeper conditionals much richer: depth 1=3.639 bits, depth 2=1.982 bits, depth 3=1.597 bits
+- Total info per " the" token: 9.18 bits via covering vs 1.96 bits first-byte = **4.7x improvement**
+- Ekalavya v2 confirmed harmful: eval BPB 1.443 at step 500 (baseline 1.421), step 550 = 1.552
+- Covering smoke test launched: `config_covering_smoke_1k.json`, results pending
 
 Saved: results/first_byte_marginal_info_loss.json
 
