@@ -55,7 +55,7 @@ BATCH_SIZE = 64
 GRAD_ACCUM = 2          # effective batch = 128 sequences
 MAX_TRAIN_STEPS = 10000
 EVAL_EVERY = 500
-LOG_EVERY = 50
+LOG_EVERY = 10
 ROLLING_SAVE = 500
 LR = 3e-4
 MIN_LR = 1e-5
@@ -1431,6 +1431,9 @@ def _build_first_byte_map(tokenizer, vocab_size, device='cpu'):
 def _teacher_byte_probs(logits, first_byte_map):
     """Convert teacher token logits to byte-level probabilities via first-byte marginal.
 
+    DEPRECATED: This destroys 84% of teacher signal. Use covering decomposition instead.
+    Kept for backward compatibility with legacy configs.
+
     Args:
         logits: (T_tok, V) raw teacher logits
         first_byte_map: (V,) mapping token_id -> first byte value
@@ -1448,9 +1451,572 @@ def _teacher_byte_probs(logits, first_byte_map):
     return bp
 
 
+# ---- Covering Decomposition (Phan et al. ICLR 2025, lossless byte alignment) ----
+
+def _build_covering_tables(tokenizer, vocab_size, device='cpu'):
+    """Build prefix-to-token index for covering decomposition.
+
+    For each byte prefix (tuple of bytes), stores which token IDs have that prefix
+    in their UTF-8 byte representation. This enables computing P(b_{k+1} | b_1...b_k)
+    from teacher token probabilities with zero information loss.
+
+    Optimized: pre-builds first-byte sum matrix (256, V) for O(1) depth-0 computation,
+    and pre-moves all index tensors to target device to avoid inner-loop transfers.
+
+    Returns dict with:
+        token_byte_seqs: list of byte tuples, indexed by token_id
+        prefix_to_indices: dict mapping byte-prefix tuple -> tensor of token indices (on device)
+        prefix_children: dict mapping prefix -> dict of {next_byte: extended_prefix}
+        first_byte_matrix: (256, V) float32 tensor for depth-0 matmul (on device)
+        max_token_bytes: maximum byte length of any token
+        n_prefixes: total number of unique prefixes
+        device: target device
+    """
+    token_byte_seqs = []
+    prefix_to_idx_lists = {}  # prefix bytes tuple -> [tok_id, ...]
+
+    for tok_id in range(min(tokenizer.vocab_size, vocab_size)):
+        try:
+            decoded = tokenizer.decode([tok_id])
+            if decoded:
+                b = tuple(decoded.encode('utf-8', errors='replace'))
+            else:
+                b = ()
+        except Exception:
+            b = ()
+        token_byte_seqs.append(b)
+
+        # Register this token under all its byte prefixes
+        for depth in range(len(b) + 1):
+            prefix = b[:depth]
+            if prefix not in prefix_to_idx_lists:
+                prefix_to_idx_lists[prefix] = []
+            prefix_to_idx_lists[prefix].append(tok_id)
+
+    # Pad for any token IDs beyond tokenizer.vocab_size
+    while len(token_byte_seqs) < vocab_size:
+        token_byte_seqs.append(())
+
+    max_token_bytes = max((len(b) for b in token_byte_seqs if b), default=1)
+
+    # Convert lists to LongTensors on target device
+    prefix_to_indices = {}
+    for prefix, indices in prefix_to_idx_lists.items():
+        prefix_to_indices[prefix] = torch.tensor(indices, dtype=torch.long, device=device)
+
+    # Build children map: for each prefix, which next bytes lead to valid extended prefixes
+    prefix_children = {}
+    for prefix in prefix_to_indices:
+        if len(prefix) > 0:
+            parent = prefix[:-1]
+            last_byte = prefix[-1]
+            if parent not in prefix_children:
+                prefix_children[parent] = {}
+            prefix_children[parent][last_byte] = prefix
+
+    # Pre-build first-byte sum matrix (256, V) for depth-0: P(first_byte=b) = M[b,:] @ P(tokens)
+    first_byte_matrix = torch.zeros(256, vocab_size, device=device, dtype=torch.float32)
+    for tok_id, bseq in enumerate(token_byte_seqs):
+        if bseq:
+            first_byte_matrix[bseq[0], tok_id] = 1.0
+
+    # Pre-build per-prefix child scatter matrices for common shallow prefixes (depth <= 2)
+    # This avoids the inner loop over children for the most frequent cases
+    prefix_child_indices = {}  # prefix -> (child_bytes tensor, list of index tensors)
+    for prefix, children in prefix_children.items():
+        if len(prefix) <= 3:  # cache depth 0, 1, 2, 3 prefixes
+            child_bytes = sorted(children.keys())
+            child_idx_list = [prefix_to_indices[children[b]] for b in child_bytes]
+            prefix_child_indices[prefix] = (
+                torch.tensor(child_bytes, dtype=torch.long, device=device),
+                child_idx_list,
+            )
+
+    # Build numpy versions for fast CPU covering computation (avoids GPU kernel overhead)
+    import numpy as np
+    first_byte_matrix_np = first_byte_matrix.cpu().numpy()
+    prefix_to_indices_np = {}
+    for prefix, idx_tensor in prefix_to_indices.items():
+        prefix_to_indices_np[prefix] = idx_tensor.cpu().numpy()
+
+    return {
+        "token_byte_seqs": token_byte_seqs,
+        "prefix_to_indices": prefix_to_indices,
+        "prefix_to_indices_np": prefix_to_indices_np,
+        "prefix_children": prefix_children,
+        "prefix_child_indices": prefix_child_indices,
+        "first_byte_matrix": first_byte_matrix,
+        "first_byte_matrix_np": first_byte_matrix_np,
+        "max_token_bytes": max_token_bytes,
+        "n_prefixes": len(prefix_to_indices),
+        "device": device,
+    }
+
+
+def _covering_byte_conditionals_np(token_probs_np, observed_bytes, covering_tables_np):
+    """Compute covering byte conditionals for one teacher position. NUMPY-ONLY (CPU).
+
+    Args:
+        token_probs_np: (V,) numpy array, teacher probability distribution
+        observed_bytes: tuple of bytes for the actual next token
+        covering_tables_np: dict with numpy index arrays from _build_covering_tables
+
+    Returns:
+        conditionals: list of (256,) numpy arrays
+    """
+    import numpy as np
+    prefix_to_indices_np = covering_tables_np["prefix_to_indices_np"]
+    prefix_children = covering_tables_np["prefix_children"]
+    first_byte_matrix_np = covering_tables_np["first_byte_matrix_np"]
+    conditionals = []
+
+    for k in range(len(observed_bytes)):
+        prefix = observed_bytes[:k]
+
+        if k == 0:
+            cond = first_byte_matrix_np @ token_probs_np  # (256,)
+            cond_sum = cond.sum()
+            if cond_sum > 1e-10:
+                cond = cond / cond_sum
+            conditionals.append(cond)
+            continue
+
+        if prefix in prefix_to_indices_np:
+            normalizer = token_probs_np[prefix_to_indices_np[prefix]].sum()
+        else:
+            normalizer = 0.0
+
+        if normalizer < 1e-10:
+            cond = np.zeros(256, dtype=np.float32)
+            cond[observed_bytes[k]] = 1.0
+            conditionals.append(cond)
+            continue
+
+        cond = np.zeros(256, dtype=np.float32)
+        children = prefix_children.get(prefix, {})
+        for next_byte, ext_prefix in children.items():
+            if ext_prefix in prefix_to_indices_np:
+                cond[next_byte] = token_probs_np[prefix_to_indices_np[ext_prefix]].sum() / normalizer
+
+        cond_sum = cond.sum()
+        if cond_sum > 1e-10:
+            cond = cond / cond_sum
+
+        conditionals.append(cond)
+
+    return conditionals
+
+
+def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
+                                         batch_raw_bytes, device, temperature=2.0,
+                                         extract_hidden=True, max_depth=None):
+    """Batched version: single teacher forward for all sequences in micro-batch.
+
+    5-10x faster than per-sequence teacher forward. Tokenizes all sequences,
+    pads, runs one GPU forward pass, then splits for per-sequence covering.
+
+    Args:
+        batch_raw_bytes: list of B raw byte lists
+        Others: same as _get_teacher_targets_covering
+
+    Returns:
+        list of B result dicts (same format as _get_teacher_targets_covering)
+    """
+    import numpy as np
+    token_byte_seqs = covering_tables["token_byte_seqs"]
+    first_byte_matrix_np = covering_tables["first_byte_matrix_np"]
+    B = len(batch_raw_bytes)
+
+    # Batch tokenize (set pad_token if missing)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    texts = [bytes(rb).decode('utf-8', errors='replace') for rb in batch_raw_bytes]
+    encoded = tokenizer(texts, padding=True, return_tensors='pt', truncation=False)
+    input_ids = encoded['input_ids'].to(device)
+    attention_mask = encoded['attention_mask'].to(device)
+
+    # Single teacher forward pass
+    with torch.inference_mode():
+        outputs = teacher(input_ids, attention_mask=attention_mask,
+                         output_hidden_states=extract_hidden, use_cache=False)
+
+    # Process each sequence
+    results = []
+    for b in range(B):
+        seq_len = attention_mask[b].sum().item()
+        logits_b = outputs.logits[b, :seq_len]  # (T_tok, V) unpadded
+
+        probs = F.softmax((logits_b / temperature).float(), dim=-1)
+        probs_np = probs.cpu().numpy()
+
+        token_ids = input_ids[b, :seq_len].tolist()
+        byte_offsets = []
+        pos = 0
+        for tid in token_ids:
+            byte_offsets.append(pos)
+            pos += len(token_byte_seqs[tid]) if tid < len(token_byte_seqs) else 1
+        byte_offsets.append(pos)
+
+        n_bytes = len(batch_raw_bytes[b])
+        byte_probs_np = np.zeros((n_bytes, 256), dtype=np.float32)
+        byte_mask_np = np.zeros(n_bytes, dtype=np.bool_)
+        supervised_count = 0
+
+        # Vectorized depth-0
+        all_depth0 = probs_np @ first_byte_matrix_np.T
+        depth0_sums = all_depth0.sum(axis=1, keepdims=True)
+        depth0_sums = np.maximum(depth0_sums, 1e-10)
+        all_depth0 = all_depth0 / depth0_sums
+
+        for i in range(len(token_ids) - 1):
+            next_tid = token_ids[i + 1]
+            if next_tid >= len(token_byte_seqs):
+                continue
+            next_bytes = token_byte_seqs[next_tid]
+            if not next_bytes:
+                continue
+
+            token_start = byte_offsets[i + 1]
+            byte_pos = token_start - 1
+            if 0 <= byte_pos < n_bytes:
+                byte_probs_np[byte_pos] = all_depth0[i]
+                byte_mask_np[byte_pos] = True
+                supervised_count += 1
+
+            effective_depth = len(next_bytes) if max_depth is None else min(len(next_bytes), max_depth + 1)
+            if effective_depth > 1:
+                tok_probs_np = probs_np[i]
+                conditionals = _covering_byte_conditionals_np(
+                    tok_probs_np, next_bytes[:effective_depth], covering_tables)
+                for j in range(1, len(conditionals)):
+                    bp = token_start + j - 1
+                    if 0 <= bp < n_bytes:
+                        byte_probs_np[bp] = conditionals[j]
+                        byte_mask_np[bp] = True
+                        supervised_count += 1
+
+        coverage_ratio = supervised_count / max(n_bytes, 1)
+        byte_probs = torch.from_numpy(byte_probs_np).to(device)
+        byte_mask = torch.from_numpy(byte_mask_np).to(device)
+
+        result = {
+            "byte_probs": byte_probs,
+            "byte_mask": byte_mask,
+            "token_offsets": byte_offsets,
+            "coverage_ratio": coverage_ratio,
+        }
+
+        if extract_hidden:
+            hidden = outputs.hidden_states[-1][b, :seq_len]
+            result["hidden"] = hidden.float()
+            result["n_tokens"] = seq_len
+
+        results.append(result)
+
+    return results
+
+
+def _get_teacher_targets_covering(teacher, tokenizer, covering_tables, raw_bytes,
+                                  device, temperature=2.0, extract_hidden=True,
+                                  max_depth=None):
+    """Run teacher forward pass and extract LOSSLESS byte-level targets via covering.
+
+    Phan et al. (ICLR 2025) covering decomposition: produces autoregressive byte
+    conditionals at EVERY byte position, preserving all teacher information.
+
+    FAST PATH: Teacher forward on GPU, covering math on CPU (numpy), single transfer back.
+    Eliminates per-position GPU kernel launch overhead that made v1 unusably slow.
+
+    Args:
+        max_depth: If set, limit covering depth (0=first-byte-marginal at all positions,
+                   1=depth-0+1, None=full covering). Trades information for speed.
+
+    Returns dict with:
+        byte_probs: (T_bytes, 256) soft byte targets at ALL supervised positions
+        byte_mask: (T_bytes,) bool, True at every position with teacher coverage
+        hidden: (N_tok, d_teacher) last-layer hidden states (if extract_hidden)
+        token_offsets: list of byte offsets for each token boundary
+        coverage_ratio: fraction of byte positions with teacher supervision
+    """
+    import numpy as np
+    token_byte_seqs = covering_tables["token_byte_seqs"]
+
+    text = bytes(raw_bytes).decode('utf-8', errors='replace')
+    tokens = tokenizer.encode(text, return_tensors='pt').to(device)
+
+    with torch.inference_mode():
+        outputs = teacher(tokens, output_hidden_states=extract_hidden, use_cache=False)
+        logits = outputs.logits[0]  # (T_tok, V)
+
+    # Temperature-scaled probabilities — compute on GPU, then move to CPU numpy
+    probs = F.softmax((logits / temperature).float(), dim=-1)  # (T_tok, V)
+    probs_np = probs.cpu().numpy()  # single GPU→CPU transfer
+
+    # Compute byte offsets at token boundaries
+    token_ids = tokens[0].tolist()
+    byte_offsets = []
+    pos = 0
+    for tid in token_ids:
+        byte_offsets.append(pos)
+        pos += len(token_byte_seqs[tid]) if tid < len(token_byte_seqs) else 1
+    byte_offsets.append(pos)
+
+    # Allocate output on CPU (numpy) — single transfer to GPU at the end
+    n_bytes = len(raw_bytes)
+    byte_probs_np = np.zeros((n_bytes, 256), dtype=np.float32)
+    byte_mask_np = np.zeros(n_bytes, dtype=np.bool_)
+    supervised_count = 0
+
+    # Vectorized depth-0: all positions at once via matmul
+    first_byte_matrix_np = covering_tables["first_byte_matrix_np"]
+    all_depth0 = probs_np @ first_byte_matrix_np.T  # (T_tok, 256) — single matmul!
+    depth0_sums = all_depth0.sum(axis=1, keepdims=True)
+    depth0_sums = np.maximum(depth0_sums, 1e-10)
+    all_depth0 = all_depth0 / depth0_sums
+
+    # Process each teacher position
+    for i in range(len(token_ids) - 1):
+        next_tid = token_ids[i + 1]
+        if next_tid >= len(token_byte_seqs):
+            continue
+        next_bytes = token_byte_seqs[next_tid]
+        if not next_bytes:
+            continue
+
+        token_start = byte_offsets[i + 1]
+
+        # Depth 0: use pre-computed vectorized result
+        byte_pos = token_start - 1  # student alignment: predict k+1 at position k
+        if 0 <= byte_pos < n_bytes:
+            byte_probs_np[byte_pos] = all_depth0[i]
+            byte_mask_np[byte_pos] = True
+            supervised_count += 1
+
+        # Depth 1+: compute per-position (numpy, fast CPU)
+        effective_depth = len(next_bytes) if max_depth is None else min(len(next_bytes), max_depth + 1)
+        if effective_depth > 1:
+            tok_probs_np = probs_np[i]
+            conditionals = _covering_byte_conditionals_np(
+                tok_probs_np, next_bytes[:effective_depth], covering_tables)
+            for j in range(1, len(conditionals)):
+                bp = token_start + j - 1
+                if 0 <= bp < n_bytes:
+                    byte_probs_np[bp] = conditionals[j]
+                    byte_mask_np[bp] = True
+                    supervised_count += 1
+
+    coverage_ratio = supervised_count / max(n_bytes, 1)
+
+    # Single CPU���GPU transfer
+    byte_probs = torch.from_numpy(byte_probs_np).to(device)
+    byte_mask = torch.from_numpy(byte_mask_np).to(device)
+
+    result = {
+        "byte_probs": byte_probs,
+        "byte_mask": byte_mask,
+        "token_offsets": byte_offsets,
+        "coverage_ratio": coverage_ratio,
+    }
+
+    if extract_hidden:
+        hidden = outputs.hidden_states[-1][0]  # (T_tok, d_teacher)
+        result["hidden"] = hidden.float()
+        result["n_tokens"] = tokens.shape[1]
+
+    return result
+
+
+def _teacher_patch_targets(targets_t, raw_len, patch_size, teacher_dim, device):
+    """Project teacher token-aligned hidden states onto causal patch boundaries."""
+    patch_count = (raw_len + patch_size - 1) // patch_size
+    patch_hidden = torch.zeros(patch_count, teacher_dim, device=device, dtype=torch.float32)
+    patch_mask = torch.zeros(patch_count, dtype=torch.bool, device=device)
+
+    hidden = targets_t.get("hidden")
+    offsets = targets_t.get("token_offsets")
+    if hidden is None or offsets is None:
+        return patch_hidden, patch_mask
+
+    for j in range(patch_count):
+        boundary = j * patch_size
+        best_ti = -1
+        for ti, offset in enumerate(offsets):
+            if offset <= boundary:
+                best_ti = ti
+            else:
+                break
+        if 0 <= best_ti < hidden.shape[0]:
+            patch_hidden[j] = hidden[best_ti]
+            patch_mask[j] = True
+
+    return patch_hidden, patch_mask
+
+
+def _aggregate_teacher_byte_targets(sample_targets, teacher_priors,
+                                    aggregation="arithmetic_mean",
+                                    aggregation_temp=1.0,
+                                    routing_cfg=None, teacher_cfgs=None):
+    """Aggregate per-teacher byte targets into one student-facing byte target."""
+    probs = torch.stack([t["byte_probs"].float() for t in sample_targets])   # (N, T, 256)
+    masks = torch.stack([t["byte_mask"] for t in sample_targets])            # (N, T)
+    priors = teacher_priors.to(probs.device, dtype=torch.float32)
+    priors = priors / priors.sum().clamp_min(1e-10)
+    available = masks.any(dim=-1)  # (N,)
+    temp = max(float(aggregation_temp), 1e-6)
+
+    if aggregation == "arithmetic_mean":
+        weights = priors.unsqueeze(-1) * masks.float()
+        weight_denom = weights.sum(dim=0, keepdim=True).clamp_min(1e-10)
+        weights = weights / weight_denom
+        sample_weights = priors * available.float()
+        sample_weights = sample_weights / sample_weights.sum().clamp_min(1e-10)
+    elif aggregation == "entropy_weighted":
+        safe_probs = probs.clamp_min(1e-10)
+        entropies = -(safe_probs * safe_probs.log()).sum(dim=-1)  # (N, T)
+        score = torch.log(priors.clamp_min(1e-10)).unsqueeze(-1) - entropies / temp
+        score = score.masked_fill(~masks, -1e9)
+        weights = torch.softmax(score, dim=0)
+        weights = torch.where(masks, weights, torch.zeros_like(weights))
+        weight_denom = weights.sum(dim=0, keepdim=True).clamp_min(1e-10)
+        weights = weights / weight_denom
+
+        sample_entropy = []
+        for i in range(entropies.shape[0]):
+            if available[i]:
+                sample_entropy.append(entropies[i][masks[i]].mean())
+            else:
+                sample_entropy.append(torch.tensor(1e9, device=probs.device))
+        sample_entropy = torch.stack(sample_entropy)
+        sample_score = torch.log(priors.clamp_min(1e-10)) - sample_entropy / temp
+        sample_score = sample_score.masked_fill(~available, -1e9)
+        sample_weights = torch.softmax(sample_score, dim=0)
+        sample_weights = torch.where(available, sample_weights, torch.zeros_like(sample_weights))
+        sample_weights = sample_weights / sample_weights.sum().clamp_min(1e-10)
+    elif aggregation == "anchor_confidence_routing":
+        # Codex-prescribed routing: anchor dominates, aux contributes only where
+        # JS divergence > threshold AND aux is more confident.
+        # Requires exactly 2 teachers with roles "anchor" and "aux" in teacher_cfgs.
+        assert probs.shape[0] == 2, "anchor_confidence_routing requires exactly 2 teachers"
+        rc = routing_cfg or {}
+        js_thresh = rc.get("js_threshold", 0.02)
+        conf_margin = rc.get("confidence_margin", 0.02)
+        conf_scale = rc.get("confidence_scale", 0.08)
+        aux_cap = rc.get("aux_weight_cap", 0.35)
+
+        # Identify anchor vs aux by role in teacher_cfgs
+        anchor_idx, aux_idx = 0, 1
+        if teacher_cfgs and len(teacher_cfgs) >= 2:
+            for i, tc in enumerate(teacher_cfgs):
+                if tc.get("role") == "anchor":
+                    anchor_idx = i
+                elif tc.get("role") == "aux":
+                    aux_idx = i
+
+        p_anchor = probs[anchor_idx]  # (T, 256)
+        p_aux = probs[aux_idx]        # (T, 256)
+        m_anchor = masks[anchor_idx]  # (T,)
+        m_aux = masks[aux_idx]        # (T,)
+
+        # JS divergence per position: JSD(anchor || aux)
+        m = 0.5 * (p_anchor + p_aux)
+        m_safe = m.clamp_min(1e-10)
+        kl_am = (p_anchor * (p_anchor.clamp_min(1e-10) / m_safe).log()).sum(-1)  # (T,)
+        kl_bm = (p_aux * (p_aux.clamp_min(1e-10) / m_safe).log()).sum(-1)
+        jsd = 0.5 * (kl_am + kl_bm)  # (T,)
+
+        # Confidence = max prob at each position
+        conf_anchor = p_anchor.max(dim=-1).values  # (T,)
+        conf_aux = p_aux.max(dim=-1).values
+
+        # Routing weight for aux: sigmoid((conf_aux - conf_anchor - margin) / scale)
+        # Gated by JS divergence > threshold (teachers must disagree)
+        raw_route = torch.sigmoid((conf_aux - conf_anchor - conf_margin) / max(conf_scale, 1e-6))
+        # Zero out where teachers agree (JS below threshold) or either teacher missing
+        both_available = m_anchor & m_aux
+        disagree = (jsd > js_thresh) & both_available
+        r = torch.where(disagree, raw_route.clamp(max=aux_cap), torch.zeros_like(raw_route))
+
+        # Build per-position weights: (2, T)
+        weights = torch.zeros_like(masks.float())
+        weights[anchor_idx] = (1.0 - r) * m_anchor.float()
+        weights[aux_idx] = r * m_aux.float()
+        # Where only one teacher available, use that teacher alone
+        only_anchor = m_anchor & ~m_aux
+        only_aux = m_aux & ~m_anchor
+        weights[anchor_idx] = torch.where(only_anchor, torch.ones_like(r), weights[anchor_idx])
+        weights[aux_idx] = torch.where(only_aux, torch.ones_like(r), weights[aux_idx])
+
+        weight_denom = weights.sum(dim=0, keepdim=True).clamp_min(1e-10)
+        weights = weights / weight_denom
+
+        # Sample-level weights: anchor-dominated, respecting index order
+        sample_weights = torch.zeros(2, device=probs.device)
+        sample_weights[anchor_idx] = 1.0 - aux_cap * 0.5
+        sample_weights[aux_idx] = aux_cap * 0.5
+        if not available[anchor_idx]:
+            sample_weights[anchor_idx] = 0.0
+            sample_weights[aux_idx] = 1.0
+        elif not available[aux_idx]:
+            sample_weights[anchor_idx] = 1.0
+            sample_weights[aux_idx] = 0.0
+        sample_weights = sample_weights / sample_weights.sum().clamp_min(1e-10)
+    else:
+        raise ValueError(f"Unknown teacher aggregation: {aggregation}")
+
+    combined_probs = (probs * weights.unsqueeze(-1)).sum(dim=0)  # (T, 256)
+    combined_mask = masks.any(dim=0)
+    combined_probs = torch.where(
+        combined_mask.unsqueeze(-1),
+        combined_probs,
+        torch.zeros_like(combined_probs),
+    )
+    return combined_probs, combined_mask, sample_weights
+
+
+def _get_kd_weights(step, max_steps, kd_alpha, kd_beta,
+                    kd_ramp_steps, kd_hold_steps, kd_decay_start_step,
+                    kd_peak_alpha_mult, kd_peak_beta_mult,
+                    kd_final_alpha_mult, kd_final_beta_mult):
+    """Piecewise KD schedule: ramp -> hold -> optional raise -> decay."""
+    ramp = min(1.0, step / max(kd_ramp_steps, 1))
+    hold_end = kd_ramp_steps + max(kd_hold_steps, 0)
+    decay_start = max(hold_end, min(max_steps - 1, kd_decay_start_step))
+    peak_alpha = kd_alpha * kd_peak_alpha_mult
+    peak_beta = kd_beta * kd_peak_beta_mult
+    raise_enabled = (
+        hold_end < decay_start
+        and (abs(kd_peak_alpha_mult - 1.0) > 1e-8 or abs(kd_peak_beta_mult - 1.0) > 1e-8)
+    )
+
+    if step < kd_ramp_steps:
+        return kd_alpha * ramp, kd_beta * ramp, ramp
+
+    if step < hold_end:
+        return kd_alpha, kd_beta, 1.0
+
+    if raise_enabled and step < decay_start:
+        progress = (step - hold_end) / max(decay_start - hold_end, 1)
+        alpha_eff = kd_alpha + (peak_alpha - kd_alpha) * progress
+        beta_eff = kd_beta + (peak_beta - kd_beta) * progress
+        return alpha_eff, beta_eff, 1.0
+
+    alpha_start = peak_alpha if raise_enabled else kd_alpha
+    beta_start = peak_beta if raise_enabled else kd_beta
+    progress = (step - decay_start) / max(max_steps - decay_start, 1)
+    progress = min(max(progress, 0.0), 1.0)
+    alpha_end = kd_alpha * kd_final_alpha_mult
+    beta_end = kd_beta * kd_final_beta_mult
+    alpha_eff = alpha_start + (alpha_end - alpha_start) * progress
+    beta_eff = beta_start + (beta_end - beta_start) * progress
+    return alpha_eff, beta_eff, 1.0
+
+
 def _get_teacher_targets(teacher, tokenizer, first_byte_map, raw_bytes, device,
                          temperature=2.0, extract_hidden=True):
     """Run teacher forward pass and extract byte-level targets.
+
+    LEGACY: Uses first-byte marginal (84% signal loss). For new runs, use
+    _get_teacher_targets_covering() instead.
 
     Returns dict with:
         byte_probs: (T_bytes, 256) soft byte targets at token boundaries
@@ -1508,15 +2074,7 @@ def _get_teacher_targets(teacher, tokenizer, first_byte_map, raw_bytes, device,
 
 
 def train_ekalavya(s1_ckpt, cfg=None):
-    """Ekalavya Phase C: Multi-teacher knowledge distillation for Sutra-Dyad.
-
-    Distills from SmolLM2-1.7B (anchor) + optional Pythia-1.4B (auxiliary) into the
-    pruned 188.2M byte-level student. Two surfaces targeted:
-    1. Byte logits: KL divergence between teacher byte probs and student byte probs
-    2. Global representations: Cosine distance between projected teacher hidden and student global states
-
-    Design validated by 2 independent Codex T+L sessions + empirical teacher probes.
-    """
+    """Ekalavya Phase C: multi-teacher knowledge distillation for Sutra-Dyad."""
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     if cfg is None:
@@ -1531,17 +2089,39 @@ def train_ekalavya(s1_ckpt, cfg=None):
     min_lr_local = cfg.get("min_lr_local", 1.5e-5)
     warmup = cfg.get("warmup_steps", 200)
     run_name = cfg.get("run_name", "ekalavya_phase_c")
+    log_every = cfg.get("log_every", LOG_EVERY)
+    eval_every = cfg.get("eval_every", EVAL_EVERY)
+    rolling_save = cfg.get("rolling_save", ROLLING_SAVE)
+    grad_clip = cfg.get("grad_clip", GRAD_CLIP)
 
     # KD config
     kd_alpha = cfg.get("kd_alpha", 0.5)      # Byte logit KD weight
     kd_beta = cfg.get("kd_beta", 0.15)       # Repr alignment weight
     kd_temperature = cfg.get("kd_temperature", 2.0)
     kd_ramp_steps = cfg.get("kd_ramp_steps", 500)  # Ramp KD weights from 0 over this many steps
+    kd_hold_steps = cfg.get("kd_hold_steps", 500)
+    kd_decay_start_step = cfg.get("kd_decay_start_step", int(max_steps * 0.7))
+    kd_peak_alpha_mult = cfg.get("kd_peak_alpha_mult", 1.5)
+    kd_peak_beta_mult = cfg.get("kd_peak_beta_mult", 1.67)
+    kd_final_alpha_mult = cfg.get("kd_final_alpha_mult", 0.33)
+    kd_final_beta_mult = cfg.get("kd_final_beta_mult", 0.60)
+    use_covering = cfg.get("use_covering", False)  # Covering decomposition (lossless KD)
+    covering_max_depth = cfg.get("covering_max_depth", None)  # None=full, 0=first-byte-only, 1=depth-0+1
 
     # Teacher config
     anchor_id = cfg.get("anchor_teacher", "HuggingFaceTB/SmolLM2-1.7B")
     aux_id = cfg.get("aux_teacher", None)  # None = anchor only
     aux_frequency = cfg.get("aux_frequency", 4)  # Run auxiliary every N steps
+    teacher_cfgs = cfg.get("teachers", None)
+    teacher_aggregation = cfg.get("teacher_aggregation", "arithmetic_mean")
+    teacher_aggregation_temp = cfg.get("teacher_aggregation_temp", 1.0)
+    # Anchor-confidence routing params
+    teacher_routing_cfg = {
+        "js_threshold": cfg.get("teacher_js_threshold", 0.02),
+        "confidence_margin": cfg.get("teacher_confidence_margin", 0.02),
+        "confidence_scale": cfg.get("teacher_confidence_scale", 0.08),
+        "aux_weight_cap": cfg.get("teacher_aux_weight_cap", 0.35),
+    }
 
     # Freeze config
     freeze_global = cfg.get("freeze_global", False)  # Default: full unfreeze for Ekalavya
@@ -1579,8 +2159,6 @@ def train_ekalavya(s1_ckpt, cfg=None):
           f"{params['trainable']/1e6:.1f}M trainable, {params['frozen']/1e6:.1f}M frozen")
     model = model.to(DEVICE)
 
-    # Teacher projection heads (linear maps from teacher hidden dim to student global dim)
-    # These are the ONLY new trainable parameters
     # 4-bit quantization config for teachers (Codex VRAM budget: ~2GB per teacher)
     bnb_cfg = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -1588,31 +2166,45 @@ def train_ekalavya(s1_ckpt, cfg=None):
         bnb_4bit_quant_type="nf4",
     )
 
-    print(f"\nLoading anchor teacher: {anchor_id} (4-bit)")
-    anchor_tok = AutoTokenizer.from_pretrained(anchor_id)
-    anchor_model = AutoModelForCausalLM.from_pretrained(
-        anchor_id, quantization_config=bnb_cfg, device_map=DEVICE)
-    anchor_model.eval()
-    anchor_d = anchor_model.config.hidden_size
-    anchor_fb = _build_first_byte_map(anchor_tok, anchor_model.config.vocab_size, DEVICE)
-    print(f"  Hidden dim: {anchor_d}, vocab: {anchor_model.config.vocab_size}")
+    if teacher_cfgs is None:
+        teacher_cfgs = [{"id": anchor_id, "weight": 1.0}]
+        if aux_id:
+            teacher_cfgs.append({"id": aux_id, "weight": 1.0})
 
-    # Repr projection: teacher_d -> student d_local (640, the global_local bottleneck)
-    repr_proj_anchor = nn.Linear(anchor_d, model.d_local, bias=False).to(DEVICE)
-    nn.init.normal_(repr_proj_anchor.weight, std=0.02)
-
-    aux_model, aux_tok, aux_fb, repr_proj_aux = None, None, None, None
-    if aux_id:
-        print(f"\nLoading auxiliary teacher: {aux_id} (4-bit)")
-        aux_tok = AutoTokenizer.from_pretrained(aux_id)
-        aux_model = AutoModelForCausalLM.from_pretrained(
-            aux_id, quantization_config=bnb_cfg, device_map=DEVICE)
-        aux_model.eval()
-        aux_d = aux_model.config.hidden_size
-        aux_fb = _build_first_byte_map(aux_tok, aux_model.config.vocab_size, DEVICE)
-        repr_proj_aux = nn.Linear(aux_d, model.d_local, bias=False).to(DEVICE)
-        nn.init.normal_(repr_proj_aux.weight, std=0.02)
-        print(f"  Hidden dim: {aux_d}, vocab: {aux_model.config.vocab_size}")
+    teachers = []
+    for idx, teacher_cfg in enumerate(teacher_cfgs):
+        teacher_id = teacher_cfg["id"]
+        teacher_weight = float(teacher_cfg.get("weight", 1.0))
+        teacher_role = "anchor" if idx == 0 else f"teacher_{idx}"
+        print(f"\nLoading {teacher_role}: {teacher_id} (4-bit, weight={teacher_weight:.3f})")
+        teacher_tok = AutoTokenizer.from_pretrained(teacher_id)
+        teacher_model = AutoModelForCausalLM.from_pretrained(
+            teacher_id, quantization_config=bnb_cfg, device_map=DEVICE)
+        teacher_model.eval()
+        teacher_dim = teacher_model.config.hidden_size
+        teacher_vocab = teacher_model.config.vocab_size
+        teacher_covering, teacher_fb = None, None
+        if use_covering:
+            print(f"  Building covering tables for {teacher_vocab} tokens...")
+            teacher_covering = _build_covering_tables(teacher_tok, teacher_vocab, device=DEVICE)
+            print(f"  Covering: {teacher_covering['n_prefixes']} prefixes, "
+                  f"max {teacher_covering['max_token_bytes']} bytes/token")
+        else:
+            teacher_fb = _build_first_byte_map(teacher_tok, teacher_vocab, DEVICE)
+        repr_proj = nn.Linear(teacher_dim, model.d_local, bias=False).to(DEVICE)
+        nn.init.normal_(repr_proj.weight, std=0.02)
+        print(f"  Hidden dim: {teacher_dim}, vocab: {teacher_vocab}")
+        teachers.append({
+            "id": teacher_id,
+            "weight": teacher_weight,
+            "tokenizer": teacher_tok,
+            "model": teacher_model,
+            "hidden_dim": teacher_dim,
+            "vocab": teacher_vocab,
+            "covering": teacher_covering,
+            "first_byte_map": teacher_fb,
+            "repr_proj": repr_proj,
+        })
 
     # Optimizer: layerwise LR groups per Codex spec
     # bridge: patch_encoder, patch_pool, patch_proj, global_to_local
@@ -1641,9 +2233,9 @@ def train_ekalavya(s1_ckpt, cfg=None):
         else:
             groups["local"].append(p)
 
-    proj_params = list(repr_proj_anchor.parameters())
-    if repr_proj_aux is not None:
-        proj_params += list(repr_proj_aux.parameters())
+    proj_params = []
+    for teacher in teachers:
+        proj_params += list(teacher["repr_proj"].parameters())
 
     param_groups = []
     if groups["bridge"]:
@@ -1676,9 +2268,18 @@ def train_ekalavya(s1_ckpt, cfg=None):
         f"lr_local={lr_local}, lr_bridge={lr_bridge}, lr_gtop={lr_global_top}, "
         f"lr_gmid={lr_global_mid}, lr_gbot={lr_global_bot}, warmup={warmup}, max_steps={max_steps}")
     log(f"KD: alpha={kd_alpha} (byte logits), beta={kd_beta} (repr), T={kd_temperature}, "
-        f"ramp={kd_ramp_steps}")
-    log(f"Anchor: {anchor_id}")
-    log(f"Auxiliary: {aux_id or 'NONE'} (every {aux_frequency} steps)")
+        f"ramp={kd_ramp_steps}, covering={'ON' if use_covering else 'OFF'}"
+        f"{f', max_depth={covering_max_depth}' if use_covering else ''}")
+    log(f"KD schedule: hold={kd_hold_steps}, decay_start={kd_decay_start_step}, "
+        f"peak=({kd_peak_alpha_mult:.2f},{kd_peak_beta_mult:.2f}), "
+        f"final=({kd_final_alpha_mult:.2f},{kd_final_beta_mult:.2f})")
+    log(f"Teachers ({len(teachers)}), aggregation={teacher_aggregation}, agg_temp={teacher_aggregation_temp}:")
+    for i, teacher in enumerate(teachers):
+        role = teacher_cfgs[i].get("role", "equal") if teacher_cfgs and i < len(teacher_cfgs) else "equal"
+        log(f"  - {teacher['id']} (weight={teacher['weight']:.3f}, d={teacher['hidden_dim']}, vocab={teacher['vocab']}, role={role})")
+    if teacher_aggregation == "anchor_confidence_routing":
+        log(f"Routing: js_thresh={teacher_routing_cfg['js_threshold']}, margin={teacher_routing_cfg['confidence_margin']}, "
+            f"scale={teacher_routing_cfg['confidence_scale']}, aux_cap={teacher_routing_cfg['aux_weight_cap']}")
     log(f"Projection params: {proj_param_count/1e3:.1f}K")
     log(f"Student checkpoint: {s1_ckpt} (step {s1_step})")
 
@@ -1688,10 +2289,16 @@ def train_ekalavya(s1_ckpt, cfg=None):
     if resume_ckpt:
         rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
         model.load_state_dict(rk["model"], strict=False)
-        if "repr_proj_anchor" in rk:
-            repr_proj_anchor.load_state_dict(rk["repr_proj_anchor"])
-        if repr_proj_aux is not None and "repr_proj_aux" in rk:
-            repr_proj_aux.load_state_dict(rk["repr_proj_aux"])
+        if "repr_proj_teachers" in rk:
+            saved_repr = rk["repr_proj_teachers"]
+            for teacher in teachers:
+                if teacher["id"] in saved_repr:
+                    teacher["repr_proj"].load_state_dict(saved_repr[teacher["id"]])
+        else:
+            if "repr_proj_anchor" in rk and teachers:
+                teachers[0]["repr_proj"].load_state_dict(rk["repr_proj_anchor"])
+            if "repr_proj_aux" in rk and len(teachers) > 1:
+                teachers[1]["repr_proj"].load_state_dict(rk["repr_proj_aux"])
         if "optimizer" in rk:
             optimizer.load_state_dict(rk["optimizer"])
         if "scaler" in rk:
@@ -1708,9 +2315,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
         torch.cuda.reset_peak_memory_stats()
 
     model.train()
-    repr_proj_anchor.train()
-    if repr_proj_aux:
-        repr_proj_aux.train()
+    for teacher in teachers:
+        teacher["repr_proj"].train()
     best_eval = float('inf')
     step = start_step
     t0 = time.time()
@@ -1723,35 +2329,19 @@ def train_ekalavya(s1_ckpt, cfg=None):
         optimizer.zero_grad(set_to_none=True)
         accum_ce, accum_kd, accum_repr, accum_total = 0.0, 0.0, 0.0, 0.0
 
-        # Phased KD weight schedule (Codex design):
-        # Phase 0 (0-500): ramp 0 -> base
-        # Phase 1 (500-1000): hold base
-        # Phase 2 (1000-4200): raise to peak
-        # Phase 3 (4200-6000): decay to floor
-        kd_ramp_end = kd_ramp_steps  # end of initial ramp (default 500)
-        kd_hold_end = kd_ramp_end + 500  # end of hold phase
-        kd_raise_end = int(max_steps * 0.7)  # raise until 70%
-        if step < kd_ramp_end:
-            ramp = step / max(kd_ramp_end, 1)
-            alpha_eff = kd_alpha * ramp
-            beta_eff = kd_beta * ramp
-        elif step < kd_hold_end:
-            alpha_eff = kd_alpha
-            beta_eff = kd_beta
-        elif step < kd_raise_end:
-            # Raise to 1.5x base
-            progress = (step - kd_hold_end) / max(kd_raise_end - kd_hold_end, 1)
-            alpha_eff = kd_alpha * (1.0 + 0.5 * progress)
-            beta_eff = kd_beta * (1.0 + 0.67 * progress)
-        else:
-            # Decay to 0.33x base
-            progress = (step - kd_raise_end) / max(max_steps - kd_raise_end, 1)
-            alpha_eff = kd_alpha * (1.5 - 1.17 * progress)
-            beta_eff = kd_beta * (1.67 - 1.07 * progress)
-        ramp = min(1.0, step / max(kd_ramp_end, 1))  # for logging
-
-        # NOTE: Auxiliary teacher (Pythia) integration deferred to Phase C.2.
-        # Plumbing exists above for loading; byte/repr merging not yet implemented.
+        alpha_eff, beta_eff, ramp = _get_kd_weights(
+            step=step,
+            max_steps=max_steps,
+            kd_alpha=kd_alpha,
+            kd_beta=kd_beta,
+            kd_ramp_steps=kd_ramp_steps,
+            kd_hold_steps=kd_hold_steps,
+            kd_decay_start_step=kd_decay_start_step,
+            kd_peak_alpha_mult=kd_peak_alpha_mult,
+            kd_peak_beta_mult=kd_peak_beta_mult,
+            kd_final_alpha_mult=kd_final_alpha_mult,
+            kd_final_beta_mult=kd_final_beta_mult,
+        )
 
         # Progressive unfreeze
         if step == unfreeze_phase1_step:
@@ -1765,54 +2355,70 @@ def train_ekalavya(s1_ckpt, cfg=None):
             x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
 
             # --- Teacher forward (no grad, before student) ---
-            # Process one sequence at a time for teacher (different tokenizer)
             with torch.no_grad():
                 B_actual = x.shape[0]
                 all_byte_probs = []
                 all_byte_masks = []
-                all_teacher_hidden_patches = []  # per-patch teacher hidden states
+                teacher_patch_hidden_by_teacher = []
+                teacher_patch_mask_by_teacher = []
+                teacher_priors = torch.tensor(
+                    [teacher["weight"] for teacher in teachers],
+                    device=DEVICE,
+                    dtype=torch.float32,
+                )
+                teacher_results = []
+                batch_raw = [x[b].tolist() for b in range(B_actual)]
 
+                for teacher in teachers:
+                    if use_covering:
+                        targets_batch = _get_teacher_targets_covering_batched(
+                            teacher["model"], teacher["tokenizer"], teacher["covering"], batch_raw, DEVICE,
+                            temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                            max_depth=covering_max_depth,
+                        )
+                    else:
+                        targets_batch = []
+                        for raw in batch_raw:
+                            targets_batch.append(_get_teacher_targets(
+                                teacher["model"], teacher["tokenizer"], teacher["first_byte_map"], raw, DEVICE,
+                                temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                            ))
+                    teacher_results.append(targets_batch)
+
+                teacher_patch_hidden = None
+                teacher_patch_mask = None
                 for b in range(B_actual):
-                    raw = x[b].tolist()
-                    targets_t = _get_teacher_targets(
-                        anchor_model, anchor_tok, anchor_fb, raw, DEVICE,
-                        temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                    sample_targets = [targets_batch[b] for targets_batch in teacher_results]
+                    combined_probs, combined_mask, sample_teacher_weights = _aggregate_teacher_byte_targets(
+                        sample_targets=sample_targets,
+                        teacher_priors=teacher_priors,
+                        aggregation=teacher_aggregation,
+                        aggregation_temp=teacher_aggregation_temp,
+                        routing_cfg=teacher_routing_cfg,
+                        teacher_cfgs=teacher_cfgs,
                     )
-                    all_byte_probs.append(targets_t["byte_probs"])
-                    all_byte_masks.append(targets_t["byte_mask"])
+                    all_byte_probs.append(combined_probs)
+                    all_byte_masks.append(combined_mask)
 
-                    if beta_eff > 0 and "hidden" in targets_t:
-                        # Causally-aligned teacher hidden per patch.
-                        # global_local[j] = global_shifted[j] = global_out[j-1],
-                        # which only sees bytes < j*P. So we must pick the last
-                        # teacher hidden whose next-token start <= j*P.
-                        offsets = targets_t["token_offsets"]
-                        hidden = targets_t["hidden"]  # (n_tok, d_teacher)
-                        P = model.patch_size
-                        N = (len(raw) + P - 1) // P
-                        patch_hidden = torch.zeros(N, anchor_d, device=DEVICE, dtype=torch.float32)
-                        patch_mask = torch.zeros(N, dtype=torch.bool, device=DEVICE)
-                        for j in range(N):
-                            boundary = j * P
-                            # Find last teacher token whose byte start <= boundary
-                            best_ti = -1
-                            for ti in range(len(offsets)):
-                                if offsets[ti] <= boundary:
-                                    best_ti = ti
-                                else:
-                                    break
-                            if best_ti >= 0 and best_ti < hidden.shape[0]:
-                                patch_hidden[j] = hidden[best_ti]
-                                patch_mask[j] = True
-                        all_teacher_hidden_patches.append((patch_hidden, patch_mask))
+                    if beta_eff > 0:
+                        patch_hidden_list = []
+                        patch_mask_list = []
+                        raw_len = len(batch_raw[b])
+                        for teacher_idx, teacher in enumerate(teachers):
+                            patch_hidden_t, patch_mask_t = _teacher_patch_targets(
+                                targets_t=sample_targets[teacher_idx],
+                                raw_len=raw_len,
+                                patch_size=model.patch_size,
+                                teacher_dim=teacher["hidden_dim"],
+                                device=DEVICE,
+                            )
+                            patch_hidden_list.append(patch_hidden_t)
+                            patch_mask_list.append(patch_mask_t)
+                        teacher_patch_hidden_by_teacher.append(patch_hidden_list)
+                        teacher_patch_mask_by_teacher.append((patch_mask_list, sample_teacher_weights))
 
-                # Stack teacher targets
                 teacher_byte_probs = torch.stack(all_byte_probs)  # (B, T, 256)
                 teacher_byte_mask = torch.stack(all_byte_masks)   # (B, T)
-
-                if all_teacher_hidden_patches:
-                    teacher_patch_hidden = torch.stack([h for h, m in all_teacher_hidden_patches])  # (B, N, d_teacher)
-                    teacher_patch_mask = torch.stack([m for h, m in all_teacher_hidden_patches])    # (B, N)
 
             # --- Student forward ---
             with torch.amp.autocast('cuda', dtype=DTYPE):
@@ -1835,12 +2441,28 @@ def train_ekalavya(s1_ckpt, cfg=None):
 
                 # KD Loss 2: Representation alignment (cosine on global_local bottleneck)
                 repr_loss = torch.tensor(0.0, device=DEVICE)
-                if beta_eff > 0 and all_teacher_hidden_patches:
+                if beta_eff > 0 and teacher_patch_hidden_by_teacher:
                     global_local = internals["global_local"]  # (B, N, d_local=640)
-                    proj_teacher = repr_proj_anchor(teacher_patch_hidden.to(DTYPE))  # (B, N, d_local)
-                    # Cosine distance, masked to only patches with causal teacher alignment
+                    teacher_proj_batches = []
+                    teacher_proj_masks = []
+                    for b in range(B_actual):
+                        patch_hidden_list = teacher_patch_hidden_by_teacher[b]
+                        patch_mask_list, sample_teacher_weights = teacher_patch_mask_by_teacher[b]
+                        projected = []
+                        projected_masks = []
+                        for teacher_idx, teacher in enumerate(teachers):
+                            projected.append(
+                                teacher["repr_proj"](patch_hidden_list[teacher_idx].to(DTYPE)).float()
+                                * sample_teacher_weights[teacher_idx]
+                            )
+                            projected_masks.append(patch_mask_list[teacher_idx])
+                        teacher_proj_batches.append(torch.stack(projected).sum(dim=0))
+                        teacher_proj_masks.append(torch.stack(projected_masks).any(dim=0))
+                    proj_teacher = torch.stack(teacher_proj_batches)      # (B, N, d_local)
+                    teacher_patch_mask = torch.stack(teacher_proj_masks)  # (B, N)
+
                     gl_norm = F.normalize(global_local.float(), dim=-1)
-                    pt_norm = F.normalize(proj_teacher.float(), dim=-1)
+                    pt_norm = F.normalize(proj_teacher, dim=-1)
                     cos_sim = (gl_norm * pt_norm).sum(dim=-1)  # (B, N)
                     pmask = teacher_patch_mask[:, :cos_sim.shape[1]]
                     if pmask.any():
@@ -1880,9 +2502,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
 
         scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            list(model.parameters()) + list(repr_proj_anchor.parameters())
-            + (list(repr_proj_aux.parameters()) if repr_proj_aux else []),
-            GRAD_CLIP)
+            list(model.parameters()) + proj_params,
+            grad_clip)
         scaler.step(optimizer)
         scaler.update()
 
@@ -1896,8 +2517,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
         running_total += avg_total
         step += 1
 
-        if step % LOG_EVERY == 0:
-            n = LOG_EVERY
+        if step % log_every == 0:
+            n = log_every
             elapsed = time.time() - t0
             throughput = step * batch_size * grad_accum * seq_bytes / elapsed
             bpb = running_ce / n / math.log(2)
@@ -1909,7 +2530,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}")
             running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
 
-        if step % EVAL_EVERY == 0:
+        if step % eval_every == 0:
             el = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
             bpb_eval = el / math.log(2)
             log(f"  *** EVAL step {step}: loss={el:.4f}, BPB={bpb_eval:.3f}")
@@ -1918,13 +2539,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 save_dict = {
                     "step": step, "stage": 1,
                     "model": model.state_dict(),
-                    "repr_proj_anchor": repr_proj_anchor.state_dict(),
+                    "repr_proj_teachers": {teacher["id"]: teacher["repr_proj"].state_dict() for teacher in teachers},
                     "optimizer": optimizer.state_dict(),
                     "scaler": scaler.state_dict(),
                     "eval_loss": el, "config": cfg,
                 }
-                if repr_proj_aux:
-                    save_dict["repr_proj_aux"] = repr_proj_aux.state_dict()
                 torch.save(save_dict, ckpt_dir / "best.pt")
                 log(f"      New best! Saved to {ckpt_dir / 'best.pt'}")
 
@@ -1937,17 +2556,15 @@ def train_ekalavya(s1_ckpt, cfg=None):
             except Exception as e:
                 log(f"      GEN failed: {e}")
 
-        if step % ROLLING_SAVE == 0:
+        if step % rolling_save == 0:
             save_dict = {
                 "step": step, "stage": 1,
                 "model": model.state_dict(),
-                "repr_proj_anchor": repr_proj_anchor.state_dict(),
+                "repr_proj_teachers": {teacher["id"]: teacher["repr_proj"].state_dict() for teacher in teachers},
                 "optimizer": optimizer.state_dict(),
                 "scaler": scaler.state_dict(),
                 "eval_loss": best_eval, "config": cfg,
             }
-            if repr_proj_aux:
-                save_dict["repr_proj_aux"] = repr_proj_aux.state_dict()
             torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
 
     final_loss = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
@@ -1966,8 +2583,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
         "best_eval_loss": best_eval, "best_bpb": best_eval / math.log(2),
         "steps": max_steps, "config": cfg,
         "params": params, "proj_params": proj_param_count,
-        "anchor_teacher": anchor_id,
-        "aux_teacher": aux_id,
+        "teachers": [{"id": teacher["id"], "weight": teacher["weight"]} for teacher in teachers],
+        "teacher_aggregation": teacher_aggregation,
     }
     with open(REPO / "results" / f"{run_name}_results.json", "w") as f:
         json.dump(results, f, indent=2)

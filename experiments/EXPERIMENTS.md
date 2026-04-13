@@ -4,6 +4,32 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ---
 
+## Phase 6: Ekalavya Protocol — Byte-Level Covering KD (2026-04-12 → ongoing)
+
+### multi2_routed_3k [RUNNING]
+**Purpose:** Multi-teacher ROUTED KD: SmolLM2 (anchor) + Pythia (aux), confidence routing, covering ON.
+**Mechanism:** Anchor-dominant confidence routing — Pythia contributes only where JSD>0.02 AND it's more confident than SmolLM2. LR -20% vs AM run, T=1.3, aggressive KD decay (final_mult=0.3), repr beta decays to 0.
+**Config:** `results/config_multi2_routed_3k.json`
+**Kill criteria:** BPB>1.430 at step 500 eval. Promote if ≤1.410.
+**What we'll learn:** Whether intelligent teacher routing (vs naive averaging) resolves the signal conflict that killed AM aggregation.
+
+### multi2_covering_3k [KILLED at step 380]
+**Purpose:** Multi-teacher covering KD with SmolLM2-1.7B + Pythia-1.4B, arithmetic mean aggregation.
+**Mechanism:** Covering decomposition, AM aggregation, alpha=0.05, progressive unfreeze at 700/1500.
+**Config:** `results/config_multi2_covering_3k.json`
+**Result:** KILLED — early kill at step 380 (saved 96 min GPU). Post-warmup BPB slope +0.000214/step (getting worse). All 4 windows above baseline: 1.443→1.431→1.444→1.465. Extrapolated step 500: 1.491 >> kill threshold 1.430. CE avg 1.002 vs baseline 0.985 — KD actively hurting.
+**What we learned:** Naive arithmetic mean of teacher byte probs is destructive when teachers disagree. The teachers produce conflicting probability distributions that average to something worse than either individually. Need intelligent routing — only blend when teachers provide complementary signal.
+
+### covering_smoke_430 [DONE]
+**Purpose:** Single-teacher covering KD smoke test (SmolLM2-1.7B, alpha=0.15, 430 steps).
+**Key finding:** Covering mechanism works — repr converged 0.90→0.055 (94%). BPB not decisive (1.437 mean vs 1.421 baseline) due to alpha=0.15 too aggressive during unfreeze. Worsening trend: 1.397→1.478. Gradient instability (max 3.29).
+**What we learned:** Covering >> first-byte marginal (v2 diverged at 550, covering oscillates). Alpha=0.05 needed, unfreeze must be delayed. Dense all-byte KD at high alpha creates sustained gradient conflict even under clipping.
+
+### ekalavya_v2_2k [DONE — FAILED]
+**Purpose:** First-byte marginal KD with Codex audit fixes, single teacher SmolLM2-1.7B.
+**Key finding:** BPB diverged from baseline (1.421→1.565 at step 2000). First-byte marginal destroys 84% of teacher signal (3.485→0.535 bits).
+**What we learned:** First-byte marginal alignment is fundamentally too lossy for byte-level KD. Led to covering decomposition design.
+
 ## Phase 5: KD Mechanism Validation (2026-03-26 → ongoing)
 
 ### kd_15k_benchmark_gate [RUNNING — KD arm active]

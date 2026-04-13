@@ -6,9 +6,180 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ---
 
+## COVERING DECOMPOSITION — IMPLEMENTED (2026-04-12)
+
+**Status:** AM RUN KILLED (step 380), ROUTING RUN #4 IN PROGRESS (2026-04-13, started 10:02:09, PID 15528).
+- Run #1: died on sleep. Run #2: died (dual-write corruption). Run #3 (AM): KILLED at step 380 (see below). Run #4 (routing): ACTIVE.
+
+**Covering smoke test result (430 steps, single teacher SmolLM2, alpha=0.15):**
+- Covering mechanism WORKS: repr loss 0.90→0.055 (94% convergence)
+- BPB NOT decisive: post-unfreeze mean 1.437 vs baseline 1.421 (+0.016, noise zone)
+- Worsening trend: 1st half 1.397 → 2nd half 1.478
+- Diagnosis: alpha=0.15 too aggressive — KD contribution (0.13-0.38) sometimes exceeds CE (~1.0)
+- Covering >> first-byte marginal: v2 (lossy) DIVERGED at step 550, covering merely oscillates
+- Gradient instability: mean 1.43, max 3.29 post-unfreeze (vs 0.7 in warmup)
+
+**Multi-teacher run (SmolLM2 + Pythia, alpha=0.05):**
+- Config: results/config_multi2_covering_3k.json
+- Alpha: 0.05 (3x lower), Beta: 0.03, T=1.5
+- Teachers: SmolLM2-1.7B + Pythia-1.4B (AM aggregation, equal weight)
+- Unfreeze: phase1@700, phase2@1500 (delayed from 300/700)
+- Ramp: 500 steps (extended from 300)
+- 3000 steps, eval every 500
+- Kill criterion: BPB > 1.50 at step 1000 eval
+
+**First run data (120 steps before crash):**
+| Step | BPB | CE | KD | Repr | Ramp | Notes |
+|------|-----|-----|-----|------|------|-------|
+| 10 | 1.433 | 0.993 | 0.924 | 0.904 | 0.03 | |
+| 20 | 1.402 | 0.972 | 1.080 | 1.005 | 0.06 | Below baseline! |
+| 30 | **1.370** | 0.950 | 1.133 | 0.994 | 0.10 | **Best BPB, -0.051 below baseline** |
+| 40 | 1.375 | 0.953 | 1.086 | 0.969 | 0.13 | |
+| 50 | 1.386 | 0.961 | 1.202 | 0.938 | 0.16 | |
+| 60 | 1.435 | 0.995 | 1.904 | 0.912 | 0.20 | |
+| 70 | 1.437 | 0.996 | 1.660 | 0.865 | 0.23 | |
+| 80 | 1.435 | 0.994 | 1.450 | 0.825 | 0.26 | |
+| 90 | 1.511 | 1.048 | 0.965 | 0.746 | 0.30 | Spike (LR warmup) |
+| 100 | 1.410 | 0.977 | 1.415 | 0.713 | 0.33 | Below baseline |
+| 110 | 1.404 | 0.973 | 1.217 | 0.650 | 0.36 | Below baseline |
+| 120 | 1.439 | 0.997 | 1.625 | 0.596 | 0.40 | Process killed (sleep) |
+
+**Key observations:** BPB below baseline (1.421) at steps 20-50, 100-110 — FIRST TIME EVER with Ekalavya KD. Repr loss monotonically improving (0.904→0.596). Covering signal is working.
+
+**Second run** started at 01:25:07. Step 10: BPB=1.472, Step 20: BPB=1.440, Step 30: BPB=1.447. Died (dual-write corruption — shell redirect + code log_f both writing same file).
+
+**Third run (clean, stdout→/dev/null)** started at 04:58:49. Config: alpha=0.05, beta=0.03, T=1.5, 2T AM.
+| Step | BPB | CE | KD | Repr | Grad | Ramp | Notes |
+|------|-----|-----|-----|------|------|------|-------|
+| 10 | **1.371** | 0.950 | 0.957 | 0.913 | 0.34 | 0.02 | Below BOTH single-teacher refs (1.433, 1.472) |
+| 20 | 1.564 | 1.084 | 4.047 | 1.000 | 0.63 | 0.04 | Hard batch (CE-driven, ramp negligible). KD loss 4x higher than 1T — AM blend entropy |
+| 30 | 1.485 | 1.029 | 2.121 | 0.981 | 0.46 | 0.06 | Recovering from step 20 spike. KD loss halved |
+| 40 | 1.443 | 1.000 | 1.952 | 0.951 | 0.98 | 0.08 | Near baseline |
+| 50 | **1.276** | 0.884 | 1.199 | 0.909 | 0.91 | 0.10 | 0.145 BELOW baseline! (easy batch) |
+| 60 | 1.434 | 0.994 | 1.500 | 0.884 | 0.73 | 0.12 | Tracking single-teacher closely |
+| 70 | 1.455 | 1.009 | 1.442 | 0.820 | 0.66 | 0.14 | |
+| 80 | 1.391 | 0.964 | 0.945 | 0.757 | 0.54 | 0.16 | Below baseline |
+| 90 | 1.437 | 0.996 | 1.517 | 0.686 | 0.76 | 0.18 | |
+| 100 | **1.386** | 0.961 | 1.134 | 0.615 | 0.78 | 0.20 | Below baseline. Repr converging fast |
+| 110 | 1.443 | 1.001 | 1.439 | 0.545 | 0.57 | 0.22 | |
+| 120 | 1.411 | 0.978 | 1.493 | 0.507 | 0.46 | 0.24 | Below baseline |
+| 130 | 1.406 | 0.974 | 1.456 | 0.445 | 0.50 | 0.26 | Below baseline |
+| 140 | **1.387** | 0.962 | 1.510 | 0.391 | 0.53 | 0.28 | Below baseline, repr 0.39 |
+Steps 50-100 avg BPB: **1.397** (−0.024 vs baseline, −0.039 vs 1T).
+Steps 100-140 avg BPB: **1.407** (−0.014 vs baseline). BPB DECREASING as ramp increases — KD is helping.
+Repr loss monotonic: 0.913→0.391. Beautiful convergence.
+Throughput: 48s/step confirmed. ETA step 500 eval ~11:43, full 3K ~40h.
+| 150 | 1.463 | 1.014 | 2.134 | 0.360 | 0.73 | 0.30 | |
+| 160 | 1.409 | 0.977 | 1.278 | 0.321 | 0.38 | 0.32 | Below baseline |
+| 170 | 1.412 | 0.979 | 1.485 | 0.282 | 0.51 | 0.34 | Below baseline |
+| 180 | 1.399 | 0.970 | 1.006 | 0.226 | 0.50 | 0.36 | Below baseline |
+| 190 | 1.465 | 1.015 | 1.890 | 0.242 | 0.57 | 0.38 | |
+| 200 | 1.462 | 1.013 | 1.455 | 0.183 | 0.66 | 0.40 | ← WARMUP END |
+| 210 | 1.442 | 0.999 | 2.128 | 0.195 | 0.68 | 0.42 | Post-warmup, lr=2e-4 |
+| 220 | 1.449 | 1.005 | 1.827 | 0.168 | 0.82 | 0.44 | Post-warmup |
+Steps 50-100 avg: 1.397 (−0.024 vs baseline). Steps 100-140 avg: 1.407 (−0.014). Steps 200-220 avg: **1.451 (+0.030)**
+| 230 | 1.396 | 0.968 | 0.976 | 0.143 | 0.54 | 0.46 | Below baseline |
+| 240 | 1.449 | 1.004 | 1.881 | 0.165 | 0.55 | 0.48 | |
+| 250 | 1.462 | 1.013 | 1.621 | 0.128 | 0.66 | 0.50 | |
+| 260 | **1.385** | 0.960 | 0.969 | 0.113 | 0.60 | 0.52 | Below baseline |
+| 270 | **1.392** | 0.965 | 1.044 | 0.106 | 0.58 | 0.54 | Below baseline |
+| 280 | 1.493 | 1.035 | 1.881 | 0.112 | 0.58 | 0.56 | Hard batch |
+| 290 | 1.449 | 1.004 | 1.396 | 0.097 | 0.70 | 0.58 | |
+| 300 | **1.403** | 0.973 | 1.167 | 0.090 | 0.54 | 0.60 | Below baseline. Repr ~0 |
+**POST-WARMUP TREND:** Steps 200-220 avg 1.451 → steps 260-300 avg **1.424**. IMPROVING as ramp increases. Student adapting to KD.
+Repr converged to near-zero (0.090). Structural alignment complete.
+| 310 | 1.395 | 0.967 | 1.423 | 0.098 | 0.60 | 0.62 | Below baseline |
+| 320 | 1.498 | 1.038 | 1.593 | 0.084 | 1.26 | 0.64 | Grad spike 1.26 |
+| 330 | 1.497 | 1.037 | 0.953 | 0.078 | 0.67 | 0.66 | |
+| 340 | 1.441 | 0.999 | 1.938 | 0.097 | 0.55 | 0.68 | |
+| 350 | 1.431 | 0.992 | 1.299 | 0.084 | 0.50 | 0.70 | |
+| 360 | 1.428 | 0.990 | 1.376 | 0.082 | 0.50 | 0.72 | Near baseline |
+| 370 | 1.495 | 1.036 | 1.722 | 0.092 | 0.95 | 0.74 | |
+| 380 | **1.504** | 1.043 | 1.816 | 0.082 | 0.96 | 0.76 | First >1.50 since step 20 |
+Steps 310-380 avg: **1.461** (+0.040 vs baseline). Trend reversed from 260-300 improvement.
+Higher ramp (0.62-0.76) → KD gradient competing with CE. Effective alpha=0.038 at step 380.
+Repr converged: 0.082 (near-zero). No more learning on repr surface.
+**AM RUN KILLED at step 380 (2026-04-13 10:00). Early kill — saved 96 min GPU.**
+Linear extrapolation: BPB 1.491 at step 500 >> kill threshold 1.430.
+BPB slope: +0.000214/step (getting WORSE with ramp). CE avg 1.002 vs baseline 0.985.
+Windowed trend: 200-250=1.443, 250-300=1.431, 300-350=1.444, 350-380=1.465. Monotonic worsening.
+**Root cause:** Arithmetic mean of teacher byte probs is destructive when teachers disagree.
+AM averages conflicting distributions → smoothed, low-confidence target → entropy injection → CE harm.
+The 5/19 steps below baseline (260,270,300,310) correlate with LOW KD loss (0.97-1.17) = teachers agreed.
+The bad steps (320,330,370,380) have HIGH KD loss (1.42-1.82) = teachers disagreed → AM hurts.
+**Quantified (simulation):** When teachers disagree (anchor=0.60 on 'e', aux=0.55 on 'a'):
+- AM creates bimodal target (0.425, 0.425) — AMBIGUOUS. Entropy +0.114 nats vs anchor alone.
+- Over 50% disagreeing positions: +0.082 BPB injection. Matches observed +0.044 (partially offset by low ramp).
+- Routing preserves sharp unimodal target (0.600 on 'e') — zero entropy injection.
+**Conclusion:** Multi-teacher signal is there but AM is the wrong aggregation. Need position-selective routing.
+
+**ROUTING RUN #4 LAUNCHED (2026-04-13 10:02:09, PID 15528):**
+Config: results/config_multi2_routed_3k.json. Key diffs from AM:
+- Aggregation: anchor_confidence_routing (SmolLM2=anchor, Pythia=aux)
+- Pythia contributes ONLY where: (1) JSD>0.02 AND (2) Pythia more confident than SmolLM2
+- Route weight: r = sigmoid((conf_aux - conf_anchor - 0.02) / 0.08), capped at 0.35
+- LR -20% vs AM: local=1.2e-4, bridge=1.6e-4
+- T=1.3 (vs 1.5). More aggressive KD decay (final_mult=0.3). Repr beta decays to 0.
+- Eval every 250 (vs 500). Kill: >1.430 at step 500.
+VRAM: expecting ~23.5GB (same teacher pair). Throughput: ~48s/step (same covering bottleneck).
+
+**MISSING FROM ROUTING RUN: Uncertainty gating (alpha_t = alpha * teacher_conf * (1 - student_conf)^2)**
+Codex prescribed TWO mechanisms: (1) anchor-confidence routing for teacher blending -- IMPLEMENTED, (2) per-position KD alpha scaling based on teacher/student confidence -- NOT IMPLEMENTED. Current run applies uniform alpha to all positions. If routing improves but isn't decisive, add uncertainty gating as next iteration -- it reduces KD pressure where student already confident AND where teacher is uncertain. This is orthogonal to routing.
+**Quantified impact (simulation):** Gating reduces effective KD to 17.3% of full alpha on average. 46.5% of positions get <10% alpha (effectively off). Only 6.9% get >50% (strong KD). The formula aggressively concentrates KD on the ~7% of positions where teacher is confident AND student is uncertain -- maximum learning potential, minimum interference with already-learned content. Key property: (1-student_conf)^2 means student confidence gates out KD quadratically -- even moderate student confidence (0.5) reduces KD by 75%.
+
+**Known minor issue (from Codex T+L):** `errors='replace'` in teacher text decoding can shift byte offsets when sampled windows start mid-UTF8 multibyte character. U+FFFD replacement is 3 bytes, may shift subsequent offsets by +2. Impact: minimal (affects only first 1-3 bytes of 1536-byte sequences). Fix: strip leading continuation bytes before decoding, or detect and skip garbled starts. Not blocking smoke test.
+
+**Codex T+L Analysis — Key Findings (2026-04-13):**
+Covering solved "how to transfer signal." It did NOT solve "when, where, and from which teacher to apply pressure."
+- Alpha=0.15 too high for dense all-byte KL on warm-started 188M. Not because scalar loss exceeds CE, but because it's dense, all-byte, persistent — sustained KD conflict under clipping.
+- The transient BPB improvement at steps 310-370 (1.397 vs baseline 1.421) was REAL — erased by gradient instability during layer unfreeze at step 300.
+- Repr term converged fast (0.90→0.055) then became uninformative. Should decay to 0 by ~900 steps.
+- **Codex prescription (for NEXT run if AM fails):**
+  - LR -20%: local=1.2e-4, bridge=1.6e-4, gtop=6e-5, gmid=4e-5, gbot=2.5e-5
+  - Temperature 1.3 (vs our 1.5)
+  - Anchor-dominant confidence routing: SmolLM2 dominates, Pythia contributes only where clearly more confident AND teachers disagree (JS>0.02)
+  - Repr KD from anchor only, decayed to 0 by step 900
+  - Uncertainty gating: alpha_t = alpha * teacher_conf * (1 - student_conf)^2
+- **Kill criteria:** 500-step >1.430=kill, 1000-step >1.410=kill, promote if 500<=1.410 & 1500<=1.390
+- **Plan B if multi-teacher fails:** Committee-guided curriculum (teacher-scored windows, CE-only) → sparse KD (top 20-30% hardest bytes) → move KD earlier in training
+- **Current run (AM, alpha=0.05, T=1.5) is a simpler first pass.** If it shows promise but not decisive, apply Codex's routing prescription next.
+
+Optimized v2 with numpy fast path + batched teacher forward.
+
+**What was done:**
+- Root cause: first-byte marginal destroys 84% of teacher signal (3.485 → 0.535 bits)
+- Solution: Phan et al. (ICLR 2025) covering decomposition — LOSSLESS
+- Implementation: `_build_covering_tables()`, `_covering_byte_conditionals()`, `_get_teacher_targets_covering()` in sutra_dyad.py
+- Memory-optimized: index lists (~5MB) instead of bool masks (~5GB)
+- Throughput-optimized: first_byte_matrix (256,V) for depth-0 matmul, pre-cached indices on GPU
+- CPU-verified: depth-0 matches first-byte marginal exactly, deeper conditionals provide 4.7x more signal
+- SmolLM2-1.7B: 100,254 prefixes, 150 active first bytes, max 81 bytes/token
+- v1 throughput: 0 steps/min (Python inner loop bottleneck). v2: training at 74% GPU util.
+- Config: `results/config_covering_smoke_1k.json` with `use_covering: true`
+- v2 (first-byte marginal) confirmed harmful: eval BPB 1.443 at step 500, 1.552 at step 550 (baseline 1.421)
+
+**Throughput bottleneck (discovered 2026-04-13):** 2-teacher covering runs at ~24s/step → 3K steps = ~20 hours. Bottleneck: CPU-bound covering byte conditional computation in Python loop (~72K numpy operations per step). NOT the GPU forward pass.
+
+**CODEX OPTIMIZATION: Selective Auxiliary (from T+L Phase C output)**
+- Run auxiliary teacher only on top 25% highest-entropy patches (anchor entropy), every 2nd/4th step
+- This is complementary to offline caching — reduces live aux computation by 75-87%
+- Byte-class calibration probe: per-class (whitespace/letters/digits/punctuation/UTF8) NLL/top-1 to identify WHERE aux helps
+
+**NEXT OPTIMIZATION: Offline Teacher Target Pre-computation**
+If multi-teacher covering shows positive signal but throughput is the bottleneck:
+1. Pre-score 10K windows per teacher offline (run teacher forward + covering once)
+2. Cache byte_probs as compressed sparse arrays (top-32 per position = ~1.5GB/teacher)
+3. Train student against cached targets — eliminates ALL teacher inference during training
+4. Speed: student-only → ~same as CE-only (~3-5s/step). 10x speedup.
+5. VRAM: student only (~3GB) + cached batch (~50MB) = 3.5GB. Could run much larger student.
+6. Repr KD not compatible with caching (needs live student features), but Codex recommends decaying repr to 0 anyway.
+7. Implement ONLY if live multi-teacher run shows signal at step 500 eval.
+
+---
+
 ## POST-V2 T+L SESSION — PREPARED TASK SECTION (2026-04-12)
 
-**Status:** DRAFT — Fill in v2 results when training completes, then fire.
+**Status:** SUPERSEDED by direct implementation. Codex T+L failed 7 times (context exhaustion).
 
 This is the TASK injection for a T+L Codex session after Ekalavya v2 completes. The session goal: validate v2 results + design multi-teacher mechanism for production.
 
@@ -188,10 +359,10 @@ def _get_teacher_targets_batched(teacher, tokenizer, first_byte_map, batch_raw_b
 
 | Teacher | Params | d_model | Layers | Vocab | BPB (our data) | Status |
 |---------|--------|---------|--------|-------|----------------|--------|
-| SmolLM2-1.7B | 1.7B | 2048 | ? | ? | 0.490 | ✅ Validated |
-| Pythia-1.4B | 1.4B | 2048 | 24 | 50K | 0.534 | ✅ Validated |
-| Qwen3-1.7B | 1.7B | 2048 | 28 | 152K | TBD | Available, HF |
-| TinyLlama-1.1B | 1.1B | 2048 | 22 | 32K | TBD | Available, HF |
+| SmolLM2-1.7B | 1.7B | 2048 | ? | 49K | 0.490 (fb) | ✅ Anchor |
+| Pythia-1.4B | 1.4B | 2048 | 24 | 50K | 0.534 (fb) | ✅ Auxiliary |
+| Qwen3-1.7B | 1.7B | 2048 | 28 | 152K | 0.858 (covering!) | ✅ Strong+diverse vocab |
+| TinyLlama-1.1B | 1.1B | 2048 | 22 | 32K | 11.42 (DEAD) | ❌ Chat model, useless |
 | Gemma-4-E2B | 2.3B | 1536 | 35 | 262K | TBD | Available (multimodal, text backbone usable) |
 | Ouro-1.4B | 1.4B | 2048 | 24×4 | 49K | TBD | Available, HF. Note: `transformers<4.56.0` required |
 
@@ -241,7 +412,7 @@ combined_probs = sum(teacher_weights * teacher_byte_probs)
 | Phase 3 (3-5 teachers) | ~100 lines: entropy weighting, teacher loop | +~6-10s/step | 13-17GB |
 | Phase 4 (MoE routing) | ~200 lines: router network, routing loss | +~10s/step + router grad | 15-19GB |
 
-**Decision: Wait for v2 results. If v2 shows clear BPB improvement over baseline, move to Phase 2 immediately. If v2 is marginal, fix single-teacher first.**
+**Decision: v2 (first-byte marginal) FAILED — BPB increased. Now testing covering decomposition (v3, lossless). If covering shows clear BPB improvement, move to Phase 2 (2 teachers) immediately. Multi-teacher covering: each teacher has its own covering tables, byte conditionals aggregated in byte space.**
 
 ### Information-Theoretic Analysis of Multi-Teacher Aggregation
 
@@ -344,7 +515,7 @@ P(byte_k = c | actual_prefix) = Σ_{w: w matches prefix, w[d]=c} P(w) / Σ_{w: w
 - **Our simplification**: We know the teacher tokenization → within-token decomposition suffices. No beam search needed. O(|prefix_matches|) per byte position via dictionary lookup. Strictly simpler and faster than BLD.
 - **Multi-teacher advantage**: Different teachers tokenize differently → each gives different byte coverings → natural diversity in supervision signals. Example: Teacher A tokenizes "the" as one token (3-byte covering), Teacher B tokenizes as "th"+"e" (two tokens, different conditionals at byte 2). At each byte position, teachers provide COMPLEMENTARY estimates from different conditioning depths. The ensemble is richer than any single teacher — different tokenizations = different "views" of the byte sequence. This is a unique advantage of our byte-level architecture that NO token-level KD approach can exploit.
 
-**Status:** DESIGN SKETCH — validated by literature, needs Codex sign-off before implementation.
+**Status:** IMPLEMENTED AND GPU-TESTING (2026-04-13). Smoke test running. See top of SCRATCHPAD for live status.
 
 ## FIRST-BYTE MARGINAL INFORMATION LOSS ANALYSIS (2026-04-12)
 
@@ -8597,3 +8768,183 @@ The first real test is not "does it beat Gemma?" It is:
 **Can a dyadic byte model with conditional refinement beat a matched flat-byte baseline in both BPT and average active compute by step 3K?**
 
 If not, the compression-native hypothesis is probably wrong in this form.
+
+---
+
+## MULTI-TEACHER COVERING IMPLEMENTATION PLAN (2026-04-13)
+
+**Status:** Design sketch. Implement AFTER covering smoke test validates (step 300+ with BPB < baseline).
+
+**Prerequisite:** Single-teacher covering KD shows clear BPB improvement over baseline (1.421) at step 300+ (full ramp). If it doesn't, multi-teacher won't help — the mechanism itself is broken.
+
+### What changes
+
+The training loop currently only runs anchor_model in the covering path (lines 2175-2185). Multi-teacher adds:
+1. N teacher forward passes per micro-batch (sequential — can't parallelize on 1 GPU)
+2. N covering computations per micro-batch (CPU numpy — potentially parallelizable)
+3. Byte-probability aggregation before KD loss
+
+### Config schema change
+
+```json
+{
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0},
+    {"id": "EleutherAI/pythia-1.4b", "weight": 1.0}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": null
+}
+```
+
+Backward-compatible: if `teachers` absent, fall back to `anchor_teacher`/`aux_teacher` single-teacher path.
+
+### Code changes (~80 lines)
+
+**1. Teacher loading (replace anchor/aux with teacher list):**
+```python
+teachers = []
+for tc in cfg.get("teachers", [{"id": anchor_id}]):
+    tid = tc["id"]
+    tok = AutoTokenizer.from_pretrained(tid)
+    model_t = AutoModelForCausalLM.from_pretrained(tid, quantization_config=bnb_cfg, device_map=DEVICE)
+    model_t.eval()
+    d_t = model_t.config.hidden_size
+    vocab_t = model_t.config.vocab_size
+    covering_t = _build_covering_tables(tok, vocab_t, device=DEVICE) if use_covering else None
+    fb_t = _build_first_byte_map(tok, vocab_t, DEVICE) if not use_covering else None
+    repr_proj_t = nn.Linear(d_t, model.d_local, bias=False).to(DEVICE)
+    nn.init.normal_(repr_proj_t.weight, std=0.02)
+    teachers.append({
+        "id": tid, "model": model_t, "tokenizer": tok,
+        "covering": covering_t, "fb": fb_t, "repr_proj": repr_proj_t,
+        "d_model": d_t, "vocab": vocab_t, "weight": tc.get("weight", 1.0),
+    })
+```
+
+**2. Training loop — multi-teacher covering forward:**
+```python
+if use_covering:
+    batch_raw = [x[b].tolist() for b in range(B_actual)]
+    teacher_results = []
+    for t in teachers:
+        targets_t = _get_teacher_targets_covering_batched(
+            t["model"], t["tokenizer"], t["covering"], batch_raw, DEVICE,
+            temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+            max_depth=covering_max_depth,
+        )
+        teacher_results.append(targets_t)
+    
+    # Aggregate byte probs across teachers
+    for b in range(B_actual):
+        teacher_bps = [tr[b]["byte_probs"] for tr in teacher_results]
+        teacher_masks = [tr[b]["byte_mask"] for tr in teacher_results]
+        
+        if aggregation == "arithmetic_mean":
+            # AM: simple average (handles different masks via union)
+            stacked = torch.stack(teacher_bps)  # (N_teachers, T, 256)
+            combined_bp = stacked.mean(dim=0)    # (T, 256)
+            combined_mask = torch.stack(teacher_masks).any(dim=0)  # union
+        elif aggregation == "entropy_weighted":
+            # Compute per-position entropy for each teacher
+            weights = []
+            for bp in teacher_bps:
+                ent = -(bp * torch.log(bp + 1e-10)).sum(dim=-1)  # (T,)
+                weights.append(-ent)  # lower entropy = higher weight
+            weights = torch.stack(weights)  # (N_teachers, T)
+            weights = F.softmax(weights / agg_temp, dim=0)  # (N_teachers, T)
+            stacked = torch.stack(teacher_bps)  # (N_teachers, T, 256)
+            combined_bp = (stacked * weights.unsqueeze(-1)).sum(dim=0)
+            combined_mask = torch.stack(teacher_masks).any(dim=0)
+        
+        all_byte_probs.append(combined_bp)
+        all_byte_masks.append(combined_mask)
+```
+
+**3. Repr-level multi-teacher:**
+Each teacher has its own repr_proj. Average projected hidden states:
+```python
+for b in range(B_actual):
+    patch_hiddens = []
+    for t_idx, t in enumerate(teachers):
+        targets = teacher_results[t_idx][b]
+        if "hidden" in targets:
+            proj = t["repr_proj"](targets["hidden_patches"])  # (N_patches, d_local)
+            patch_hiddens.append(proj)
+    if patch_hiddens:
+        combined_hidden = torch.stack(patch_hiddens).mean(dim=0)  # average in projected space
+        all_teacher_hidden_patches.append(combined_hidden)
+```
+
+### VRAM budget
+
+| N Teachers | Teacher VRAM | Student VRAM | Total | Headroom |
+|-----------|-------------|-------------|-------|----------|
+| 1 (current) | ~2GB | ~9GB | ~11GB | 13GB |
+| 2 | ~4GB | ~9GB | ~13GB | 11GB |
+| 3 | ~6GB | ~9GB | ~15GB | 9GB |
+| 5 | ~10GB | ~9GB | ~19GB | 5GB |
+
+**Practical limit: 3-4 teachers.** Beyond 4, VRAM gets tight and throughput drops significantly.
+
+### Throughput impact
+
+Current: ~24s/step (1 teacher, covering).
+Each additional teacher adds:
+- GPU forward: ~3s (batched, 12 sequences)
+- CPU covering: ~15s (numpy, 12 × 1536 positions × full depth)
+- Total: ~18s/teacher
+
+| N Teachers | Est. s/step | Steps/hour | 1K steps | 3K steps |
+|-----------|------------|------------|----------|----------|
+| 1 | 24 | 150 | 6.7h | 20h |
+| 2 | 42 | 86 | 11.6h | 34.8h |
+| 3 | 60 | 60 | 16.7h | 50h |
+
+**Optimization: multiprocessing for CPU covering.** Teacher A's GPU forward → spawn CPU covering process → Teacher B's GPU forward → spawn CPU covering process → collect results. This pipelines GPU/CPU work. Expected speedup: ~40% for 2 teachers.
+
+### First multi-teacher experiment config
+
+```json
+{
+  "max_steps": 3000,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0},
+    {"id": "EleutherAI/pythia-1.4b", "weight": 1.0}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "use_covering": true,
+  "covering_max_depth": null,
+  "kd_alpha": 0.10,
+  "kd_beta": 0.10,
+  "kd_temperature": 1.5,
+  "kd_ramp_steps": 500,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+  "run_name": "ekalavya_multi2_covering_3k"
+}
+```
+
+**Note:** Reduced alpha to 0.10 (from 0.15) because 2-teacher AM targets are softer → more KD gradient per position. Monitor BPB carefully.
+
+### Teacher selection rationale
+
+**SmolLM2-1.7B + Pythia-1.4B** (2 teachers, same d_model=2048):
+- SmolLM2: best BPB on our data (0.490), trained on 2T tokens, strong general capability
+- Pythia: different training data (The Pile), different architecture details, BPB 0.534
+- Same d_model → can share repr_proj as a comparison experiment
+- Different tokenizers → different covering decompositions → complementary byte conditionals
+- This is the minimum viable multi-teacher experiment
+
+**If 2 teachers validates, add Qwen3-1.7B** (3 teachers):
+- d_model=2048 (same), 152K vocab (3x larger → very different tokenization)
+- Trained on ~18T tokens, different data distribution
+- 28 layers (deepest of the 3) → likely different hidden representations
+
+### Key metrics to track
+
+1. **BPB** — must beat single-teacher covering (whatever that achieves)
+2. **Teacher agreement** — compute JS(P_1, P_2) at each position. Low JS = teachers agree. High JS = they disagree. Track mean JS over training.
+3. **Per-teacher contribution** — with entropy weighting, track how often each teacher dominates. If one teacher always dominates, the other is adding noise.
+4. **Repr loss** — should improve faster with 2 teachers (more diverse hidden supervision)
