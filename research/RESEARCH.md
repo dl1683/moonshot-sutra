@@ -5225,3 +5225,32 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 - **Fix:** Changed to per-teacher `need_hidden = beta_eff > 0 and (not repr_anchor_only or t_idx in repr_teacher_indices)`. Non-anchor teachers pass `extract_hidden=False`.
 - **Safety:** `_teacher_patch_targets()` gracefully handles missing hidden states (line 1866: returns zeros). Zeros are stored in `patch_hidden_list` but never indexed by repr loss when `repr_anchor_only=True`.
 - **Status:** ✅ IMPLEMENTED (same commit).
+
+### 10.15 TAID+Gating Probe Results & 6K Launch Decision (2026-04-15)
+
+**Probe: ekalavya_iter5_taid_gating_probe (250 steps)**
+
+| Metric | Value |
+|--------|-------|
+| Step 250 eval BPB | 1.433 (+0.015 above 1.418 baseline) |
+| Final eval BPB | 1.409 (-0.009 below baseline) |
+| Eval variance | 0.024 BPB (400 samples insufficient for decisive signal) |
+| Mean training BPB | 1.420 (25 logged steps) |
+| Hard-batch spikes | Step 140: 1.512, Step 200: 1.625 (both fully recovered) |
+| Repr loss trajectory | 0.878 → 0.188 (78% reduction, still converging) |
+| KD loss vs routing | 2-6x lower at same ramp (TAID trust-region working) |
+| Max gradient (pre-clip) | 1.88 (clipped to 0.8, safe) |
+
+**Key findings:**
+1. **TAID trust-region is working.** KD loss 2-6x lower than routing at equivalent ramp values. The geometric interpolation `p_taid ∝ p_s^(1-β) * p_t^β` prevents the target from deviating too far from the student.
+2. **Hard-batch spikes recover.** Step 200 spike (BPB 1.625, KD 1.568) was the worst in the probe. Recovery: 1.625→1.472→1.464→1.423→1.414→1.398 (5 steps). The ug_clamp=4.0 allowed 4x amplification on hard batches — the 6K uses ug_clamp=1.5.
+3. **Probe KD budget was insufficient for eval improvement.** Cumulative effective KD transfer: probe=0.667, routing=5.188, 6K=35.776. The probe delivered only 13% of routing's signal. TAID β only reached 0.33 in 250 steps (reaches 0.8 at step 600 in 6K).
+4. **Mechanism is stable.** No catastrophic degradation, no divergence, no sustained regression. The routing run degraded from 1.418→1.429 during its hold phase. The probe shows no such trend.
+
+**6K launch decision: PROCEED.** The probe confirmed mechanism stability. The 6K config addresses probe limitations:
+- ug_clamp=1.5 (vs 4.0): prevents hard-batch KD amplification
+- 54x larger KD budget: TAID β reaches 0.8, sustained for 1500 steps
+- Piecewise alpha decay: gradual knowledge absorption over 4500 steps
+- CE-only consolidation (steps 4500-6000): student internalizes absorbed knowledge
+
+**6K run launched 2026-04-15 11:04.** Config: `results/config_ekalavya_iter5_full_6k.json`. Log: `results/ekalavya_iter5_full_6k.log`.
