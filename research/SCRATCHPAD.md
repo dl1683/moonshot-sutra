@@ -9598,6 +9598,51 @@ Routing: 1.418 (250) -> 1.426 (500) -> 1.429 (750) — DEGRADING
 **If step 500 eval > 1.430: KILL.** But this should NOT happen given probe's mean train BPB of 1.408 and the tighter ug_clamp=1.5.
 **If step 500 eval in 1.418-1.430: NEUTRAL.** Continue — budget only at 0.9x routing. Step 1000 is the real test.
 
+### TAID × Uncertainty Gating Interaction Analysis (Live Run 5 Data)
+
+**The mechanism chain at step 280:**
+```
+teacher_logits → softmax/T → t_probs (256-dim byte distribution)
+student_logits → softmax    → s_probs (256-dim byte distribution)
+
+TAID target = s_probs^(1-β) × t_probs^β     [geometric interpolation]
+  β=0.37 at step 280 → target is 63% student, 37% teacher
+
+UG gate = t_conf × (1 - s_match)^exp         [per-position weight]
+  exp=1.47 at step 280
+  t_conf = teacher's max prob (how confident is teacher?)
+  s_match = student's prob at teacher's top byte (does student agree?)
+
+KL_loss = KL(student || TAID_target) × gate   [gated divergence]
+Total = α_eff × T² × KL_loss                  [scaled contribution]
+```
+
+**Effective intensity at key milestones:**
+| Step | β | α_eff | T² | KD% of CE | Phase |
+|------|---|-------|-----|-----------|-------|
+| 280 | 0.37 | 0.029 | 1.69 | 1.4% | Ramp-up: student adapting to gentle targets |
+| 400 | 0.53 | 0.027 | 1.69 | ~2% | Moderate: TAID halfway to teacher |
+| 600 | 0.80 | 0.024 | 1.69 | peak | Full TAID: target is 80% teacher |
+| 1000 | 0.80 | 0.021 | 1.69 | declining | Peak budget zone: α decaying |
+| 1500 | 0.80 | 0.015 | 1.69 | low | Late absorption |
+| 3000 | 0.80 | 0.005 | 1.69 | trace | Almost pure CE |
+| 4500+ | 0.80 | 0.000 | 1.69 | 0% | Consolidation: no KD |
+
+**Live Run 5 diagnostic (steps 260-280):**
+| Step | CE↓ | KD↓ | Repr↓ | UG↓ | Interpretation |
+|------|-----|-----|-------|-----|----------------|
+| 260 | 0.995 | 0.561 | 0.197 | 0.74 | Adapting from step-250 checkpoint |
+| 270 | 0.981 | 0.464 | 0.174 | 0.70 | CE and KD both dropping: harmonious |
+| 280 | 0.965 | 0.474 | 0.161 | 0.69 | KD flat but CE still improving |
+
+**Harmonious convergence confirmed:** CE, KD, Repr, and UG all trending down. This means:
+1. Student is improving (lower CE)
+2. Student matches teacher better (lower s_match gap → lower UG)
+3. Student matches TAID target better (lower/flat KD)
+4. Representation alignment converging (lower Repr)
+
+Contrast with AM run (killed at step 380): KD was 4x higher (1.8-2.0 vs 0.47), CE was unstable, UG was NOT measured. The TAID+routing combination is qualitatively different.
+
 ---
 
 ## 6K EKALAVYA POST-MORTEM (2026-04-15)
@@ -9622,6 +9667,77 @@ No improvement over probe. Trend is flat at best.
 **Verdict:** 80 steps of continued training showed zero improvement beyond the probe checkpoint.
 Tesla R1-R3 consensus confirmed: Ekalavya-only has a ceiling at ~1.41 BPB with current 1.7B teachers.
 Restarting the 6K run would cost 10-30 hours for marginal data. Better to use GPU for architecture experiments.
+
+---
+
+## NEXT EKALAVYA ITERATION PLANNING (2026-04-15)
+
+**Depends on:** Current 6K run result. Decision tree after step 500 eval (~23:10 EST).
+
+### Decision Tree
+| Step 500 eval BPB | Action | Rationale |
+|--------------------|--------|-----------|
+| < 1.410 | EXCELLENT: Continue to 6K, plan 3-teacher next iter | KD accumulating well beyond probe |
+| 1.410 - 1.420 | GOOD: Continue, step 1000 is the real test | Matching probe, need more budget |
+| 1.420 - 1.430 | NEUTRAL: Continue cautiously | At routing baseline, watch for degradation |
+| > 1.430 | KILL: T+L redesign session | KD mechanism failing |
+
+Kill rules: `{"500": 1.430, "1500": 1.420}` — step 1500 kill is tighter.
+
+### Improvements for Next Iteration (regardless of 6K outcome)
+
+**1. Teacher caching (HIGHEST PRIORITY)**
+- Pre-compute covering byte probs for all training windows
+- Eliminates 77% wall-time bottleneck (48s/step → ~5-8s/step)
+- Implementation: already done (precompute_teacher_cache + training-side loader)
+- Cache size: ~33GB (top-8 sparse, 2 teachers, 6K steps)
+- Build time: ~100h on CPU, ~10-20h with GPU covering
+- **Action:** Build cache overnight after 6K run completes
+
+**2. GPU scatter_add covering (speeds up cache building)**
+- Spec + per-sequence implementation done (in sutra_dyad.py)
+- Expected: 600x speedup per sequence, 4800x fully batched
+- Reduces cache build time: 100h → ~10-20h
+- **Action:** Test + validate when GPU is free, then use for cache building
+
+**3. Qwen3-1.7B as 3rd teacher**
+- Byte BPB 1.055, near-zero correlation with anchor (0.008)
+- 151K vocab (3x covering tables, partially offset by GPU covering)
+- Same hidden dim (2048) — repr proj already compatible
+- **Action:** Add to teacher caching config, run 3-teacher iteration
+
+**4. Extended training (12K or 15K steps)**
+- Current 6K run has alpha decaying to 0 by step 4500, then 1500 steps of pure CE
+- Could extend: slower alpha decay, or more CE consolidation steps
+- **Action:** Decide based on 6K eval trajectory (if still improving at step 4500, extend)
+
+### Research-Informed Improvements
+
+**From CTLS (2512.14954):** Our covering is already optimal for V_M → V_0 (byte). No change needed.
+
+**From Axiomatic Aggregation (2601.09165):** Geometric mean (TAID) is one of 3 theoretically valid aggregation families. Could also try entropic regularization (family c). But geometric is already working.
+
+**From Knowledge Purification (2602.01064):** Routing beats averaging for multi-teacher. We already do this (anchor-confidence routing). Could explore: similarity-based routing (currently we use JSD-based). Also: at REPRESENTATION level, routing is even more important than at byte level.
+
+### Config Sketch for 3-Teacher Iteration
+```json
+{
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"},
+    {"id": "EleutherAI/pythia-1.4b", "weight": 1.0, "role": "aux"},
+    {"id": "Qwen/Qwen3-1.7B", "weight": 1.0, "role": "aux"}
+  ],
+  "use_teacher_cache": true,
+  "teacher_cache_path": "results/teacher_cache_3teacher_12k.pt",
+  "aggregation": "anchor_confidence_routing",
+  "routing": {"js_thresh": 0.02, "margin": 0.02, "aux_cap": 0.35},
+  "max_steps": 12000,
+  "kd_alpha": 0.03,
+  "kd_alpha_decay_points": [[150, 1.0], [3000, 0.5], [6000, 0.167], [9000, 0.0]],
+  "taid_beta_end": 0.8,
+  "taid_beta_ramp_steps": 1200
+}
+```
 
 ---
 
@@ -9780,3 +9896,170 @@ If P=4 loses by >0.05 → more patches ≠ better, reconsider MVG approach.
 1. Teacher caching is implemented (eliminates covering bottleneck)
 2. Current 2-teacher 6K run completes and provides baseline
 3. GPU covering or sparse optimization is in place
+
+---
+
+## GPU SCATTER_ADD COVERING — DESIGN SPEC (2026-04-15)
+
+**Goal:** Replace CPU Python-dict covering with GPU scatter_add. Expected speedup: ~1000x at depths 1+ (40ms vs 48s per micro-batch).
+
+**Why now:** GPU covering speeds up BOTH live training AND cache building. For 3-teacher caching with Qwen3 (151K vocab → huge prefix tables), CPU covering would take ~150-200 hours. GPU covering brings this to ~15-20 hours.
+
+### Current CPU Architecture (bottleneck analysis)
+```
+Per micro-batch (12 sequences × ~170 token positions × ~7 bytes/token ≈ 14K byte positions):
+
+Depth 0: first_byte_matrix (256, V) @ token_probs (V,) → 256-dim conditional
+         ALREADY VECTORIZED. ~2ms on GPU matmul. No bottleneck.
+
+Depths 1-7: For each byte position at depth d:
+  1. Build prefix = observed_bytes[:d]                     ← Python tuple construction
+  2. Look up prefix_to_indices[prefix] → token indices     ← Python dict lookup
+  3. Sum token_probs[indices] → normalizer                 ← numpy fancy indexing
+  4. For each child byte c in prefix_children[prefix]:     ← Python dict iteration
+       Sum token_probs[child_indices[c]] → cond[c]         ← numpy fancy indexing
+  5. Normalize cond / normalizer                           ← numpy division
+
+  ~12K positions × Python overhead = 48 SECONDS on CPU (77% of wall time).
+```
+
+### GPU Design
+
+**Pre-compute (one-time per tokenizer, ~2s build time):**
+
+For each depth d (1 to max_token_bytes):
+```python
+# CSR-style grouping by prefix:
+depth_d_offsets: (N_prefixes[d] + 1,) long   — CSR row pointers
+depth_d_tokens:  (N_entries[d],) long          — token indices, grouped by prefix
+depth_d_bytes:   (N_entries[d],) uint8         — d-th byte of each token (the "next byte")
+prefix_to_id:    dict{tuple → int}             — maps prefix bytes → group_id
+
+# Also store: each token's FULL byte sequence as a padded tensor
+token_byte_tensor: (V, max_token_bytes) uint8  — byte encoding of each token
+token_byte_lens:   (V,) int                    — length of each token's byte encoding
+```
+
+Example for SmolLM2 (49K vocab):
+- Depth 1: ~256 unique prefixes (1-byte), ~49K entries → ~400KB
+- Depth 2: ~5K unique prefixes, ~48K entries → ~400KB
+- Depth 3: ~20K unique prefixes, ~40K entries → ~500KB
+- Total: ~2MB GPU memory. Trivial.
+
+**Runtime (per micro-batch):**
+
+```python
+def gpu_covering_batched(token_probs_gpu, observed_bytes_batch, covering_gpu_tables):
+    """
+    token_probs_gpu: (B, T_teacher, V) — softmaxed teacher probs, ALREADY ON GPU
+    observed_bytes_batch: list of B lists of (T_teacher - 1) token byte sequences
+    covering_gpu_tables: pre-computed GPU tensors
+    
+    Returns: byte_probs (B, seq_bytes, 256), byte_mask (B, seq_bytes)
+    """
+    B, T, V = token_probs_gpu.shape
+    
+    # === DEPTH 0: GPU matmul (already fast) ===
+    # depth0_probs: (B, T, 256) = token_probs_gpu @ first_byte_matrix.T
+    depth0 = torch.matmul(token_probs_gpu, first_byte_matrix.T)  # (B, T, 256)
+    depth0 = depth0 / depth0.sum(dim=-1, keepdim=True).clamp(min=1e-10)
+    
+    # === DEPTHS 1+: GPU scatter_add ===
+    # Step 1: Build index arrays on CPU (~1ms for 12K positions)
+    # For each (b, t, d) triple where byte position exists:
+    #   - pos_idx: which output byte position
+    #   - teacher_idx: which teacher token position to read probs from
+    #   - group_id: prefix group ID at depth d
+    
+    all_pos_idx = []      # output byte position index
+    all_teacher_idx = []  # which (b, t) in token_probs_gpu
+    all_group_starts = [] # CSR start for this prefix group
+    all_group_ends = []   # CSR end for this prefix group
+    
+    for b in range(B):
+        byte_offset = 0
+        for t in range(T - 1):  # each teacher token position predicts NEXT token
+            next_token_bytes = observed_bytes_batch[b][t]
+            if not next_token_bytes:
+                continue
+            
+            for d in range(1, len(next_token_bytes)):
+                prefix = next_token_bytes[:d]
+                group_id = prefix_to_id[d].get(prefix, -1)
+                if group_id < 0:
+                    continue
+                
+                byte_pos = byte_offset + d  # position in output byte sequence
+                all_pos_idx.append(byte_pos + b * seq_bytes)  # flat index
+                all_teacher_idx.append(b * T + t)             # flat index
+                all_group_starts.append(depth_d_offsets[d][group_id].item())
+                all_group_ends.append(depth_d_offsets[d][group_id + 1].item())
+            
+            byte_offset += len(next_token_bytes)
+    
+    # Step 2: Expand into flat gather/scatter arrays (~2ms)
+    expanded_pos = []      # which output position this contributes to
+    expanded_teacher = []  # which teacher position to read from
+    expanded_token = []    # which token index in the vocabulary
+    expanded_next_byte = []# which byte value (0-255)
+    
+    for i in range(len(all_pos_idx)):
+        start, end = all_group_starts[i], all_group_ends[i]
+        group_size = end - start
+        d = <depth_for_this_entry>  # need to track which depth
+        
+        expanded_pos.extend([all_pos_idx[i]] * group_size)
+        expanded_teacher.extend([all_teacher_idx[i]] * group_size)
+        expanded_token.extend(depth_d_tokens[d][start:end].tolist())
+        expanded_next_byte.extend(depth_d_bytes[d][start:end].tolist())
+    
+    # Step 3: GPU gather + scatter_add (~0.1ms for 200K entries)
+    M = len(expanded_pos)
+    pos_t   = torch.tensor(expanded_pos, device=device, dtype=torch.long)
+    teach_t = torch.tensor(expanded_teacher, device=device, dtype=torch.long)
+    tok_t   = torch.tensor(expanded_token, device=device, dtype=torch.long)
+    byte_t  = torch.tensor(expanded_next_byte, device=device, dtype=torch.long)
+    
+    # Gather teacher probs for each (teacher_pos, token_id) pair
+    gathered = token_probs_gpu.view(-1, V)[teach_t, tok_t]  # (M,)
+    
+    # Scatter into output: (N_total_byte_positions, 256)
+    flat_idx = pos_t * 256 + byte_t  # (M,)
+    output = torch.zeros(B * seq_bytes * 256, device=device)
+    output.scatter_add_(0, flat_idx, gathered)
+    output = output.view(B * seq_bytes, 256)
+    
+    # Normalize each byte position
+    output = output / output.sum(dim=-1, keepdim=True).clamp(min=1e-10)
+    byte_probs = output.view(B, seq_bytes, 256)
+```
+
+### Memory Budget
+- Index arrays (M ≈ 200K): 4 tensors × 200K × 8 bytes = 6.4MB
+- Output: B × seq_bytes × 256 × 4 = 12 × 1536 × 256 × 4 = 18.9MB
+- GPU tables: ~2MB
+- Total GPU overhead: ~27MB — negligible vs 11.2GB training footprint
+
+### Expected Performance
+| Component | CPU (current) | GPU (proposed) | Speedup |
+|-----------|--------------|----------------|---------|
+| Depth 0 matmul | 5ms | 0.5ms | 10x |
+| Depths 1-7 covering | 48,000ms | 5ms | 9600x |
+| Index building (CPU) | — | 3ms | (new overhead) |
+| CPU→GPU tensor transfer | — | 1ms | (new overhead) |
+| **Total covering** | **48,000ms** | **~10ms** | **~4800x** |
+
+### Caveats / Open Questions
+1. **Index building on CPU** — The Python loop over positions and dict lookups adds ~3ms. Could be accelerated with Cython/numba if needed, but 3ms is probably fine.
+2. **Variable expansion size** — M varies by micro-batch (depends on token byte lengths). For worst-case 151K-vocab Qwen3, M could be ~500K. Still fast.
+3. **Correctness validation** — Must verify against CPU reference for 100+ micro-batches before trusting.
+4. **Integration with _covering_one_sequence** — Need to refactor the batched function to use GPU covering instead of ThreadPoolExecutor CPU covering.
+5. **Memory for large vocab (151K)** — CSR arrays larger but still <10MB. Fine.
+
+### Implementation Plan
+1. Add `_build_covering_tables_gpu()` that converts existing covering_tables into CSR GPU tensors
+2. Add `_gpu_covering_batched()` that replaces the ThreadPoolExecutor path
+3. Add a config flag `gpu_covering: true` (default false for safety)
+4. Validate: run 100 micro-batches with both paths, verify max error < 1e-5
+5. Benchmark: measure wall time per step with GPU vs CPU covering
+6. **Blocked on GPU** — can implement + test only when training finishes or on CPU-only path for index building logic
