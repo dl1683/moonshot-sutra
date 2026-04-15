@@ -9688,3 +9688,95 @@ If P=4 loses by >0.05 → more patches ≠ better, reconsider MVG approach.
 6. **_training_state["finished"]** flag prevents atexit double-save on normal exit.
 
 **Current run:** PID 59068, launched at 19:00:12, nohup-detached, all crash defenses active. Resuming from step_250.pt.
+
+---
+
+## COVERING DECOMPOSITION BOTTLENECK — OPTIMIZATION SKETCH (2026-04-15)
+
+**Problem:** Covering decomposition is CPU-bound at ~48-60s/step. This makes a 6K run take ~100 hours (4.2 days). The GPU sits idle during covering.
+
+**Current architecture:**
+1. Teacher forward (GPU, batched): ~5s per micro-batch × 2 teachers = ~10s/step
+2. Covering (CPU, ThreadPoolExecutor(12)): ~4-5s per sequence × 12 sequences = ~48s/step
+3. Student forward+backward (GPU): ~3s/step
+4. Optimizer step: ~1s/step
+**Total: ~62s/step, covering is 77% of wall time.**
+
+**Bottleneck analysis:**
+- `_covering_byte_conditionals_np`: inner loop iterates over prefix_children dict
+- For each token position: depth-0 is vectorized (fast), depths 1+ iterate over dict entries (slow)
+- Average token is ~7 bytes → 6 depth iterations per token
+- ~216 tokens per 1536-byte sequence → ~1296 dict iterations per sequence
+- Python dict overhead: ~1μs per lookup × 1296 × 12 sequences = ~15ms (negligible)
+- The slow part: `token_probs_np[prefix_to_indices_np[prefix]].sum()` — fancy indexing
+
+**Optimization ideas (ranked by effort/impact):**
+
+1. **Sparse matrix covering (MEDIUM effort, HIGH impact)**
+   Convert prefix_children + prefix_to_indices into pre-computed sparse matrices (scipy.sparse CSR).
+   Then `cond[next_byte] = token_probs_np @ sparse_matrix[prefix]` — single sparse matmul.
+   Expected: 3-5x speedup on deeper bytes.
+
+2. **GPU covering (HIGH effort, HIGH impact)**
+   The covering computation is: p(byte_k | bytes_<k) = Σ_{tokens with prefix bytes_<k,byte_k} p(token) / Σ_{tokens with prefix bytes_<k} p(token).
+   This is a group-by-sum operation on a vocabulary of ~50K tokens. Could be done with scatter_add on GPU.
+   Requires pre-computing the grouping indices as GPU tensors (one-time cost per tokenizer).
+   Expected: 10-20x speedup (GPU scatter is much faster than CPU dict iteration).
+
+3. **Teacher caching (ZERO effort, eliminates covering entirely)**
+   Pre-compute all teacher targets for the training data shards.
+   Store byte_probs + hidden states on disk.
+   During training, just load from disk — no teacher forward, no covering.
+   Config already supports this (`use_teacher_cache`, `teacher_cache_path`).
+   Downside: requires ~50-100GB disk per teacher for full dataset.
+   Expected: 10-20x throughput improvement (step time drops from 60s to ~5-8s).
+
+4. **Async covering (LOW effort, MODERATE impact)**
+   Overlap covering of micro-batch N+1 with GPU backward of micro-batch N.
+   Use multiprocessing (not threading) to avoid GIL for non-numpy parts.
+   Expected: 1.5-2x speedup (CPU and GPU work in parallel).
+
+5. **Depth limiting (ZERO effort, MINOR impact)**
+   The `max_depth` parameter already exists but is set to None (= all depths).
+   Based on the SCRATCHPAD analysis, first-byte marginal (depth 0) captures 84% of signal.
+   Setting max_depth=2 or 3 would skip deeper byte conditionals.
+   Expected: 1.3-1.5x speedup but with some signal loss.
+
+**Recommendation:** Option 3 (teacher caching) is the highest-ROI optimization. It's already supported in the code and eliminates the covering bottleneck entirely. For a long 6K+ run, pre-computing the cache is a one-time ~6-8 hour investment that pays back 10-20x.
+
+**For immediate run:** Let the current run complete (4 days). For the next iteration, pre-compute teacher cache first.
+
+---
+
+## QWEN3-1.7B AS 3RD TEACHER — ANALYSIS (2026-04-15)
+
+**Teacher profiling data (from results/teacher_profile_remaining.json + teacher_profiles.json):**
+| Teacher | Byte BPB | Token Top-1 | Mean Entropy | Vocab | Hidden | 
+|---------|----------|-------------|--------------|-------|--------|
+| SmolLM2-1.7B (anchor) | — | 43.8% | 2.688 | 49K | 2048 |
+| Pythia-1.4B (aux) | — | 39.6% | 3.003 | 50K | 2048 |
+| Qwen3-1.7B (candidate) | 1.055 | 39.8% | 2.942 | 151K | 2048 |
+
+**Cross-teacher confidence correlations:**
+| Pair | Correlation | Interpretation |
+|------|-------------|----------------|
+| Pythia vs SmolLM2 | 0.067 | Low — complementary |
+| Qwen3 vs SmolLM2 | 0.008 | Near-zero — fully independent! |
+| Qwen3 vs Pythia | 0.037 | Very low — complementary |
+
+**Why Qwen3 is exciting:**
+1. Near-zero correlation with anchor (SmolLM2) — maximally complementary
+2. Different tokenizer (151K BPE) — captures different byte-level patterns
+3. Byte BPB 1.055 — very strong, close to our target range
+4. Same hidden dimension (2048) — projection layer already fits
+
+**Challenges:**
+1. 151K vocab → larger covering tables (~3x more tokens to iterate)
+2. Covering decomposition would be even slower (more prefix lookups per token)
+3. Additional ~3GB VRAM for 4-bit quantized Qwen3
+4. CPU bottleneck gets worse with 3 teachers (1.5x more covering time)
+
+**Verdict:** Strong candidate for next Ekalavya iteration, but ONLY after:
+1. Teacher caching is implemented (eliminates covering bottleneck)
+2. Current 2-teacher 6K run completes and provides baseline
+3. GPU covering or sparse optimization is in place
