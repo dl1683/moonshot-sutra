@@ -2418,10 +2418,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
     taid_beta_end = cfg.get("taid_beta_end", 0.8)
     taid_beta_ramp = cfg.get("taid_beta_ramp_steps", 600)
 
-    # Uncertainty gating: gate = t_conf * (1-s_conf)^exp, renorm to mean=1, clamp
+    # Uncertainty gating v2: gate = t_conf * (1-s_match)^exp, renorm to mean=1, clamp
+    # s_match = student prob at teacher's top byte (not max student prob)
     use_uncertainty_gating = cfg.get("use_uncertainty_gating", False)
     ug_renormalize = cfg.get("ug_renormalize", True)
-    ug_clamp = cfg.get("ug_clamp", 4.0)
+    ug_clamp = cfg.get("ug_clamp", 1.5)  # v2: lowered from 4.0 per Codex correctness review
     ug_exp_start = cfg.get("ug_exp_start", 1.0)
     ug_exp_end = cfg.get("ug_exp_end", 2.0)
     ug_exp_ramp = cfg.get("ug_exp_ramp_steps", 600)
@@ -2836,25 +2837,35 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         kl = F.kl_div(student_log_probs, target_log_probs, reduction='none', log_target=True)
                         kl = kl.sum(dim=-1)  # (B, T)
 
-                        # Uncertainty gating: concentrate KD on high-value positions
+                        # Uncertainty gating v2: concentrate KD on high-value positions
+                        # Fix 1: s_match (student prob at teacher's top byte) instead of s_conf (max student prob)
+                        #   - Old: s_conf gates out KD where student is peaked, even if confidently WRONG
+                        #   - New: s_match gates out KD where student already agrees with teacher
+                        # Fix 2: compute student probs at kd_temperature (matching teacher)
+                        # Fix 3: expanded logging (raw_mean, sat fraction)
                         if use_uncertainty_gating:
                             t_conf = t_probs.max(dim=-1).values  # (B, T) teacher confidence
                             with torch.no_grad():
-                                s_probs_ug = F.softmax(student_logits.float(), dim=-1)
-                                s_conf = s_probs_ug[:, :t_probs.shape[1], :].max(dim=-1).values
+                                s_probs_ug = F.softmax(student_logits.float() / kd_temperature, dim=-1)
+                                s_probs_ug = s_probs_ug[:, :t_probs.shape[1], :]
+                                teacher_top = t_probs.argmax(dim=-1, keepdim=True)  # (B, T, 1)
+                                s_match = s_probs_ug.gather(-1, teacher_top).squeeze(-1)  # (B, T)
                             ug_exp = ug_exp_start + (ug_exp_end - ug_exp_start) * min(1.0, step / max(ug_exp_ramp, 1))
-                            gate = t_conf * (1.0 - s_conf).pow(ug_exp)
+                            gate = t_conf * (1.0 - s_match).pow(ug_exp)
+                            with torch.no_grad():
+                                raw_gate_mean = (gate * mask.float()).sum() / mask.float().sum().clamp_min(1e-10)
                             if ug_renormalize:
-                                gate_mean = (gate * mask.float()).sum() / mask.float().sum().clamp_min(1e-10)
-                                gate = gate / gate_mean.clamp_min(1e-10)
+                                gate = gate / raw_gate_mean.clamp_min(1e-10)
                             gate = gate.clamp(max=ug_clamp)
                             kl = kl * gate
                             # Stats for logging
                             with torch.no_grad():
                                 ug_stats = {
+                                    "ug_raw_mean": raw_gate_mean.item(),
                                     "ug_mean": gate[mask].mean().item() if mask.any() else 0,
                                     "ug_active": (gate[mask] > 0.5).float().mean().item() if mask.any() else 0,
                                     "ug_max": gate[mask].max().item() if mask.any() else 0,
+                                    "ug_sat": (gate[mask] >= ug_clamp - 0.01).float().mean().item() if mask.any() else 0,
                                 }
 
                         kl = (kl * mask.float()).sum() / mask.float().sum()
@@ -2947,7 +2958,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
             local_lr = optimizer.param_groups[0]['lr']
             ug_suffix = ""
             if use_uncertainty_gating and ug_stats:
-                ug_suffix = f" | ug={ug_stats.get('ug_mean',0):.2f}/{ug_stats.get('ug_active',0):.0%}"
+                ug_suffix = (f" | ug={ug_stats.get('ug_mean',0):.2f}/{ug_stats.get('ug_active',0):.0%}"
+                             f" r{ug_stats.get('ug_raw_mean',0):.2f}/m{ug_stats.get('ug_max',0):.1f}/s{ug_stats.get('ug_sat',0):.0%}")
             taid_suffix = ""
             if use_taid:
                 bt = taid_beta_start + (taid_beta_end - taid_beta_start) * min(1.0, step / max(taid_beta_ramp, 1))
