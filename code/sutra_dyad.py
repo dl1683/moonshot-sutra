@@ -692,6 +692,769 @@ class SutraDyadS1(nn.Module):
         return ids[0].tolist()
 
 
+# ---- MVG Scout: BPE-aligned variable patching ----
+# Designed by Tesla R1-R3 Codex review (§16 of tesla_session_design.md).
+# Tests the core hypothesis: semantic (BPE-aligned) patch boundaries give the
+# global transformer better context than fixed 6-byte patches.
+
+class BPEPatcher:
+    """Segments byte sequences into BPE-aligned patches on CPU.
+
+    NOT used inside model forward pass (R3 gap #4: no GPU sync).
+    Produces patch_ids and patch_mask tensors consumed by SutraDyadMVG.
+    Falls back to fixed 4-byte patches for non-UTF-8 sequences.
+    """
+
+    def __init__(self, model_path=None, vocab_size=8192):
+        self.vocab_size = vocab_size
+        self._model_path = model_path or str(REPO / f"data/bpe_{vocab_size}.model")
+        self._sp = None  # lazy load
+
+    @property
+    def sp(self):
+        if self._sp is None:
+            import sentencepiece as spm
+            if not os.path.exists(self._model_path):
+                raise FileNotFoundError(
+                    f"BPE model not found: {self._model_path}\n"
+                    f"Train one with: BPEPatcher.train_bpe()")
+            self._sp = spm.SentencePieceProcessor()
+            self._sp.Load(self._model_path)
+        return self._sp
+
+    @classmethod
+    def train_bpe(cls, vocab_size=8192, sample_bytes=10_000_000, output_dir=None):
+        """Train a SentencePiece BPE model on training data byte shards."""
+        import sentencepiece as spm
+        import tempfile
+
+        output_dir = output_dir or str(REPO / "data")
+        model_prefix = os.path.join(output_dir, f"bpe_{vocab_size}")
+
+        if os.path.exists(model_prefix + ".model"):
+            print(f"BPE model already exists: {model_prefix}.model")
+            return model_prefix + ".model"
+
+        # Sample text from byte shards
+        shard_dir = REPO / "data" / "shards_bytes"
+        shard_files = sorted(shard_dir.glob("*.pt"))
+        if not shard_files:
+            raise FileNotFoundError(f"No byte shards in {shard_dir}")
+
+        # Collect sample bytes from multiple shards
+        collected = bytearray()
+        bytes_per_shard = max(1, sample_bytes // len(shard_files))
+        for sf in shard_files:
+            if len(collected) >= sample_bytes:
+                break
+            data = torch.load(sf, weights_only=True)
+            n = min(bytes_per_shard, data.numel())
+            offset = random.randint(0, max(0, data.numel() - n))
+            chunk = bytes(data[offset:offset + n].numpy().astype('uint8'))
+            collected.extend(chunk)
+
+        # Decode to text (skip invalid UTF-8 spans)
+        text = bytes(collected).decode('utf-8', errors='replace')
+
+        # Write to temp file for SentencePiece training
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False,
+                                          encoding='utf-8') as f:
+            f.write(text)
+            tmp_path = f.name
+
+        try:
+            spm.SentencePieceTrainer.Train(
+                input=tmp_path,
+                model_prefix=model_prefix,
+                vocab_size=vocab_size,
+                model_type='bpe',
+                character_coverage=1.0,
+                byte_fallback=True,  # handle all bytes
+                normalization_rule_name='identity',  # no normalization
+                add_dummy_prefix=False,
+                max_sentence_length=16384,
+                num_threads=4,
+            )
+            print(f"BPE model trained: {model_prefix}.model ({vocab_size} tokens)")
+        finally:
+            os.unlink(tmp_path)
+
+        return model_prefix + ".model"
+
+    def segment(self, byte_tensor):
+        """Convert byte tensor to patch assignments.
+
+        Args:
+            byte_tensor: (T,) long tensor of byte values [0, 255]
+        Returns:
+            patch_ids: (T,) long tensor — patch_ids[t] = which patch byte t belongs to
+            n_patches: int
+        """
+        T = byte_tensor.shape[0]
+        raw = bytes(byte_tensor.cpu().numpy().astype('uint8'))
+
+        # Try UTF-8 decode → BPE tokenize
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            # Fallback: fixed 4-byte patches
+            patch_ids = torch.arange(T, dtype=torch.long) // 4
+            return patch_ids, int((T + 3) // 4)
+
+        # Encode with SentencePiece (returns piece strings)
+        pieces = self.sp.EncodeAsPieces(text)
+
+        # Build byte→patch mapping by tracking byte position
+        patch_ids = torch.zeros(T, dtype=torch.long)
+        byte_pos = 0
+        for patch_idx, piece in enumerate(pieces):
+            # SentencePiece piece → bytes (handle ▁ prefix and byte fallback tokens)
+            piece_text = piece.replace('▁', ' ') if piece.startswith('▁') else piece
+            # Handle byte fallback tokens like <0xAB>
+            if piece.startswith('<0x') and piece.endswith('>'):
+                piece_bytes = bytes([int(piece[3:-1], 16)])
+            else:
+                piece_bytes = piece_text.encode('utf-8')
+
+            n_bytes = len(piece_bytes)
+            if byte_pos + n_bytes > T:
+                # Truncation safety: assign remaining bytes to last patch
+                patch_ids[byte_pos:] = patch_idx
+                byte_pos = T
+                break
+            patch_ids[byte_pos:byte_pos + n_bytes] = patch_idx
+            byte_pos += n_bytes
+
+        # R3 gap #3: verify byte reconstruction
+        if byte_pos != T:
+            # BPE span mismatch — fallback to fixed patches for this sample
+            patch_ids = torch.arange(T, dtype=torch.long) // 4
+            return patch_ids, int((T + 3) // 4)
+
+        n_patches = patch_ids.max().item() + 1
+        return patch_ids, n_patches
+
+    def batch_segment(self, byte_batch):
+        """Segment a batch of byte sequences.
+
+        Args:
+            byte_batch: (B, T) long tensor
+        Returns:
+            patch_ids: (B, T) long tensor
+            patch_mask: (B, Nmax) bool tensor
+            n_patches: (B,) long tensor
+        """
+        B, T = byte_batch.shape
+        all_ids = []
+        all_n = []
+
+        for b in range(B):
+            ids, n = self.segment(byte_batch[b])
+            all_ids.append(ids)
+            all_n.append(n)
+
+        patch_ids = torch.stack(all_ids)      # (B, T)
+        n_patches = torch.tensor(all_n, dtype=torch.long)
+        Nmax = n_patches.max().item()
+
+        patch_mask = torch.zeros(B, Nmax, dtype=torch.bool)
+        for b in range(B):
+            patch_mask[b, :all_n[b]] = True
+
+        return patch_ids, patch_mask, n_patches
+
+
+class SutraDyadMVG(nn.Module):
+    """MVG scout: BPE-aligned variable patches, same global trunk as Stage0.
+
+    Designed by Tesla R1-R3 (§16 of tesla_session_design.md).
+    Differences from SutraDyad Stage0:
+    - patch_proj: Linear(d_local, d_global) instead of Linear(P*d_local, d_global)
+    - Accepts patch_ids, patch_mask from CPU-side BPEPatcher
+    - Uses scatter-mean for patch embedding, gather for global→byte depooling
+    - Everything else IDENTICAL to Stage0
+
+    Causality contract (verified R3):
+    - patch_mean[j] = mean(byte_emb[bytes in patch j])
+    - global_out[j] = CausalTransformer(patch_emb[0..j])
+    - global_shifted[j] = global_out[j-1]  (bytes in patch j see patches 0..j-1)
+    - local decoder is causal over all T bytes
+    """
+
+    def __init__(self, n_bytes=N_BYTES, d_local=D_LOCAL, d_global=D_GLOBAL,
+                 n_local_heads=N_LOCAL_HEADS, n_global_heads=N_GLOBAL_HEADS,
+                 n_local_dec_layers=N_LOCAL_DEC_LAYERS, n_global_layers=N_GLOBAL_LAYERS,
+                 ff_local=FF_LOCAL, ff_global=FF_GLOBAL,
+                 max_patches=512, max_seq_bytes=SEQ_BYTES):
+        super().__init__()
+        self.n_bytes = n_bytes
+        self.d_local = d_local
+        self.d_global = d_global
+        self.max_patches = max_patches
+        self.max_seq_bytes = max_seq_bytes
+
+        # Byte embedding (SAME as Stage0)
+        self.byte_embed = nn.Embedding(n_bytes, d_local)
+
+        # Patch projection: mean-pooled d_local → d_global (CHANGED)
+        self.patch_proj = nn.Linear(d_local, d_global, bias=False)
+
+        # Global transformer (IDENTICAL to Stage0)
+        self.global_layers = nn.ModuleList([
+            TransformerBlock(d_global, n_global_heads, ff_global)
+            for _ in range(n_global_layers)
+        ])
+        self.global_norm = RMSNorm(d_global)
+
+        # RoPE for global (over patches)
+        g_head_dim = d_global // n_global_heads
+        g_cos, g_sin = precompute_rope(g_head_dim, max_patches + 16)
+        self.register_buffer('g_rope_cos', g_cos, persistent=False)
+        self.register_buffer('g_rope_sin', g_sin, persistent=False)
+
+        # Global-to-local projection (SAME)
+        self.global_to_local = nn.Linear(d_global, d_local, bias=False)
+
+        # Local decoder (IDENTICAL to Stage0)
+        self.local_decoder = nn.ModuleList([
+            TransformerBlock(d_local, n_local_heads, ff_local)
+            for _ in range(n_local_dec_layers)
+        ])
+        self.local_norm = RMSNorm(d_local)
+
+        # RoPE for local (over bytes)
+        l_head_dim = d_local // n_local_heads
+        l_cos, l_sin = precompute_rope(l_head_dim, max_seq_bytes + 16)
+        self.register_buffer('l_rope_cos', l_cos, persistent=False)
+        self.register_buffer('l_rope_sin', l_sin, persistent=False)
+
+        # Output head (tied — SAME)
+        self.output_head = nn.Linear(d_local, n_bytes, bias=False)
+        self.output_head.weight = self.byte_embed.weight
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.02)
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(m.weight, std=0.02)
+
+    def _scatter_mean(self, byte_emb, patch_ids, Nmax):
+        """Mean-pool byte embeddings per patch using scatter."""
+        B, T, D = byte_emb.shape
+        patch_sum = torch.zeros(B, Nmax, D, device=byte_emb.device, dtype=byte_emb.dtype)
+        patch_count = torch.zeros(B, Nmax, 1, device=byte_emb.device, dtype=byte_emb.dtype)
+
+        idx = patch_ids.unsqueeze(-1).expand_as(byte_emb)
+        patch_sum.scatter_add_(1, idx, byte_emb)
+        patch_count.scatter_add_(1, patch_ids.unsqueeze(-1),
+                                  torch.ones(B, T, 1, device=byte_emb.device, dtype=byte_emb.dtype))
+        return patch_sum / patch_count.clamp(min=1.0)
+
+    def _gather_to_bytes(self, patch_repr, patch_ids):
+        """Expand patch representation back to byte level."""
+        idx = patch_ids.unsqueeze(-1).expand(patch_ids.shape[0], patch_ids.shape[1],
+                                              patch_repr.shape[-1])
+        return torch.gather(patch_repr, 1, idx)
+
+    def forward(self, byte_ids, targets=None, patch_ids=None, patch_mask=None):
+        """Forward pass with variable BPE patches.
+
+        Args:
+            byte_ids: (B, T) long tensor of byte values [0, 255]
+            targets: (B, T) long tensor of next-byte targets
+            patch_ids: (B, T) long — which patch each byte belongs to
+            patch_mask: (B, Nmax) bool — True for real patches
+        """
+        B, T = byte_ids.shape
+        Nmax = patch_mask.shape[1]
+
+        # 1. Byte embeddings
+        byte_emb = self.byte_embed(byte_ids)  # (B, T, d_local)
+
+        # 2. Mean-pool bytes per BPE patch → project to global dim
+        patch_mean = self._scatter_mean(byte_emb, patch_ids, Nmax)  # (B, Nmax, d_local)
+        patch_emb = self.patch_proj(patch_mean)  # (B, Nmax, d_global)
+
+        # 3. Global causal transformer over patches
+        g_cos = self.g_rope_cos.to(patch_emb.device)
+        g_sin = self.g_rope_sin.to(patch_emb.device)
+        x = patch_emb
+        for layer in self.global_layers:
+            x = layer(x, g_cos, g_sin)
+        global_out = self.global_norm(x)  # (B, Nmax, d_global)
+
+        # 4. SHIFT global by 1 patch — LOAD-BEARING CAUSALITY CONTRACT
+        # bytes in patch j use global context from patches 0..j-1 ONLY
+        global_shifted = torch.cat([
+            torch.zeros(B, 1, self.d_global, device=byte_ids.device, dtype=global_out.dtype),
+            global_out[:, :-1, :]
+        ], dim=1)
+
+        # 5. Project to d_local
+        global_local = self.global_to_local(global_shifted)  # (B, Nmax, d_local)
+
+        # 6. Gather back to byte level
+        byte_global = self._gather_to_bytes(global_local, patch_ids)  # (B, T, d_local)
+
+        # 7. Combine byte embeddings + global context
+        local_input = byte_emb + byte_global
+
+        # 8. Local causal decoder over full byte sequence
+        l_cos = self.l_rope_cos.to(local_input.device)
+        l_sin = self.l_rope_sin.to(local_input.device)
+        x = local_input
+        for layer in self.local_decoder:
+            x = layer(x, l_cos, l_sin)
+        x = self.local_norm(x)
+
+        # 9. Output logits
+        logits = self.output_head(x)  # (B, T, n_bytes)
+
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.reshape(-1, self.n_bytes),
+                targets.reshape(-1),
+                ignore_index=-100,
+            )
+            return loss
+
+        return logits
+
+    def count_params(self):
+        total = sum(p.numel() for p in self.parameters())
+        unique = total - self.output_head.weight.numel()
+        return {"total": total, "unique_untied": unique}
+
+    @torch.no_grad()
+    def generate(self, prompt_bytes, max_new_bytes=256, temperature=0.8, top_k=50,
+                 patcher=None):
+        """Autoregressive byte generation with BPE patching."""
+        self.eval()
+        device = next(self.parameters()).device
+        ids = torch.tensor(prompt_bytes, dtype=torch.long).unsqueeze(0)
+
+        for _ in range(max_new_bytes):
+            if ids.shape[1] > self.max_seq_bytes:
+                ids = ids[:, -self.max_seq_bytes:]
+
+            patch_ids, patch_mask, _ = patcher.batch_segment(ids)
+            logits = self.forward(
+                ids.to(device),
+                patch_ids=patch_ids.to(device),
+                patch_mask=patch_mask.to(device),
+            )
+
+            next_logits = logits[:, -1, :] / temperature
+            if top_k > 0:
+                v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+                next_logits[next_logits < v[:, [-1]]] = float('-inf')
+            probs = F.softmax(next_logits, dim=-1)
+            next_byte = torch.multinomial(probs, num_samples=1).cpu()
+            ids = torch.cat([ids, next_byte], dim=1)
+
+        return ids[0].tolist()
+
+
+def test_mvg():
+    """MVG scout unit tests — run on CPU before any GPU training.
+    Tests from §16.6 of tesla_session_design.md (R3 convergence round).
+    Usage: python code/sutra_dyad.py --test-mvg
+    """
+    import traceback
+    passed, failed = 0, 0
+
+    def run_test(name, fn):
+        nonlocal passed, failed
+        try:
+            fn()
+            print(f"  PASS {name}")
+            passed += 1
+        except Exception as e:
+            print(f"  FAIL {name}: {e}")
+            traceback.print_exc()
+            failed += 1
+
+    print("=" * 60)
+    print("MVG SCOUT UNIT TESTS (CPU only)")
+    print("=" * 60)
+
+    # Test 1: Param count within 10% of Stage0
+    def test_param_count():
+        model = SutraDyadMVG()
+        s0 = SutraDyad()
+        mvg_p = sum(p.numel() for p in model.parameters())
+        s0_p = sum(p.numel() for p in s0.parameters())
+        diff_pct = abs(mvg_p - s0_p) / s0_p * 100
+        assert diff_pct < 10, f"Param mismatch: MVG={mvg_p/1e6:.1f}M vs Stage0={s0_p/1e6:.1f}M ({diff_pct:.1f}%)"
+        print(f"    MVG={mvg_p/1e6:.1f}M, Stage0={s0_p/1e6:.1f}M, diff={diff_pct:.1f}%")
+    run_test("1. Param count within 10% of Stage0", test_param_count)
+
+    # Test 2: Forward pass shape with fixed patches
+    def test_forward_shape():
+        model = SutraDyadMVG(max_patches=64)
+        B, T = 2, 48
+        byte_ids = torch.randint(0, 256, (B, T))
+        patch_ids = torch.arange(T).unsqueeze(0).expand(B, -1) // 4
+        Nmax = patch_ids.max().item() + 1
+        patch_mask = torch.ones(B, Nmax, dtype=torch.bool)
+        logits = model(byte_ids, patch_ids=patch_ids, patch_mask=patch_mask)
+        assert logits.shape == (B, T, 256), f"Expected (2, 48, 256), got {logits.shape}"
+    run_test("2. Forward pass shape (fixed patches)", test_forward_shape)
+
+    # Test 3: Loss computation
+    def test_loss():
+        model = SutraDyadMVG(max_patches=64)
+        B, T = 2, 48
+        byte_ids = torch.randint(0, 256, (B, T))
+        targets = torch.randint(0, 256, (B, T))
+        patch_ids = torch.arange(T).unsqueeze(0).expand(B, -1) // 4
+        Nmax = patch_ids.max().item() + 1
+        patch_mask = torch.ones(B, Nmax, dtype=torch.bool)
+        loss = model(byte_ids, targets=targets, patch_ids=patch_ids, patch_mask=patch_mask)
+        assert loss.dim() == 0, f"Loss should be scalar, got shape {loss.shape}"
+        assert 4.0 < loss.item() < 7.0, f"Random loss should be ~5.5, got {loss.item():.2f}"
+        print(f"    Loss={loss.item():.4f}")
+    run_test("3. Loss computation", test_loss)
+
+    # Test 4: Causality — changing byte N does NOT affect logits 0..N-1
+    def test_causality():
+        torch.manual_seed(42)
+        model = SutraDyadMVG(max_patches=64)
+        model.eval()
+        B, T = 1, 48
+        byte_ids_a = torch.randint(0, 256, (B, T))
+        byte_ids_b = byte_ids_a.clone()
+        # Change the LAST byte in patch 6 (byte index 27 for 4-byte patches)
+        change_pos = 27
+        byte_ids_b[0, change_pos] = (byte_ids_b[0, change_pos] + 1) % 256
+
+        # Use same fixed patches for both (important: same patch assignment)
+        patch_ids = torch.arange(T).unsqueeze(0).expand(B, -1) // 4
+        Nmax = patch_ids.max().item() + 1
+        patch_mask = torch.ones(B, Nmax, dtype=torch.bool)
+
+        with torch.no_grad():
+            logits_a = model(byte_ids_a, patch_ids=patch_ids, patch_mask=patch_mask)
+            logits_b = model(byte_ids_b, patch_ids=patch_ids, patch_mask=patch_mask)
+
+        # Patch of changed byte: patch 6 (bytes 24-27)
+        # Due to global shift: global context for patch 6 comes from patches 0..5
+        # So bytes in patch 6 see global from patches 0..5, but byte_emb changes at pos 27
+        # Bytes in patches 0..5 (positions 0..23) should be UNAFFECTED
+        # because: their byte_emb is unchanged AND their global context (patches 0..4) is unchanged
+        # Bytes 0..23: only bytes in their patches changed → byte_emb is the same
+        # Their global context = global_shifted[their_patch] = global_out[their_patch-1]
+        # global_out depends on patch_emb, which uses scatter_mean of byte_emb in each patch
+        # Patch 6 byte_emb changed → patch_emb[6] changed → global_out[6+] changed
+        # But global_shifted for patches 0..5 = global_out[-1..4], unaffected until patch >=7
+
+        # Strictly: bytes in patches 0..5 (positions 0..23) use global_shifted[0..5] = global_out[-1..4]
+        # global_out[4] depends on patches 0..4, none of which changed → identical
+        # Actually, patch_emb for patches 0..5 are identical (no byte changed there)
+        # And patches 0..5 see causal global from 0..5 of patch_emb → all identical
+        # So logits at positions 0..23 must be identical
+        safe_end = 24  # end of patch 5
+        diff = (logits_a[0, :safe_end] - logits_b[0, :safe_end]).abs().max().item()
+        assert diff < 1e-5, f"Causality violated: logits differ by {diff} at positions before change"
+        print(f"    Max diff at safe positions: {diff:.2e}")
+
+        # Bytes AT or AFTER the changed position may differ (that's fine)
+        diff_after = (logits_a[0, change_pos:] - logits_b[0, change_pos:]).abs().max().item()
+        print(f"    Max diff at/after change: {diff_after:.2e} (expected >0)")
+    run_test("4. Causality: changing byte N doesn't affect logits before N's patch", test_causality)
+
+    # Test 5: BPEPatcher (if tokenizer available)
+    def test_bpe_patcher():
+        bpe_model = REPO / "data" / "bpe_8192.model"
+        if not bpe_model.exists():
+            print("    SKIP: BPE model not trained yet (run --train-bpe first)")
+            return
+
+        patcher = BPEPatcher()
+        test_text = b"Hello, world! This is a test of BPE patching."
+        byte_t = torch.tensor(list(test_text), dtype=torch.long)
+
+        patch_ids, n_patches = patcher.segment(byte_t)
+        assert patch_ids.shape == byte_t.shape, f"Shape mismatch: {patch_ids.shape} vs {byte_t.shape}"
+        assert patch_ids.max().item() == n_patches - 1
+        assert (patch_ids[1:] >= patch_ids[:-1]).all(), "patch_ids not monotonically non-decreasing"
+        print(f"    '{test_text.decode()}' -> {n_patches} patches (avg {len(test_text)/n_patches:.1f} bytes/patch)")
+
+        # Batch segment
+        batch = torch.randint(0, 128, (4, 64))  # ASCII-safe
+        pi, pm, np_t = patcher.batch_segment(batch)
+        assert pi.shape == (4, 64)
+        assert pm.shape[0] == 4
+        print(f"    Batch: {pi.shape}, mask: {pm.shape}, patches: {np_t.tolist()}")
+
+        # Integration: patcher → model forward
+        model = SutraDyadMVG(max_patches=pm.shape[1] + 16)
+        logits = model(batch, patch_ids=pi, patch_mask=pm)
+        assert logits.shape == (4, 64, 256)
+        print(f"    Patcher->Model integration: OK")
+    run_test("5. BPEPatcher segment + batch + model integration", test_bpe_patcher)
+
+    # Test 6: Variable-length patches (different sizes in same batch)
+    def test_variable_patches():
+        model = SutraDyadMVG(max_patches=64)
+        B, T = 3, 36
+        byte_ids = torch.randint(0, 256, (B, T))
+        # Different patch sizes per sample
+        # Sample 0: 4-byte patches (9 patches)
+        # Sample 1: 6-byte patches (6 patches)
+        # Sample 2: 3-byte patches (12 patches)
+        patch_ids = torch.zeros(B, T, dtype=torch.long)
+        patch_ids[0] = torch.arange(T) // 4
+        patch_ids[1] = torch.arange(T) // 6
+        patch_ids[2] = torch.arange(T) // 3
+        Nmax = patch_ids.max().item() + 1
+        patch_mask = torch.zeros(B, Nmax, dtype=torch.bool)
+        for b in range(B):
+            n = patch_ids[b].max().item() + 1
+            patch_mask[b, :n] = True
+
+        logits = model(byte_ids, patch_ids=patch_ids, patch_mask=patch_mask)
+        assert logits.shape == (B, T, 256)
+        print(f"    Variable patches: sample patch counts = {[patch_ids[b].max().item()+1 for b in range(B)]}")
+    run_test("6. Variable-length patches in same batch", test_variable_patches)
+
+    print(f"\n{'='*60}")
+    print(f"RESULTS: {passed} passed, {failed} failed")
+    if failed == 0:
+        print("ALL MVG UNIT TESTS PASSED")
+    else:
+        print(f"FAILED: {failed} test(s)")
+        sys.exit(1)
+    print(f"{'='*60}")
+
+
+def train_mvg(cfg=None):
+    """Train MVG scout (BPE-aligned variable patching).
+    Matches Stage0 protocol exactly but with BPE patch boundaries.
+    Usage: python code/sutra_dyad.py --train-mvg [--config config.json]
+    """
+    if cfg is None:
+        cfg = {}
+
+    max_steps = cfg.get("max_steps", MAX_TRAIN_STEPS)
+    batch_size = cfg.get("batch_size", BATCH_SIZE)
+    grad_accum = cfg.get("grad_accum", GRAD_ACCUM)
+    seq_bytes = cfg.get("seq_bytes", SEQ_BYTES)
+    lr = cfg.get("lr", LR)
+    min_lr_val = cfg.get("min_lr", MIN_LR)
+    warmup = cfg.get("warmup_steps", WARMUP_STEPS)
+    run_name = cfg.get("run_name", "mvg_scout")
+
+    print(f"\n{'='*60}")
+    print(f"SUTRA MVG SCOUT — BPE-Aligned Variable Patching")
+    print(f"{'='*60}")
+
+    # BPE Patcher
+    patcher = BPEPatcher(vocab_size=8192)
+    _ = patcher.sp  # force load to fail fast
+    print(f"BPE patcher: vocab={patcher.vocab_size}")
+
+    # Dataset
+    dataset = ByteShardedDataset()
+    print(f"Dataset: {dataset.total_bytes / 1e9:.1f}B est bytes, {len(dataset.index)} shards")
+
+    # Model
+    model = SutraDyadMVG(max_seq_bytes=seq_bytes)
+    params = model.count_params()
+    print(f"Model params: {params['total']/1e6:.1f}M total, {params['unique_untied']/1e6:.1f}M unique")
+    model = model.to(DEVICE)
+
+    # Optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95),
+                                   weight_decay=WD, fused=(DEVICE == "cuda"))
+    scaler = torch.amp.GradScaler('cuda') if DEVICE == "cuda" else None
+
+    # Logging
+    ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_path = REPO / "results" / f"{run_name}.log"
+    log_f = open(log_path, "w", encoding="utf-8")
+    results_path = REPO / "results" / f"{run_name}_results.json"
+
+    def log(msg):
+        print(msg)
+        log_f.write(msg + "\n")
+        log_f.flush()
+
+    log(f"Config: batch={batch_size}, grad_accum={grad_accum}, seq={seq_bytes}, "
+        f"lr={lr}, warmup={warmup}, max_steps={max_steps}")
+
+    if DEVICE == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
+    model.train()
+    best_eval = float('inf')
+    step = 0
+    t0 = time.time()
+    running_loss = 0.0
+    patch_stats = {"mean": [], "max": [], "p95": []}
+
+    while step < max_steps:
+        for micro in range(grad_accum):
+            # Sample batch on CPU
+            x, y = dataset.sample_batch(batch_size, seq_bytes, device='cpu', split='train')
+
+            # BPE patching on CPU
+            patch_ids, patch_mask, n_patches = patcher.batch_segment(x)
+
+            # Move to GPU
+            x = x.to(DEVICE)
+            y = y.to(DEVICE)
+            patch_ids = patch_ids.to(DEVICE)
+            patch_mask = patch_mask.to(DEVICE)
+
+            # Forward
+            if scaler:
+                with torch.amp.autocast('cuda', dtype=DTYPE):
+                    loss = model(x, y, patch_ids=patch_ids, patch_mask=patch_mask)
+                loss = loss / grad_accum
+                scaler.scale(loss).backward()
+            else:
+                loss = model(x, y, patch_ids=patch_ids, patch_mask=patch_mask)
+                loss = loss / grad_accum
+                loss.backward()
+
+            running_loss += loss.item()
+
+            # Track patch statistics
+            np_float = n_patches.float()
+            patch_stats["mean"].append(np_float.mean().item())
+            patch_stats["max"].append(n_patches.max().item())
+            sorted_np = np_float.sort().values
+            p95_idx = int(0.95 * len(sorted_np))
+            patch_stats["p95"].append(sorted_np[min(p95_idx, len(sorted_np)-1)].item())
+
+        # Optimizer step
+        lr_now = get_lr(step, warmup, max_steps, lr, min_lr_val)
+        for pg in optimizer.param_groups:
+            pg['lr'] = lr_now
+
+        if scaler:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+        step += 1
+
+        # Logging
+        if step % LOG_EVERY == 0:
+            bpb = running_loss / LOG_EVERY * math.log(2) / math.log(2)  # CE is in nats
+            # Actually: CE loss in nats, BPB = CE / ln(2). But F.cross_entropy uses natural log.
+            bpb = running_loss / LOG_EVERY / math.log(2)
+            vram = torch.cuda.max_memory_allocated() / 1e9 if DEVICE == "cuda" else 0
+            mean_p = sum(patch_stats["mean"][-LOG_EVERY*grad_accum:]) / (LOG_EVERY*grad_accum)
+            max_p = max(patch_stats["max"][-LOG_EVERY*grad_accum:])
+            log(f"  step {step:5d} | loss {running_loss/LOG_EVERY:.4f} | BPB {bpb:.3f} | "
+                f"lr {lr_now:.2e} | VRAM {vram:.1f}G | "
+                f"patches: mean={mean_p:.0f} max={max_p} avg_size={seq_bytes/mean_p:.1f}b")
+
+            # Kill criterion: patch count approaching limit
+            if max_p > model.max_patches - 16:
+                log(f"  WARNING: patch count {max_p} near limit {model.max_patches}!")
+
+            running_loss = 0.0
+
+        # Eval
+        if step % EVAL_EVERY == 0:
+            model.eval()
+            total_eval_loss, eval_count = 0.0, 0
+            with torch.no_grad():
+                for _ in range(30):
+                    ex, ey = dataset.sample_batch(8, seq_bytes, device='cpu', split='test')
+                    epi, epm, _ = patcher.batch_segment(ex)
+                    ex = ex.to(DEVICE)
+                    ey = ey.to(DEVICE)
+                    epi = epi.to(DEVICE)
+                    epm = epm.to(DEVICE)
+                    with torch.amp.autocast('cuda', dtype=DTYPE) if DEVICE == "cuda" else \
+                            torch.no_grad():
+                        el = model(ex, ey, patch_ids=epi, patch_mask=epm)
+                    total_eval_loss += el.item() * ex.shape[0]
+                    eval_count += ex.shape[0]
+            eval_bpb = (total_eval_loss / eval_count) / math.log(2)
+            model.train()
+
+            log(f"  EVAL step {step}: BPB {eval_bpb:.3f}")
+
+            # Save checkpoint
+            save_dict = {
+                "step": step, "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "eval_loss": eval_bpb,
+            }
+            if scaler:
+                save_dict["scaler"] = scaler.state_dict()
+            torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+
+            if eval_bpb < best_eval:
+                best_eval = eval_bpb
+                torch.save(save_dict, ckpt_dir / "best.pt")
+                log(f"    New best! BPB={eval_bpb:.3f}")
+
+            # Kill criteria from §16.7
+            if step >= 2000 and eval_bpb > 1.460:
+                log(f"  >>> EARLY KILL: BPB {eval_bpb:.3f} > 1.460 at step {step}")
+                break
+
+        # Rolling save
+        if step % ROLLING_SAVE == 0:
+            save_dict = {
+                "step": step, "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            }
+            if scaler:
+                save_dict["scaler"] = scaler.state_dict()
+            torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+
+    # Final eval
+    model.eval()
+    total_eval_loss, eval_count = 0.0, 0
+    with torch.no_grad():
+        for _ in range(50):
+            ex, ey = dataset.sample_batch(8, seq_bytes, device='cpu', split='test')
+            epi, epm, _ = patcher.batch_segment(ex)
+            ex = ex.to(DEVICE); ey = ey.to(DEVICE)
+            epi = epi.to(DEVICE); epm = epm.to(DEVICE)
+            with torch.amp.autocast('cuda', dtype=DTYPE) if DEVICE == "cuda" else torch.no_grad():
+                el = model(ex, ey, patch_ids=epi, patch_mask=epm)
+            total_eval_loss += el.item() * ex.shape[0]
+            eval_count += ex.shape[0]
+    final_bpb = (total_eval_loss / eval_count) / math.log(2)
+
+    elapsed = time.time() - t0
+    log(f"\nFINAL: BPB={final_bpb:.3f}, best={best_eval:.3f}, "
+        f"time={elapsed/3600:.1f}h, steps={step}")
+
+    # Save results
+    results = {
+        "run_name": run_name, "final_bpb": final_bpb, "best_bpb": best_eval,
+        "steps": step, "elapsed_seconds": elapsed,
+        "config": cfg,
+        "patch_stats": {
+            "mean_patches": sum(patch_stats["mean"]) / max(1, len(patch_stats["mean"])),
+            "max_patches": max(patch_stats["max"]) if patch_stats["max"] else 0,
+        },
+    }
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=2)
+    log(f"Results saved to {results_path}")
+
+    log_f.close()
+
+
 # ---- Training ----
 
 def get_lr(step, warmup, max_steps, max_lr, min_lr):
@@ -3194,9 +3957,30 @@ if __name__ == "__main__":
     parser.add_argument("--unfreeze-layers", type=int, nargs=2, default=None,
                         metavar=("START", "END"),
                         help="Partially unfreeze global layers [START, END) after initial freeze")
+    parser.add_argument("--test-mvg", action="store_true",
+                        help="Run MVG scout unit tests (CPU only, no GPU needed)")
+    parser.add_argument("--train-bpe", action="store_true",
+                        help="Train BPE tokenizer for MVG patcher (CPU only)")
+    parser.add_argument("--train-mvg", action="store_true",
+                        help="Train MVG scout (BPE-aligned variable patching)")
     args = parser.parse_args()
 
-    if args.cache_teachers:
+    if args.test_mvg:
+        test_mvg()
+    elif args.train_bpe:
+        BPEPatcher.train_bpe(vocab_size=8192)
+    elif args.train_mvg:
+        cfg = {}
+        if args.config:
+            with open(args.config) as f:
+                cfg = json.load(f)
+        cfg.setdefault("max_steps", args.max_steps)
+        cfg.setdefault("batch_size", args.batch_size or BATCH_SIZE)
+        cfg.setdefault("seq_bytes", args.seq_bytes)
+        cfg.setdefault("lr", args.lr or LR)
+        cfg.setdefault("run_name", args.run_name or "mvg_scout")
+        train_mvg(cfg)
+    elif args.cache_teachers:
         with open(args.cache_teachers) as f:
             cache_cfg = json.load(f)
         cache_name = cache_cfg.get("run_name", "teacher_cache")
