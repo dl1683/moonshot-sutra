@@ -12,8 +12,8 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **Config:** `results/config_ekalavya_iter5_probe.json`
 **Seed:** best.pt from routing run (step 250, eval BPB=1.418)
 **Kill:** step 250 eval > 1.418 = failed
-**Early data (steps 10-140):** Mean BPB 1.410 (below 1.418 baseline). 9/14 steps below baseline. Step 140 spike to 1.512 at ramp=0.93 (hard batch + peak ramp pressure, grad 0.84 = first clip trigger). KD loss 2-4x lower than routing at same ramp (TAID trust-region working). Step 150 (peak alpha, decay onset) is the critical checkpoint.
-**Status:** Running (relaunched 07:52 April 15, PID 36992). At step 140/250.
+**Early data (steps 10-160):** Mean BPB 1.405 (below 1.418 baseline). 12/16 steps below baseline. Step 140 spike to 1.512 (one-off hard batch at ramp=0.93), recovered to 1.377 at step 150 (peak alpha). Step 160: 1.412, clean decay entry. KD loss 2-4x lower than routing at same ramp (TAID trust-region working). Grad spikes (1.83-1.88) are pre-clip norms — clipped to 0.8.
+**Status:** Running (relaunched 07:52 April 15, PID 36992). At step 160/250.
 
 ### multi2_routed_3k [KILLED at step 760 — POSITIVE]
 **Purpose:** Multi-teacher ROUTED KD: SmolLM2 (anchor) + Pythia (aux), confidence routing, covering ON.

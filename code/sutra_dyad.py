@@ -2786,12 +2786,19 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
 
             # --- Teacher targets: cached reconstruction or live forward ---
-            with torch.no_grad():
-                B_actual = x.shape[0]
+            # Gate: skip teacher computation entirely when KD weights are zero
+            # (saves ~25% compute in CE-only tail of piecewise decay)
+            need_teacher = alpha_eff > 0 or beta_eff > 0
+            B_actual = x.shape[0]
+            teacher_byte_probs = None
+            teacher_byte_mask = None
+            teacher_patch_hidden_by_teacher = []
+            teacher_patch_mask_by_teacher = []
+
+            if need_teacher:
+              with torch.no_grad():
                 all_byte_probs = []
                 all_byte_masks = []
-                teacher_patch_hidden_by_teacher = []
-                teacher_patch_mask_by_teacher = []
                 teacher_priors = torch.tensor(
                     [teacher["weight"] for teacher in teachers],
                     device=DEVICE,
@@ -2819,11 +2826,13 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         teacher_results.append(targets_batch)
                 else:
                     batch_raw = [x[b].tolist() for b in range(B_actual)]
-                    for teacher in teachers:
+                    for t_idx, teacher in enumerate(teachers):
+                        # Fix 2: only extract hidden states for teachers used in repr loss
+                        need_hidden = beta_eff > 0 and (not repr_anchor_only or t_idx in repr_teacher_indices)
                         if use_covering:
                             targets_batch = _get_teacher_targets_covering_batched(
                                 teacher["model"], teacher["tokenizer"], teacher["covering"], batch_raw, DEVICE,
-                                temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                                temperature=kd_temperature, extract_hidden=need_hidden,
                                 max_depth=covering_max_depth,
                             )
                         else:
@@ -2831,7 +2840,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                             for raw in batch_raw:
                                 targets_batch.append(_get_teacher_targets(
                                     teacher["model"], teacher["tokenizer"], teacher["first_byte_map"], raw, DEVICE,
-                                    temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                                    temperature=kd_temperature, extract_hidden=need_hidden,
                                 ))
                         teacher_results.append(targets_batch)
 

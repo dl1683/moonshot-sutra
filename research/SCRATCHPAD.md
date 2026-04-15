@@ -352,6 +352,7 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 | 130 | **1.397** | 0.968 | 0.299 | 0.56 | 0.416 | 0.86 | 0.17 | 0.98/55% | **Recovery!** -0.033 below baseline. KD back down (0.299 from 0.361). Ramp 0.86 — DEEPEST yet, AM degrading hard here. TAID stable. Grad 0.56 clean. |
 | 140 | **1.512** | 1.048 | 0.406 | 0.84 | 0.386 | 0.93 | 0.19 | 1.00/61% | **⚠ WORST BPB IN PROBE.** +0.094 above baseline. Hard batch (CE=1.048) + peak ramp pressure. Grad 0.84 = first clip trigger. KD still 2-4x lower than routing at same ramp. |
 | 150 | **1.377** | 0.954 | 0.247 | **1.88** | 0.320 | 0.99 | 0.20 | 0.98/52% | **MASSIVE RECOVERY!** Step 140 spike confirmed ONE-OFF. BPB -0.041 below baseline (2nd best in probe). Grad 1.88 = pre-clip norm (clipped to 0.8, safe). KD dropped back to 0.247. Ramp 0.99 = PEAK, decay starts NOW. **TAID+gating survives peak alpha where AM collapsed.** |
+| 160 | **1.412** | 0.979 | 0.254 | **1.83** | 0.302 | 1.00 | 0.21 | 0.98/52% | **Decay phase entry.** -0.018 below baseline. Ramp=1.00 (peak alpha). Grad 1.83 pre-clip (stable). KD steady at 0.254. Repr 0.302 (still converging). Clean transition from ramp to decay. |
 
 **HEAD-TO-HEAD: TAID vs Routing (first 30 steps):**
 | Metric | Routing→TAID trend | Interpretation |
