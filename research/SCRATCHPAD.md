@@ -9597,4 +9597,94 @@ Routing: 1.418 (250) -> 1.426 (500) -> 1.429 (750) — DEGRADING
 
 **If step 500 eval > 1.430: KILL.** But this should NOT happen given probe's mean train BPB of 1.408 and the tighter ug_clamp=1.5.
 **If step 500 eval in 1.418-1.430: NEUTRAL.** Continue — budget only at 0.9x routing. Step 1000 is the real test.
-**If step 500 eval < 1.418: POSITIVE.** TAID matches routing at equal budget. Strong signal for long-run improvement.
+
+---
+
+## 6K EKALAVYA POST-MORTEM (2026-04-15)
+
+**Run died at step 330** (process killed during context compaction). Only checkpoint: step 250.
+
+**Data collected (steps 260-330, resumed from step 250):**
+| Step | CE | KD | Repr | BPB | TAID_b | UG | Notes |
+|------|-----|-----|------|-----|--------|-----|-------|
+| 260 | 1.013 | 0.379 | 0.181 | 1.461 | 0.35 | 0.75/57% | |
+| 270 | 0.979 | 0.407 | 0.174 | 1.413 | 0.36 | 0.73/56% | |
+| 280 | 1.006 | 0.491 | 0.195 | 1.451 | 0.37 | 0.73/55% | |
+| 290 | 0.982 | 0.439 | 0.155 | 1.417 | 0.39 | 0.71/54% | |
+| 300 | 0.978 | 0.522 | 0.151 | 1.410 | 0.40 | 0.67/50% | |
+| 310 | 0.977 | 0.513 | 0.158 | 1.409 | 0.41 | 0.72/54% | |
+| 320 | 0.877 | 0.411 | 0.136 | 1.265 | 0.43 | 0.68/51% | Easy batch |
+| 330 | 0.989 | 0.468 | 0.145 | 1.427 | 0.44 | 0.75/58% | |
+
+**Step 260-330 avg BPB: 1.407** (excluding step 320 easy batch: 1.427). Probe eval was 1.409.
+No improvement over probe. Trend is flat at best.
+
+**Verdict:** 80 steps of continued training showed zero improvement beyond the probe checkpoint.
+Tesla R1-R3 consensus confirmed: Ekalavya-only has a ceiling at ~1.41 BPB with current 1.7B teachers.
+Restarting the 6K run would cost 10-30 hours for marginal data. Better to use GPU for architecture experiments.
+
+---
+
+## ZEROTH EXPERIMENT — PATCH_SIZE ABLATION (2026-04-15)
+
+**Hypothesis:** Smaller patches (P=4 vs P=6) give the global transformer more context tokens,
+improving information flow. If P=4 wins, it strengthens the MVG hypothesis (BPE-aligned variable
+patches would further improve context).
+
+**Setup:**
+- Model: SutraDyad Stage0 (same architecture, only PATCH_SIZE changed)
+- P=4: 384 patches/seq, Linear(1024, 1024) patch proj, ~fewer patch proj params
+- P=6: 256 patches/seq, Linear(1536, 1024) patch proj (baseline from dyad_stage0_10k)
+- Config: batch=24, ga=3, seq=1536, lr=3e-4, warmup=100, 5K steps
+- Both from scratch, no KD
+- VRAM: P=4 uses 8.2G (P=6 used 13.1G — counterintuitive)
+
+**P=6 baseline at key evals (from dyad_stage0_10k.log):**
+| Step | BPB |
+|------|-----|
+| 500 | 4.368 |
+| 1000 | 3.262 |
+| 2000 | 2.498 |
+| 3000 | 2.228 |
+| 4000 | 2.063 |
+| 5000 | 2.078 |
+
+**VRAM puzzle:** P=4 should use MORE attention memory (384² vs 256²) but uses LESS total VRAM.
+Possible explanations: (1) smaller patch_proj linear layer, (2) different memory layout with 
+smaller patches, (3) batch fits better in BF16 with 4-byte alignment.
+
+**Decision criteria:** If P=4 beats P=6 at 5K by >0.05 BPB → strong support for MVG.
+If P=4 within ±0.05 → inconclusive, run MVG anyway (BPE alignment is the real hypothesis).
+If P=4 loses by >0.05 → more patches ≠ better, reconsider MVG approach.
+
+**Status: COMPLETED** — zeroth_p4_5k finished at BPB 1.887, which is 0.191 BPB better than Stage 0 P=6 at 5K (2.078). Clear win for P=4. Supports MVG hypothesis.
+
+---
+
+## CRASH ANALYSIS — EKALAVYA TRAINING PROCESS DEATH (2026-04-15)
+
+**Pattern:** Training repeatedly dies silently — no error trace, no crash log, just stops writing to log file. Process becomes zombie (holds VRAM, 0% GPU util). At least 5 crashes observed across sessions.
+
+**Crash history (iter5_full_6k run):**
+| Restart | Start time | Steps completed | Died at | Cause |
+|---------|-----------|----------------|---------|-------|
+| 1 | 11:04:17 | 250→310 (~60 steps) | ~step 320 | "Parent shell killed during context compaction" (confirmed in log) |
+| 2 | 15:45:59 | — | Immediately | Config printed but no steps (model load failed?) |
+| 3 | 15:52:23 | 250→330 (~80 steps) | After step 330 | Silent death, no error |
+| 4 | 18:26:03 | 250→280 (~30 steps) | After step 280 | Silent death, zombie at 18.6G VRAM |
+
+**Root cause analysis:**
+1. **Primary:** Parent shell death from Claude Code context compaction kills child training process. Confirmed by explicit comment in _steps_10_310.log.
+2. **No outer try/except:** Unhandled Python exceptions crash silently with no trace to log file.
+3. **Stderr not captured:** Error messages go to terminal that no longer exists.
+4. **No atexit checkpoint:** Process death loses all progress since last rolling_save (250-step intervals = up to 250 steps lost).
+
+**Fixes implemented (2026-04-15 18:58):**
+1. **Stderr tee** — `_TeeStderr` class routes stderr to both console AND log file. Any Python exception traceback will appear in the .log file.
+2. **atexit emergency checkpoint** — `atexit.register(_emergency_save)` fires on ANY exit path, saves model/optimizer/scaler state to `emergency_step_N.pt`.
+3. **Crash log capture** — `__main__` level try/except writes full traceback to `{run_name}_CRASH.log`.
+4. **Rolling save 250→100** — Lose at most 100 steps on crash instead of 250.
+5. **nohup + disown launch** — Process detached from parent shell, survives Claude Code session restarts.
+6. **_training_state["finished"]** flag prevents atexit double-save on normal exit.
+
+**Current run:** PID 59068, launched at 19:00:12, nohup-detached, all crash defenses active. Resuming from step_250.pt.

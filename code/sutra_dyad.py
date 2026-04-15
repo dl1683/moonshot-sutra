@@ -56,7 +56,7 @@ GRAD_ACCUM = 2          # effective batch = 128 sequences
 MAX_TRAIN_STEPS = 10000
 EVAL_EVERY = 500
 LOG_EVERY = 10
-ROLLING_SAVE = 250
+ROLLING_SAVE = 100
 LR = 3e-4
 MIN_LR = 1e-5
 WARMUP_STEPS = 300
@@ -3441,6 +3441,25 @@ def train_ekalavya(s1_ckpt, cfg=None):
     log_path = REPO / "results" / f"{run_name}.log"
     log_f = open(log_path, "a" if cfg.get("resume_ckpt") else "w", encoding="utf-8")
 
+    # Redirect stderr to log file so crash tracebacks are captured
+    import sys as _sys
+    _stderr_backup = _sys.stderr
+    class _TeeStderr:
+        """Tee stderr to both console and log file so crash traces are captured."""
+        def __init__(self, original, log_file):
+            self.original = original
+            self.log_file = log_file
+        def write(self, msg):
+            self.original.write(msg)
+            try:
+                self.log_file.write(msg)
+                self.log_file.flush()
+            except Exception:
+                pass
+        def flush(self):
+            self.original.flush()
+    _sys.stderr = _TeeStderr(_stderr_backup, log_f)
+
     def log(msg):
         print(msg)
         log_f.write(msg + "\n")
@@ -3536,6 +3555,30 @@ def train_ekalavya(s1_ckpt, cfg=None):
     import signal
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
+
+    # Emergency crash checkpoint via atexit — fires on ANY exit (exception, signal, etc.)
+    import atexit
+    _training_state = {"step": step, "finished": False}
+    def _emergency_save():
+        if _training_state["finished"]:
+            return  # Normal exit, no emergency save needed
+        try:
+            s = _training_state["step"]
+            emergency_path = ckpt_dir / f"emergency_step_{s}.pt"
+            save_dict = {
+                "step": s, "stage": 1,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scaler": scaler.state_dict(),
+                "eval_loss": best_eval, "config": cfg,
+                "repr_proj_teachers": {t["id"]: t["repr_proj"].state_dict() for t in teachers},
+            }
+            torch.save(save_dict, emergency_path)
+            log_f.write(f"\n  >>> EMERGENCY SAVE at step {s} -> {emergency_path}\n")
+            log_f.flush()
+        except Exception:
+            pass  # If even this fails, we tried
+    atexit.register(_emergency_save)
 
     # PID file to prevent duplicate launches
     pid_path = ckpt_dir / "training.pid"
@@ -3822,6 +3865,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
         running_repr += avg_repr
         running_total += avg_total
         step += 1
+        _training_state["step"] = step
 
         if step % log_every == 0:
             n = log_every
@@ -3878,6 +3922,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         "eval_loss": best_eval, "config": cfg,
                     }
                     torch.save(save_dict, ckpt_dir / f"killed_step_{step}.pt")
+                    _training_state["finished"] = True  # Prevent atexit double-save
                     pid_path.unlink(missing_ok=True)
                     log_f.close()
                     sys.exit(1)
@@ -3917,11 +3962,14 @@ def train_ekalavya(s1_ckpt, cfg=None):
             }
             torch.save(save_dict, ckpt_dir / f"shutdown_step_{step}.pt")
             log(f"  >>> Shutdown checkpoint saved. Exiting.")
+            _training_state["finished"] = True  # Prevent atexit double-save
             pid_path.unlink(missing_ok=True)
             log_f.close()
             sys.exit(0)
 
+    _training_state["finished"] = True
     pid_path.unlink(missing_ok=True)
+    _sys.stderr = _stderr_backup  # Restore stderr
     final_loss = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
     final_bpb = final_loss / math.log(2)
     log(f"\n{'='*60}")
@@ -4024,7 +4072,21 @@ if __name__ == "__main__":
             cfg.setdefault("lr_local", args.lr)
         if args.resume:
             cfg["resume_ckpt"] = args.resume
-        train_ekalavya(args.ekalavya, cfg)
+        try:
+            train_ekalavya(args.ekalavya, cfg)
+        except Exception as _crash_exc:
+            import traceback
+            _tb = traceback.format_exc()
+            # Write crash trace to log file (stderr tee may already capture it,
+            # but ensure it's in a dedicated crash file too)
+            _crash_log = REPO / "results" / f"{cfg.get('run_name', 'ekalavya')}_CRASH.log"
+            with open(_crash_log, "a", encoding="utf-8") as _cf:
+                _cf.write(f"\n{'='*60}\n")
+                _cf.write(f"CRASH at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                _cf.write(_tb)
+                _cf.write(f"{'='*60}\n")
+            print(f"\n!!! CRASH: {_crash_exc}\n!!! Traceback saved to {_crash_log}")
+            sys.exit(2)
     elif args.stage == 1:
         if args.stage0_ckpt is None:
             print("ERROR: --stage0-ckpt required for Stage 1 (needed for anchor loss even when resuming)")
