@@ -355,6 +355,22 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 | 160 | **1.412** | 0.979 | 0.254 | **1.83** | 0.302 | 1.00 | 0.21 | 0.98/52% | **Decay phase entry.** -0.018 below baseline. Ramp=1.00 (peak alpha). Grad 1.83 pre-clip (stable). KD steady at 0.254. Repr 0.302 (still converging). Clean transition from ramp to decay. |
 | 170 | 1.421 | 0.985 | 0.359 | 0.69 | 0.277 | 1.00 | 0.23 | 0.98/53% | At baseline (1.421 vs 1.418 target). KD rose (0.254→0.359) — harder batch. Grad back to normal (0.69). Alpha decaying (now at step 170, 20% into decay). |
 | 180 | 1.425 | 0.988 | 0.397 | 0.55 | 0.273 | 1.00 | 0.24 | 0.98/53% | Slightly above baseline (+0.007). KD rose further (harder batch). Grad clean (0.55). α decaying: ~0.024 at step 180. Expected: BPB oscillates as KD fades. |
+| 190 | 1.425 | 0.988 | 0.399 | 0.55 | 0.223 | 1.00 | 0.25 | 0.97/51% | Flat at 1.425 (stable). Repr 0.223 (new low, still converging). LR 1.48e-4. α ~0.021. Model settling into CE-only equilibrium. |
+| 200 | **1.625** | 1.126 | 1.568 | 0.56 | 0.291 | 1.00 | 0.27 | 0.98/53% | **HARD BATCH SPIKE.** +0.207 above baseline. KD 1.568 (4x normal) — teacher/student disagree violently on this batch. CE 1.126 (student also struggling). Grad 0.56 (CLEAN — clip not triggered despite huge loss). Same pattern as step 140 (1.512→1.377). Recovery expected. |
+| 210 | 1.472 | 1.020 | 0.540 | 1.24 | 0.207 | 1.00 | 0.28 | 0.98/54% | **Partial recovery.** 1.625→1.472 (-0.153). CE back toward normal (1.020 vs baseline 0.985). KD back down (0.540 vs 1.568). Grad 1.24 pre-clip. Repr 0.207 (new low!). Still above baseline but recovery trajectory matches step 140→150 pattern. |
+| 220 | 1.464 | 1.015 | 0.450 | 0.66 | 0.216 | 1.00 | 0.29 | 0.96/49% | Continuing recovery: 1.625→1.472→1.464. CE 1.015 (converging to baseline). KD 0.450 (normal range). Grad 0.66 (clean). α ≈ 0.009 at step 220 (decayed to 30%). LR 6.86e-5 (WSD decay phase). |
+| 230 | **1.423** | 0.986 | 0.563 | 0.46 | 0.188 | 1.00 | 0.31 | 0.97/52% | **FULL RECOVERY.** Step 200 spike completely resolved (1.625→1.472→1.464→1.423). CE back to baseline (0.986). Grad 0.46 (clean). Repr 0.188 (new low — still converging throughout spike). α ≈ 0.006 (20% of peak). LR 4.21e-5. |
+| 240 | **1.414** | 0.980 | 0.495 | 0.38 | 0.187 | 1.00 | 0.32 | 0.97/51% | **BELOW BASELINE.** -0.004 below 1.418. CE improving (0.980). KD stable. Grad 0.38 (clean). α ≈ 0.003 (10%). Model improving as KD fades. |
+| 250 | **1.398** | 0.969 | 0.558 | 0.50 | 0.188 | 1.00 | 0.33 | 0.95/48% | **STRONG training BPB.** -0.020 below baseline. CE 0.969 (best in probe). α ≈ 0.000 (KD nearly off). |
+| EVAL | **1.433** | — | — | — | — | — | — | — | Step 250 eval on 400 fresh samples. +0.015 above baseline. |
+| FINAL | **1.409** | — | — | — | — | — | — | — | Post-training eval (400 fresh samples). -0.009 below baseline. **Eval variance: 0.024 BPB.** |
+
+**PROBE VERDICT: MARGINAL.** Eval straddles baseline (1.433 vs 1.409, variance 0.024). Mechanism STABLE. 6K LAUNCHED based on:
+1. Final eval below baseline (1.409 < 1.418)
+2. Mechanism stability confirmed (no catastrophic degradation)
+3. ug_clamp=4.0 (probe) allowed hard-batch amplification → 6K uses 1.5
+4. Probe KD budget = 13% of routing → insufficient for eval improvement
+5. 6K KD budget = 54x probe = 7x routing → real test of TAID+gating
 
 **HEAD-TO-HEAD: TAID vs Routing (first 30 steps):**
 | Metric | Routing→TAID trend | Interpretation |
@@ -413,6 +429,27 @@ IF eval > 1.418 (TAID+gating fails):
 | UG active % at step 170 | **53%** | — | Gating engagement |
 | Mean BPB (all steps) | **1.408** | — | Overall quality |
 | Decision: FKL A/B SKIPPED in favor of immediate 6K launch. TAID showing strong signal (mean 1.408, 2-6x lower KD than routing). |
+
+**6K FULL RUN SUCCESS CRITERIA (eval BPB targets):**
+| Eval Step | DECISIVE | POSITIVE | NEUTRAL | KILL |
+|-----------|----------|----------|---------|------|
+| 500 (~6.4h) | ≤1.40 | 1.40-1.418 | 1.418-1.430 | >1.430 |
+| 1000 (~12.8h) | ≤1.39 | 1.39-1.410 | 1.410-1.420 | >1.430 |
+| 1500 (~19.2h) | ≤1.38 | 1.38-1.400 | 1.400-1.420 | >1.420 |
+| 2000 (~25.6h) | ≤1.37 | 1.37-1.395 | 1.395-1.415 | >1.420 |
+| 3000 (~38.3h) | ≤1.36 | 1.36-1.390 | 1.390-1.410 | >1.420 |
+| 6000 (~61h) | ≤1.35 | 1.35-1.380 | 1.380-1.410 | >1.418 |
+Key: routing eval was 1.418 at step 250 and DEGRADED to 1.429 by step 750. If 6K shows IMPROVING trajectory (unlike routing's degradation), the mechanism works even if absolute numbers are modest.
+CE-only consolidation (steps 4500-6000) should show continued improvement from WSD-like decay.
+
+**CUMULATIVE KD TRANSFER ANALYSIS (alpha_eff * taid_beta, summed over steps):**
+| Run | Budget | Relative |
+|-----|--------|----------|
+| Probe (250 steps) | 0.667 | 1.0x |
+| Routing (250 steps, no TAID) | 5.188 | 7.8x |
+| 6K at step 1500 | 20.769 | 31x probe, 4x routing |
+| 6K full (6000 steps) | 35.776 | 54x probe, 7x routing |
+**Implication:** Probe result (marginal) does NOT predict 6K outcome. Probe delivered only 13% of routing's KD signal because TAID β only reached 0.33 in 250 steps. The 6K delivers 7x routing's signal at lower per-step intensity but sustained over 4500 steps. The probe tests mechanism stability (✓ confirmed), not KD effectiveness.
 
 **Geometric TAID Theory (byte-space adaptation):**
 Original TAID (Sakana AI, logit space): z_taid = (1-β)z_s + βz_t — arithmetic interpolation.
