@@ -5209,3 +5209,19 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 7. **use_teacher_cache: false.** No cache artifact exists. Live teachers correct for this run.
 
 **Config updated:** `results/config_ekalavya_iter5_full_6k.json` — all discrepancies resolved.
+
+### 10.14 Codex Correctness Engineer: Teacher Computation Gating (2026-04-15)
+
+**Source:** Codex Correctness Engineer review of Ekalavya training loop in sutra_dyad.py.
+
+**Finding 1 [MEDIUM]: Teacher computation not gated by KD weight**
+- Lines 2788-2871: Teacher forward pass + covering decomposition runs every microbatch even when `alpha_eff=0` AND `beta_eff=0` (steps 4500-6000 in piecewise decay).
+- **Impact:** ~25% wasted compute in CE-only consolidation tail. Two teacher forwards + covering at ~47s/step for zero training signal.
+- **Fix:** Added `need_teacher = alpha_eff > 0 or beta_eff > 0` gate. When False, teacher_byte_probs=None, teacher_patch_hidden_by_teacher=[]. Downstream guards (`if alpha_eff > 0`, `if beta_eff > 0 and teacher_patch_hidden_by_teacher`) already protect against None access.
+- **Status:** ✅ IMPLEMENTED (commit a5d4234).
+
+**Finding 2 [LOW]: Unnecessary hidden state extraction for non-anchor teachers**
+- When `repr_anchor_only=True`, only anchor teacher's hidden states are used in repr loss (line 2950 iterates `repr_teacher_indices`). But `extract_hidden=(beta_eff > 0)` was passed to ALL teachers at line 2824, extracting and storing Pythia hidden states that were never used.
+- **Fix:** Changed to per-teacher `need_hidden = beta_eff > 0 and (not repr_anchor_only or t_idx in repr_teacher_indices)`. Non-anchor teachers pass `extract_hidden=False`.
+- **Safety:** `_teacher_patch_targets()` gracefully handles missing hidden states (line 1866: returns zeros). Zeros are stored in `patch_hidden_list` but never indexed by repr loss when `repr_anchor_only=True`.
+- **Status:** ✅ IMPLEMENTED (same commit).

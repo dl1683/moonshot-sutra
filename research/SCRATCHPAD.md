@@ -353,6 +353,8 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 | 140 | **1.512** | 1.048 | 0.406 | 0.84 | 0.386 | 0.93 | 0.19 | 1.00/61% | **⚠ WORST BPB IN PROBE.** +0.094 above baseline. Hard batch (CE=1.048) + peak ramp pressure. Grad 0.84 = first clip trigger. KD still 2-4x lower than routing at same ramp. |
 | 150 | **1.377** | 0.954 | 0.247 | **1.88** | 0.320 | 0.99 | 0.20 | 0.98/52% | **MASSIVE RECOVERY!** Step 140 spike confirmed ONE-OFF. BPB -0.041 below baseline (2nd best in probe). Grad 1.88 = pre-clip norm (clipped to 0.8, safe). KD dropped back to 0.247. Ramp 0.99 = PEAK, decay starts NOW. **TAID+gating survives peak alpha where AM collapsed.** |
 | 160 | **1.412** | 0.979 | 0.254 | **1.83** | 0.302 | 1.00 | 0.21 | 0.98/52% | **Decay phase entry.** -0.018 below baseline. Ramp=1.00 (peak alpha). Grad 1.83 pre-clip (stable). KD steady at 0.254. Repr 0.302 (still converging). Clean transition from ramp to decay. |
+| 170 | 1.421 | 0.985 | 0.359 | 0.69 | 0.277 | 1.00 | 0.23 | 0.98/53% | At baseline (1.421 vs 1.418 target). KD rose (0.254→0.359) — harder batch. Grad back to normal (0.69). Alpha decaying (now at step 170, 20% into decay). |
+| 180 | 1.425 | 0.988 | 0.397 | 0.55 | 0.273 | 1.00 | 0.24 | 0.98/53% | Slightly above baseline (+0.007). KD rose further (harder batch). Grad clean (0.55). α decaying: ~0.024 at step 180. Expected: BPB oscillates as KD fades. |
 
 **HEAD-TO-HEAD: TAID vs Routing (first 30 steps):**
 | Metric | Routing→TAID trend | Interpretation |
@@ -364,7 +366,17 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 | Grad at equal LR (~3.1e-5) | routing step 60: 0.45 → TAID step 30: 0.73 | TAID **higher grad despite lower KD** |
 Note: TAID warmup=150 (2x faster than routing's 300), so more LR pressure per step. TAID started from routing best.pt (more trained, potentially more constrained gradients). Routing started from base S1 step 5000.
 
-**ETA:** Relaunched 07:52 after fixing dual-write bug (stdout→/dev/null, log_f handles file). ~57s/step → step 250 eval ~11:10-11:30 AM. Kill: eval > 1.418.
+**ETA:** Relaunched 07:52 after fixing dual-write bug (stdout→/dev/null, log_f handles file). ~46s/step → step 250 eval ~11:01 AM. Kill: eval > 1.418.
+
+**MAMBA-1.4B AS 3RD TEACHER (compatibility check 2026-04-15):**
+- mamba_ssm 2.2.6.post3 installed, causal_conv1d available
+- **Tokenizer MATCHES Pythia exactly** (same vocab_size=50254, same encodings)
+- Can SHARE Pythia's covering tables (zero setup cost)
+- d_model=2048, 48 layers, vocab=50280
+- VRAM: ~700MB at 4-bit, ~2.8GB at FP16. Current usage 10.6GB → fits easily
+- Cost: +1 teacher forward (~2s GPU) + 1 covering pass (~15s CPU) per step = ~35% slower
+- **numba blocked**: numba 0.62.1 needs numpy ≤2.3, we have 2.4.4. Not worth upgrading.
+- **Decision:** Profile BPB AFTER 6K launch. If oracle gain justifies 35% slowdown, add as 3rd teacher in iter6.
 
 **POST-PROBE DECISION TREE (from Codex ceiling analysis + correctness review):**
 ```
@@ -394,12 +406,13 @@ IF eval > 1.418 (TAID+gating fails):
 **A/B COMPARISON FRAMEWORK (TAID+gating vs FKL+gating):**
 | Metric | TAID+gating (this probe) | FKL+gating (next, config ready) | What it tells us |
 |--------|--------------------------|--------------------------------|-----------------|
-| Step 250 eval BPB | TBD | TBD | Net improvement from TAID |
-| Avg KD loss (steps 50-150) | TBD | TBD | Geometric vs standard target |
-| Max KD loss (hard-batch spikes) | TBD | TBD | Mode-covering handling |
-| Max gradient norm | TBD | TBD | Training stability |
-| UG active % at step 200 | TBD | TBD | Should be identical (same gating) |
-| Decision: If TAID wins by ≥0.003 BPB → keep TAID. If tie → drop TAID (simpler). If FKL wins → TAID harmful. |
+| Step 250 eval BPB | **PENDING** | SKIPPED (launching 6K direct) | Net improvement from TAID |
+| Avg KD loss (steps 50-150) | **0.271** | — | Geometric vs standard target |
+| Max KD loss (hard-batch spikes) | **0.406** (step 140) | — | Mode-covering handling |
+| Max gradient norm (pre-clip) | **1.88** (step 150) | — | Training stability |
+| UG active % at step 170 | **53%** | — | Gating engagement |
+| Mean BPB (all steps) | **1.408** | — | Overall quality |
+| Decision: FKL A/B SKIPPED in favor of immediate 6K launch. TAID showing strong signal (mean 1.408, 2-6x lower KD than routing). |
 
 **Geometric TAID Theory (byte-space adaptation):**
 Original TAID (Sakana AI, logit space): z_taid = (1-β)z_s + βz_t — arithmetic interpolation.
