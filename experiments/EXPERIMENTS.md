@@ -4,6 +4,33 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ---
 
+## Phase 7: MVG Scout — Architecture Exploration (2026-04-15 → ongoing)
+
+### zeroth_p4_5k [DONE — SUPPORTS MVG HYPOTHESIS]
+**Purpose:** Test whether smaller patches (4-byte vs 6-byte) improve learning by giving the global transformer more context patches.
+**Config:** `results/config_zeroth_p4_5k.json` (patch_size=4, batch=24, grad_accum=3, lr=3e-4, 5K steps, from-scratch CE-only)
+**Result:** BPB 1.887 at 5K steps (eval).
+**Baseline comparison:** Stage 0 (patch_size=6) at 5K steps: BPB 2.078. **Delta: -0.191 BPB (patch_size=4 wins).**
+**What we learned:** Finer-grained patching (384 patches of 4 bytes vs 256 patches of 6 bytes = 50% more global context) produces significantly better language modeling. This directly supports the MVG scout hypothesis: semantic (BPE-aligned) patch boundaries with avg ~3.5 bytes/patch should be even better. The zeroth also used smaller effective batch (72 vs 128) and STILL won — suggesting the context advantage is substantial.
+
+### mvg_scout [PENDING — implementation ready, GPU blocked by Ekalavya 6K]
+**Purpose:** Test core hypothesis — do BPE-aligned variable patches beat fixed patches at matched params?
+**Architecture:** SutraDyadMVG (~152.4M params, BPE 8K vocab patcher, scatter-mean byte pooling per BPE patch, same 12-layer d=1024 global transformer).
+**Decision criteria (at 5K steps, compared to Stage 0 p6 at 5K = BPB 2.078):**
+- Strong win: BPB < 2.028 (delta < -0.05)
+- Weak win: BPB < 2.058 (delta < -0.02)
+- Loss: BPB > 2.098 (delta > +0.02)
+**Code:** Committed b3ccb16, unit tests pass (all 6). Kill criteria fixed for from-scratch calibration.
+**Blocked on:** GPU (Ekalavya 6K running, est. ~4 days)
+
+### Tesla R1-R3 Design Session (2026-04-15)
+**Purpose:** Strategic architecture review. Are we on the best path?
+**Design doc:** `research/tesla_session_design.md` (2091 lines, 3 Codex rounds)
+**Key findings:** (1) Ekalavya KD ceiling with 2 teachers: 0.005-0.016 BPB. (2) Student capacity at 188M may be the bottleneck, not teacher quality. (3) Token-global/byte-local (Architecture G) scored highest across all 5 outcomes. (4) MVG scout is the minimum viable test of the core hypothesis. (5) Design confidence maxes at 6.4/10 — only experiments close the gap.
+**What we learned:** Ekalavya should remain as INFRASTRUCTURE, not the singular priority. The architecture decision (fixed byte patches vs semantic patches) may matter more than KD mechanism refinement.
+
+---
+
 ## Phase 6: Ekalavya Protocol — Byte-Level Covering KD (2026-04-12 → ongoing)
 
 ### ekalavya_iter5_full_6k [RUNNING — 6000 steps]

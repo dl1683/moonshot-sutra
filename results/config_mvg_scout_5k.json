@@ -1,0 +1,13 @@
+{
+  "max_steps": 5000,
+  "batch_size": 64,
+  "grad_accum": 2,
+  "seq_bytes": 1536,
+  "lr": 3e-4,
+  "warmup_steps": 300,
+  "run_name": "mvg_scout_5k",
+  "kill_rules": {
+    "2000": 2.7,
+    "3000": 2.4
+  }
+}

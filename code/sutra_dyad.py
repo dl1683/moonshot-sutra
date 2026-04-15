@@ -801,35 +801,36 @@ class BPEPatcher:
             patch_ids = torch.arange(T, dtype=torch.long) // 4
             return patch_ids, int((T + 3) // 4)
 
-        # Encode with SentencePiece (returns piece strings)
-        pieces = self.sp.EncodeAsPieces(text)
+        # Use protobuf encoding to get exact byte offsets.
+        # SentencePiece's piece-string reconstruction drops leading spaces and
+        # has edge cases with ▁ handling. The protobuf begin/end fields give
+        # character offsets into the original text — reliable and lossless.
+        proto = self.sp.Encode(text, out_type='immutable_proto')
 
-        # Build byte→patch mapping by tracking byte position
+        # Convert character offsets to byte offsets
+        # (for ASCII, char_offset == byte_offset; for multi-byte UTF-8, they differ)
+        char_to_byte = []
+        byte_idx = 0
+        for ch in text:
+            char_to_byte.append(byte_idx)
+            byte_idx += len(ch.encode('utf-8'))
+        char_to_byte.append(byte_idx)  # sentinel for end-of-string
+
         patch_ids = torch.zeros(T, dtype=torch.long)
-        byte_pos = 0
-        for patch_idx, piece in enumerate(pieces):
-            # SentencePiece piece → bytes (handle ▁ prefix and byte fallback tokens)
-            piece_text = piece.replace('▁', ' ') if piece.startswith('▁') else piece
-            # Handle byte fallback tokens like <0xAB>
-            if piece.startswith('<0x') and piece.endswith('>'):
-                piece_bytes = bytes([int(piece[3:-1], 16)])
-            else:
-                piece_bytes = piece_text.encode('utf-8')
+        for patch_idx, piece in enumerate(proto.pieces):
+            b_start = char_to_byte[piece.begin]
+            b_end = char_to_byte[piece.end]
+            if b_end > T:
+                b_end = T
+            patch_ids[b_start:b_end] = patch_idx
 
-            n_bytes = len(piece_bytes)
-            if byte_pos + n_bytes > T:
-                # Truncation safety: assign remaining bytes to last patch
-                patch_ids[byte_pos:] = patch_idx
-                byte_pos = T
-                break
-            patch_ids[byte_pos:byte_pos + n_bytes] = patch_idx
-            byte_pos += n_bytes
-
-        # R3 gap #3: verify byte reconstruction
-        if byte_pos != T:
-            # BPE span mismatch — fallback to fixed patches for this sample
-            patch_ids = torch.arange(T, dtype=torch.long) // 4
-            return patch_ids, int((T + 3) // 4)
+        # Handle any unmapped bytes (e.g., leading space dropped by SentencePiece)
+        # by assigning them to the next mapped patch
+        if len(proto.pieces) > 0:
+            first_begin = char_to_byte[proto.pieces[0].begin]
+            if first_begin > 0:
+                # Leading bytes not covered — assign to first patch
+                patch_ids[:first_begin] = 0
 
         n_patches = patch_ids.max().item() + 1
         return patch_ids, n_patches
@@ -885,7 +886,7 @@ class SutraDyadMVG(nn.Module):
                  n_local_heads=N_LOCAL_HEADS, n_global_heads=N_GLOBAL_HEADS,
                  n_local_dec_layers=N_LOCAL_DEC_LAYERS, n_global_layers=N_GLOBAL_LAYERS,
                  ff_local=FF_LOCAL, ff_global=FF_GLOBAL,
-                 max_patches=512, max_seq_bytes=SEQ_BYTES):
+                 max_patches=768, max_seq_bytes=SEQ_BYTES):
         super().__init__()
         self.n_bytes = n_bytes
         self.d_local = d_local
@@ -1351,9 +1352,7 @@ def train_mvg(cfg=None):
 
         # Logging
         if step % LOG_EVERY == 0:
-            bpb = running_loss / LOG_EVERY * math.log(2) / math.log(2)  # CE is in nats
-            # Actually: CE loss in nats, BPB = CE / ln(2). But F.cross_entropy uses natural log.
-            bpb = running_loss / LOG_EVERY / math.log(2)
+            bpb = running_loss / LOG_EVERY / math.log(2)  # CE nats → bits per byte
             vram = torch.cuda.max_memory_allocated() / 1e9 if DEVICE == "cuda" else 0
             mean_p = sum(patch_stats["mean"][-LOG_EVERY*grad_accum:]) / (LOG_EVERY*grad_accum)
             max_p = max(patch_stats["max"][-LOG_EVERY*grad_accum:])
@@ -1389,6 +1388,16 @@ def train_mvg(cfg=None):
 
             log(f"  EVAL step {step}: BPB {eval_bpb:.3f}")
 
+            # Generation sample
+            try:
+                prompt = list(b"The meaning of intelligence is")
+                gen_bytes = model.generate(prompt, max_new_bytes=80, patcher=patcher)
+                gen_text = bytes(gen_bytes).decode('utf-8', errors='replace')
+                log(f"    GEN: {gen_text}")
+            except Exception as e:
+                log(f"    GEN failed: {e}")
+            model.train()
+
             # Save checkpoint
             save_dict = {
                 "step": step, "model": model.state_dict(),
@@ -1404,9 +1413,17 @@ def train_mvg(cfg=None):
                 torch.save(save_dict, ckpt_dir / "best.pt")
                 log(f"    New best! BPB={eval_bpb:.3f}")
 
-            # Kill criteria from §16.7
-            if step >= 2000 and eval_bpb > 1.460:
-                log(f"  >>> EARLY KILL: BPB {eval_bpb:.3f} > 1.460 at step {step}")
+            # Kill criteria — calibrated for FROM-SCRATCH training
+            # Stage0 (p6) at 2K: ~2.498 BPB, zeroth (p4) extrapolated: ~2.3
+            # Kill if catastrophically worse than expected trajectory
+            kill_rules = cfg.get("kill_rules", {"2000": 2.7, "3000": 2.4})
+            killed = False
+            for ks, kv in kill_rules.items():
+                if step >= int(ks) and eval_bpb > kv:
+                    log(f"  >>> EARLY KILL: BPB {eval_bpb:.3f} > {kv} at step {step} (rule: step>={ks})")
+                    killed = True
+                    break
+            if killed:
                 break
 
         # Rolling save
