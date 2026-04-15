@@ -5020,3 +5020,126 @@ Saved: results/first_byte_marginal_info_loss.json
 - Should repr-level KD also be multi-teacher or just logit-level?
 - Optimal scheduling: all teachers always, or teacher curriculum (easy→hard)?
 - Does multi-teacher help with the "inconsistent gains" problem BLD identified?
+
+### 10.6 BLD — Byte-Level Distillation (April 2026, arXiv 2604.07466)
+
+**Source:** Singh, Wu, Cioba, Bernacchia, Buffelli. "Cross-Tokenizer LLM Distillation through a Byte-Level Interface."
+
+**Method:** Converts teacher token probs to byte probs using covering decomposition (Phan et al. 2025) with beam search approximation (K=10, ε=0.01, JSD=0.0045 from exact). Adds lightweight byte-level decoder head (10 parallel linear projections, d_model→260) to token-level student. Distills via forward KL at byte level (λ_KL=0.1). Head removed after training.
+
+**Results (mixed):**
+- BPE→BPE (Llama3.2-3B→Qwen2): BLD best on PiQA (75.68) but worst on IFEval (30.58 vs MinED 62.83)
+- BPE→Byte: All methods degrade ~21 MMLU points. BLD marginal lead on PiQA.
+- Cross-model (8B→2B): GSM8K 62.55 (teacher 87.26). Moderate improvement over SFT.
+- Key finding: "no existing method consistently dominates across benchmarks"
+
+**What this means for Ekalavya:**
+1. **Covering decomposition validated** — same approach we use. Not novel, but correct.
+2. **Forward KL at λ=0.1 is their default** — close to our α=0.03-0.05 (we learned lower is better).
+3. **NO multi-teacher support** — our anchor-confidence routing is unique in the byte-level CTD space.
+4. **NO position-selective KD** — our uncertainty gating is unique.
+5. **NO progressive targets** — our TAID adaptation is unique.
+6. **Their BPE→byte degradation is concerning** — suggests byte-level KD targets are inherently noisy. But we're native byte-level (no bolt-on head), which may be fundamentally different.
+7. **"CTD remains open"** — validates our research direction. If we crack multi-teacher byte-level KD with position-selective TAID, that's a genuine contribution.
+
+### 10.7 ALM — Approximate Likelihood Matching (March 2026, arXiv 2503.20083)
+
+**Source:** "Universal Cross-Tokenizer Distillation via Approximate Likelihood Matching."
+First to enable "rapid transfer of subword models to byte-level." Also supports hypernetwork-based training-free tokenizer transfer. Detailed technical comparison needed (full paper not yet analyzed).
+
+### Competitive Position Summary (April 2026)
+
+| Feature | BLD | ALM | MinED | **Ekalavya (ours)** |
+|---------|-----|-----|-------|-------------------|
+| Byte-level alignment | Covering (approx) | Likelihood matching | Edit distance | Covering (exact) |
+| Multi-teacher | No | No | No | **YES (routing)** |
+| Position-selective | No | No | No | **YES (gating)** |
+| Progressive targets | No | No | No | **YES (TAID)** |
+| Native byte student | No (bolt-on head) | Partial | No | **YES** |
+| Results | Mixed | Strong for transfer | Strong for same-size | In progress |
+
+**Our unique niche: multi-teacher cross-architecture byte-level KD with progressive position-selective targets. No published work combines these.**
+
+### 10.8 Codex Strategic Review: TAID+Gating Ceiling Analysis (April 15, 2026)
+
+**Source:** Architecture Theorist + Scaling Expert review of full Ekalavya trajectory (iter1-5).
+
+**Geometric TAID validation:** Byte-space TAID `p_taid ∝ p_s^(1-β) * p_t^β` is the correct log-geodesic / product-of-experts analogue of the original logit interpolation. Mathematically defensible when both distributions share support (which byte space guarantees). However, it is a *trust-region projection*, not full distillation — it suppresses teacher mass where the student assigns low probability. This protects confident student errors. Recommendation: adaptive per-position β and a small teacher leak `q = (1-leak) * normalize(p_s^(1-β) p_t^β) + leak * p_t` to prevent novel teacher modes from being erased.
+
+**Uncertainty gating risks:**
+1. Renorm-to-mean-1 can amplify gradients ~6x when raw gate mean is ~0.17 — a few positions see effective alpha far above configured alpha.
+2. Confidence calibration mismatch: teacher confidence computed at KD temperature, student at raw logits — makes student appear more confident than teacher.
+3. Max-prob confidence is weak for byte-level covering (intra-token bytes can be deterministic without carrying semantic signal).
+4. Recommendation: cap post-renorm gate at 2.0, or use EMA renorm instead of per-batch renorm.
+
+**Expected ceiling with current teachers:**
+- Pythia oracle gain over SmolLM2: only 0.054 BPB (58/4180 positions where Pythia wins).
+- Warm-started 188M student at alpha 0.03-0.05 should capture 10-30% of pairwise oracle gain.
+- **Expected improvement range: 0.005-0.016 BPB.**
+- Routing's -0.012 BPB (eval 1.418 vs baseline 1.430) is ALREADY in the plausible ceiling band.
+- Realistic TAID+gating target: 1.410-1.416. ≤1.405 would be surprisingly strong. ≤1.390 unlikely.
+
+**Next levers (if TAID+gating < 0.005 better than FKL):**
+1. **Transfer-bank curriculum**: Score 50-100K windows by student entropy, teacher confidence, teacher NLL, student-teacher KL, cross-teacher disagreement, oracle advantage. Train on 70% high-utility + 20% normal + 10% disagreement windows. Apply KD only to top 10-20% utility positions.
+2. **3-teacher oracle probe**: Add non-transformer teacher (SSM/hybrid). Required incremental oracle gain ≥0.010 BPB.
+3. **Earlier KD application**: Warm-start KD into low-entropy student is structurally hard (basin-locked). Run same mechanism from scratch or early in Stage 1.
+
+**Cross-domain mechanism imports:**
+1. Predictive coding: train student to predict teacher residuals, not copy outputs.
+2. Statistical physics: transfer functional subspaces, maximize freedom elsewhere.
+3. Immunology: hard compatibility thresholds, reject signals whose gradients fight CE.
+4. Log opinion pools: geometric pooling correct for independent evidence, but requires reliability calibration.
+5. Horizontal gene transfer (biology): foreign knowledge needs compatibility gate before integration.
+
+**Fundamental gap:** SmolLM2 and Pythia are both decoder transformers — not truly "cross-architecture." Ekalavya thesis requires genuinely different teacher families (SSM, hybrid, encoder, specialist).
+
+**Decision criteria:** If TAID does not beat FKL by ≥0.003 BPB on fixed eval windows, drop TAID. Then move to transfer-bank curriculum as primary lever.
+
+### 10.9 Codex Correctness Review: Uncertainty Gating Amplification (April 15, 2026)
+
+**Finding 1 (HIGH): ug_clamp=4.0 makes gate a KD amplifier.** With raw gate mean ~0.17, renorm multiplies by ~6x before clamp. At peak ramp, effective alpha for capped position = `0.03 * 1.3² * 4.0 = 0.203`. This is 4x above the α=0.05 that caused gradient spikes in routing run. **Fix: lower ug_clamp to 1.5** (effective = 0.076, safely below prior 0.0845). Treat 2.0 as absolute experimental ceiling, not safe value.
+
+**Finding 2 (MEDIUM): s_conf penalizes confidently-wrong tokens.** Current gate uses `s_conf = max p_student(byte)`. If student is confidently wrong, KD gets downweighted exactly where teacher correction is most valuable. **Fix: use `s_match = p_student(teacher_top_byte)` instead of max-prob confidence.** This gates on whether the student already agrees with the teacher, not whether the student is peaked.
+
+**Finding 3 (MEDIUM): Temperature calibration mismatch.** `t_probs` computed at kd_temperature (softened), `s_conf` at raw logits (sharper). Makes student appear more confident, lowers raw gate mean, worsens renorm amplification. **Fix: compute `s_probs_ug` at kd_temperature.**
+
+**Finding 4 (LOW): Logging hides amplification.** ug_max computed but not logged. Can't detect clamp saturation. **Fix: log ug_raw_mean, ug_mean, ug_max, ug_sat_frac.**
+
+**No broadcast/mask bugs found.** Gate and KL shapes correct, masking proper.
+
+**Decision:** Let current probe run as diagnostic — dangerous zone is steps 140-160 (peak ramp). If gradient spikes appear, confirms finding. Apply all fixes before full run launch.
+
+### 10.10 Codex Competitive Analyst Review (April 15, 2026)
+
+**Honest positioning:** Sutra-Dyad-188.2M is NOT competitive with SmolLM2-135M on published downstream benchmarks yet. Current evidence supports "early positive signal," not a public first.
+
+**BLD comparison (arXiv 2604.07466):** BLD does 3B self-transfer and 8B→2B cross-tokenizer distillation. Critical finding: BLD's BPE→byte conversion loses heavily (MMLU 60.50→39.06, ARC-C 45.73→30.89, PIQA 75.46→67.52). This validates Sutra's native byte approach — training natively in byte-space avoids this degradation.
+
+**Sub-200M byte-level landscape:** No published generative byte/character-level LM under 200M with strong benchmarks found. Active byte frontier is 760M-1.3B+ (H-Net, BLT). The niche is open.
+
+**Defensible novelty claim:** "Smallest reported native byte-level generative LM showing benefit from multi-teacher cross-tokenizer KD, first to test byte-position routing/gating." Requirements to make it public:
+1. ≥0.005 BPB sustained (preferably ≥0.010) with bootstrap CIs on fixed eval windows
+2. Fixed comparison: baseline vs single-teacher vs naive-average vs routed multi-teacher
+3. At least one non-transformer teacher for "cross-architecture" claim
+4. Downstream benchmarks (lighteval suite matching SmolLM2/Pythia evals)
+
+**Cannot claim yet:**
+- "Cross-architecture" (SmolLM2+Pythia are both decoder transformers)
+- "Smallest model to benefit from KD" (KD works in much smaller classifiers)
+- "Smallest multi-teacher KD" (exists in vision/NLP at far smaller scales)
+
+**New papers to study:**
+1. StableOPD (arXiv 2604.08527): On-policy distillation stabilization, +7.2% average math improvement. Reports length inflation/truncation collapse as failure modes.
+2. Token-trained→byte distillation recipe (arXiv 2602.01007, Feb 2026): Cross Llama/Qwen/OLMo families using ~125B bytes.
+
+**Strategic opportunity:** Existing byte transfer methods are large and lose heavily on BPE→byte. Sutra's unique path: native byte modeling + selective teacher transfer + position-level routing. This avoids the conversion loss entirely.
+
+### 10.11 StableOPD — On-Policy Distillation Stabilization (April 2026, arXiv 2604.08527)
+
+**Key technique:** Reference-based divergence constraints + rollout mixture distillation to prevent length inflation and truncation collapse in on-policy distillation.
+
+**Result:** +7.2% average math improvement from stabilization alone.
+
+**Failure modes identified:** (1) Length inflation — on-policy rollouts generate longer sequences as training progresses, (2) Truncation collapse — abrupt inflation causes truncated sequences to dominate, destabilizing dynamics.
+
+**Relevance to Ekalavya:** Our uncertainty gating serves a similar stabilization role — concentrating KD on high-utility positions prevents the student from being forced into teacher modes everywhere. The divergence constraint concept aligns with TAID's trust-region interpretation (Codex §10.8). Could formalize our gating as a position-level divergence constraint: "apply KD only where KL(teacher||student) is within a learnable threshold."

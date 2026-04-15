@@ -28,7 +28,7 @@
   "use_taid": false,
   "use_uncertainty_gating": true,
   "ug_renormalize": true,
-  "ug_clamp": 4.0,
+  "ug_clamp": 1.5,
   "ug_exp_start": 1.0,
   "ug_exp_end": 2.0,
   "ug_exp_ramp_steps": 600,

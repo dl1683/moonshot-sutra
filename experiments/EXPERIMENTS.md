@@ -12,8 +12,8 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **Config:** `results/config_ekalavya_iter5_probe.json`
 **Seed:** best.pt from routing run (step 250, eval BPB=1.418)
 **Kill:** step 250 eval > 1.418 = failed
-**Early data (step 10):** BPB=1.421 (baseline), KD=0.177 (6x lower than routing run — TAID working), UG active=53%, grad=0.49 (stable below clip 0.8).
-**Status:** Running. Step 20+ pending.
+**Early data:** Prior run crashed (computer shutdown). Relaunched 07:52 April 15. Awaiting step 10 data.
+**Status:** Running (relaunched). Step 10+ pending.
 
 ### multi2_routed_3k [KILLED at step 760 — POSITIVE]
 **Purpose:** Multi-teacher ROUTED KD: SmolLM2 (anchor) + Pythia (aux), confidence routing, covering ON.

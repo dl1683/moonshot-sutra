@@ -336,23 +336,63 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 
 | Step | BPB | CE | KD | Repr | Grad | Ramp | TAID β | UG mean/active | Notes |
 |------|-----|-----|-----|------|------|------|--------|----------------|-------|
-| 10 | 1.421 | 0.985 | 0.177 | 0.877 | 0.49 | 0.06 | 0.01 | 0.98/53% | At baseline. KD 6x lower than routing (0.97) — TAID working |
-| 20 | 1.427 | 0.989 | 0.286 | 0.969 | 0.57 | 0.13 | 0.03 | 0.99/55% | Slightly above baseline. KD increasing as β grows. Stable. |
+| *(prior run data cleared — crashed during computer shutdown)* |
+| 10 | 1.388 | 0.962 | 0.162 | 0.878 | 0.34 | 0.06 | 0.01 | 0.99/56% | Below baseline. KD 6x lower than routing (0.97). Grad very stable. |
+| 20 | 1.424 | 0.987 | 0.251 | 0.973 | 0.56 | 0.13 | 0.03 | 0.99/57% | Regression toward baseline (expected, LR warmup). Still below 1.430. KD 6.5x lower than routing (1.63). |
+| 30 | 1.442 | 1.000 | 0.218 | 0.956 | 0.73 | 0.19 | 0.04 | 1.00/61% | Above baseline (1.430). Similar to routing step 30 (1.450). Grad 0.73 but TAID ramp is 3x routing's at same step (0.19 vs 0.07). |
+| 40 | **1.406** | 0.975 | **0.154** | 0.75 | 0.924 | 0.26 | 0.05 | 0.99/54% | **Strong recovery to below baseline.** Grad stabilized (+0.02). Routing step 40: BPB=1.512/grad=0.83 — TAID dramatically better. |
 
-**Key observations:**
-- KD loss 3.8x lower than routing run at step 20 (0.286 vs 1.080). TAID progressive target working as designed.
-- BPB 0.013 below routing run at step 20 (1.427 vs 1.440). Less aggressive KD → less disruption.
-- Gradient 0.57, well below clip=0.8. Stable.
-- UG active=55% — gating concentrating on ~55% positions (will narrow as exp ramps 1→2).
+**HEAD-TO-HEAD: TAID vs Routing (first 30 steps):**
+| Metric | Routing→TAID trend | Interpretation |
+|--------|-------------------|----------------|
+| BPB variance | 1.382-1.490 → 1.388-1.442 | TAID **smoother** (range 0.054 vs 0.108) |
+| Grad spikes | 0.87 spike at step 20 → no spike, monotonic rise | TAID **more stable** (no hard-batch blowups) |
+| KD loss | 0.97-1.63 → 0.16-0.25 | TAID **6x lower** (trust-region working) |
+| BPB at equal ramp (0.19) | routing step ~57: 1.390 → TAID step 30: 1.442 | TAID **worse at equal ramp** |
+| Grad at equal LR (~3.1e-5) | routing step 60: 0.45 → TAID step 30: 0.73 | TAID **higher grad despite lower KD** |
+Note: TAID warmup=150 (2x faster than routing's 300), so more LR pressure per step. TAID started from routing best.pt (more trained, potentially more constrained gradients). Routing started from base S1 step 5000.
 
-**Comparison with routing run at step 20:**
-| Metric | Routing | TAID+gating | Delta |
-|--------|---------|-------------|-------|
-| BPB | 1.440 | 1.427 | -0.013 |
-| KD | 1.080 | 0.286 | -3.8x |
-| Grad | 0.63 | 0.57 | -10% |
+**ETA:** Relaunched 07:52 after fixing dual-write bug (stdout→/dev/null, log_f handles file). ~57s/step → step 250 eval ~11:10-11:30 AM. Kill: eval > 1.418.
 
-**ETA:** ~60s/step → step 250 eval ~12:00-12:30 PM. Kill: eval > 1.418.
+**POST-PROBE DECISION TREE (from Codex ceiling analysis + correctness review):**
+```
+IF eval ≤ 1.418 (TAID+gating matches or beats routing best):
+  1. Apply gating fix: s_match, temp calibration, clamp 1.5 (from Codex correctness §10.9)
+  2. Build teacher cache (~30 min on GPU)
+  3. Run FKL+gating CACHED probe (20 min, with fixed gating, config ready)
+  4. TAID vs FKL comparison:
+     - TAID wins by ≥0.003 → keep TAID for full run
+     - Tie → drop TAID (simpler = better)
+     - FKL wins → TAID harmful, use FKL
+  5. Launch 6K full run with winner + fixed gating + cache
+  6. In parallel: run Mamba-1.4B oracle probe (3-teacher potential)
+
+IF eval > 1.418 (TAID+gating fails):
+  1. Check gradient data at steps 140-160 (peak ramp = amplification zone)
+  2. If gradient spikes caused by clamp amplification:
+     → Fix gating (clamp 1.5), retry with FKL+gating only (no TAID)
+  3. If gradients clean but BPB still regressed:
+     → TAID geometry is wrong, drop both TAID+gating
+     → Revert to plain routing (which worked: eval 1.418)
+     → Move to transfer-bank curriculum (top-20% position KD)
+  4. If nothing works at warm-start:
+     → Try KD from scratch (not warm-start) per Codex recommendation
+```
+
+**A/B COMPARISON FRAMEWORK (TAID+gating vs FKL+gating):**
+| Metric | TAID+gating (this probe) | FKL+gating (next, config ready) | What it tells us |
+|--------|--------------------------|--------------------------------|-----------------|
+| Step 250 eval BPB | TBD | TBD | Net improvement from TAID |
+| Avg KD loss (steps 50-150) | TBD | TBD | Geometric vs standard target |
+| Max KD loss (hard-batch spikes) | TBD | TBD | Mode-covering handling |
+| Max gradient norm | TBD | TBD | Training stability |
+| UG active % at step 200 | TBD | TBD | Should be identical (same gating) |
+| Decision: If TAID wins by ≥0.003 BPB → keep TAID. If tie → drop TAID (simpler). If FKL wins → TAID harmful. |
+
+**Geometric TAID Theory (byte-space adaptation):**
+Original TAID (Sakana AI, logit space): z_taid = (1-β)z_s + βz_t — arithmetic interpolation.
+Our byte-space TAID: p_taid ∝ p_s^(1-β) * p_t^β — geometric (product of experts).
+Key property: geometric naturally handles capacity gap. If teacher puts mass on a byte the student considers impossible, the geometric product kills it (unlike arithmetic which creates bimodal target). This gives "soft capacity gap filtering" for free — intermediate target only has high mass on bytes BOTH student and teacher find plausible. Complementary to explicit uncertainty gating (which modulates alpha, not the target itself). Prediction: TAID should show lower KD loss AND fewer gradient spikes than FKL, especially on hard batches.
 
 **OFFLINE TEACHER CACHING — IMPLEMENTED (2026-04-15)**
 Functions added to sutra_dyad.py:
@@ -376,7 +416,89 @@ python code/sutra_dyad.py --ekalavya results/checkpoints_xxx/best.pt --config re
 
 **Value proposition:** Each cached run takes ~20 min vs ~3 hours live. Critical for A/B experiments (TAID vs FKL, warm-start comparison, gate audit).
 
+**CODEX CEILING ANALYSIS (Architecture Theorist + Scaling Expert, 2026-04-15 08:04):**
+- Geometric TAID is mathematically correct (log-geodesic) but is a trust-region, not full distillation — protects confident student errors.
+- Uncertainty gating risk: renorm-to-mean-1 amplifies gradients ~6x when raw mean ~0.17. Cap post-renorm at 2.0.
+- **EXPECTED CEILING with SmolLM2+Pythia: 0.005-0.016 BPB improvement. Routing's -0.012 is ALREADY near ceiling.**
+- Realistic TAID+gating target: eval 1.410-1.416. ≤1.405 surprisingly strong. ≤1.390 unlikely.
+- TAID must beat FKL by ≥0.003 BPB to justify its complexity. Otherwise drop it.
+- **If marginal: next lever is transfer-bank curriculum** (score windows by utility, apply KD to top 10-20% positions only).
+- **Fundamental gap: need non-transformer teacher** (SSM/hybrid) for true cross-architecture claim.
+- Cross-domain imports: predictive coding (residuals), stat physics (functional subspaces), immunology (hard compatibility gates).
+
+**TRANSFER-BANK CURRICULUM — DESIGN SKETCH (from Codex ceiling analysis):**
+
+Motivation: Codex showed current ceiling is 0.005-0.016 BPB with SmolLM2+Pythia on random windows. ~80% of positions get unhelpful KD signal. Solution: concentrate KD on the 10-20% of positions where transfer is genuinely useful.
+
+**Architecture (extends existing offline cache):**
+1. After teacher cache built, run student forward on same cached windows
+2. Score each position: `utility = teacher_conf * student_entropy * sqrt(KL(t||s))`
+   - teacher_conf: max(teacher_probs) — teacher has strong signal
+   - student_entropy: H(student) — student is uncertain  
+   - KL: how far student is from teacher — room for improvement
+3. Score each window: mean of top-20% utility positions
+4. Create sorted index
+
+**Training:**
+- Sample windows: 70% from top-quartile utility, 20% uniform, 10% high-disagreement
+- Per-position KD mask: only apply KD where utility > 80th percentile within window
+- CE on all positions (unchanged)
+- Expected: KD applied to ~20% of positions but the 20% with highest learning signal
+
+**Key advantages:**
+- Compatible with all other mechanisms (TAID, gating, routing)
+- No extra compute during training (scoring is offline)
+- Can be combined with 3-teacher setup
+- Directly addresses the "KD is sparse signal in dense noise" problem
+
+**Implementation: extend precompute_teacher_cache() → add scoring pass → store utility scores → modify train loop to use scored sampling + KD masking.**
+
+**When to build:** After TAID probe results + FKL A/B. If gains plateau at <0.005 BPB improvement, transfer-bank is the next iteration.
+
+**MAMBA-1.4B AS 3RD TEACHER (discovered 2026-04-15):**
+- `state-spaces/mamba-1.4b` uses GPT-NeoX tokenizer (vocab=50254) — **SAME as Pythia-1.4B**
+- **Drop-in replacement**: reuses Pythia covering decomposition path, no new tokenizer alignment needed
+- Pure SSM architecture (no attention) — genuinely different inductive bias from SmolLM2/Pythia (both transformers)
+- This gives us the true "cross-architecture" claim: transformer anchor (SmolLM2) + transformer aux (Pythia) + SSM aux (Mamba)
+- Also available: Mamba2-1.3B, Mamba2-2.7B, Falcon-H1-1.5B (hybrid), Granite-4.0-H-1B (hybrid)
+- **Next step:** Run 3-teacher oracle probe. Criterion: Mamba must add ≥0.010 BPB incremental oracle gain over SmolLM2+Pythia combined oracle (currently 0.344 BPB).
+
 ---
+
+**GATING FIX v2 (from Codex Correctness review, ready to apply after probe):**
+Code patch for lines 2840-2858 of sutra_dyad.py:
+```python
+# Uncertainty gating v2: concentrate KD on high-value positions
+if use_uncertainty_gating:
+    t_conf = t_probs.max(dim=-1).values  # (B, T) teacher confidence
+    with torch.no_grad():
+        # FIX 1: compute student probs at kd_temperature (not raw logits)
+        s_probs_ug = F.softmax(student_logits.float() / kd_temperature, dim=-1)
+        s_probs_ug = s_probs_ug[:, :t_probs.shape[1], :]
+        # FIX 2: use student prob at teacher's top byte, not max student prob
+        teacher_top = t_probs.argmax(dim=-1, keepdim=True)  # (B, T, 1)
+        s_match = s_probs_ug.gather(-1, teacher_top).squeeze(-1)  # (B, T)
+    ug_exp = ug_exp_start + (ug_exp_end - ug_exp_start) * min(1.0, step / max(ug_exp_ramp, 1))
+    gate = t_conf * (1.0 - s_match).pow(ug_exp)
+    # FIX 3: log raw mean before renorm
+    with torch.no_grad():
+        raw_gate_mean = (gate * mask.float()).sum() / mask.float().sum().clamp_min(1e-10)
+    if ug_renormalize:
+        gate = gate / raw_gate_mean.clamp_min(1e-10)
+    gate = gate.clamp(max=ug_clamp)  # FIX 4: config ug_clamp lowered to 1.5
+    kl = kl * gate
+    # FIX 5: expanded logging
+    with torch.no_grad():
+        ug_stats = {
+            "ug_raw_mean": raw_gate_mean.item(),
+            "ug_mean": gate[mask].mean().item() if mask.any() else 0,
+            "ug_active": (gate[mask] > 0.5).float().mean().item() if mask.any() else 0,
+            "ug_max": gate[mask].max().item() if mask.any() else 0,
+            "ug_sat": (gate[mask] >= ug_clamp - 0.01).float().mean().item() if mask.any() else 0,
+        }
+```
+Config change: `"ug_clamp": 1.5` (was 4.0)
+Log format change: `ug=raw{raw:.2f}/mean{mean:.2f}/max{max:.2f}/sat{sat:.0%}/{active:.0%}`
 
 **MISSING FROM ROUTING RUN: Uncertainty gating (alpha_t = alpha * teacher_conf * (1 - student_conf)^2)**
 Codex prescribed TWO mechanisms: (1) anchor-confidence routing for teacher blending -- IMPLEMENTED, (2) per-position KD alpha scaling based on teacher/student confidence -- NOT IMPLEMENTED. Current run applies uniform alpha to all positions. If routing improves but isn't decisive, add uncertainty gating as next iteration -- it reduces KD pressure where student already confident AND where teacher is uncertain. This is orthogonal to routing.
