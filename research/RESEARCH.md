@@ -5275,4 +5275,27 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 
 **Gate call:** CONTINUE. The HIGH finding is a documentation mismatch (corrected), not a mechanism bug. All MEDIUM items are either N/A for this run or require manual monitoring (step 700 VRAM, step 500 eval kill). No code changes needed for the current run.
 
+### 10.17 Crash Resilience Audit: Ekalavya Training Loop (2026-04-15)
+
+**Scope:** `code/sutra_dyad.py::train_ekalavya()` log handling, checkpoint resume/save, training-loop failure handling, eval kill criteria. Triggered by the 2026-04-15 crash sequence: false-negative Windows `tasklist /FI`, duplicate Python processes, VRAM contention, log truncation on resume, incomplete resume restoration, and no stuck-run recovery.
+
+**Status:** Audit only. Fixes below are minimal surgical edits to `code/sutra_dyad.py`; no training-loop redesign required.
+
+**P0 - prevent data loss and duplicate-run corruption**
+1. **Atomic checkpoint writes.** Current direct `torch.save(..., best.pt)` / `torch.save(..., step_N.pt)` can leave partial/corrupt checkpoints if the process dies mid-save. Add a local `_atomic_torch_save(obj, path)` helper that writes `path.with_suffix(path.suffix + ".tmp")`, then `os.replace(tmp, path)`. Replace lines 3064 and 3085 with atomic saves. Prevents: silent process death during checkpoint write, corrupt resume checkpoint.
+2. **Hard run lock per `run_name`.** Current trainer admits multiple processes for the same run if external monitoring lies. Add an atomic lock file in `ckpt_dir` immediately after line 2662 using `os.O_CREAT | os.O_EXCL`; write PID/start time and remove it in `finally`. If it exists, raise with explicit message to inspect/kill the old PID before resuming. Prevents: duplicate process spawning, VRAM contention, CUDA-context corruption.
+3. **Resume must preserve `best_eval`.** Current dirty working tree logs `best_eval_restored` at resume but still resets `best_eval = inf` at line 2743. Replace with `best_eval = best_eval_restored if resume_ckpt else float("inf")` or assign directly in the resume block and guard the reset. Prevents: overwriting `best.pt` with a worse checkpoint after resume; misleading results JSON.
+4. **Never truncate an existing run log by default.** Current line 2662 appends only when `cfg.get("resume_ckpt")` is truthy. Safer minimal change: append if resuming OR `log_path.exists()`, and log a clear restart delimiter with PID. Prevents: log data loss when a retry is launched without `--resume` or with a miswired config.
+
+**P1 - prevent wasted GPU hours**
+5. **Checkpoint on Python crash / KeyboardInterrupt / NaN fatal.** Wrap the `while step < max_steps` body in `try/except (KeyboardInterrupt, Exception)` and call `_save_training_state(ckpt_dir / f"crash_step_{step}.pt", eval_loss=best_eval)` before re-raising or returning. The NaN fatal branch at lines 2985-2988 should save before exit. Prevents: losing up to one rolling-save interval and silent returns with no terminal checkpoint.
+6. **Step heartbeat and watchdog.** Existing logs appear only every `log_every` steps, so a hang inside teacher covering can be invisible for 15+ minutes. Add `heartbeat_path = ckpt_dir / "heartbeat.json"` updated at each step start/end with PID, step, micro, phase, timestamp, and elapsed seconds. Add `max_step_seconds = cfg.get("max_step_seconds", 900)` and fail after a completed step exceeds the threshold; for mid-step hangs, the heartbeat gives an external monitor reliable state without `tasklist /FI`. Prevents: silent stuck runs, unreliable Windows process checks.
+7. **Auto-kill eval criteria.** Add `kill_eval_bpb_above = cfg.get("kill_eval_bpb_above", [])`, a list of `{step, bpb}` thresholds, and after line 3053 exit cleanly after saving `killed_step_{step}.pt` if `bpb_eval` exceeds the threshold for that checkpoint. For the current run config this encodes step 500 > 1.430 and step 1500 > 1.420. Prevents: manual intervention when the run is already below decision quality.
+8. **Guard optimizer/scaler restore like `train_s1()`.** Lines 2725-2728 load optimizer/scaler unconditionally. Copy the Stage 1 param-group-count guard from lines 1270-1282 and log fresh-optimizer fallback. Prevents: resume abort after config/unfreeze changes, wasting launch time.
+
+**P2 - make debugging and resume behavior clearer**
+9. **Persist richer checkpoint metadata.** Add `run_name`, `log_path`, `s1_ckpt`, teacher IDs/weights, `last_wall_time`, and `last_step_seconds` to every `save_dict`. Prevents: ambiguous checkpoint provenance after multiple restarts.
+10. **Cache resume indexing must be explicit.** In cache mode, lines 2782 and 2811 use `(step - start_step) * grad_accum + micro`; this replays cached windows after resume if the cache was precomputed for the whole run. Replace with `cache_offset = cfg.get("teacher_cache_start_step", 0)` and `mb_idx = (step - cache_offset) * grad_accum + micro`, with bounds checks. Prevents: accidental repeated training windows in cached resumes.
+11. **All-NaN accumulation guard.** If every microbatch is skipped, the trainer still performs optimizer/scaler steps with no valid gradients. Track `valid_microbatches`; if zero, skip LR update/optimizer step and count toward fatal NaN. Prevents: misleading step advancement and optimizer state changes after invalid batches.
+
 **Lesson learned:** This gate should have run BEFORE launch. Caught post-launch at step 250 — documentation was wrong about the routing mechanism for 2+ days. Future runs: gate runs FIRST, always.

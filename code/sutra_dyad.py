@@ -2659,7 +2659,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
     ckpt_dir = REPO / "results" / f"checkpoints_{run_name}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_path = REPO / "results" / f"{run_name}.log"
-    log_f = open(log_path, "w", encoding="utf-8")
+    log_f = open(log_path, "a" if cfg.get("resume_ckpt") else "w", encoding="utf-8")
 
     def log(msg):
         print(msg)
@@ -2708,6 +2708,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
 
     # Resume support
     start_step = 0
+    best_eval_restored = float('inf')
     resume_ckpt = cfg.get("resume_ckpt")
     if resume_ckpt:
         rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
@@ -2727,12 +2728,13 @@ def train_ekalavya(s1_ckpt, cfg=None):
         if "scaler" in rk:
             scaler.load_state_dict(rk["scaler"])
         start_step = rk["step"]
+        best_eval_restored = rk.get("eval_loss", float('inf'))
         # Restore unfreeze state based on resumed step
         if start_step >= unfreeze_phase1_step:
             model.unfreeze_global(layer_range=(4, 8))
         if start_step >= unfreeze_phase2_step:
             model.unfreeze_global(layer_range=(0, 4))
-        log(f"Resumed from {resume_ckpt} at step {start_step}")
+        log(f"Resumed from {resume_ckpt} at step {start_step}, best_eval={best_eval_restored:.4f}")
 
     if DEVICE == "cuda":
         torch.cuda.reset_peak_memory_stats()
@@ -2740,11 +2742,27 @@ def train_ekalavya(s1_ckpt, cfg=None):
     model.train()
     for teacher in teachers:
         teacher["repr_proj"].train()
-    best_eval = float('inf')
+    best_eval = best_eval_restored if resume_ckpt else float('inf')
     step = start_step
     t0 = time.time()
     running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
     nan_count = 0
+
+    # Graceful shutdown: save checkpoint on SIGTERM/SIGINT
+    _shutdown_requested = [False]
+    def _graceful_shutdown(signum, frame):
+        _shutdown_requested[0] = True
+        log(f"  >>> SHUTDOWN SIGNAL ({signum}) at step {step} — saving checkpoint...")
+    import signal
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+
+    # PID file to prevent duplicate launches
+    pid_path = ckpt_dir / "training.pid"
+    if pid_path.exists():
+        old_pid = int(pid_path.read_text().strip())
+        log(f"  WARNING: PID file exists (PID {old_pid}). Previous run may still be active!")
+    pid_path.write_text(str(os.getpid()))
 
     log(f"\nStarting Ekalavya training at {time.strftime('%H:%M:%S')} (step {step})")
 
@@ -3064,6 +3082,26 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 torch.save(save_dict, ckpt_dir / "best.pt")
                 log(f"      New best! Saved to {ckpt_dir / 'best.pt'}")
 
+            # Auto-kill criteria (configurable via config)
+            kill_rules = cfg.get("kill_rules", {})
+            for kill_step_str, kill_bpb in kill_rules.items():
+                kill_step = int(kill_step_str)
+                if step >= kill_step and bpb_eval > kill_bpb:
+                    log(f"  >>> AUTO-KILL: BPB {bpb_eval:.3f} > {kill_bpb} at step {step} (rule: step>={kill_step})")
+                    log(f"  >>> Saving final checkpoint before exit...")
+                    save_dict = {
+                        "step": step, "stage": 1,
+                        "model": model.state_dict(),
+                        "repr_proj_teachers": {teacher["id"]: teacher["repr_proj"].state_dict() for teacher in teachers},
+                        "optimizer": optimizer.state_dict(),
+                        "scaler": scaler.state_dict(),
+                        "eval_loss": best_eval, "config": cfg,
+                    }
+                    torch.save(save_dict, ckpt_dir / f"killed_step_{step}.pt")
+                    pid_path.unlink(missing_ok=True)
+                    log_f.close()
+                    sys.exit(1)
+
             prompt = b"The meaning of intelligence is"
             try:
                 gen_ids = model.generate(list(prompt), max_new_bytes=128, temperature=0.8)
@@ -3086,6 +3124,24 @@ def train_ekalavya(s1_ckpt, cfg=None):
             if DEVICE == "cuda":
                 torch.cuda.empty_cache()
 
+        # Graceful shutdown: save checkpoint and exit cleanly
+        if _shutdown_requested[0]:
+            log(f"  >>> Saving shutdown checkpoint at step {step}...")
+            save_dict = {
+                "step": step, "stage": 1,
+                "model": model.state_dict(),
+                "repr_proj_teachers": {teacher["id"]: teacher["repr_proj"].state_dict() for teacher in teachers},
+                "optimizer": optimizer.state_dict(),
+                "scaler": scaler.state_dict(),
+                "eval_loss": best_eval, "config": cfg,
+            }
+            torch.save(save_dict, ckpt_dir / f"shutdown_step_{step}.pt")
+            log(f"  >>> Shutdown checkpoint saved. Exiting.")
+            pid_path.unlink(missing_ok=True)
+            log_f.close()
+            sys.exit(0)
+
+    pid_path.unlink(missing_ok=True)
     final_loss = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
     final_bpb = final_loss / math.log(2)
     log(f"\n{'='*60}")

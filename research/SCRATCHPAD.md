@@ -9560,3 +9560,41 @@ Each additional teacher adds:
 2. **Teacher agreement** — compute JS(P_1, P_2) at each position. Low JS = teachers agree. High JS = they disagree. Track mean JS over training.
 3. **Per-teacher contribution** — with entropy weighting, track how often each teacher dominates. If one teacher always dominates, the other is adding noise.
 4. **Repr loss** — should improve faster with 2 teachers (more diverse hidden supervision)
+
+---
+
+## 6K PREDICTIVE TRAJECTORY ANALYSIS (2026-04-15)
+
+**Cumulative KD Budget at Each Eval Checkpoint:**
+| Step | Alpha | TAID_b | Eff/step | Cumul | vs Routing (5.19) |
+|------|-------|--------|----------|-------|-------------------|
+| 100 | 0.020 | 0.133 | 0.00267 | 0.088 | 0.0x |
+| 250 | 0.029 | 0.333 | 0.00963 | 1.079 | 0.2x |
+| **500** | **0.026** | **0.667** | **0.01741** | **4.493** | **0.9x** |
+| 1000 | 0.021 | 0.800 | 0.01644 | 13.656 | 2.6x |
+| 1500 | 0.015 | 0.800 | 0.01200 | 20.769 | 4.0x |
+| 2000 | 0.012 | 0.800 | 0.00933 | 26.104 | 5.0x |
+| 3000 | 0.005 | 0.800 | 0.00400 | 32.773 | 6.3x |
+| 4500+ | 0.000 | 0.800 | 0.00000 | 35.775 | 6.9x (final) |
+
+**Key crossover: step 538** — 6K matches routing's entire lifetime budget.
+**Peak intensity: step 600** — eff=0.020 (only 40% of routing's 0.05 peak). Lower peak, longer sustain.
+**Main absorption window (600-1500):** Budget=14.404 (2.8x routing total). Avg eff=0.016/step.
+
+**What this means for eval predictions:**
+- **Step 500 eval** (budget = 0.9x routing): Should match routing's step 250 eval (1.418) if TAID trust-region works as well as plain FKL. If TAID is strictly better, expect 1.410-1.415. Range: 1.405-1.425.
+- **Step 1000 eval** (budget = 2.6x routing): First truly novel territory. If KD is accumulating, expect 1.395-1.415. This is the decisive eval — routing degraded to 1.429 by step 750, so any improvement over 1.418 at 2.6x budget means TAID sustains better than routing.
+- **Step 1500 eval** (budget = 4.0x routing): Deep transfer. Expect 1.385-1.410 if mechanism works. Phase2 unfreeze at 1800 hasn't happened yet.
+- **Steps 4500-6000** (pure CE): WSD-like consolidation. No new KD, but absorbed knowledge gets integrated. Historically WSD gives 0.01-0.02 BPB improvement in consolidation phase.
+
+**Critical comparison: routing vs 6K trajectories**
+Routing: 1.418 (250) -> 1.426 (500) -> 1.429 (750) — DEGRADING
+6K should: improve or hold steady (not degrade) because:
+1. TAID trust-region prevents capacity-gap blowups
+2. Lower per-step intensity reduces gradient conflict
+3. Piecewise decay prevents late-stage KD interference
+4. Unfreeze is delayed (700/1800 vs routing's 700) giving more ramp absorption
+
+**If step 500 eval > 1.430: KILL.** But this should NOT happen given probe's mean train BPB of 1.408 and the tighter ug_clamp=1.5.
+**If step 500 eval in 1.418-1.430: NEUTRAL.** Continue — budget only at 0.9x routing. Step 1000 is the real test.
+**If step 500 eval < 1.418: POSITIVE.** TAID matches routing at equal budget. Strong signal for long-run improvement.

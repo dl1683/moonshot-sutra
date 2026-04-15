@@ -52,5 +52,9 @@
   "freeze_global": false,
   "unfreeze_phase1_step": 700,
   "unfreeze_phase2_step": 1800,
-  "grad_clip": 0.8
+  "grad_clip": 0.8,
+  "kill_rules": {
+    "500": 1.430,
+    "1500": 1.420
+  }
 }
