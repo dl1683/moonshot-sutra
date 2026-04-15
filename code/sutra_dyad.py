@@ -2073,6 +2073,305 @@ def _get_teacher_targets(teacher, tokenizer, first_byte_map, raw_bytes, device,
     return result
 
 
+def precompute_teacher_cache(cfg, output_path):
+    """Pre-compute teacher byte probs for all training windows (offline caching).
+
+    Eliminates teacher forward passes during training → 8-10x per-step speedup.
+    Saves per-teacher sparse byte probs (top-K) + masks + metadata.
+    Routing, TAID, and gating all compose with cached probs at train time.
+
+    Usage:
+        python code/sutra_dyad.py --cache-teachers results/config_xxx.json
+        # Then train with: "use_teacher_cache": true, "teacher_cache_path": "results/teacher_cache_xxx.pt"
+    """
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    import numpy as np
+
+    max_steps = cfg.get("max_steps", 250)
+    batch_size = cfg.get("batch_size", 12)
+    grad_accum = cfg.get("grad_accum", 6)
+    seq_bytes = cfg.get("seq_bytes", SEQ_BYTES)
+    kd_temperature = cfg.get("kd_temperature", 2.0)
+    use_covering = cfg.get("use_covering", False)
+    covering_max_depth = cfg.get("covering_max_depth", None)
+    teacher_cfgs = cfg.get("teachers", [{"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0}])
+    cache_topk = cfg.get("cache_topk", 16)  # Top-K sparse storage per position
+    cache_seed = cfg.get("cache_seed", 42)
+
+    n_microbatches = max_steps * grad_accum
+    print(f"\n{'='*60}")
+    print(f"TEACHER CACHE PRE-COMPUTATION")
+    print(f"{'='*60}")
+    print(f"Steps: {max_steps}, micro-batches: {n_microbatches}, batch: {batch_size}, seq: {seq_bytes}")
+    print(f"Top-K: {cache_topk}, seed: {cache_seed}")
+
+    # Dataset
+    dataset = ByteShardedDataset()
+    print(f"Dataset: {dataset.total_bytes / 1e9:.1f}B est bytes")
+
+    # Pre-sample all windows with fixed seed for reproducibility
+    print(f"\nPre-sampling {n_microbatches} micro-batches ({n_microbatches * batch_size} windows)...")
+    rng_state = random.getstate()
+    random.seed(cache_seed)
+    windows_x, windows_y = [], []
+    for i in range(n_microbatches):
+        x, y = dataset.sample_batch(batch_size, seq_bytes, device='cpu', split='train')
+        windows_x.append(x.to(torch.uint8))
+        windows_y.append(y.to(torch.uint8))
+        if (i + 1) % 500 == 0:
+            print(f"  Sampled {i+1}/{n_microbatches} micro-batches")
+    random.setstate(rng_state)
+    print(f"  Done. Total windows: {len(windows_x) * batch_size}")
+
+    # Load teachers + build covering tables
+    bnb_cfg = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4",
+    )
+
+    teacher_cache_data = {}
+    for t_cfg in teacher_cfgs:
+        teacher_id = t_cfg["id"]
+        teacher_role = t_cfg.get("role", "equal")
+        print(f"\nLoading teacher: {teacher_id} (4-bit, role={teacher_role})")
+        tok = AutoTokenizer.from_pretrained(teacher_id)
+        model = AutoModelForCausalLM.from_pretrained(
+            teacher_id, quantization_config=bnb_cfg, device_map=DEVICE)
+        model.eval()
+        vocab = model.config.vocab_size
+
+        covering_tables, fb_map = None, None
+        if use_covering:
+            print(f"  Building covering tables for {vocab} tokens...")
+            covering_tables = _build_covering_tables(tok, vocab, device=DEVICE)
+            print(f"  Covering: {covering_tables['n_prefixes']} prefixes")
+        else:
+            fb_map = _build_first_byte_map(tok, vocab, DEVICE)
+
+        # Process all micro-batches
+        print(f"  Computing byte probs for {n_microbatches} micro-batches...")
+        all_topk_vals = []   # list of (B, T, K) float16
+        all_topk_idx = []    # list of (B, T, K) uint8
+        all_masks = []       # list of (B, T) bool
+        t0 = time.time()
+
+        for mb_idx in range(n_microbatches):
+            x = windows_x[mb_idx]
+            batch_raw = [x[b].tolist() for b in range(x.shape[0])]
+
+            with torch.no_grad():
+                if use_covering:
+                    targets = _get_teacher_targets_covering_batched(
+                        model, tok, covering_tables, batch_raw, DEVICE,
+                        temperature=kd_temperature, extract_hidden=False,
+                        max_depth=covering_max_depth,
+                    )
+                else:
+                    targets = []
+                    for raw in batch_raw:
+                        targets.append(_get_teacher_targets(
+                            model, tok, fb_map, raw, DEVICE,
+                            temperature=kd_temperature, extract_hidden=False,
+                        ))
+
+            # Stack and sparsify
+            bp = torch.stack([t["byte_probs"] for t in targets])   # (B, T, 256)
+            bm = torch.stack([t["byte_mask"] for t in targets])    # (B, T)
+
+            # Top-K sparse storage
+            topk_v, topk_i = bp.topk(cache_topk, dim=-1)  # (B, T, K)
+            all_topk_vals.append(topk_v.half().cpu())
+            all_topk_idx.append(topk_i.to(torch.uint8).cpu())
+            all_masks.append(bm.cpu())
+
+            if (mb_idx + 1) % 100 == 0:
+                elapsed = time.time() - t0
+                rate = (mb_idx + 1) / elapsed
+                eta = (n_microbatches - mb_idx - 1) / max(rate, 1e-6)
+                print(f"    [{mb_idx+1}/{n_microbatches}] {rate:.1f} mb/s, "
+                      f"ETA {eta/60:.1f}min")
+
+        elapsed = time.time() - t0
+        print(f"  Done in {elapsed/60:.1f}min ({n_microbatches/elapsed:.1f} mb/s)")
+
+        teacher_cache_data[teacher_id] = {
+            "topk_vals": all_topk_vals,
+            "topk_idx": all_topk_idx,
+            "masks": all_masks,
+            "role": teacher_role,
+            "weight": float(t_cfg.get("weight", 1.0)),
+        }
+
+        # Free teacher model VRAM before loading next
+        del model, tok, covering_tables, fb_map
+        gc.collect()
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
+
+    # Package and save
+    cache = {
+        "version": 1,
+        "config": cfg,
+        "n_microbatches": n_microbatches,
+        "max_steps": max_steps,
+        "batch_size": batch_size,
+        "grad_accum": grad_accum,
+        "seq_bytes": seq_bytes,
+        "temperature": kd_temperature,
+        "cache_topk": cache_topk,
+        "cache_seed": cache_seed,
+        "windows_x": windows_x,
+        "windows_y": windows_y,
+        "teachers": teacher_cache_data,
+    }
+
+    # Compute cache size
+    total_bytes = 0
+    for tid, td in teacher_cache_data.items():
+        for v in td["topk_vals"]:
+            total_bytes += v.nelement() * 2
+        for i in td["topk_idx"]:
+            total_bytes += i.nelement()
+        for m in td["masks"]:
+            total_bytes += m.nelement()
+    for x in windows_x:
+        total_bytes += x.nelement()
+    for y in windows_y:
+        total_bytes += y.nelement()
+
+    output_path = Path(output_path)
+    print(f"\nSaving cache to {output_path} ({total_bytes/1e6:.0f}MB estimated)...")
+    torch.save(cache, output_path)
+    actual_size = output_path.stat().st_size
+    print(f"Saved: {actual_size/1e6:.0f}MB on disk")
+    print(f"Cache ready. Use with: \"use_teacher_cache\": true, \"teacher_cache_path\": \"{output_path}\"")
+    return cache
+
+
+def _reconstruct_byte_probs_from_cache(topk_vals, topk_idx, n_bytes=256):
+    """Reconstruct full (B, T, 256) byte probs from sparse top-K cache.
+
+    Distributes residual mass uniformly across non-top-K positions.
+    """
+    B, T, K = topk_vals.shape
+    probs = torch.zeros(B, T, n_bytes, device=topk_vals.device, dtype=torch.float32)
+    # Scatter top-K values
+    idx_long = topk_idx.long()
+    probs.scatter_(2, idx_long, topk_vals.float())
+    # Distribute residual uniformly
+    residual = (1.0 - probs.sum(dim=-1, keepdim=True)).clamp_min(0)
+    # Count non-topk positions
+    n_rest = n_bytes - K
+    if n_rest > 0:
+        uniform_fill = residual / n_rest
+        # Create mask of top-K positions
+        topk_mask = torch.zeros_like(probs, dtype=torch.bool)
+        topk_mask.scatter_(2, idx_long, True)
+        probs = probs + uniform_fill * (~topk_mask).float()
+    return probs
+
+
+def verify_teacher_cache(cache_path, n_batches=3):
+    """Verify cached teacher targets match live teacher output (parity check).
+
+    Loads cache, runs live teacher forward on a few cached windows,
+    compares byte probs. Reports max and mean error per teacher.
+    """
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+    cache = torch.load(cache_path, map_location='cpu', weights_only=False)
+    cfg = cache["config"]
+    kd_temperature = cache["temperature"]
+    cache_topk = cache["cache_topk"]
+    use_covering = cfg.get("use_covering", False)
+    covering_max_depth = cfg.get("covering_max_depth", None)
+
+    bnb_cfg = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_quant_type="nf4",
+    )
+
+    print(f"\n{'='*60}")
+    print(f"CACHE PARITY CHECK: {cache_path}")
+    print(f"{'='*60}")
+    print(f"Checking {n_batches} micro-batches per teacher, top-{cache_topk} sparse")
+
+    all_pass = True
+    for tid, td in cache["teachers"].items():
+        print(f"\nTeacher: {tid}")
+        tok = AutoTokenizer.from_pretrained(tid)
+        model = AutoModelForCausalLM.from_pretrained(
+            tid, quantization_config=bnb_cfg, device_map=DEVICE)
+        model.eval()
+        vocab = model.config.vocab_size
+
+        covering_tables, fb_map = None, None
+        if use_covering:
+            covering_tables = _build_covering_tables(tok, vocab, device=DEVICE)
+        else:
+            fb_map = _build_first_byte_map(tok, vocab, DEVICE)
+
+        errors = []
+        for mb_idx in range(n_batches):
+            x = cache["windows_x"][mb_idx]
+            batch_raw = [x[b].tolist() for b in range(x.shape[0])]
+
+            # Live teacher forward
+            with torch.no_grad():
+                if use_covering:
+                    live_targets = _get_teacher_targets_covering_batched(
+                        model, tok, covering_tables, batch_raw, DEVICE,
+                        temperature=kd_temperature, extract_hidden=False,
+                        max_depth=covering_max_depth,
+                    )
+                else:
+                    live_targets = [_get_teacher_targets(
+                        model, tok, fb_map, raw, DEVICE,
+                        temperature=kd_temperature, extract_hidden=False,
+                    ) for raw in batch_raw]
+
+            live_bp = torch.stack([t["byte_probs"] for t in live_targets])
+            live_mask = torch.stack([t["byte_mask"] for t in live_targets])
+
+            # Cached reconstruction
+            topk_v = td["topk_vals"][mb_idx].to(DEVICE)
+            topk_i = td["topk_idx"][mb_idx].to(DEVICE)
+            cached_bp = _reconstruct_byte_probs_from_cache(topk_v, topk_i)
+            cached_mask = td["masks"][mb_idx].to(DEVICE)
+
+            # Compare on masked positions (where teacher has valid probs)
+            both_mask = live_mask & cached_mask
+            if both_mask.any():
+                diff = (live_bp[both_mask] - cached_bp[both_mask].to(live_bp.device)).abs()
+                max_err = diff.max().item()
+                mean_err = diff.mean().item()
+                # Top-K error: compare only top-K positions (exact match expected)
+                topk_live_v, topk_live_i = live_bp[both_mask].topk(cache_topk, dim=-1)
+                topk_cache_v = cached_bp[both_mask].to(live_bp.device).gather(1, topk_live_i)
+                topk_diff = (topk_live_v - topk_cache_v).abs()
+                topk_max = topk_diff.max().item()
+                errors.append((max_err, mean_err, topk_max))
+                print(f"  mb {mb_idx}: max_err={max_err:.6f}, mean_err={mean_err:.6f}, "
+                      f"topk_max_err={topk_max:.6f}, mask_match={both_mask.sum()}/{live_mask.sum()}")
+
+        if errors:
+            avg_max = sum(e[0] for e in errors) / len(errors)
+            avg_topk = sum(e[2] for e in errors) / len(errors)
+            status = "PASS" if avg_topk < 0.005 else "FAIL"
+            if status == "FAIL":
+                all_pass = False
+            print(f"  Result: {status} (avg max_err={avg_max:.6f}, avg topk_err={avg_topk:.6f})")
+
+        del model, tok, covering_tables, fb_map
+        gc.collect()
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
+
+    print(f"\n{'='*60}")
+    print(f"Overall: {'ALL PASS' if all_pass else 'SOME FAILED'}")
+    return all_pass
+
+
 def train_ekalavya(s1_ckpt, cfg=None):
     """Ekalavya Phase C: multi-teacher knowledge distillation for Sutra-Dyad."""
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -2094,6 +2393,10 @@ def train_ekalavya(s1_ckpt, cfg=None):
     rolling_save = cfg.get("rolling_save", ROLLING_SAVE)
     grad_clip = cfg.get("grad_clip", GRAD_CLIP)
 
+    # Teacher cache config (offline pre-computed targets)
+    use_teacher_cache = cfg.get("use_teacher_cache", False)
+    teacher_cache_path = cfg.get("teacher_cache_path", None)
+
     # KD config
     kd_alpha = cfg.get("kd_alpha", 0.5)      # Byte logit KD weight
     kd_beta = cfg.get("kd_beta", 0.15)       # Repr alignment weight
@@ -2107,6 +2410,21 @@ def train_ekalavya(s1_ckpt, cfg=None):
     kd_final_beta_mult = cfg.get("kd_final_beta_mult", 0.60)
     use_covering = cfg.get("use_covering", False)  # Covering decomposition (lossless KD)
     covering_max_depth = cfg.get("covering_max_depth", None)  # None=full, 0=first-byte-only, 1=depth-0+1
+
+    # TAID: Temporally Adaptive Interpolated Distillation (byte-space adaptation)
+    # Target: p_taid ∝ p_student_det^(1-β) * p_route^β — progressive student→teacher
+    use_taid = cfg.get("use_taid", False)
+    taid_beta_start = cfg.get("taid_beta_start", 0.0)
+    taid_beta_end = cfg.get("taid_beta_end", 0.8)
+    taid_beta_ramp = cfg.get("taid_beta_ramp_steps", 600)
+
+    # Uncertainty gating: gate = t_conf * (1-s_conf)^exp, renorm to mean=1, clamp
+    use_uncertainty_gating = cfg.get("use_uncertainty_gating", False)
+    ug_renormalize = cfg.get("ug_renormalize", True)
+    ug_clamp = cfg.get("ug_clamp", 4.0)
+    ug_exp_start = cfg.get("ug_exp_start", 1.0)
+    ug_exp_end = cfg.get("ug_exp_end", 2.0)
+    ug_exp_ramp = cfg.get("ug_exp_ramp_steps", 600)
 
     # Teacher config
     anchor_id = cfg.get("anchor_teacher", "HuggingFaceTB/SmolLM2-1.7B")
@@ -2159,51 +2477,87 @@ def train_ekalavya(s1_ckpt, cfg=None):
           f"{params['trainable']/1e6:.1f}M trainable, {params['frozen']/1e6:.1f}M frozen")
     model = model.to(DEVICE)
 
-    # 4-bit quantization config for teachers (Codex VRAM budget: ~2GB per teacher)
-    bnb_cfg = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_quant_type="nf4",
-    )
+    # Load teacher cache OR live teacher models
+    teacher_cache = None
+    if use_teacher_cache and teacher_cache_path:
+        print(f"\nLoading teacher cache from {teacher_cache_path}...")
+        teacher_cache = torch.load(teacher_cache_path, map_location='cpu', weights_only=False)
+        assert teacher_cache["version"] == 1, f"Unsupported cache version: {teacher_cache['version']}"
+        assert teacher_cache["n_microbatches"] >= max_steps * grad_accum, \
+            f"Cache has {teacher_cache['n_microbatches']} micro-batches, need {max_steps * grad_accum}"
+        print(f"  Cache: {teacher_cache['n_microbatches']} micro-batches, "
+              f"top-{teacher_cache['cache_topk']} sparse, "
+              f"teachers: {list(teacher_cache['teachers'].keys())}")
+        # Build teacher_cfgs from cache metadata
+        if teacher_cfgs is None:
+            teacher_cfgs = []
+            for tid, td in teacher_cache["teachers"].items():
+                teacher_cfgs.append({"id": tid, "weight": td["weight"], "role": td["role"]})
+        # No live teachers needed — create lightweight teacher entries for logging/routing only
+        teachers = []
+        for idx, t_cfg in enumerate(teacher_cfgs):
+            teachers.append({
+                "id": t_cfg["id"],
+                "weight": float(t_cfg.get("weight", 1.0)),
+                "tokenizer": None,
+                "model": None,
+                "hidden_dim": 0,
+                "vocab": 0,
+                "covering": None,
+                "first_byte_map": None,
+                "repr_proj": nn.Linear(1, model.d_local, bias=False).to(DEVICE),  # placeholder
+            })
+        # Repr loss disabled in cache mode (no hidden states)
+        if kd_beta > 0:
+            print(f"  NOTE: repr loss (beta={kd_beta}) disabled in cache mode (no hidden states)")
+            kd_beta = 0.0
+    else:
+        # Live teacher loading (original path)
+        # 4-bit quantization config for teachers (Codex VRAM budget: ~2GB per teacher)
+        bnb_cfg = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type="nf4",
+        )
 
-    if teacher_cfgs is None:
-        teacher_cfgs = [{"id": anchor_id, "weight": 1.0}]
-        if aux_id:
-            teacher_cfgs.append({"id": aux_id, "weight": 1.0})
+        if teacher_cfgs is None:
+            teacher_cfgs = [{"id": anchor_id, "weight": 1.0}]
+            if aux_id:
+                teacher_cfgs.append({"id": aux_id, "weight": 1.0})
 
-    teachers = []
-    for idx, teacher_cfg in enumerate(teacher_cfgs):
-        teacher_id = teacher_cfg["id"]
-        teacher_weight = float(teacher_cfg.get("weight", 1.0))
-        teacher_role = "anchor" if idx == 0 else f"teacher_{idx}"
-        print(f"\nLoading {teacher_role}: {teacher_id} (4-bit, weight={teacher_weight:.3f})")
-        teacher_tok = AutoTokenizer.from_pretrained(teacher_id)
-        teacher_model = AutoModelForCausalLM.from_pretrained(
-            teacher_id, quantization_config=bnb_cfg, device_map=DEVICE)
-        teacher_model.eval()
-        teacher_dim = teacher_model.config.hidden_size
-        teacher_vocab = teacher_model.config.vocab_size
-        teacher_covering, teacher_fb = None, None
-        if use_covering:
-            print(f"  Building covering tables for {teacher_vocab} tokens...")
-            teacher_covering = _build_covering_tables(teacher_tok, teacher_vocab, device=DEVICE)
-            print(f"  Covering: {teacher_covering['n_prefixes']} prefixes, "
-                  f"max {teacher_covering['max_token_bytes']} bytes/token")
-        else:
-            teacher_fb = _build_first_byte_map(teacher_tok, teacher_vocab, DEVICE)
-        repr_proj = nn.Linear(teacher_dim, model.d_local, bias=False).to(DEVICE)
-        nn.init.normal_(repr_proj.weight, std=0.02)
-        print(f"  Hidden dim: {teacher_dim}, vocab: {teacher_vocab}")
-        teachers.append({
-            "id": teacher_id,
-            "weight": teacher_weight,
-            "tokenizer": teacher_tok,
-            "model": teacher_model,
-            "hidden_dim": teacher_dim,
-            "vocab": teacher_vocab,
-            "covering": teacher_covering,
-            "first_byte_map": teacher_fb,
-            "repr_proj": repr_proj,
+        teachers = []
+        for idx, teacher_cfg in enumerate(teacher_cfgs):
+            teacher_id = teacher_cfg["id"]
+            teacher_weight = float(teacher_cfg.get("weight", 1.0))
+            teacher_role = "anchor" if idx == 0 else f"teacher_{idx}"
+            print(f"\nLoading {teacher_role}: {teacher_id} (4-bit, weight={teacher_weight:.3f})")
+            teacher_tok = AutoTokenizer.from_pretrained(teacher_id)
+            teacher_model = AutoModelForCausalLM.from_pretrained(
+                teacher_id, quantization_config=bnb_cfg, device_map=DEVICE)
+            teacher_model.eval()
+            teacher_dim = teacher_model.config.hidden_size
+            teacher_vocab = teacher_model.config.vocab_size
+            teacher_covering, teacher_fb = None, None
+            if use_covering:
+                print(f"  Building covering tables for {teacher_vocab} tokens...")
+                teacher_covering = _build_covering_tables(teacher_tok, teacher_vocab, device=DEVICE)
+                print(f"  Covering: {teacher_covering['n_prefixes']} prefixes, "
+                      f"max {teacher_covering['max_token_bytes']} bytes/token")
+            else:
+                teacher_fb = _build_first_byte_map(teacher_tok, teacher_vocab, DEVICE)
+            repr_proj = nn.Linear(teacher_dim, model.d_local, bias=False).to(DEVICE)
+            nn.init.normal_(repr_proj.weight, std=0.02)
+            print(f"  Hidden dim: {teacher_dim}, vocab: {teacher_vocab}")
+            teachers.append({
+                "id": teacher_id,
+                "weight": teacher_weight,
+                "tokenizer": teacher_tok,
+                "model": teacher_model,
+                "hidden_dim": teacher_dim,
+                "vocab": teacher_vocab,
+                "covering": teacher_covering,
+                "first_byte_map": teacher_fb,
+                "repr_proj": repr_proj,
         })
 
     # Optimizer: layerwise LR groups per Codex spec
@@ -2273,6 +2627,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
     log(f"KD schedule: hold={kd_hold_steps}, decay_start={kd_decay_start_step}, "
         f"peak=({kd_peak_alpha_mult:.2f},{kd_peak_beta_mult:.2f}), "
         f"final=({kd_final_alpha_mult:.2f},{kd_final_beta_mult:.2f})")
+    if use_taid:
+        log(f"TAID: beta {taid_beta_start}->{taid_beta_end} over {taid_beta_ramp} steps")
+    if use_uncertainty_gating:
+        log(f"Uncertainty gating: exp {ug_exp_start}->{ug_exp_end} over {ug_exp_ramp} steps, "
+            f"clamp={ug_clamp}, renorm={ug_renormalize}")
     log(f"Teachers ({len(teachers)}), aggregation={teacher_aggregation}, agg_temp={teacher_aggregation_temp}:")
     for i, teacher in enumerate(teachers):
         role = teacher_cfgs[i].get("role", "equal") if teacher_cfgs and i < len(teacher_cfgs) else "equal"
@@ -2352,9 +2711,15 @@ def train_ekalavya(s1_ckpt, cfg=None):
             log(f"  >>> UNFREEZE global layers 0-3 at step {step} (all params trainable)")
 
         for micro in range(grad_accum):
-            x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
+            # --- Data: cached windows or live sampling ---
+            if teacher_cache is not None:
+                mb_idx = (step - start_step) * grad_accum + micro
+                x = teacher_cache["windows_x"][mb_idx].to(dtype=torch.long, device=DEVICE)
+                y = teacher_cache["windows_y"][mb_idx].to(dtype=torch.long, device=DEVICE)
+            else:
+                x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
 
-            # --- Teacher forward (no grad, before student) ---
+            # --- Teacher targets: cached reconstruction or live forward ---
             with torch.no_grad():
                 B_actual = x.shape[0]
                 all_byte_probs = []
@@ -2367,23 +2732,42 @@ def train_ekalavya(s1_ckpt, cfg=None):
                     dtype=torch.float32,
                 )
                 teacher_results = []
-                batch_raw = [x[b].tolist() for b in range(B_actual)]
 
-                for teacher in teachers:
-                    if use_covering:
-                        targets_batch = _get_teacher_targets_covering_batched(
-                            teacher["model"], teacher["tokenizer"], teacher["covering"], batch_raw, DEVICE,
-                            temperature=kd_temperature, extract_hidden=(beta_eff > 0),
-                            max_depth=covering_max_depth,
-                        )
-                    else:
+                if teacher_cache is not None:
+                    # Reconstruct per-teacher byte probs from sparse cache
+                    mb_idx = (step - start_step) * grad_accum + micro
+                    for teacher in teachers:
+                        tid = teacher["id"]
+                        td = teacher_cache["teachers"][tid]
+                        topk_v = td["topk_vals"][mb_idx].to(DEVICE)  # (B, T, K) float16
+                        topk_i = td["topk_idx"][mb_idx].to(DEVICE)   # (B, T, K) uint8
+                        mask = td["masks"][mb_idx].to(DEVICE)         # (B, T) bool
+                        byte_probs = _reconstruct_byte_probs_from_cache(topk_v, topk_i)
+                        # Build per-sample target dicts (same format as live path)
                         targets_batch = []
-                        for raw in batch_raw:
-                            targets_batch.append(_get_teacher_targets(
-                                teacher["model"], teacher["tokenizer"], teacher["first_byte_map"], raw, DEVICE,
+                        for b in range(B_actual):
+                            targets_batch.append({
+                                "byte_probs": byte_probs[b],
+                                "byte_mask": mask[b],
+                            })
+                        teacher_results.append(targets_batch)
+                else:
+                    batch_raw = [x[b].tolist() for b in range(B_actual)]
+                    for teacher in teachers:
+                        if use_covering:
+                            targets_batch = _get_teacher_targets_covering_batched(
+                                teacher["model"], teacher["tokenizer"], teacher["covering"], batch_raw, DEVICE,
                                 temperature=kd_temperature, extract_hidden=(beta_eff > 0),
-                            ))
-                    teacher_results.append(targets_batch)
+                                max_depth=covering_max_depth,
+                            )
+                        else:
+                            targets_batch = []
+                            for raw in batch_raw:
+                                targets_batch.append(_get_teacher_targets(
+                                    teacher["model"], teacher["tokenizer"], teacher["first_byte_map"], raw, DEVICE,
+                                    temperature=kd_temperature, extract_hidden=(beta_eff > 0),
+                                ))
+                        teacher_results.append(targets_batch)
 
                 teacher_patch_hidden = None
                 teacher_patch_mask = None
@@ -2426,16 +2810,53 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 student_logits = internals["logits"]  # (B, T, 256)
 
                 # KD Loss 1: Byte-level KL divergence (float32 for numerical stability)
+                # Supports TAID (progressive target) and uncertainty gating (per-position weighting)
                 kd_loss = torch.tensor(0.0, device=DEVICE)
+                ug_stats = {}
                 if alpha_eff > 0:
                     # Compute in float32 outside autocast for log-space stability
                     student_log_probs = F.log_softmax(student_logits.float() / kd_temperature, dim=-1)
                     mask = teacher_byte_mask[:, :student_logits.shape[1]]
                     if mask.any():
                         t_probs = teacher_byte_probs[:, :student_logits.shape[1], :]
-                        t_log_probs = torch.log(t_probs + 1e-10)
-                        kl = F.kl_div(student_log_probs, t_log_probs, reduction='none', log_target=True)
+
+                        # TAID: progressive intermediate target p_taid ∝ p_s_det^(1-β) * p_t^β
+                        if use_taid:
+                            beta_taid = taid_beta_start + (taid_beta_end - taid_beta_start) * min(1.0, step / max(taid_beta_ramp, 1))
+                            with torch.no_grad():
+                                s_probs_det = F.softmax(student_logits.float() / kd_temperature, dim=-1)
+                                s_probs_det = s_probs_det[:, :t_probs.shape[1], :]
+                            # Geometric interpolation in probability space
+                            taid_target = s_probs_det.pow(1.0 - beta_taid) * t_probs.pow(beta_taid)
+                            taid_target = taid_target / taid_target.sum(dim=-1, keepdim=True).clamp_min(1e-10)
+                            target_log_probs = torch.log(taid_target + 1e-10)
+                        else:
+                            target_log_probs = torch.log(t_probs + 1e-10)
+
+                        kl = F.kl_div(student_log_probs, target_log_probs, reduction='none', log_target=True)
                         kl = kl.sum(dim=-1)  # (B, T)
+
+                        # Uncertainty gating: concentrate KD on high-value positions
+                        if use_uncertainty_gating:
+                            t_conf = t_probs.max(dim=-1).values  # (B, T) teacher confidence
+                            with torch.no_grad():
+                                s_probs_ug = F.softmax(student_logits.float(), dim=-1)
+                                s_conf = s_probs_ug[:, :t_probs.shape[1], :].max(dim=-1).values
+                            ug_exp = ug_exp_start + (ug_exp_end - ug_exp_start) * min(1.0, step / max(ug_exp_ramp, 1))
+                            gate = t_conf * (1.0 - s_conf).pow(ug_exp)
+                            if ug_renormalize:
+                                gate_mean = (gate * mask.float()).sum() / mask.float().sum().clamp_min(1e-10)
+                                gate = gate / gate_mean.clamp_min(1e-10)
+                            gate = gate.clamp(max=ug_clamp)
+                            kl = kl * gate
+                            # Stats for logging
+                            with torch.no_grad():
+                                ug_stats = {
+                                    "ug_mean": gate[mask].mean().item() if mask.any() else 0,
+                                    "ug_active": (gate[mask] > 0.5).float().mean().item() if mask.any() else 0,
+                                    "ug_max": gate[mask].max().item() if mask.any() else 0,
+                                }
+
                         kl = (kl * mask.float()).sum() / mask.float().sum()
                         kd_loss = kd_temperature ** 2 * kl
 
@@ -2524,10 +2945,18 @@ def train_ekalavya(s1_ckpt, cfg=None):
             bpb = running_ce / n / math.log(2)
             vram = torch.cuda.max_memory_allocated() / 1e9 if DEVICE == "cuda" else 0
             local_lr = optimizer.param_groups[0]['lr']
+            ug_suffix = ""
+            if use_uncertainty_gating and ug_stats:
+                ug_suffix = f" | ug={ug_stats.get('ug_mean',0):.2f}/{ug_stats.get('ug_active',0):.0%}"
+            taid_suffix = ""
+            if use_taid:
+                bt = taid_beta_start + (taid_beta_end - taid_beta_start) * min(1.0, step / max(taid_beta_ramp, 1))
+                taid_suffix = f" | taid_b={bt:.2f}"
             log(f"  step {step:>5d} | CE {running_ce/n:.4f} | KD {running_kd/n:.4f} | "
                 f"Repr {running_repr/n:.4f} | Total {running_total/n:.4f} | BPB {bpb:.3f} | "
                 f"lr {local_lr:.2e} | grad {grad_norm:.2f} | "
-                f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}")
+                f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}"
+                f"{taid_suffix}{ug_suffix}")
             running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
 
         if step % eval_every == 0:
@@ -2605,6 +3034,10 @@ if __name__ == "__main__":
                         help="Profile teacher models for Ekalavya KD (CPU-only)")
     parser.add_argument("--ekalavya", type=str, default=None, metavar="S1_CKPT",
                         help="Run Ekalavya KD from Stage 1 checkpoint")
+    parser.add_argument("--cache-teachers", type=str, default=None, metavar="CONFIG",
+                        help="Pre-compute teacher cache from JSON config (offline caching)")
+    parser.add_argument("--verify-cache", type=str, default=None, metavar="CACHE_PATH",
+                        help="Verify teacher cache parity (compare cached vs live targets)")
     parser.add_argument("--config", type=str, default=None, help="JSON config file")
     parser.add_argument("--stage0-ckpt", type=str, default=None, help="Stage 0 checkpoint for Stage 1")
     parser.add_argument("--resume", type=str, default=None, help="Resume training from S1 checkpoint")
@@ -2617,7 +3050,15 @@ if __name__ == "__main__":
                         help="Partially unfreeze global layers [START, END) after initial freeze")
     args = parser.parse_args()
 
-    if args.det_eval:
+    if args.cache_teachers:
+        with open(args.cache_teachers) as f:
+            cache_cfg = json.load(f)
+        cache_name = cache_cfg.get("run_name", "teacher_cache")
+        output_path = REPO / "results" / f"teacher_cache_{cache_name}.pt"
+        precompute_teacher_cache(cache_cfg, output_path)
+    elif args.verify_cache:
+        verify_teacher_cache(args.verify_cache)
+    elif args.det_eval:
         det_eval(args.det_eval)
     elif args.ablate:
         ablation_eval(args.ablate)

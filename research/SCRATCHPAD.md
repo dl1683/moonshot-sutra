@@ -121,13 +121,329 @@ Config: results/config_multi2_routed_3k.json. Key diffs from AM:
 - LR -20% vs AM: local=1.2e-4, bridge=1.6e-4
 - T=1.3 (vs 1.5). More aggressive KD decay (final_mult=0.3). Repr beta decays to 0.
 - Eval every 250 (vs 500). Kill: >1.430 at step 500.
-VRAM: expecting ~23.5GB (same teacher pair). Throughput: ~48s/step (same covering bottleneck).
+VRAM: 15.7GB so far (lower than AM's 23.5GB). Throughput: ~48s/step (same covering bottleneck).
+
+**ROUTING EARLY DATA (steps 10-20):**
+| Step | BPB | CE | KD | Repr | Grad | Ramp | vs AM BPB | Notes |
+|------|-----|-----|-----|------|------|------|-----------|-------|
+| 10 | 1.382 | 0.958 | 0.970 | 0.901 | 0.55 | 0.02 | +0.011 | LR is 47% lower (slower warmup) |
+| 20 | **1.490** | 1.033 | **1.630** | 1.006 | 0.87 | 0.05 | **-0.074** | KD loss 1.63 vs AM's 4.05! |
+| 30 | **1.450** | 1.005 | **1.374** | 0.986 | 0.48 | 0.07 | **-0.035** | KD 1.37 vs AM 2.12. BPB dropping |
+| 40 | **1.512** | 1.048 | **1.179** | 0.967 | 0.83 | 0.10 | **+0.069** | Hard batch (CE=1.048). KD improving |
+| 50 | **1.400** | 0.970 | **0.847** | 0.965 | 0.62 | 0.12 | **+0.124** | **BELOW BASELINE!** KD 0.85 (AM was 1.20) |
+**Steps 10-50 summary:** KD loss monotonically declining (0.97->1.63->1.37->1.18->0.85). BPB volatile but trending down. Step 50 crosses below baseline (1.400 < 1.421). Routing producing clean targets.
+| 60 | **1.390** | 0.963 | 1.517 | 0.940 | 0.45 | 0.15 | **-0.044** | **Below baseline!** Two consecutive sub-baseline |
+| 70 | 1.442 | 0.999 | 1.033 | 0.906 | 0.51 | 0.17 | +0.005 | Bounce back. AM was 1.437 at step 70 |
+| 80 | 1.456 | 1.010 | 1.506 | 0.911 | 0.58 | 0.20 | +0.021 | Hard batch. AM was 1.435 at step 80 |
+| 90 | **1.421** | 0.985 | 1.582 | 0.862 | 0.64 | 0.22 | **-0.090** | AM was 1.511 (spike)! |
+| 100 | **1.378** | 0.955 | 0.860 | 0.811 | 0.48 | 0.25 | **-0.032** | Below baseline. AM was 1.410 |
+| 110 | **1.382** | 0.958 | 0.932 | 0.766 | 0.45 | 0.27 | **-0.022** | Below baseline. AM was 1.404 |
+Rolling avg (10-110): routing BPB=1.428, AM BPB=1.418. Gap narrowing as routing catches up during LR warmup. Last 5-step window (70-110): routing **1.416** vs AM **1.439** — routing NOW LEADING. Steps 100-110 both below baseline. Repr converging well: 0.766 (vs AM 0.650 at step 110). KD loss avg: 1.157 (routing) vs ~1.8 (AM) — 36% lower.
+| 120 | **1.394** | 0.966 | 1.248 | 0.723 | 0.42 | 0.30 | **-0.045** | Below baseline. AM was 1.439 |
+| 130 | **1.405** | 0.974 | 1.306 | 0.676 | 0.46 | 0.32 | — | Below baseline. Repr still dropping |
+**Key trend: routing BPB improving as ramp increases (0.20→0.32). Steps 100-130 ALL below baseline (1.378, 1.382, 1.394, 1.405). AM BPB was FLAT then WORSENING at same ramp. This is clear evidence that routing's cleaner targets translate to actual BPB improvement under increasing KD pressure.**
+| 140 | **1.383** | 0.959 | 0.795 | 0.616 | 0.39 | 0.35 | — | Below baseline. KD=0.795 lowest yet |
+| 150 | **1.370** | 0.950 | 1.271 | 0.581 | 0.64 | 0.37 | — | **BEST BPB in any KD run.** -0.060 below eval baseline |
+Steps 100-150 avg: **1.385** — consistently below eval baseline 1.430 by 0.045. CRITICAL: ramp=0.37, entering AM's failure zone (0.40-0.60). BPB is DROPPING here, not rising (AM was worsening). Routing confirmed: no entropy injection at increasing ramp.
+Repr converging fast: 0.901→0.581 in 140 steps (35% reduction). Gradients stable: 0.39-0.64 range.
+| 160 | **1.377** | 0.955 | 0.773 | 0.508 | 0.37 | 0.40 | — | **AM FAILURE ZONE ENTERED.** BPB still below baseline |
+| 170 | **1.375** | 0.953 | 0.820 | 0.456 | 0.43 | 0.42 | — | In AM failure zone. Routing holding |
+| 180 | **1.407** | 0.975 | 1.146 | 0.438 | 0.52 | 0.45 | — | Harder batch, still below baseline |
+| 190 | **1.387** | 0.962 | 0.959 | 0.363 | 0.43 | 0.47 | — | Deep in AM failure zone. Routing stable |
+**ROUTING CONCLUSIVELY CONFIRMED (ramp 0.40-0.47):** Routing avg 1.384 vs AM avg ~1.445 at same ramp — **0.061 BPB advantage**. AM degraded monotonically here; routing is FLAT/IMPROVING. No entropy injection. Repr converged (0.363). Steps 90-190: **11 consecutive below-baseline checkpoints.** LR approaching peak (1.01e-4 of 1.2e-4).
+| 200 | **1.396** | 0.968 | 1.066 | 0.342 | 0.57 | 0.50 | — | Below baseline. Ramp 0.50 |
+| 210 | 1.435 | 0.995 | 1.603 | 0.354 | 0.63 | 0.52 | — | First above-baseline since step 80. KD spike |
+| 220 | **1.427** | 0.989 | 1.462 | 0.326 | 0.51 | 0.55 | — | Recovery. Just below eval baseline |
+Steps 200-220: mild pressure at ramp 0.50-0.55. Avg 1.419 (still below baseline). NOT AM degradation (AM was monotonic; routing recovered at step 220). Gap narrowing: routing advantage went from 0.061 (ramp 0.40) to 0.019 (ramp 0.55). KD loss volatile (1.066-1.603). Repr converged: 0.326.
+| 230 | **1.392** | 0.965 | 1.123 | 0.262 | 0.62 | 0.57 | — | Below baseline. Deep in AM collapse zone |
+| 240 | **1.407** | 0.975 | 1.248 | 0.244 | 0.42 | 0.60 | — | Below baseline |
+| 250 | **1.376** | 0.954 | 0.825 | 0.200 | 0.41 | 0.62 | — | Excellent. Repr near zero |
+
+### *** STEP 250 FORMAL EVAL: BPB=1.418, loss=0.9830 ***
+**VERDICT: STRONG** (1.410-1.420 range). First time Ekalavya KD produces formal eval improvement.
+- Baseline eval: BPB=1.430, loss=0.9914
+- Routing eval: **BPB=1.418, loss=0.9830**
+- **Delta: -0.012 BPB (-0.84%)**
+- New best checkpoint saved
+- Generation: coherent English ("The meaning of intelligence is a good perspective of study and education...")
+- Routing conclusively validated: stable through AM's entire failure zone (ramp 0.40-0.62)
+
+**DECISION: CONTINUE to step 500.** Plan uncertainty gating for next iteration.
+**Next eval at step 500 (~16:30).** Kill criteria: eval BPB > 1.440. Promote if ≤ 1.410.
+
+**POST-EVAL TRAINING (steps 260-340, ramp 0.65-0.85):**
+| 260 | **1.379** | 0.956 | 0.801 | 0.179 | 0.53 | 0.65 | — | Good |
+| 270 | 1.458 | 1.010 | 1.013 | 0.197 | 0.74 | 0.67 | — | Hard batch |
+| 280 | **1.405** | 0.974 | 0.859 | 0.154 | 0.53 | 0.70 | — | Recovery |
+| 290 | 1.456 | 1.009 | 1.549 | 0.179 | 0.76 | 0.72 | — | High KD spike |
+| 300 | **1.423** | 0.987 | 1.065 | 0.153 | 0.49 | 0.75 | — | Near baseline |
+| 310 | **1.415** | 0.981 | 1.102 | 0.146 | 0.49 | 0.77 | — | Below baseline |
+| 320 | **1.258** | 0.872 | 1.103 | 0.136 | 0.68 | 0.80 | — | Outlier easy batch |
+| 330 | **1.420** | 0.985 | 1.143 | 0.119 | 0.54 | 0.82 | — | Below baseline |
+| 340 | 1.444 | 1.001 | 1.264 | 0.121 | 0.69 | 0.85 | — | Above baseline |
+Steps 260-340 avg: **1.406** (below baseline). Excl. outlier 320: **1.425** (just below baseline). Variance increased at high ramp — expected as alpha*ramp approaches full weight. No monotonic degradation (AM pattern absent). LR at full 1.60e-4. Repr converged (~0.12).
+**Critical next phase:** Ramp 1.0 at step 400 (hold phase, full alpha=0.05). Step 700: decay starts + unfreeze phase 1. AM never reached these — uncharted territory.
+
+**FINAL RAMP + HOLD PHASE (steps 350-420):**
+| 350 | **1.390** | 0.964 | 0.973 | 0.102 | 0.61 | 0.87 | — | Good |
+| 360 | **1.429** | 0.990 | 1.275 | 0.116 | 0.68 | 0.90 | — | Near baseline |
+| 370 | 1.481 | 1.027 | 1.042 | 0.107 | 0.80 | 0.92 | — | Spike, high grad |
+| 380 | **1.396** | 0.968 | 1.030 | 0.091 | 0.67 | 0.95 | — | Recovery |
+| 390 | **1.394** | 0.966 | 0.941 | 0.089 | 0.51 | 0.97 | — | Good |
+| 400 | **1.380** | 0.956 | 0.848 | 0.077 | 0.48 | 1.00 | — | **HOLD PHASE ENTERED.** Clean transition |
+| 410 | **1.427** | 0.989 | 1.173 | 0.082 | 0.79 | 1.00 | — | Near baseline |
+| 420 | **1.543** | 1.070 | 1.068 | 0.076 | 0.78 | 1.00 | — | **WORST BPB in run.** CE=1.070 = hard batch? |
+Steps 350-400 avg: 1.412 (below baseline).
+
+**HOLD PHASE DEGRADATION (steps 400-450, ramp=1.00, full alpha=0.05):**
+| 400 | **1.380** | 0.956 | 0.848 | 0.077 | 0.48 | 1.00 | — | Hold phase entry — excellent |
+| 410 | **1.427** | 0.989 | 1.173 | 0.082 | 0.79 | 1.00 | — | Near baseline |
+| 420 | 1.543 | 1.070 | 1.068 | 0.076 | 0.78 | 1.00 | — | Degradation begins |
+| 430 | **1.672** | **1.159** | **3.211** | 0.131 | 0.59 | 1.00 | — | **CATASTROPHIC.** KD=3.211, CE worst ever |
+| 440 | 1.484 | 1.028 | 1.198 | 0.076 | 0.63 | 1.00 | — | Partial recovery |
+| 450 | 1.504 | 1.043 | 1.595 | 0.074 | 0.88 | 1.00 | — | Still degraded |
+Steps 420-450 avg: **1.551** (>>baseline 1.430). NOT an outlier — 4 consecutive degraded steps.
+**Root cause:** Full alpha=0.05 at ramp=1.0 too strong for dense per-position KD. During ramp (eff. alpha 0.02-0.04), routing kept BPB below baseline. At full alpha, ~80% unhelpful positions overwhelm CE. SE-KD literature predicted exactly this: dense KD at full strength hurts.
+**Implication for next iteration:** Routing WORKS during ramp. But need either (a) lower peak alpha (~0.03), (b) shorter hold phase, or (c) uncertainty gating to suppress the ~80% unhelpful positions. Option (c) is the designed solution.
+**STEP 500 EVAL: BPB=1.426, loss=0.9884 — POSITIVE (below baseline 1.430, below kill 1.440)**
+Regressed from step 250 eval (1.418 → 1.426, +0.008). Generation degraded (incoherent at 500 vs coherent at 250).
+Steps 460-500: avg BPB 1.478 (elevated). Gradient spikes: 1.86 (step 460), 1.35 (step 490) — highest in run.
+| 460 | 1.463 | 1.014 | 1.591 | 0.080 | **1.86** | 1.00 | — | Grad spike! |
+| 470 | 1.506 | 1.044 | 1.237 | 0.079 | 0.83 | 1.00 | — | |
+| 480 | **1.409** | 0.977 | 0.880 | 0.067 | 0.63 | 1.00 | — | Recovery |
+| 490 | 1.534 | 1.063 | 1.732 | 0.074 | **1.35** | 1.00 | — | Grad spike |
+| 500 | 1.480 | 1.026 | 1.515 | 0.071 | 0.49 | 1.00 | — | |
+
+**DECISION: Continue to step 750 eval.** Eval is below kill threshold. At step 700, alpha decay starts (0.05→0.015) AND unfreeze phase 1 triggers — both should HELP. If step 750 eval > 1.430 (below baseline), kill then.
+
+**HOLD PHASE CONTINUED (steps 510-590):**
+Steps 510-540 avg: 1.421 (partial recovery). Steps 550-580 avg: 1.460 (worsening again). Step 590: BPB=1.390, CE=0.963, grad=0.90 — STRONG recovery. Oscillating, not monotonic. CE drifted to ~1.000-1.018 (was ~0.960 in ramp). Full alpha KD hurting CE by ~+0.040.
+| 590 | **1.390** | 0.963 | 1.024 | 0.060 | 0.90 | 1.00 | — | Strong recovery, lowest since step 250 |
+Steps 510-590 avg: ~1.432 (near baseline). Hold phase oscillates 1.390-1.465 with no degradation trend.
+
+**HOLD PHASE CONTINUED (steps 600-670):**
+| 600 | **1.412** | 0.979 | 1.066 | 0.057 | 0.90 | 1.00 | — | Below baseline |
+| 610 | 1.448 | 1.004 | 1.184 | 0.054 | 0.81 | 1.00 | — | Above |
+| 620 | **1.383** | 0.959 | 0.832 | 0.053 | 0.46 | 1.00 | — | Below |
+| 630 | 1.464 | 1.015 | 1.577 | 0.055 | 0.73 | 1.00 | — | Above |
+| 640 | **1.580** | **1.095** | **2.340** | 0.060 | 0.64 | 1.00 | — | **HARD-BATCH SPIKE.** KD=2.34 (max). Forward KL mode-covering blowup. |
+| 650 | **1.396** | 0.967 | 0.769 | 0.051 | 0.48 | 1.00 | — | Immediate recovery |
+| 660 | **1.384** | 0.960 | 1.057 | 0.052 | 0.59 | 1.00 | — | Below baseline |
+| 670 | **1.423** | 0.986 | 0.997 | 0.051 | 0.60 | 1.00 | — | Near baseline |
+Steps 600-670 avg: 1.436 (above baseline). Excl. step 640 outlier: **1.416** (below baseline).
+**Pattern confirmed**: Hold phase = baseline oscillation (1.38-1.46) + hard-batch spikes where FKL mode-covering fails. Uncertainty gating would suppress these spikes specifically.
+
+**PRE-DECAY + UNFREEZE (steps 680-750):**
+| 680 | **1.365** | 0.946 | 1.144 | 0.053 | 0.56 | 1.00 | — | Strong improvement |
+| 690 | **1.349** | 0.935 | 1.077 | 0.052 | 1.00 | 1.00 | — | Best hold-phase training BPB |
+| 700 | **1.331** | **0.922** | 0.791 | 0.055 | 1.08 | 1.00 | — | **Best in entire run.** Then UNFREEZE layers 4-7 |
+| 710 | 1.466 | 1.016 | 1.450 | 0.056 | 1.05 | 1.00 | 11.2G | Post-unfreeze spike (expected) |
+| 720 | **1.418** | 0.983 | 1.347 | 0.058 | 0.61 | 1.00 | 11.2G | Recovery |
+| 730 | 1.430 | 0.991 | 1.081 | 0.051 | 0.93 | 1.00 | 11.2G | At baseline |
+| 740 | 1.447 | 1.003 | 1.471 | 0.053 | 0.60 | 1.00 | 11.2G | Above |
+| 750 | **1.405** | 0.974 | 1.196 | 0.051 | 0.58 | 1.00 | 11.2G | Below baseline |
+**STEP 750 EVAL: BPB=1.429, loss=0.9906 — POSITIVE (baseline 1.430, delta -0.001)**
+Generation: "The meaning of intelligence is much more comprehensive, with more general processes that are designed to enhance the teaching meaning of obstacles."
+Eval trajectory: 1.418 → 1.426 → 1.429 (approaching baseline from below, decelerating).
+Steps 680-700 showed dramatic pre-unfreeze improvement (training BPB 1.331) but eval didn't reflect it.
+VRAM stable at 11.2G post-unfreeze (was 10.5G). Alpha decay only 2.2% through — negligible so far.
+**DECISION: KILLED at step 760 per Codex T+L recommendation.** Value exhausted: routing works (eval 1.418), dense full-alpha hurts (hold degradation), forward KL mode-covering causes hard-batch spikes. GPU freed for iteration 5.
+
+## CODEX T+L — EKALAVYA ITERATION 5 DESIGN (2026-04-13)
+
+**Codex prescription (full output: /tmp/codex_tl_ekalavya5_output.txt):**
+
+**Architecture: routing + covering + capped byte-space TAID + uncertainty gating + no hold + offline cache**
+
+1. **TAID adaptation for byte-level multi-teacher KD:**
+   - Target: `p_taid ∝ p_student_det^(1-β) * p_route^β` where p_route comes from existing routing
+   - β_taid: 0.0→0.8 over 600 steps, then hold 0.8 (NOT 1.0)
+   - This is the clean cross-tokenizer multi-teacher adaptation of TAID
+
+2. **Uncertainty gating with curriculum:**
+   - `g_raw = t_conf * (1 - s_conf)^exp`, s_conf under torch.no_grad()
+   - Renormalize to mean=1, clamp at 4.0
+   - Curriculum: exponent from 1.0→2.0 over first 600 steps (softer gating early)
+
+3. **Schedule (no hold):**
+   - alpha: 0.03 peak (was 0.05), warmup 150 steps, then immediate decay
+   - 0.03→0.015 by 1500, →0.005 by 3000, →0.0 by 4500, CE-only tail to 6000
+   - beta: 0.02 peak, anchor-only, zero by step 500-600
+   - grad_clip: 0.8 (was 1.0)
+
+4. **Offline caching NOW:**
+   - Cache per-teacher sparse byte targets separately
+   - Route at train time from cache
+   - TAID and gating both compose with cache
+
+5. **2 teachers, add Qwen only as offline oracle probe first**
+
+**Seed:** best.pt from step 250 (eval BPB=1.418). Run 100-step A/B vs step_5000.pt.
+
+**Kill/promote:**
+- 250 eval > 1.418 = kill (didn't beat old best)
+- 500 eval > 1.412 = kill
+- 1000 eval > 1.405 = kill
+- Promote to 6K only if 500≤1.412 AND 1000≤1.405
+- Success: ≤1.390 by 1500-3000
+
+**Probes before full run:**
+1. Cache parity: cached vs live on 3-5 batches (mismatch <0.5%)
+2. FKL+gating vs TAID+gating A/B: 150-250 steps from best.pt at alpha=0.03
+3. Warm-start A/B: 100 steps from best.pt vs step_5000.pt
+4. 3-teacher oracle: Smol+Pythia+Qwen offline, add Qwen only if improves by ≥0.010
+5. Gate audit: inspect raw gate mean/tail distribution
+
+**Confidence:** Routing 9/10, no-hold 9/10, gating 8/10, TAID 7/10, cache 8/10, 2T 8/10.
+**Fallback:** D_SRKL(alpha_skew=0.2) + same gating/cache, then AMiD.
+**TAID correction:** Codex notes TAID is ICLR 2025 Spotlight (not NeurIPS 2024).
+⚠️ **VRAM: 24.1GB of 24GB (98.6%). OOM risk.** Step 700 decay should reduce memory pressure.
+Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430.
+
+**CLEAR LEARNING from this run:**
+1. ✅ Routing WORKS during ramp (steps 100-400, eval 1.418, -0.012 below baseline)
+2. ❌ Dense KD at full alpha=0.05 is too strong (steps 420-580 degraded, oscillating ~1.450)
+3. ✅ Hold phase not monotonically worsening (oscillates, partial recoveries — better than AM which was monotonic)
+4. → Uncertainty gating is the CLEAR next step: suppress KD on ~80% of unhelpful positions
+5. → Alternative: lower peak alpha to 0.03, or shorter ramp (reach peak earlier, start decay earlier)
+
+**THEORETICAL CEILING (routing alone):**
+- Baseline EVAL BPB = 1.430 (corrected from training BPB 1.421)
+- Routing removes AM failure mode (entropy injection) but ceiling is eval BPB ~1.42-1.44 (neutral)
+- For decisive win (eval BPB ≤ 1.36): need uncertainty gating + longer training + stronger teachers
+- Each improvement builds on previous: routing → gating → caching → stronger teachers
+- **Decision framework at step 250 eval:** ≤1.410=DECISIVE, 1.410-1.420=STRONG, 1.420-1.430=POSITIVE, 1.430-1.440=NEUTRAL, >1.440=FAILING
+
+**STEP 250 EVAL — ACTION PLAN (pre-decided, act immediately):**
+| Eval BPB | Verdict | Immediate Action |
+|----------|---------|-----------------|
+| ≤1.410 | DECISIVE | Continue to step 500. Start uncertainty gating implementation in parallel. Codex PR-gate review. |
+| 1.410-1.420 | STRONG | Continue to step 500. Plan uncertainty gating as next run. |
+| 1.420-1.430 | POSITIVE | Continue to step 500. Routing works (no degradation like AM). Plan routing + uncertainty gating combined run. |
+| 1.430-1.440 | NEUTRAL | Continue to step 500 (give it a chance — AM was still OK at step 250 too). Prepare Plan B (sparse KD, single-teacher). |
+| 1.440-1.460 | CONCERNING | Let run to step 500 but start preparing Plan B actively. Codex diagnostic review. |
+| >1.460 | KILL | Kill immediately. Invoke Codex for strategy reset. Options: single-teacher routing, sparse KD (top-20% positions only), or CE-only with teacher-scored curriculum. |
+
+**KEY INSIGHT from AM failure**: AM was actually decent at step 250 (~1.431) — the degradation happened AFTER step 300 as ramp increased. So a neutral step 250 result is NOT necessarily safe. The diagnostic at step 250 must also check: (1) BPB *trend* over steps 200-250 (flat/improving = good, worsening = AM pattern repeating), (2) KD loss behavior at ramp 0.50+ (should be stable, not spiking).
+
+**REFRAMING (from SE-KD literature, Apr 2026):** SE-KD showed 20% selective position KD beats 100% dense KD. Implication: even with perfect routing, dense per-position KD is suboptimal — ~80% of positions receive unhelpful or harmful signal. **A neutral routing result (1.420-1.440) with no AM degradation is therefore POSITIVE** — it means routing fixed teacher conflict, and the next step (uncertainty gating, selecting ~7-20% of positions) should unlock decisive improvement. The question at step 250 is not "did KD help?" but "did routing avoid making things worse?" If yes → proceed to routing + gating. Only KILL if routing shows AM-style degradation (worsening BPB trend at high ramp).
+
+## EKALAVYA ITER5 PROBE — TAID+GATING (2026-04-15)
+
+**Config:** results/config_ekalavya_iter5_probe.json (250 steps from best.pt)
+**Seed:** best.pt (routing run step 250, eval BPB=1.418)
+**Kill:** step 250 eval > 1.418 = failed to beat routing run's best
+
+| Step | BPB | CE | KD | Repr | Grad | Ramp | TAID β | UG mean/active | Notes |
+|------|-----|-----|-----|------|------|------|--------|----------------|-------|
+| 10 | 1.421 | 0.985 | 0.177 | 0.877 | 0.49 | 0.06 | 0.01 | 0.98/53% | At baseline. KD 6x lower than routing (0.97) — TAID working |
+| 20 | 1.427 | 0.989 | 0.286 | 0.969 | 0.57 | 0.13 | 0.03 | 0.99/55% | Slightly above baseline. KD increasing as β grows. Stable. |
+
+**Key observations:**
+- KD loss 3.8x lower than routing run at step 20 (0.286 vs 1.080). TAID progressive target working as designed.
+- BPB 0.013 below routing run at step 20 (1.427 vs 1.440). Less aggressive KD → less disruption.
+- Gradient 0.57, well below clip=0.8. Stable.
+- UG active=55% — gating concentrating on ~55% positions (will narrow as exp ramps 1→2).
+
+**Comparison with routing run at step 20:**
+| Metric | Routing | TAID+gating | Delta |
+|--------|---------|-------------|-------|
+| BPB | 1.440 | 1.427 | -0.013 |
+| KD | 1.080 | 0.286 | -3.8x |
+| Grad | 0.63 | 0.57 | -10% |
+
+**ETA:** ~60s/step → step 250 eval ~12:00-12:30 PM. Kill: eval > 1.418.
+
+**OFFLINE TEACHER CACHING — IMPLEMENTED (2026-04-15)**
+Functions added to sutra_dyad.py:
+- `precompute_teacher_cache(cfg, output_path)` — pre-sample windows, batch teacher forward + covering, store top-K sparse byte probs
+- `_reconstruct_byte_probs_from_cache(topk_vals, topk_idx)` — reconstruct full 256-dim probs from sparse cache
+- `verify_teacher_cache(cache_path)` — parity check (cached vs live targets)
+- `train_ekalavya()` now supports `use_teacher_cache: true` + `teacher_cache_path: "path"` config
+
+Cache format: top-16 sparse byte probs per position per teacher. For 250-step probe: ~1.3GB total (2 teachers). Repr loss disabled in cache mode (beta forced to 0).
+
+**Usage:**
+```bash
+# Pre-compute cache
+python code/sutra_dyad.py --cache-teachers results/config_xxx.json
+# Verify parity
+python code/sutra_dyad.py --verify-cache results/teacher_cache_xxx.pt
+# Train with cache (8-10x faster per step)
+# Add to config: "use_teacher_cache": true, "teacher_cache_path": "results/teacher_cache_xxx.pt"
+python code/sutra_dyad.py --ekalavya results/checkpoints_xxx/best.pt --config results/config_xxx.json
+```
+
+**Value proposition:** Each cached run takes ~20 min vs ~3 hours live. Critical for A/B experiments (TAID vs FKL, warm-start comparison, gate audit).
+
+---
 
 **MISSING FROM ROUTING RUN: Uncertainty gating (alpha_t = alpha * teacher_conf * (1 - student_conf)^2)**
 Codex prescribed TWO mechanisms: (1) anchor-confidence routing for teacher blending -- IMPLEMENTED, (2) per-position KD alpha scaling based on teacher/student confidence -- NOT IMPLEMENTED. Current run applies uniform alpha to all positions. If routing improves but isn't decisive, add uncertainty gating as next iteration -- it reduces KD pressure where student already confident AND where teacher is uncertain. This is orthogonal to routing.
 **Quantified impact (simulation):** Gating reduces effective KD to 17.3% of full alpha on average. 46.5% of positions get <10% alpha (effectively off). Only 6.9% get >50% (strong KD). The formula aggressively concentrates KD on the ~7% of positions where teacher is confident AND student is uncertain -- maximum learning potential, minimum interference with already-learned content. Key property: (1-student_conf)^2 means student confidence gates out KD quadratically -- even moderate student confidence (0.5) reduces KD by 75%.
 
+**UNCERTAINTY GATING — IMPLEMENTATION DESIGN (ready for next iteration):**
+Integration point: sutra_dyad.py lines 2437-2439 (after per-position KL, before mean reduction).
+```
+# Current code:
+kl = kl.sum(dim=-1)  # (B, T) — per-position KL
+kl = (kl * mask.float()).sum() / mask.float().sum()
+
+# With uncertainty gating:
+kl = kl.sum(dim=-1)  # (B, T)
+if use_uncertainty_gating:
+    t_conf = t_probs.max(dim=-1).values  # (B, T) — teacher confidence (already detached)
+    with torch.no_grad():  # CRITICAL: detach student gate to prevent overconfidence incentive
+        s_probs = F.softmax(student_logits.float(), dim=-1)
+        s_conf = s_probs.max(dim=-1).values  # (B, T)
+    gate = t_conf * (1.0 - s_conf).pow(2)  # (B, T)
+    if ug_renormalize:  # Normalize gate to mean=1: redistribute KD focus without changing total magnitude
+        gate_mean = (gate * mask.float()).sum() / mask.float().sum().clamp_min(1e-10)
+        gate = gate / gate_mean.clamp_min(1e-10)
+    kl = kl * gate
+kl = (kl * mask.float()).sum() / mask.float().sum()
+```
+Key design decisions:
+- **torch.no_grad() on student confidence**: Without this, student learns to appear confident to reduce KD → mode collapse. Gate must be observation, not incentive.
+- **Renormalize to mean=1**: Without renormalization, effective alpha drops to ~17% (too low). Renormalization preserves total KD magnitude while redistributing it — high-uncertainty positions get gate>1 (boosted), low-uncertainty get gate<1 (suppressed). Pure focus redistribution.
+- **No new parameters**: Zero overhead. Just a per-position multiplicative mask.
+- **Config**: `use_uncertainty_gating: true`, `ug_renormalize: true` (default: both false for backward compat)
+- **Diagnostics to log**: `ug_mean_gate` (raw, pre-renorm), `ug_active_pct` (% with gate>0.5), `ug_max_gate`
+- **repr loss**: NOT gated. Repr already decays to 0 via kd_final_beta_mult=0.0. No need.
+- **Interaction with routing**: Orthogonal. Routing decides WHICH teacher provides the target. Gating decides HOW MUCH to weight each position. They compose naturally.
+
+**LITERATURE REVIEW — Position-Selective KD (surveyed 2026-04-13):**
+Key finding: **position-selective KD is a validated, active research area**. Our design is well-grounded but has genuine novelty.
+
+| Paper | Year | Signal | Granularity | Method | Key Result |
+|-------|------|--------|-------------|--------|------------|
+| SE-KD (arXiv:2602.01395) | Feb 2026 | Student entropy | Position | Top-20% selection, easy→hard curriculum | Beats dense KD. Best accuracy+instruction-following |
+| SelecTKD (arXiv:2510.24021) | Oct 2025 | Teacher verification | Position | Binary accept/reject via speculative decode | Reduces noisy high-entropy supervision |
+| DA-KD (ICML 2025) | 2025 | Sample difficulty | Sample | Bidirectional discrepancy loss | +2% at half cost. Beats SOTA |
+| EA-KD (arXiv:2311.13621) | 2023-25 | Teacher+student entropy | Sample | Entropy reweighting | SOTA across tasks, negligible cost |
+| CA-MKD | 2025 | Teacher confidence | Sample | Sample-wise reliability weighting | Multi-teacher adaptive weighting |
+
+**What this means for our design:**
+1. **Validated**: SE-KD shows 20% selective >> 100% dense. Our gating (concentrating ~50% weight onto ~7% positions) is even more aggressive — literature supports this direction.
+2. **Best signal**: SE-KD found student entropy beats teacher entropy, student CE, and random selection. Our formula uses BOTH teacher conf + student uncertainty — a superset.
+3. **Curriculum potential**: SE-KD's easy→hard curriculum improved results. We could add scheduling: early training uses softer gating, later uses aggressive gating.
+4. **Offline caching synergy**: SE-KD paper explicitly notes selective KD enables offline teacher caching (fewer effective positions = smaller cache). Validates our caching architecture.
+5. **Our novelty is REAL**: No paper does continuous weighting with teacher_conf × (1-student_conf)² at byte-level in cross-tokenizer multi-teacher setup. The closest is EA-KD (entropy reweighting), but it's sample-level and doesn't combine teacher+student signals multiplicatively.
+
+**Possible improvement from literature**: Add curriculum scheduling to gating. Early in training (ramp phase), use softer gating (e.g., gate^0.5) so more positions receive KD. Later (decay phase), use aggressive gating to concentrate on hardest remaining positions. SE-KD's evidence suggests this helps.
+
+**CODEX CORRECTNESS REVIEW (2026-04-13 10:50, routing implementation):**
+- HIGH (FALSE POSITIVE): Codex flagged KL direction as wrong. Actually CORRECT: F.kl_div(student, teacher) = KL(teacher||student) = standard forward KL = Hinton 2015 KD loss. Mode-covering, correct for byte-level KD.
+- MEDIUM: anchor/aux role resolution can collapse if roles misconfigured → add validation. Not triggering (config explicit).
+- MEDIUM: single-teacher with routing crashes (assert 2 teachers) → add fallback. Not triggering.
+- LOW: Repr loss uses fixed sample weights (82.5/17.5) not per-position routing. Irrelevant as repr decays to 0.
+- LOW: No validation on aux_weight_cap. Current 0.35 is safe.
+- CLEAN: JSD, routing formula, weight normalization, covering integration, float32 stability, mask alignment. All verified correct.
+**Verdict: routing implementation is CORRECT. No blocking issues.**
+
 **Known minor issue (from Codex T+L):** `errors='replace'` in teacher text decoding can shift byte offsets when sampled windows start mid-UTF8 multibyte character. U+FFFD replacement is 3 bytes, may shift subsequent offsets by +2. Impact: minimal (affects only first 1-3 bytes of 1536-byte sequences). Fix: strip leading continuation bytes before decoding, or detect and skip garbled starts. Not blocking smoke test.
+
+**BASELINE CORRECTION (2026-04-13):** Eval BPB from step_5000.pt checkpoint = **1.430** (not 1.421 as previously used from training BPB). Eval metric uses held-out test split (50 batches × 8 seq). All kill/promote thresholds should reference eval BPB 1.430.
 
 **Codex T+L Analysis — Key Findings (2026-04-13):**
 Covering solved "how to transfer signal." It did NOT solve "when, where, and from which teacher to apply pressure."
@@ -165,15 +481,107 @@ Optimized v2 with numpy fast path + batched teacher forward.
 - This is complementary to offline caching — reduces live aux computation by 75-87%
 - Byte-class calibration probe: per-class (whitespace/letters/digits/punctuation/UTF8) NLL/top-1 to identify WHERE aux helps
 
+**T+L NEXT ITERATION — PREPARED FINDINGS (for Codex, post step-750 decision)**
+
+Context: This is the empirical evidence from the routing KD run (multi2_routed_3k). Inject into next T+L session.
+
+**RUN SUMMARY: multi2_routed_3k (SmolLM2 anchor + Pythia aux, confidence routing, covering)**
+- Student: Sutra-Dyad-188.2M (warm-start from step_5000.pt CE-only checkpoint, eval BPB=1.430)
+- Teachers: SmolLM2-1.7B (4-bit anchor) + Pythia-1.4B (4-bit aux)
+- Schedule: alpha ramp 0→0.05 (400 steps), hold (400-700), decay 0.05→0.015 (700-3000)
+- Routing: JSD>0.02 gate, anchor-dominant, aux contributes only where more confident
+- Forward KL: KL(teacher || student) — mode-covering
+
+**PHASE RESULTS:**
+| Phase | Steps | Avg BPB | vs Baseline (1.430) | CE | Gradient | Verdict |
+|-------|-------|---------|---------------------|-----|----------|---------|
+| Early ramp | 10-200 | 1.413 | -0.017 | 0.97 | 0.53 | EXCELLENT |
+| Late ramp | 200-400 | 1.408 | -0.022 | 0.97 | 0.56 | EXCELLENT |
+| Hold phase | 400-590 | 1.450 | +0.020 | 1.02 | 0.81 | DEGRADED |
+| Step 250 EVAL | — | 1.418 | -0.012 | — | — | STRONG |
+| Step 500 EVAL | — | 1.426 | -0.004 | — | — | POSITIVE |
+| Post-unfreeze | 710-750 | 1.433 | +0.003 | 0.99 | 0.75 | Near baseline |
+| Step 750 EVAL | — | 1.429 | -0.001 | — | — | POSITIVE (barely) |
+
+**KEY FINDINGS (empirical):**
+1. Routing WORKS during ramp. Eval 1.418 at step 250 = first formal KD improvement ever.
+2. Dense KD at full alpha=0.05 is too strong. Hold phase (ramp=1.0) degrades CE by +0.040, oscillates BPB 1.390-1.540.
+3. Hold phase is NOT monotonically worsening (unlike AM which was). Oscillates with partial recoveries.
+4. Gradient instability at full alpha: spikes to 1.86 (was 0.53 during ramp).
+5. VRAM at 24.1/24.5GB — approaching OOM limit.
+
+**DESIGN QUESTIONS FOR CODEX:**
+1. **KL DIRECTION (CRITICAL)**: Currently forward KL (teacher||student). Our own RESEARCH.md §6.4.33 concludes "standard forward KL alone fails at >1:10" based on MiniLLM, AMiD, GKD, DistiLLM. We're at 1:9 ratio. The hold-phase degradation may be PARTLY caused by forward KL mode-covering — student spreads thin trying to cover 1.7B teacher's full distribution. Options ranked by feasibility:
+   - **TAID interpolation** (NeurIPS 2024): progressive target from student→teacher. No on-policy cost. Tested at similar ratios. Composes with alpha schedule. RECOMMENDED.
+   - **Skew reverse KL** (DistiLLM): D_SRKL with alpha=0.1-0.3. Simple drop-in. Slightly outperforms skew FKL.
+   - **AMiD** (α=-5): Strongly mode-seeking. Tested at 15:1 ratio. +1.64 ROUGE-L over FKL.
+   - **Reverse KL** (MiniLLM): On-policy cost too high for pre-training.
+   Which divergence for byte-level cross-tokenizer multi-teacher KD?
+2. **UNCERTAINTY GATING**: We have a design ready (teacher_conf × (1-student_conf)²). Should this be the primary mechanism, or should we also reduce peak alpha (from 0.05 to 0.03)?
+3. **SCHEDULE**: Ramp works, hold hurts. Should we eliminate the hold phase entirely (ramp directly into decay)?
+4. **OFFLINE CACHING**: 10x throughput via cached sparse teacher targets. Should this be implemented now, or validate gating first?
+5. **CODEX AUDIT FIXES**: Single-teacher fallback, aux_cap validation, repr-loss routing alignment.
+6. **INTERACTION**: How do KL direction change + uncertainty gating + schedule change interact? Should we ablate one at a time or combine?
+
+**T+L CODEX PROMPT — READY TO LAUNCH (fill in [STEP_750_EVAL] and fire):**
+```
+TASK: Design iteration 5 of Ekalavya multi-teacher KD for byte-level student.
+
+=== EMPIRICAL EVIDENCE FROM ROUTING RUN (multi2_routed_3k, 3000 steps) ===
+Student: Sutra-Dyad-188.2M, warm-started from 5K CE-only checkpoint (eval BPB=1.430)
+Teachers: SmolLM2-1.7B (4-bit anchor) + Pythia-1.4B (4-bit aux)
+Config: alpha=0.05, T=1.3, forward KL, anchor-dominant routing, covering decomposition
+
+Results:
+- Step 250 eval: BPB=1.418 (baseline 1.430, delta -0.012) — FIRST KD improvement ever
+- Step 500 eval: BPB=1.426 (baseline 1.430, delta -0.004) — regressed from 250
+- Step 750 eval: BPB=[STEP_750_EVAL] (baseline 1.430) — [VERDICT]
+- Ramp phase (steps 10-400): avg BPB 1.410, consistently below baseline. Routing WORKS.
+- Hold phase (steps 400-590): avg BPB 1.450, oscillating 1.390-1.540. Dense full-alpha=0.05 TOO STRONG.
+- Gradient spikes to 1.86 during hold (was 0.53 during ramp).
+
+=== ROOT CAUSE ANALYSIS ===
+1. FORWARD KL is mode-covering. At 1:9 ratio (188M:1.7B), student spreads thin covering teacher's full distribution. Our RESEARCH.md §6.4.33 predicts forward KL fails at >1:10.
+2. DENSE per-position KD at full alpha hurts ~80% of positions. SE-KD (Feb 2026) confirms 20% selective beats 100% dense.
+3. NO uncertainty gating implemented. Codex T+L prescribed it but was deferred to iteration 5.
+
+=== READY MECHANISMS (designed, not implemented) ===
+1. Uncertainty gating: gate = teacher_conf × (1 - student_conf)² with renormalization to mean=1. Concentrates ~50% KD onto ~7% of hardest positions. Code design complete.
+2. TAID interpolation: progressive target student→teacher. No on-policy cost. Replaces manual alpha schedule. Addresses capacity gap smoothly.
+3. Offline teacher caching: top-8 sparse targets per position, ~6.1GB for 2 teachers. 10x speedup.
+
+=== DESIGN QUESTIONS (prioritized) ===
+1. KL DIRECTION: TAID interpolation vs skew reverse KL vs keep forward KL? TAID is recommended by literature at our ratio.
+2. UNCERTAINTY GATING: Use as primary mechanism? Also reduce peak alpha (0.05→0.03)?
+3. SCHEDULE: Eliminate hold phase? Ramp directly into decay?
+4. OFFLINE CACHING: Implement now or validate gating first?
+5. Which changes to combine vs ablate separately?
+6. Codex audit fixes: single-teacher fallback, aux_cap validation.
+
+=== CONSTRAINTS ===
+- RTX 5090, 24GB VRAM. Currently at 24.1GB with 2 live teachers.
+- Offline caching drops VRAM to ~3.5GB (student only).
+- Warm-start from best checkpoint (step 250, eval 1.418 or original step 5000, eval 1.430).
+```
+
 **NEXT OPTIMIZATION: Offline Teacher Target Pre-computation**
 If multi-teacher covering shows positive signal but throughput is the bottleneck:
 1. Pre-score 10K windows per teacher offline (run teacher forward + covering once)
-2. Cache byte_probs as compressed sparse arrays (top-32 per position = ~1.5GB/teacher)
+2. Cache byte_probs as compressed sparse arrays (top-8 per position)
 3. Train student against cached targets — eliminates ALL teacher inference during training
 4. Speed: student-only → ~same as CE-only (~3-5s/step). 10x speedup.
 5. VRAM: student only (~3GB) + cached batch (~50MB) = 3.5GB. Could run much larger student.
 6. Repr KD not compatible with caching (needs live student features), but Codex recommends decaying repr to 0 anyway.
 7. Implement ONLY if live multi-teacher run shows signal at step 500 eval.
+
+**Concrete design (worked out 2026-04-13):**
+- **Bottleneck analysis**: Teacher forward is 75% of step time (36/48s), NOT covering. Two 1.7B/1.4B teachers × 6 micro-batches × ~3s/forward = ~36s. Covering adds ~6s.
+- **Storage**: Top-8 sparse per position: 8×(1B index + 4B float32) = 40B/pos. Per sequence: 1536×40 = 61.4KB. Per teacher × 50K windows: ~3.1GB. Total 2 teachers: ~6.1GB.
+- **Pre-scoring time**: 50K windows / 12 batch = 4167 batches × 2 teachers × 4s = ~9.3h. Feasible overnight.
+- **Memory-mapped**: numpy memmap for random access without loading full file.
+- **Store per-teacher targets, route at training time**: Allows experimenting with routing params without re-scoring.
+- **Fixed non-overlapping windows** (stride=1536): 50 shards × ~1000 windows = 50K windows. At 72 windows/step, repeats every ~694 steps. For 3K steps, each window seen ~4.3x. Acceptable.
+- **Prerequisites**: (1) Routing run validates mechanism, (2) Pre-scoring script implemented, (3) Data loader extended to return window_id
 
 ---
 

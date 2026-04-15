@@ -1776,16 +1776,29 @@ PonderLM-2 (CRITICAL RESULT):
 
 **Sutra relevance:** Theoretical foundation for cross-architecture multi-teacher KD. Transformer + SSM + encoder teachers have maximally diverse error patterns (different inductive biases). The "Condorcet independence" we derived earlier (§7.2) is a special case of this diversity decomposition. Predicts: adding a structurally different teacher should help more than adding a same-family teacher, IF errors are independent.
 
-#### 6.4.37 SelecTKD / AdaSPEC: Adaptive Token Selection for KD (2025)
+#### 6.4.37 Position-Selective KD: Token-Level Adaptive Weighting (2023-2026)
 
-**Per-token loss weighting and selection for efficient KD.**
+**Per-token loss weighting and selection for efficient KD — ACTIVE RESEARCH AREA.**
 
-- SelecTKD: selective token-weighted KD for LLMs — dynamically adjusts which tokens participate in loss.
-- AdaSPEC: token loss filtering based on loss-gap ranking for speculative decoders.
-- AdaKD: Hellinger-based difficulty metrics for selecting/weighting tokens.
+| Paper | Year/Venue | Signal | Method | Key Result |
+|-------|-----------|--------|--------|------------|
+| SE-KD (arXiv:2602.01395) | Feb 2026 | Student entropy | Top-20% selection, easy→hard curriculum | **Beats dense KD** on accuracy + instruction-following |
+| SelecTKD (arXiv:2510.24021) | Oct 2025 | Teacher verification | Binary accept/reject (spec decode style) | Reduces noisy high-entropy supervision |
+| DA-KD (ICML 2025) | 2025 | Sample difficulty | Bidirectional discrepancy loss | +2% at half cost, surpasses teacher with 4.7× compression |
+| EA-KD (arXiv:2311.13621) | 2023-25 | Teacher+student entropy | Sample-level entropy reweighting | SOTA across tasks, negligible cost |
+| AdaSPEC | 2025 | Loss-gap ranking | Token filtering for spec decoders | |
+| AdaKD | 2025 | Hellinger difficulty | Per-token Hellinger-based weighting | |
+
+- **SE-KD is the landmark result**: 20% selective consistently beats 100% dense KD. Student entropy is the best signal (beats teacher entropy, CE, random). Easy→hard curriculum scheduling helps. Multi-axis extension (position+class+sample) yields complementary gains. **Critically: selective KD enables offline teacher caching** (fewer effective positions = smaller cache).
 - Common pattern: rank positions by uncertainty, split into easy/hard, skip or reweight easy tokens.
 
-**Sutra relevance:** Validates our hard_token_frac approach. The field is converging on per-token adaptive gating as standard practice. Our student-entropy top-25% is consistent with this direction. For production, consider learned per-token weights (AdaKD-style) instead of fixed top-K threshold.
+**Sutra relevance:** Strongly validates our uncertainty gating design. Key differences from existing work:
+1. We use BOTH teacher confidence + student uncertainty (literature mostly uses one or the other)
+2. We use continuous multiplicative weighting, not binary top-K selection
+3. Our quadratic student uncertainty term (1-s_conf)² is novel — more aggressive than linear
+4. Cross-tokenizer byte-level application is entirely novel (all prior work is token-level)
+5. Combination with per-position routing in multi-teacher setup has no prior art
+6. **Improvement opportunity from SE-KD**: add curriculum scheduling — softer gating early, aggressive later
 
 #### 6.4.38 River Valley Loss Landscape & WSD Dynamics (ICLR 2025) — arXiv:2410.05192
 

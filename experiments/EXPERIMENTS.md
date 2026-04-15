@@ -6,12 +6,26 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ## Phase 6: Ekalavya Protocol — Byte-Level Covering KD (2026-04-12 → ongoing)
 
-### multi2_routed_3k [RUNNING]
+### ekalavya_iter5_taid_gating_probe [RUNNING — 250 steps]
+**Purpose:** Probe TAID + uncertainty gating from Codex T+L iteration 5. Validate that progressive intermediate targets (TAID) + per-position gating fix hold-phase degradation.
+**Mechanism:** TAID β 0→0.8/600, uncertainty gating exp 1→2/600, anchor-confidence routing, covering, alpha=0.03 (lowered from 0.05), no hold, grad_clip=0.8.
+**Config:** `results/config_ekalavya_iter5_probe.json`
+**Seed:** best.pt from routing run (step 250, eval BPB=1.418)
+**Kill:** step 250 eval > 1.418 = failed
+**Early data (step 10):** BPB=1.421 (baseline), KD=0.177 (6x lower than routing run — TAID working), UG active=53%, grad=0.49 (stable below clip 0.8).
+**Status:** Running. Step 20+ pending.
+
+### multi2_routed_3k [KILLED at step 760 — POSITIVE]
 **Purpose:** Multi-teacher ROUTED KD: SmolLM2 (anchor) + Pythia (aux), confidence routing, covering ON.
 **Mechanism:** Anchor-dominant confidence routing — Pythia contributes only where JSD>0.02 AND it's more confident than SmolLM2. LR -20% vs AM run, T=1.3, aggressive KD decay (final_mult=0.3), repr beta decays to 0.
 **Config:** `results/config_multi2_routed_3k.json`
-**Kill criteria:** BPB>1.430 at step 500 eval. Promote if ≤1.410.
-**What we'll learn:** Whether intelligent teacher routing (vs naive averaging) resolves the signal conflict that killed AM aggregation.
+**Step 250 eval:** BPB=1.418 (baseline 1.430, delta -0.012). STRONG. First formal eval improvement from Ekalavya KD.
+**Step 500 eval:** BPB=1.426 (baseline 1.430, delta -0.004). POSITIVE but regressed from step 250. Hold phase (full alpha=0.05) caused training degradation (steps 420-500 avg BPB 1.494, gradient spikes to 1.86). Eval still below baseline but trajectory negative.
+**Hold phase (steps 400-590):** Oscillating BPB 1.390-1.540, avg ~1.450. NOT monotonically worsening (unlike AM). Step 590: BPB=1.390 (strong recovery). CE drifted +0.040 vs ramp phase. Gradient spikes to 1.86.
+**Step 750 eval:** BPB=1.429 (baseline 1.430, delta -0.001). POSITIVE but barely below baseline. Eval trajectory: 1.418→1.426→1.429 (decelerating toward baseline). Layers 4-7 unfrozen at step 700. Pre-unfreeze spike to 1.466, fast recovery. Alpha decay only 2.2% at step 750 — negligible.
+**Kill criteria (revised):** Eval BPB > 1.430 at step 1000. Run continues but is unlikely to produce decisive improvement.
+**KL direction note:** Using forward KL (teacher||student). RESEARCH.md §6.4.33 shows forward KL expected to fail at >1:10 ratio (we're 1:9). Hard-batch KD spikes (step 430: 3.211, step 640: 2.340) are forward KL mode-covering failures. TAID interpolation recommended for next iteration.
+**What we've learned:** (1) Routing WORKS during ramp (eval 1.418, -0.012 below baseline). (2) Dense KD at full alpha=0.05 is too strong. (3) Forward KL causes periodic blowups on hard batches. (4) The run won't produce decisive improvement but validates the mechanism. Next: uncertainty gating + TAID + possibly offline caching.
 
 ### multi2_covering_3k [KILLED at step 380]
 **Purpose:** Multi-teacher covering KD with SmolLM2-1.7B + Pythia-1.4B, arithmetic mean aggregation.

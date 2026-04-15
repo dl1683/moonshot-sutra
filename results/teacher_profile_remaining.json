@@ -1,0 +1,26 @@
+{
+  "qwen3-1.7b": {
+    "model_id": "Qwen/Qwen3-1.7B-Base",
+    "vocab_size": 151669,
+    "byte_bpb": 1.0546,
+    "top1_accuracy": 0.8552,
+    "mean_token_entropy": 2.832,
+    "mean_compression_ratio": 216.4,
+    "total_tokens": 6648,
+    "total_eval_bytes": 6617,
+    "active_first_bytes": 174,
+    "status": "OK"
+  },
+  "tinyllama-1.1b": {
+    "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "vocab_size": 32000,
+    "byte_bpb": 11.4165,
+    "top1_accuracy": 0.0439,
+    "mean_token_entropy": 2.395,
+    "mean_compression_ratio": 248.5,
+    "total_tokens": 7633,
+    "total_eval_bytes": 7603,
+    "active_first_bytes": 172,
+    "status": "OK"
+  }
+}
