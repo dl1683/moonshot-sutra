@@ -5143,3 +5143,69 @@ First to enable "rapid transfer of subword models to byte-level." Also supports 
 **Failure modes identified:** (1) Length inflation — on-policy rollouts generate longer sequences as training progresses, (2) Truncation collapse — abrupt inflation causes truncated sequences to dominate, destabilizing dynamics.
 
 **Relevance to Ekalavya:** Our uncertainty gating serves a similar stabilization role — concentrating KD on high-utility positions prevents the student from being forced into teacher modes everywhere. The divergence constraint concept aligns with TAID's trust-region interpretation (Codex §10.8). Could formalize our gating as a position-level divergence constraint: "apply KD only where KL(teacher||student) is within a learnable threshold."
+
+### 10.12 Performance Engineer Analysis — 6K Full Run (2026-04-15)
+
+Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5 6K full run with multi-teacher byte-level KD.
+
+**Finding 1 [HIGH]: Covering decomposition CPU bottleneck — 47s/step**
+- Hot path: `_get_teacher_targets_covering_batched()` lines 1645-1696. Per-sequence loop (line 1645) iterates B=12 sequences. For each, per-token loop (line 1671) iterates ~300 tokens. For multi-byte tokens (effective_depth > 1), calls `_covering_byte_conditionals_np()` (line 1689) which is pure Python+numpy with dictionary lookups and numpy sums.
+- GPU sits idle during entire covering computation (~40s of the 47s/step). Teacher forward pass is ~3-5s.
+- **Fix options (ranked by impact/effort):**
+  1. **Numba @jit on inner loop** — `_covering_byte_conditionals_np()` (lines 1556-1607) is pure numpy with Python loops over byte depths. Numba nopython mode could give 10-50x on this function alone. Estimated total step time: ~10-15s.
+  2. **Multiprocessing on per-sequence loop** — Line 1645 iterates B=12 sequences independently. Use `concurrent.futures.ProcessPoolExecutor` or `multiprocessing.Pool`. With 12 workers: ~4s covering.
+  3. **Combined numba + multiprocessing** — Expected: 47s → ~3-5s covering + 3-5s GPU = ~8-10s/step total. Competitive with caching without soundness tradeoffs.
+  4. **Offline rolling cache** — Eliminates covering entirely during training. But has fixed-window-order and no-repr-KD tradeoffs (see Finding 2).
+- **Recommendation:** Implement numba first (1-2 hours work). If insufficient, add multiprocessing. Cache is backup.
+
+**Finding 2 [HIGH]: Rolling cache soundness tradeoffs**
+- Pre-compute 500 steps of teacher targets at a time (~5.3GB), train at ~6s/step, re-cache next chunk.
+- **Soundness risks:**
+  - **Fixed window order:** Cache pre-samples windows deterministically. If seed pattern matches live sampling, equivalent. BUT: live mode samples fresh random windows each step, while cache replays exact same windows. For 6K steps with only ~250K tokens per shard, window overlap is high anyway — not a major concern.
+  - **No repr KD:** Cache stores byte probs only, not hidden states. beta_eff forced to 0. In prior runs, repr loss converged to near-zero by step 100 (0.595→0.090). For 6K with beta decaying to 0, impact is losing early repr alignment. **MEDIUM risk** — repr provided structural signal in first 200 steps.
+  - **Stale signal:** Non-issue. Teachers are frozen (inference-only). Cache = live for all byte probs.
+  - **Chunk transitions:** When loading new cache chunk, optimizer state continues but training data changes. Could cause brief loss spike. Mitigate: overlap last 10 batches of old chunk with first 10 of new for smooth transition.
+- **Verdict:** Sound for production. The 8x speedup (16h vs 95h) justifies the minor repr loss tradeoff. Recommend: run first 200 steps live (for repr benefit), then switch to cached for remaining 5800.
+
+**Finding 3 [MEDIUM]: VRAM budget — can fit 3rd teacher**
+- Current observed: 10.6GB with 2 teachers (4-bit).
+- Breakdown: student ~0.4GB, SmolLM2-1.7B 4-bit ~1.7GB, Pythia-1.4B 4-bit ~1.4GB, covering tables ~0.3GB, optimizer ~0.8GB, activations/gradients ~5-6GB.
+- Adding Mamba-1.4B at 4-bit: +~1.4GB → ~12.0GB. **Fits with 12GB headroom.**
+- At FP16 (if 4-bit unavailable for mamba_ssm): +~2.8GB → ~13.4GB. Still fits but monitor peak.
+- **Caveat:** mamba_ssm uses CUDA-only causal_conv1d kernels. Teacher forward pass adds GPU time (~1-2s). Third teacher covering adds ~15s CPU time per step.
+- Peak VRAM during teacher forward: batch=12, seq~300 tokens, vocab~50K → 12 × 300 × 50K × 2 bytes = ~0.35GB transient per teacher. With 3 teachers, peak is staggered (sequential forwards), not additive.
+
+**Finding 4 [MEDIUM]: 6K stability — 78-hour run risks**
+- **Memory leaks:** numpy arrays in covering are function-local, garbage collected after each step. No accumulating state. **LOW risk.**
+- **GPU fragmentation:** torch autocast + GradScaler + mixed precision creates fragmented memory over many steps. No `torch.cuda.empty_cache()` in training loop. Recommend adding at every rolling save point.
+- **Checkpoint frequency:** Current `ROLLING_SAVE = 500` at 47s/step = 6.5 hours between saves. **Recommend lowering to 250** (3.3h max loss on crash). Checkpoint is ~1.5GB.
+- **Windows-specific risks:** OneDrive desktop sync can lock files. Windows Update can force restart. GPU driver timeouts (TDR). Recommend: disable OneDrive sync on results/ during training, check Windows Update schedule.
+- **Process monitoring:** The log file write-to-disk at every `log_every=10` steps provides heartbeat. Use external watchdog or periodic `tail` to detect hangs.
+
+**Finding 5 [LOW]: TAID/gating softmax deduplication**
+- `s_probs_det` computed at line 2828 (for TAID) and `s_probs_ug` at line 2849 (for gating) are identical: `F.softmax(student_logits.float() / kd_temperature, dim=-1)` trimmed to teacher length.
+- Can be computed once before the TAID block, reused in gating. Saves one redundant softmax over (B, T, 256).
+- **Impact:** Negligible compute savings (~0.1ms/step) but cleaner code.
+
+**Actionable before 6K launch (status):**
+1. ✅ ROLLING_SAVE 500→250 (code updated)
+2. ✅ `torch.cuda.empty_cache()` at rolling save points (code updated)
+3. ✅ ThreadPoolExecutor parallelism for per-sequence covering (numba blocked by numpy 2.4 incompatibility). Expected 1.5-2x covering speedup. Combined with offline cache for remaining speedup.
+4. ✅ Deduplicated TAID/gating softmax into shared `s_probs_shared`
+
+### 10.13 Codex T+L: 6K Config Schedule Validation (2026-04-15)
+
+**Session:** 019d915a-7047-71c1-9a18-4bd5033f0241 (GPT-5.4, xhigh)
+
+**Verdict:** Use fast no-hold schedule. Original config (600 ramp, 1400 hold, decay to 0.009) is WRONG. Updated to match prior Codex prescription.
+
+**Key decisions:**
+1. **Hold phase: 0 steps.** Routing run proved hold catastrophic at alpha=0.05. TAID+gating doesn't justify prolonged plateau.
+2. **KD ramp: 150 steps.** Probe validates stability at ramp 0.86+. TAID's separate 600-step target ramp provides smoothness.
+3. **Alpha decays to 0.0, not 0.009.** Full stop at step 4500. Steps 4500-6000 = CE-only consolidation tail.
+4. **Piecewise decay:** α: 0.03→0.015 by 1500, →0.005 by 3000, →0.0 by 4500. β: 0.02→0.0 by step 600.
+5. **TAID/UG ramps: 600 steps** (not 2000). Underusing mechanisms for 1/3 of run is wasteful.
+6. **repr_anchor_only: true.** Only compute repr loss from anchor teacher (SmolLM2).
+7. **use_teacher_cache: false.** No cache artifact exists. Live teachers correct for this run.
+
+**Config updated:** `results/config_ekalavya_iter5_full_6k.json` — all discrepancies resolved.

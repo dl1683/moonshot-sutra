@@ -56,7 +56,7 @@ GRAD_ACCUM = 2          # effective batch = 128 sequences
 MAX_TRAIN_STEPS = 10000
 EVAL_EVERY = 500
 LOG_EVERY = 10
-ROLLING_SAVE = 500
+ROLLING_SAVE = 250
 LR = 3e-4
 MIN_LR = 1e-5
 WARMUP_STEPS = 300
@@ -1607,6 +1607,64 @@ def _covering_byte_conditionals_np(token_probs_np, observed_bytes, covering_tabl
     return conditionals
 
 
+def _covering_one_sequence(b, probs_np_b, token_ids_b, raw_bytes_b,
+                           token_byte_seqs, first_byte_matrix_np,
+                           covering_tables, max_depth):
+    """CPU-only covering computation for one sequence. Thread-safe (numpy only).
+
+    Extracted from _get_teacher_targets_covering_batched for parallel execution.
+    Returns (byte_probs_np, byte_mask_np, byte_offsets, coverage_ratio).
+    """
+    import numpy as np
+    byte_offsets = []
+    pos = 0
+    for tid in token_ids_b:
+        byte_offsets.append(pos)
+        pos += len(token_byte_seqs[tid]) if tid < len(token_byte_seqs) else 1
+    byte_offsets.append(pos)
+
+    n_bytes = len(raw_bytes_b)
+    byte_probs_np = np.zeros((n_bytes, 256), dtype=np.float32)
+    byte_mask_np = np.zeros(n_bytes, dtype=np.bool_)
+    supervised_count = 0
+
+    # Vectorized depth-0
+    all_depth0 = probs_np_b @ first_byte_matrix_np.T
+    depth0_sums = all_depth0.sum(axis=1, keepdims=True)
+    depth0_sums = np.maximum(depth0_sums, 1e-10)
+    all_depth0 = all_depth0 / depth0_sums
+
+    for i in range(len(token_ids_b) - 1):
+        next_tid = token_ids_b[i + 1]
+        if next_tid >= len(token_byte_seqs):
+            continue
+        next_bytes = token_byte_seqs[next_tid]
+        if not next_bytes:
+            continue
+
+        token_start = byte_offsets[i + 1]
+        byte_pos = token_start - 1
+        if 0 <= byte_pos < n_bytes:
+            byte_probs_np[byte_pos] = all_depth0[i]
+            byte_mask_np[byte_pos] = True
+            supervised_count += 1
+
+        effective_depth = len(next_bytes) if max_depth is None else min(len(next_bytes), max_depth + 1)
+        if effective_depth > 1:
+            tok_probs_np = probs_np_b[i]
+            conditionals = _covering_byte_conditionals_np(
+                tok_probs_np, next_bytes[:effective_depth], covering_tables)
+            for j in range(1, len(conditionals)):
+                bp = token_start + j - 1
+                if 0 <= bp < n_bytes:
+                    byte_probs_np[bp] = conditionals[j]
+                    byte_mask_np[bp] = True
+                    supervised_count += 1
+
+    coverage_ratio = supervised_count / max(n_bytes, 1)
+    return byte_probs_np, byte_mask_np, byte_offsets, coverage_ratio
+
+
 def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
                                          batch_raw_bytes, device, temperature=2.0,
                                          extract_hidden=True, max_depth=None):
@@ -1614,6 +1672,7 @@ def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
 
     5-10x faster than per-sequence teacher forward. Tokenizes all sequences,
     pads, runs one GPU forward pass, then splits for per-sequence covering.
+    Per-sequence covering runs in parallel threads (numpy releases the GIL).
 
     Args:
         batch_raw_bytes: list of B raw byte lists
@@ -1623,6 +1682,7 @@ def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
         list of B result dicts (same format as _get_teacher_targets_covering)
     """
     import numpy as np
+    from concurrent.futures import ThreadPoolExecutor
     token_byte_seqs = covering_tables["token_byte_seqs"]
     first_byte_matrix_np = covering_tables["first_byte_matrix_np"]
     B = len(batch_raw_bytes)
@@ -1640,62 +1700,30 @@ def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
         outputs = teacher(input_ids, attention_mask=attention_mask,
                          output_hidden_states=extract_hidden, use_cache=False)
 
-    # Process each sequence
-    results = []
+    # Pre-compute GPU→CPU transfers sequentially (PCIe transfers are serial anyway)
+    seq_data = []
     for b in range(B):
         seq_len = attention_mask[b].sum().item()
-        logits_b = outputs.logits[b, :seq_len]  # (T_tok, V) unpadded
-
+        logits_b = outputs.logits[b, :seq_len]
         probs = F.softmax((logits_b / temperature).float(), dim=-1)
         probs_np = probs.cpu().numpy()
-
         token_ids = input_ids[b, :seq_len].tolist()
-        byte_offsets = []
-        pos = 0
-        for tid in token_ids:
-            byte_offsets.append(pos)
-            pos += len(token_byte_seqs[tid]) if tid < len(token_byte_seqs) else 1
-        byte_offsets.append(pos)
+        seq_data.append((probs_np, token_ids))
 
-        n_bytes = len(batch_raw_bytes[b])
-        byte_probs_np = np.zeros((n_bytes, 256), dtype=np.float32)
-        byte_mask_np = np.zeros(n_bytes, dtype=np.bool_)
-        supervised_count = 0
+    # Parallel CPU covering computation (numpy releases GIL for matmul/indexing)
+    def _process_seq(b):
+        probs_np, token_ids = seq_data[b]
+        return _covering_one_sequence(
+            b, probs_np, token_ids, batch_raw_bytes[b],
+            token_byte_seqs, first_byte_matrix_np, covering_tables, max_depth)
 
-        # Vectorized depth-0
-        all_depth0 = probs_np @ first_byte_matrix_np.T
-        depth0_sums = all_depth0.sum(axis=1, keepdims=True)
-        depth0_sums = np.maximum(depth0_sums, 1e-10)
-        all_depth0 = all_depth0 / depth0_sums
+    with ThreadPoolExecutor(max_workers=min(B, 12)) as executor:
+        covering_results = list(executor.map(_process_seq, range(B)))
 
-        for i in range(len(token_ids) - 1):
-            next_tid = token_ids[i + 1]
-            if next_tid >= len(token_byte_seqs):
-                continue
-            next_bytes = token_byte_seqs[next_tid]
-            if not next_bytes:
-                continue
-
-            token_start = byte_offsets[i + 1]
-            byte_pos = token_start - 1
-            if 0 <= byte_pos < n_bytes:
-                byte_probs_np[byte_pos] = all_depth0[i]
-                byte_mask_np[byte_pos] = True
-                supervised_count += 1
-
-            effective_depth = len(next_bytes) if max_depth is None else min(len(next_bytes), max_depth + 1)
-            if effective_depth > 1:
-                tok_probs_np = probs_np[i]
-                conditionals = _covering_byte_conditionals_np(
-                    tok_probs_np, next_bytes[:effective_depth], covering_tables)
-                for j in range(1, len(conditionals)):
-                    bp = token_start + j - 1
-                    if 0 <= bp < n_bytes:
-                        byte_probs_np[bp] = conditionals[j]
-                        byte_mask_np[bp] = True
-                        supervised_count += 1
-
-        coverage_ratio = supervised_count / max(n_bytes, 1)
+    # Assemble results with GPU transfers
+    results = []
+    for b in range(B):
+        byte_probs_np, byte_mask_np, byte_offsets, coverage_ratio = covering_results[b]
         byte_probs = torch.from_numpy(byte_probs_np).to(device)
         byte_mask = torch.from_numpy(byte_mask_np).to(device)
 
@@ -1707,6 +1735,7 @@ def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
         }
 
         if extract_hidden:
+            seq_len = attention_mask[b].sum().item()
             hidden = outputs.hidden_states[-1][b, :seq_len]
             result["hidden"] = hidden.float()
             result["n_tokens"] = seq_len
@@ -1976,7 +2005,8 @@ def _aggregate_teacher_byte_targets(sample_targets, teacher_priors,
 def _get_kd_weights(step, max_steps, kd_alpha, kd_beta,
                     kd_ramp_steps, kd_hold_steps, kd_decay_start_step,
                     kd_peak_alpha_mult, kd_peak_beta_mult,
-                    kd_final_alpha_mult, kd_final_beta_mult):
+                    kd_final_alpha_mult, kd_final_beta_mult,
+                    kd_alpha_decay_points=None, kd_beta_decay_points=None):
     """Piecewise KD schedule: ramp -> hold -> optional raise -> decay."""
     ramp = min(1.0, step / max(kd_ramp_steps, 1))
     hold_end = kd_ramp_steps + max(kd_hold_steps, 0)
@@ -2000,14 +2030,29 @@ def _get_kd_weights(step, max_steps, kd_alpha, kd_beta,
         beta_eff = kd_beta + (peak_beta - kd_beta) * progress
         return alpha_eff, beta_eff, 1.0
 
+    def interp_decay_points(base_weight, points):
+        if not points:
+            return None
+        pts = sorted((int(s), float(m)) for s, m in points)
+        if step <= pts[0][0]:
+            return base_weight * pts[0][1]
+        for (s0, m0), (s1, m1) in zip(pts, pts[1:]):
+            if step <= s1:
+                progress = (step - s0) / max(s1 - s0, 1)
+                mult = m0 + (m1 - m0) * progress
+                return base_weight * mult
+        return base_weight * pts[-1][1]
+
     alpha_start = peak_alpha if raise_enabled else kd_alpha
     beta_start = peak_beta if raise_enabled else kd_beta
+    alpha_from_points = interp_decay_points(kd_alpha, kd_alpha_decay_points)
+    beta_from_points = interp_decay_points(kd_beta, kd_beta_decay_points)
     progress = (step - decay_start) / max(max_steps - decay_start, 1)
     progress = min(max(progress, 0.0), 1.0)
     alpha_end = kd_alpha * kd_final_alpha_mult
     beta_end = kd_beta * kd_final_beta_mult
-    alpha_eff = alpha_start + (alpha_end - alpha_start) * progress
-    beta_eff = beta_start + (beta_end - beta_start) * progress
+    alpha_eff = alpha_from_points if alpha_from_points is not None else alpha_start + (alpha_end - alpha_start) * progress
+    beta_eff = beta_from_points if beta_from_points is not None else beta_start + (beta_end - beta_start) * progress
     return alpha_eff, beta_eff, 1.0
 
 
@@ -2408,8 +2453,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
     kd_peak_beta_mult = cfg.get("kd_peak_beta_mult", 1.67)
     kd_final_alpha_mult = cfg.get("kd_final_alpha_mult", 0.33)
     kd_final_beta_mult = cfg.get("kd_final_beta_mult", 0.60)
+    kd_alpha_decay_points = cfg.get("kd_alpha_decay_points", None)
+    kd_beta_decay_points = cfg.get("kd_beta_decay_points", None)
     use_covering = cfg.get("use_covering", False)  # Covering decomposition (lossless KD)
     covering_max_depth = cfg.get("covering_max_depth", None)  # None=full, 0=first-byte-only, 1=depth-0+1
+    repr_anchor_only = cfg.get("repr_anchor_only", False)
 
     # TAID: Temporally Adaptive Interpolated Distillation (byte-space adaptation)
     # Target: p_taid ∝ p_student_det^(1-β) * p_route^β — progressive student→teacher
@@ -2628,6 +2676,12 @@ def train_ekalavya(s1_ckpt, cfg=None):
     log(f"KD schedule: hold={kd_hold_steps}, decay_start={kd_decay_start_step}, "
         f"peak=({kd_peak_alpha_mult:.2f},{kd_peak_beta_mult:.2f}), "
         f"final=({kd_final_alpha_mult:.2f},{kd_final_beta_mult:.2f})")
+    if kd_alpha_decay_points:
+        log(f"KD alpha decay points: {kd_alpha_decay_points}")
+    if kd_beta_decay_points:
+        log(f"KD beta decay points: {kd_beta_decay_points}")
+    if repr_anchor_only:
+        log("Representation KD: anchor-only")
     if use_taid:
         log(f"TAID: beta {taid_beta_start}->{taid_beta_end} over {taid_beta_ramp} steps")
     if use_uncertainty_gating:
@@ -2637,6 +2691,15 @@ def train_ekalavya(s1_ckpt, cfg=None):
     for i, teacher in enumerate(teachers):
         role = teacher_cfgs[i].get("role", "equal") if teacher_cfgs and i < len(teacher_cfgs) else "equal"
         log(f"  - {teacher['id']} (weight={teacher['weight']:.3f}, d={teacher['hidden_dim']}, vocab={teacher['vocab']}, role={role})")
+    repr_teacher_indices = list(range(len(teachers)))
+    if repr_anchor_only:
+        repr_anchor_idx = 0
+        if teacher_cfgs:
+            for i, tc in enumerate(teacher_cfgs):
+                if tc.get("role") == "anchor":
+                    repr_anchor_idx = i
+                    break
+        repr_teacher_indices = [repr_anchor_idx]
     if teacher_aggregation == "anchor_confidence_routing":
         log(f"Routing: js_thresh={teacher_routing_cfg['js_threshold']}, margin={teacher_routing_cfg['confidence_margin']}, "
             f"scale={teacher_routing_cfg['confidence_scale']}, aux_cap={teacher_routing_cfg['aux_weight_cap']}")
@@ -2701,6 +2764,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
             kd_peak_beta_mult=kd_peak_beta_mult,
             kd_final_alpha_mult=kd_final_alpha_mult,
             kd_final_beta_mult=kd_final_beta_mult,
+            kd_alpha_decay_points=kd_alpha_decay_points,
+            kd_beta_decay_points=kd_beta_decay_points,
         )
 
         # Progressive unfreeze
@@ -2821,14 +2886,18 @@ def train_ekalavya(s1_ckpt, cfg=None):
                     if mask.any():
                         t_probs = teacher_byte_probs[:, :student_logits.shape[1], :]
 
+                        # Pre-compute student probs (shared by TAID + uncertainty gating)
+                        s_probs_shared = None
+                        if use_taid or use_uncertainty_gating:
+                            with torch.no_grad():
+                                s_probs_shared = F.softmax(student_logits.float() / kd_temperature, dim=-1)
+                                s_probs_shared = s_probs_shared[:, :t_probs.shape[1], :]
+
                         # TAID: progressive intermediate target p_taid ∝ p_s_det^(1-β) * p_t^β
                         if use_taid:
                             beta_taid = taid_beta_start + (taid_beta_end - taid_beta_start) * min(1.0, step / max(taid_beta_ramp, 1))
-                            with torch.no_grad():
-                                s_probs_det = F.softmax(student_logits.float() / kd_temperature, dim=-1)
-                                s_probs_det = s_probs_det[:, :t_probs.shape[1], :]
                             # Geometric interpolation in probability space
-                            taid_target = s_probs_det.pow(1.0 - beta_taid) * t_probs.pow(beta_taid)
+                            taid_target = s_probs_shared.pow(1.0 - beta_taid) * t_probs.pow(beta_taid)
                             taid_target = taid_target / taid_target.sum(dim=-1, keepdim=True).clamp_min(1e-10)
                             target_log_probs = torch.log(taid_target + 1e-10)
                         else:
@@ -2838,18 +2907,14 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         kl = kl.sum(dim=-1)  # (B, T)
 
                         # Uncertainty gating v2: concentrate KD on high-value positions
-                        # Fix 1: s_match (student prob at teacher's top byte) instead of s_conf (max student prob)
-                        #   - Old: s_conf gates out KD where student is peaked, even if confidently WRONG
-                        #   - New: s_match gates out KD where student already agrees with teacher
-                        # Fix 2: compute student probs at kd_temperature (matching teacher)
-                        # Fix 3: expanded logging (raw_mean, sat fraction)
+                        # s_match = student prob at teacher's top byte (not max student prob)
+                        # Gating formula: gate = t_conf * (1 - s_match)^exp
+                        # Renormalized to mean=1, clamped at ug_clamp
                         if use_uncertainty_gating:
                             t_conf = t_probs.max(dim=-1).values  # (B, T) teacher confidence
                             with torch.no_grad():
-                                s_probs_ug = F.softmax(student_logits.float() / kd_temperature, dim=-1)
-                                s_probs_ug = s_probs_ug[:, :t_probs.shape[1], :]
                                 teacher_top = t_probs.argmax(dim=-1, keepdim=True)  # (B, T, 1)
-                                s_match = s_probs_ug.gather(-1, teacher_top).squeeze(-1)  # (B, T)
+                                s_match = s_probs_shared.gather(-1, teacher_top).squeeze(-1)  # (B, T)
                             ug_exp = ug_exp_start + (ug_exp_end - ug_exp_start) * min(1.0, step / max(ug_exp_ramp, 1))
                             gate = t_conf * (1.0 - s_match).pow(ug_exp)
                             with torch.no_grad():
@@ -2882,10 +2947,12 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         patch_mask_list, sample_teacher_weights = teacher_patch_mask_by_teacher[b]
                         projected = []
                         projected_masks = []
-                        for teacher_idx, teacher in enumerate(teachers):
+                        for teacher_idx in repr_teacher_indices:
+                            teacher = teachers[teacher_idx]
+                            teacher_weight = 1.0 if repr_anchor_only else sample_teacher_weights[teacher_idx]
                             projected.append(
                                 teacher["repr_proj"](patch_hidden_list[teacher_idx].to(DTYPE)).float()
-                                * sample_teacher_weights[teacher_idx]
+                                * teacher_weight
                             )
                             projected_masks.append(patch_mask_list[teacher_idx])
                         teacher_proj_batches.append(torch.stack(projected).sum(dim=0))
@@ -3007,6 +3074,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 "eval_loss": best_eval, "config": cfg,
             }
             torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+            if DEVICE == "cuda":
+                torch.cuda.empty_cache()
 
     final_loss = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
     final_bpb = final_loss / math.log(2)

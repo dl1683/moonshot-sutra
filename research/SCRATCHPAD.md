@@ -342,7 +342,16 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 | 30 | 1.442 | 1.000 | 0.218 | 0.956 | 0.73 | 0.19 | 0.04 | 1.00/61% | Above baseline (1.430). Similar to routing step 30 (1.450). Grad 0.73 but TAID ramp is 3x routing's at same step (0.19 vs 0.07). |
 | 40 | **1.406** | 0.975 | **0.154** | 0.75 | 0.924 | 0.26 | 0.05 | 0.99/54% | **Strong recovery to below baseline.** Grad stabilized (+0.02). Routing step 40: BPB=1.512/grad=0.83 — TAID dramatically better. |
 | 50 | **1.377** | 0.955 | 0.188 | **0.46** | 0.881 | 0.33 | 0.07 | 0.98/51% | **New best BPB.** Grad DROPPED 0.75→0.46 (warmup spike resolved). Routing step 50: BPB=1.400/grad=0.62. TAID beating routing. |
-| 60 | 1.307 | 0.906 | 0.182 | **1.10** | 0.839 | 0.39 | 0.08 | 0.95/45% | **Grad spike >clip (0.8).** BPB 1.307 likely easy batch (CE=0.906 anomalously low). Grad clipping active. Watch step 70: if grad returns <0.8 = one-off; if persists = amplification. |
+| 60 | 1.307 | 0.906 | 0.182 | **1.10** | 0.839 | 0.39 | 0.08 | 0.95/45% | **Grad spike >clip (0.8).** Easy batch (CE=0.906). ONE-OFF confirmed by step 70. |
+| 70 | 1.453 | 1.007 | 0.296 | 0.68 | 0.800 | 0.46 | 0.09 | 0.98/53% | Grad recovered (1.10→0.68). Hard batch (CE=1.007, mirror of step 60). KD rising (0.296) as ramp increases. Routing step 70: BPB=1.442/grad=0.51. |
+| 80 | **1.376** | 0.954 | 0.222 | 0.58 | 0.721 | 0.53 | 0.11 | 0.98/53% | **Strong recovery.** -0.054 below baseline. Routing step 80: 1.456. TAID advantage: -0.080. KD dropping (0.296→0.222). Grad stable. |
+| 90 | **1.413** | 0.980 | 0.283 | 0.55 | 0.660 | 0.59 | 0.12 | 0.98/51% | Below baseline (-0.017). Routing step 90: 1.421 (spike). TAID smoother. KD rising w/ ramp. Pre-critical zone. |
+| 100 | **1.388** | 0.962 | 0.216 | 0.62 | 0.595 | 0.66 | 0.13 | 0.98/51% | **CRITICAL WINDOW ENTRY.** -0.042 below baseline. AM avg here: 1.461. Routing: 1.378. TAID competitive. KD dropped (trust-region). No degradation signal. |
+| 110 | **1.394** | 0.966 | 0.281 | 0.50 | 0.545 | 0.73 | 0.15 | 0.99/55% | **DEEP CRITICAL WINDOW.** -0.036 below baseline. Grad DROPPED (0.62→0.50). AM at this ramp: 1.461. Routing: 1.382. TAID holding strong. |
+| 120 | 1.442 | 0.999 | 0.361 | 0.54 | 0.484 | 0.79 | 0.16 | 0.97/52% | Above baseline (+0.012). KD rising (0.361, highest yet). Ramp 0.79 — deepest in critical window. AM at 0.80: ~1.465. TAID still -0.023 better than AM. Bounce after 3 consecutive below-baseline steps. |
+| 130 | **1.397** | 0.968 | 0.299 | 0.56 | 0.416 | 0.86 | 0.17 | 0.98/55% | **Recovery!** -0.033 below baseline. KD back down (0.299 from 0.361). Ramp 0.86 — DEEPEST yet, AM degrading hard here. TAID stable. Grad 0.56 clean. |
+| 140 | **1.512** | 1.048 | 0.406 | 0.84 | 0.386 | 0.93 | 0.19 | 1.00/61% | **⚠ WORST BPB IN PROBE.** +0.094 above baseline. Hard batch (CE=1.048) + peak ramp pressure. Grad 0.84 = first clip trigger. KD still 2-4x lower than routing at same ramp. |
+| 150 | **1.377** | 0.954 | 0.247 | **1.88** | 0.320 | 0.99 | 0.20 | 0.98/52% | **MASSIVE RECOVERY!** Step 140 spike confirmed ONE-OFF. BPB -0.041 below baseline (2nd best in probe). Grad 1.88 = pre-clip norm (clipped to 0.8, safe). KD dropped back to 0.247. Ramp 0.99 = PEAK, decay starts NOW. **TAID+gating survives peak alpha where AM collapsed.** |
 
 **HEAD-TO-HEAD: TAID vs Routing (first 30 steps):**
 | Metric | Routing→TAID trend | Interpretation |
@@ -463,6 +472,19 @@ Motivation: Codex showed current ceiling is 0.005-0.016 BPB with SmolLM2+Pythia 
 - Options: (a) run live (57s/step → ~95h total — slow but works), (b) chunked cache (3K micro-batches per chunk, swap every 500 steps), (c) transfer-bank with repeated high-utility windows
 - Config `config_ekalavya_iter5_full_6k.json` currently set to `use_teacher_cache: false` (live mode). Codex T+L should decide caching strategy.
 - **KEY SCHEDULE CHANGE for 6K:** warmup=600, ramp=600, hold=1400 (to step 2000), decay from 2000→6000 (final_alpha_mult=0.3). TAID ramp=2000, UG ramp=2000. Progressive unfreeze: phase1@700, phase2@1800.
+
+**ROLLING CACHE — PROPOSED OPTIMIZATION (10x speedup):**
+- Problem: 6K cache = 64GB (too large). Live mode = 57s/step = 95h total.
+- Solution: Cache 500 steps at a time (~5.3GB), run 500 steps cached (~6s/step), re-cache next 500.
+- Per chunk: 30 min cache build + 50 min training = 80 min for 500 steps.
+- vs live: 500 steps × 57s = 8 hours.
+- Total 6K: 12 chunks × 80 min = **16 hours** vs 95 hours live.
+- Implementation: extend train_ekalavya() with chunk loop — pause, cache, resume. Requires:
+  1. `precompute_teacher_cache()` takes step range and window sampling seed
+  2. Training loop pauses at chunk boundary, triggers cache rebuild, reloads
+  3. Cache includes exact same windows the training loop would sample (deterministic seeding)
+- **CRITICAL**: Window sampling must be reproducible — same seed per chunk produces same windows.
+- Codex Performance Engineer should validate this approach.
 
 **MAMBA-1.4B AS 3RD TEACHER (discovered 2026-04-15):**
 - `state-spaces/mamba-1.4b` uses GPT-NeoX tokenizer (vocab=50254) — **SAME as Pythia-1.4B**
