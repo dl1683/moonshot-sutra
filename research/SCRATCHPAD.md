@@ -341,6 +341,8 @@ Step 700 (decay + unfreeze): ~18:52. Step 750 eval: ~19:30. Kill if eval > 1.430
 | 20 | 1.424 | 0.987 | 0.251 | 0.973 | 0.56 | 0.13 | 0.03 | 0.99/57% | Regression toward baseline (expected, LR warmup). Still below 1.430. KD 6.5x lower than routing (1.63). |
 | 30 | 1.442 | 1.000 | 0.218 | 0.956 | 0.73 | 0.19 | 0.04 | 1.00/61% | Above baseline (1.430). Similar to routing step 30 (1.450). Grad 0.73 but TAID ramp is 3x routing's at same step (0.19 vs 0.07). |
 | 40 | **1.406** | 0.975 | **0.154** | 0.75 | 0.924 | 0.26 | 0.05 | 0.99/54% | **Strong recovery to below baseline.** Grad stabilized (+0.02). Routing step 40: BPB=1.512/grad=0.83 — TAID dramatically better. |
+| 50 | **1.377** | 0.955 | 0.188 | **0.46** | 0.881 | 0.33 | 0.07 | 0.98/51% | **New best BPB.** Grad DROPPED 0.75→0.46 (warmup spike resolved). Routing step 50: BPB=1.400/grad=0.62. TAID beating routing. |
+| 60 | 1.307 | 0.906 | 0.182 | **1.10** | 0.839 | 0.39 | 0.08 | 0.95/45% | **Grad spike >clip (0.8).** BPB 1.307 likely easy batch (CE=0.906 anomalously low). Grad clipping active. Watch step 70: if grad returns <0.8 = one-off; if persists = amplification. |
 
 **HEAD-TO-HEAD: TAID vs Routing (first 30 steps):**
 | Metric | Routing→TAID trend | Interpretation |
@@ -454,6 +456,13 @@ Motivation: Codex showed current ceiling is 0.005-0.016 BPB with SmolLM2+Pythia 
 **Implementation: extend precompute_teacher_cache() → add scoring pass → store utility scores → modify train loop to use scored sampling + KD masking.**
 
 **When to build:** After TAID probe results + FKL A/B. If gains plateau at <0.005 BPB improvement, transfer-bank is the next iteration.
+
+**6K FULL RUN — CACHE SIZING PROBLEM:**
+- 250-step cache: 250*6 = 1,500 micro-batches → ~2.65 GB ✅ (fits in RAM)
+- 6K run cache: 6000*6 = 36,000 micro-batches → ~64 GB ❌ (exceeds practical limits)
+- Options: (a) run live (57s/step → ~95h total — slow but works), (b) chunked cache (3K micro-batches per chunk, swap every 500 steps), (c) transfer-bank with repeated high-utility windows
+- Config `config_ekalavya_iter5_full_6k.json` currently set to `use_teacher_cache: false` (live mode). Codex T+L should decide caching strategy.
+- **KEY SCHEDULE CHANGE for 6K:** warmup=600, ramp=600, hold=1400 (to step 2000), decay from 2000→6000 (final_alpha_mult=0.3). TAID ramp=2000, UG ramp=2000. Progressive unfreeze: phase1@700, phase2@1800.
 
 **MAMBA-1.4B AS 3RD TEACHER (discovered 2026-04-15):**
 - `state-spaces/mamba-1.4b` uses GPT-NeoX tokenizer (vocab=50254) — **SAME as Pythia-1.4B**
