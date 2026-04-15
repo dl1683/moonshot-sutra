@@ -41,7 +41,15 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **Seed:** best.pt from routing run (step 250, eval BPB=1.418)
 **Kill:** eval > 1.430 at step 500, eval > 1.420 at step 1500
 **KD budget:** 7x routing's cumulative transfer (35.8 vs 5.2). Main absorption window: steps 600-1500 (β=0.8, α=0.03-0.015).
-**Status:** Launched 2026-04-15 11:04 (PID 22608). Est. runtime ~61h (~2.5 days).
+**Crash history:** 5 restarts due to parent shell death from Claude Code context compaction. Run 1 reached step 310, runs 2-4 only reached 270-330 before dying silently. All restarts from step 250 checkpoint.
+**Crash defenses (commit 7d380b1):** stderr tee to log file, atexit emergency checkpoint, __main__ crash log, rolling_save 250→100, nohup+disown launch.
+**Training trajectory (steps 250-310, from run 1 which had the most data):**
+| Window | Steps | Mean BPB | CE | Repr | TAID β | Trend |
+|--------|-------|----------|-----|------|--------|-------|
+| Warmup end | 150-200 | 1.414 | 0.975 | 0.33 | 0.20-0.27 | Stable |
+| Post-warmup | 200-250 | 1.440 | 0.996 | 0.24 | 0.27-0.33 | +0.026 (worse) |
+| Late | 250-310 | 1.415 | 0.976 | 0.18 | 0.33-0.41 | -0.025 (recovering) |
+**Status:** Restarted 2026-04-15 19:00 (PID 59068, nohup-detached), crash defenses active. Previous step 250 checkpoint. First eval at step 500.
 
 ### ekalavya_iter5_taid_gating_probe [DONE — MARGINAL]
 **Purpose:** Probe TAID + uncertainty gating mechanism stability before 6K launch.
