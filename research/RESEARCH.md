@@ -5254,3 +5254,25 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 - CE-only consolidation (steps 4500-6000): student internalizes absorbed knowledge
 
 **6K run launched 2026-04-15 11:04.** Config: `results/config_ekalavya_iter5_full_6k.json`. Log: `results/ekalavya_iter5_full_6k.log`.
+
+### 10.16 Codex Pre-Training Gate Review — 6K at Step 250 (2026-04-15)
+
+**Reviewer:** GPT-5.4 (Codex CLI), Correctness + Performance + Robustness
+
+**Findings:**
+
+1. **HIGH — Routing is soft, not hard confidence-gated.** The anchor-confidence routing uses `sigmoid((conf_aux - conf_anchor - margin) / scale)` (line 1962), which is a soft gate. Pythia gets ~30% weight at equal confidence, ~29% even when slightly less confident. The docs said "only when more confident" — WRONG. Corrected. **Impact on current run:** None — the routing run that produced our best eval (1.418) used the same soft routing. The 6K is consistent. The soft gate actually makes more theoretical sense (avoids discontinuities in the gradient signal).
+
+2. **MEDIUM — Resume loses best_eval.** Line 2743 resets `best_eval = inf` unconditionally. Not a problem for this run (no resume planned). **Fix for iter6.**
+
+3. **MEDIUM — Unfreeze memory +0.6GB per phase.** Optimizer includes all params upfront (line 2624). Unfreeze at steps 700/1800 adds AdamW state + grads for ~50M params/phase (~0.6GB). Current PyTorch allocation: 10.5GB → safe. nvidia-smi peak was 23.3GB (caching allocator) — need to monitor at step 700. **Action: watch VRAM at step 700.**
+
+4. **MEDIUM — Kill criteria not in code.** Eval at line 3050 only logs/saves, never exits. Manual intervention required at step 500 eval. **Fix for iter6: add auto-kill.**
+
+5. **LOW — NaN guard doesn't handle all-NaN accumulation step.** Not observed. Risk: theoretical only.
+
+6. **LOW — eval_loss() → generate() leaves model in eval mode.** No dropout/batchnorm in current model → harmless.
+
+**Gate call:** CONTINUE. The HIGH finding is a documentation mismatch (corrected), not a mechanism bug. All MEDIUM items are either N/A for this run or require manual monitoring (step 700 VRAM, step 500 eval kill). No code changes needed for the current run.
+
+**Lesson learned:** This gate should have run BEFORE launch. Caught post-launch at step 250 — documentation was wrong about the routing mechanism for 2+ days. Future runs: gate runs FIRST, always.

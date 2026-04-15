@@ -8,7 +8,8 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ### ekalavya_iter5_full_6k [RUNNING — 6000 steps]
 **Purpose:** Full TAID + uncertainty gating + piecewise alpha decay run. Codex T+L iteration 5 design.
-**Mechanism:** TAID β 0→0.8/600, uncertainty gating exp 1→2/600 (ug_clamp=1.5), anchor-confidence routing, covering, piecewise alpha decay (0.03→0.015→0.005→0.0 at steps 150/1500/3000/4500), no hold, grad_clip=0.8. Global layers unfreeze at 700/1800.
+**Mechanism:** TAID β 0→0.8/600, uncertainty gating exp 1→2/600 (ug_clamp=1.5), soft-sigmoid anchor routing (JSD>0.02 gate, sigmoid confidence weighting, aux_cap=0.35), covering, piecewise alpha decay (0.03→0.015→0.005→0.0 at steps 150/1500/3000/4500), no hold, grad_clip=0.8. Global layers unfreeze at 700/1800.
+**Codex gate review (step 250):** HIGH: routing is soft (sigmoid), not hard confidence gate — docs corrected. MEDIUM: resume loses best_eval (N/A for this run), unfreeze +0.6GB/phase (safe), kill criteria manual only.
 **Config:** `results/config_ekalavya_iter5_full_6k.json`
 **Seed:** best.pt from routing run (step 250, eval BPB=1.418)
 **Kill:** eval > 1.430 at step 500, eval > 1.420 at step 1500
@@ -25,7 +26,7 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ### multi2_routed_3k [KILLED at step 760 — POSITIVE]
 **Purpose:** Multi-teacher ROUTED KD: SmolLM2 (anchor) + Pythia (aux), confidence routing, covering ON.
-**Mechanism:** Anchor-dominant confidence routing — Pythia contributes only where JSD>0.02 AND it's more confident than SmolLM2. LR -20% vs AM run, T=1.3, aggressive KD decay (final_mult=0.3), repr beta decays to 0.
+**Mechanism:** Anchor-dominant soft-sigmoid routing — Pythia weight = sigmoid((conf_aux - conf_anchor - 0.02) / 0.08), gated by JSD>0.02, capped at 0.35. This is a SOFT gate (Pythia gets ~30% weight even at equal confidence, not hard "only when more confident"). LR -20% vs AM run, T=1.3, aggressive KD decay (final_mult=0.3), repr beta decays to 0.
 **Config:** `results/config_multi2_routed_3k.json`
 **Step 250 eval:** BPB=1.418 (baseline 1.430, delta -0.012). STRONG. First formal eval improvement from Ekalavya KD.
 **Step 500 eval:** BPB=1.426 (baseline 1.430, delta -0.004). POSITIVE but regressed from step 250. Hold phase (full alpha=0.05) caused training degradation (steps 420-500 avg BPB 1.494, gradient spikes to 1.86). Eval still below baseline but trajectory negative.
