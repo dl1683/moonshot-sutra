@@ -63,7 +63,7 @@ GRAD_ACCUM = 2          # effective batch = 128 sequences
 MAX_TRAIN_STEPS = 10000
 EVAL_EVERY = 500
 LOG_EVERY = 10
-ROLLING_SAVE = 100
+ROLLING_SAVE = 10  # Save every 10 steps (~15min at 88s/step) for fine-grained resume
 LR = 3e-4
 MIN_LR = 1e-5
 WARMUP_STEPS = 300
@@ -3323,16 +3323,13 @@ def precompute_teacher_cache(cfg, output_path):
         model.eval()
         vocab = model.config.vocab_size
 
-        covering_tables, fb_map, csr_tables = None, None, None
+        covering_tables, fb_map = None, None
         if use_covering:
             print(f"  Building covering tables for {vocab} tokens...")
             covering_tables = _build_covering_tables(tok, vocab, device=DEVICE)
-            print(f"  Covering: {covering_tables['n_prefixes']} prefixes")
-            try:
-                csr_tables = _build_covering_csr_gpu(covering_tables, device=DEVICE)
-                print(f"  GPU CSR tables built: {len(csr_tables['depth_tables'])} depths")
-            except Exception as e:
-                print(f"  GPU CSR build failed ({e}), using CPU covering")
+            print(f"  Covering: {covering_tables['n_prefixes']} prefixes, "
+                  f"max {covering_tables['max_token_bytes']} bytes/token")
+            print(f"  Using CPU numpy covering (threaded, max_depth={covering_max_depth})")
         else:
             fb_map = _build_first_byte_map(tok, vocab, DEVICE)
 
@@ -3349,11 +3346,10 @@ def precompute_teacher_cache(cfg, output_path):
 
             with torch.no_grad():
                 if use_covering:
-                    targets = _get_teacher_targets_covering_batched_gpu(
+                    targets = _get_teacher_targets_covering_batched(
                         model, tok, covering_tables, batch_raw, DEVICE,
                         temperature=kd_temperature, extract_hidden=False,
                         max_depth=covering_max_depth,
-                        csr_tables=csr_tables,
                     )
                 else:
                     targets = []
@@ -3876,10 +3872,21 @@ def train_ekalavya(s1_ckpt, cfg=None):
         log(f"  {t['id']}: covering={csr_status}")
     log(f"Student checkpoint: {s1_ckpt} (step {s1_step})")
 
-    # Resume support
+    # Resume support — auto-find latest checkpoint if none specified
     start_step = 0
     best_eval_restored = float('inf')
     resume_ckpt = cfg.get("resume_ckpt")
+    if not resume_ckpt and cfg.get("auto_resume", True):
+        import glob as _glob
+        candidates = sorted(
+            _glob.glob(str(ckpt_dir / "step_*.pt")) +
+            _glob.glob(str(ckpt_dir / "shutdown_step_*.pt")) +
+            _glob.glob(str(ckpt_dir / "emergency_step_*.pt")),
+            key=lambda f: int(''.join(c for c in Path(f).stem.split("step_")[-1] if c.isdigit())),
+        )
+        if candidates:
+            resume_ckpt = candidates[-1]
+            log(f"Auto-resume: found {Path(resume_ckpt).name} (latest of {len(candidates)} checkpoints)")
     if resume_ckpt:
         rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
         model.load_state_dict(rk["model"], strict=False)
@@ -4337,6 +4344,19 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 "eval_loss": best_eval, "config": cfg,
             }
             atomic_torch_save(save_dict, ckpt_dir / f"step_{step}.pt")
+            # Rolling cleanup: keep only last 3 rolling checkpoints + eval/best/special
+            _keep_n = cfg.get("rolling_keep", 3)
+            import glob as _glob
+            rolling_files = sorted(
+                _glob.glob(str(ckpt_dir / "step_*.pt")),
+                key=lambda f: int(Path(f).stem.split("_")[1]),
+            )
+            # Don't delete eval checkpoints (on eval_every boundaries) or best.pt
+            eval_steps = {s for s in range(0, step + 1, eval_every)}
+            for old_ckpt in rolling_files[:-_keep_n]:
+                old_step = int(Path(old_ckpt).stem.split("_")[1])
+                if old_step not in eval_steps:
+                    Path(old_ckpt).unlink(missing_ok=True)
             if DEVICE == "cuda":
                 torch.cuda.empty_cache()
 
