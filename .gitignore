@@ -15,6 +15,7 @@ data/
 *.ckpt
 *.pt
 *.bin
+*.pid
 
 # IDE
 .vscode/
