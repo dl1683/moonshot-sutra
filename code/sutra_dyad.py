@@ -2545,22 +2545,43 @@ def _gpu_covering_one_sequence(token_probs_gpu, token_ids, raw_bytes, csr_tables
         dt = depth_tables[d]
         prefix_to_id = dt["prefix_to_id"]
 
-        for bp, ti, prefix in items:
-            gid = prefix_to_id.get(prefix, -1)
+        # --- Batch prefix lookups (Python dict, fast) ---
+        gids = [prefix_to_id.get(prefix, -1) for bp, ti, prefix in items]
+
+        # Handle unknown prefixes (gid < 0) — delta fallback
+        valid_indices = []
+        valid_gids = []
+        for idx, gid in enumerate(gids):
             if gid < 0:
-                # Unknown prefix — fallback to delta on observed byte
+                bp = items[idx][0]
+                byte_probs[bp, raw_bytes[bp]] = 1.0
+                byte_mask[bp] = True
+            else:
+                valid_indices.append(idx)
+                valid_gids.append(gid)
+
+        if not valid_gids:
+            continue
+
+        # --- Batch ALL offset lookups into single GPU→CPU transfers ---
+        gid_tensor = torch.tensor(valid_gids, dtype=torch.long, device=device)
+        norm_starts = dt["norm_offsets"][gid_tensor].tolist()
+        norm_ends = dt["norm_offsets"][gid_tensor + 1].tolist()
+        num_starts = dt["offsets"][gid_tensor].tolist()
+        num_ends = dt["offsets"][gid_tensor + 1].tolist()
+
+        # --- Process valid items with pre-fetched offsets (no per-item .item() calls) ---
+        for j, idx in enumerate(valid_indices):
+            bp, ti, prefix = items[idx]
+            ns, ne = norm_starts[j], norm_ends[j]
+            s, e = num_starts[j], num_ends[j]
+
+            if ns == ne:
                 byte_probs[bp, raw_bytes[bp]] = 1.0
                 byte_mask[bp] = True
                 continue
 
-            # Gather normalizer (all tokens matching prefix)
-            norm_start = dt["norm_offsets"][gid].item()
-            norm_end = dt["norm_offsets"][gid + 1].item()
-            if norm_start == norm_end:
-                byte_probs[bp, raw_bytes[bp]] = 1.0
-                byte_mask[bp] = True
-                continue
-            norm_tok_ids = dt["norm_tokens"][norm_start:norm_end]
+            norm_tok_ids = dt["norm_tokens"][ns:ne]
             normalizer = token_probs_gpu[ti, norm_tok_ids].sum()
 
             if normalizer < 1e-10:
@@ -2568,15 +2589,11 @@ def _gpu_covering_one_sequence(token_probs_gpu, token_ids, raw_bytes, csr_tables
                 byte_mask[bp] = True
                 continue
 
-            # Gather numerator entries and scatter by next_byte
-            start = dt["offsets"][gid].item()
-            end = dt["offsets"][gid + 1].item()
-            if start < end:
-                tok_ids = dt["tokens"][start:end]
-                next_bytes_t = dt["next_bytes"][start:end]
+            if s < e:
+                tok_ids = dt["tokens"][s:e]
+                next_bytes_t = dt["next_bytes"][s:e]
                 probs = token_probs_gpu[ti, tok_ids]
                 byte_probs[bp].scatter_add_(0, next_bytes_t, probs)
-                # Normalize
                 cond_sum = byte_probs[bp].sum()
                 if cond_sum > 1e-10:
                     byte_probs[bp] /= cond_sum
@@ -3714,16 +3731,13 @@ def train_ekalavya(s1_ckpt, cfg=None):
             teacher_vocab = teacher_model.config.vocab_size
             teacher_covering, teacher_fb, teacher_csr = None, None, None
             if use_covering:
-                print(f"  Building covering tables for {teacher_vocab} tokens...")
+                print(f"  Building covering tables for {teacher_vocab} tokens...", flush=True)
                 teacher_covering = _build_covering_tables(teacher_tok, teacher_vocab, device=DEVICE)
                 print(f"  Covering: {teacher_covering['n_prefixes']} prefixes, "
-                      f"max {teacher_covering['max_token_bytes']} bytes/token")
-                # Build GPU CSR tables for scatter_add covering (~20-30x faster)
-                try:
-                    teacher_csr = _build_covering_csr_gpu(teacher_covering, device=DEVICE)
-                    print(f"  GPU CSR tables built: {len(teacher_csr['depth_tables'])} depths")
-                except Exception as e:
-                    print(f"  GPU CSR build failed ({e}), falling back to CPU covering")
+                      f"max {teacher_covering['max_token_bytes']} bytes/token", flush=True)
+                # Skip GPU CSR tables — CPU numpy covering is faster (no per-item kernel overhead)
+                teacher_csr = None
+                print(f"  Using CPU numpy covering (threaded, max_depth={covering_max_depth})", flush=True)
             else:
                 teacher_fb = _build_first_byte_map(teacher_tok, teacher_vocab, DEVICE)
             repr_proj = nn.Linear(teacher_dim, model.d_local, bias=False).to(DEVICE)
@@ -3856,6 +3870,10 @@ def train_ekalavya(s1_ckpt, cfg=None):
         log(f"Routing: js_thresh={teacher_routing_cfg['js_threshold']}, margin={teacher_routing_cfg['confidence_margin']}, "
             f"scale={teacher_routing_cfg['confidence_scale']}, aux_cap={teacher_routing_cfg['aux_weight_cap']}")
     log(f"Projection params: {proj_param_count/1e3:.1f}K")
+    # Log CSR table status for each teacher (critical: GPU vs CPU covering)
+    for t in teachers:
+        csr_status = f"CPU numpy covering (threaded, max_depth={covering_max_depth})"
+        log(f"  {t['id']}: covering={csr_status}")
     log(f"Student checkpoint: {s1_ckpt} (step {s1_step})")
 
     # Resume support
@@ -4024,11 +4042,13 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         # Fix 2: only extract hidden states for teachers used in repr loss
                         need_hidden = beta_eff > 0 and (not repr_anchor_only or t_idx in repr_teacher_indices)
                         if use_covering:
-                            targets_batch = _get_teacher_targets_covering_batched_gpu(
-                                teacher["model"], teacher["tokenizer"], teacher["covering"], batch_raw, DEVICE,
+                            # CPU numpy covering is faster than GPU per-item kernels
+                            # GPU forward pass + parallel CPU covering + GPU result transfer
+                            targets_batch = _get_teacher_targets_covering_batched(
+                                teacher["model"], teacher["tokenizer"], teacher["covering"],
+                                batch_raw, DEVICE,
                                 temperature=kd_temperature, extract_hidden=need_hidden,
                                 max_depth=covering_max_depth,
-                                csr_tables=teacher.get("csr_tables"),
                             )
                         else:
                             targets_batch = []
@@ -4240,7 +4260,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
         if step % log_every == 0:
             n = log_every
             elapsed = time.time() - t0
-            throughput = step * batch_size * grad_accum * seq_bytes / elapsed
+            steps_done = step - start_step  # Fix: count steps since resume, not total
+            throughput = steps_done * batch_size * grad_accum * seq_bytes / elapsed
             bpb = running_ce / n / math.log(2)
             vram = torch.cuda.max_memory_allocated() / 1e9 if DEVICE == "cuda" else 0
             local_lr = optimizer.param_groups[0]['lr']

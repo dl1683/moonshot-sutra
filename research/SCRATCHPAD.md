@@ -167,7 +167,7 @@ Compare to AM (killed at step 380): BPB slope +0.000214/step, CE avg 1.002 (abov
 
 ### Improvements for Iter6
 1. **Teacher caching** — Pre-compute covering byte probs. Eliminates 77% wall-time bottleneck. Config: results/config_cache_3teacher_12k.json. ~15-20h with GPU covering.
-2. **GPU scatter_add covering** — Implemented in sutra_dyad.py. Expected ~20-30x speedup. Needs GPU validation.
+2. **GPU scatter_add covering** — FAILED. Per-item GPU kernel launch overhead (`.item()`, scatter, gather) makes it SLOWER than CPU numpy. With Pythia's 512-depth covering: ~10+ min/step (GPU) vs ~100s/step (CPU). **Fix applied:** CPU numpy covering (threaded ThreadPoolExecutor) with max_depth=8. The covering math doesn't parallelize well on GPU because each work item has variable-size gather/scatter — classic "embarrassingly serial on GPU, fast on CPU" pattern.
 3. **Qwen3-1.7B as 3rd teacher** — Byte BPB 1.055, near-zero correlation with anchor (0.008). Same hidden dim (2048). 151K vocab.
 4. **12K steps** — Proportionally stretched schedules from 6K config.
 5. **Config ready:** results/config_ekalavya_iter6_3teacher_12k.json

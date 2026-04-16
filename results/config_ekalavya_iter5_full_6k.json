@@ -26,7 +26,7 @@
   "kd_alpha_decay_points": [[150, 1.0], [1500, 0.5], [3000, 0.1666667], [4500, 0.0]],
   "kd_beta_decay_points": [[150, 1.0], [600, 0.0]],
   "use_covering": true,
-  "covering_max_depth": null,
+  "covering_max_depth": 8,
   "repr_anchor_only": true,
   "use_taid": true,
   "taid_beta_start": 0.0,
