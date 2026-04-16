@@ -63,32 +63,35 @@
 - **Axiomatic Multi-Teacher Aggregation** (Jan 2026, arXiv:2601.09165): Purely theoretical paper defining 5 axioms for valid aggregation operators: convexity, positivity, weight monotonicity, continuity, temperature coherence. Proves 3 conforming families: (a) linear convex (weighted average), (b) geometric mean (Rényi-based), (c) entropic regularization. **Our TAID geometric interpolation is family (b) — theoretically validated.** No experiments. Assumes shared vocabulary — does NOT address cross-tokenizer case. The hard problem (getting teachers to a common space) remains ours to solve.
 - **Knowledge Purification in Multi-Teacher KD** (Feb 2026, arXiv:2602.01064): 5 methods for handling teacher conflicts: aggregation (GPT-4 synthesis), Plackett-Luce ranking, PLM classifier, similarity-based router, RL-based selection. **KEY FINDING: Routing > averaging at RATIONALE level** — selecting coherent single-teacher guidance beats averaging conflicting reasoning. Similarity-based router wins overall (+3.3% over baseline, best CMV). **However:** this operates at rationale level, not logit/byte level. At byte-probability level, arithmetic mean is well-founded (Bayesian model averaging) because probability distributions compose naturally. The insight for Ekalavya: start with AM at byte level (theoretically sound), but for repr-level KD (where hidden states encode reasoning), routing-based selection may outperform averaging. No byte-level or cross-tokenizer experiments.
 
-**Implications for Ekalavya (UPDATED 2026-04-13):**
-1. Byte-level KD from tokenized teachers is HARDER than initially assumed (BLD shows significant drops)
-2. Our advantage: Sutra IS already byte-level, so we're not converting a subword model TO bytes — we're using byte-level KD as additional training signal on a natively byte-level model. This avoids the worst degradation mode.
-3. **Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL** — no existing work (BLD, ALM, ULD, CDM, MultiLevelOT) tests multi-teacher scenarios. ALL are single-teacher only. Multi-teacher acknowledged as "future work" across multiple papers.
-4. The covering-based probability conversion (BLD) is expensive (2 days on 4×RTX 3090). Our omega_ij bridge is simpler: direct hidden state projection via byte-span overlap weights.
-5. KEY RISK: if BLD with its sophisticated probability conversion still shows large drops, our simpler bridge may lose even more signal. Teacher profiling probe (2026-04-12) showed teachers have only ~40% top-1 accuracy on our data. The soft distribution quality matters more than top-1.
+**Implications for Ekalavya (UPDATED 2026-04-15):**
+1. Byte-level KD from tokenized teachers is HARDER than initially assumed. BLD (2604.07466) confirms: "consistent improvements across all tasks remain elusive." ALM byte-transfer: -2.6% vs subword.
+2. Our advantage: Sutra IS already byte-level, so we're not converting a subword model TO bytes — we're using byte-level KD as additional training signal on a natively byte-level model. This avoids the worst degradation mode (ALM's "strongly destructive" byte transfer).
+3. **Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL** — BLD (Apr 2026), ALM (Mar 2026), ULD, CDM, MultiLevelOT, CTLS, DWA-KD — ALL single-teacher only. Multi-teacher acknowledged as "future work" in BLD. ALM tests post-hoc ensembling (+0.6%) but not simultaneous multi-teacher KD during training. **We are the ONLY group doing per-position routed multi-teacher byte-level KD.**
+4. BLD uses covering decomposition (same as us) + pre-computes byte probs offline (~2 days on 4×3090). We also pre-compute (teacher caching). Covering is the validated approach.
+5. BLD uses parallel linear projections (10 MLP heads, non-autoregressive). We use a full autoregressive local byte decoder. Our decoder captures byte-level dependencies; theirs treats byte positions independently. Tradeoff: ours is more expressive, theirs is faster.
 6. **The byte interface eliminates the cross-tokenizer ALIGNMENT problem entirely.** ALL teacher outputs can be projected to byte probabilities via covering decomposition regardless of tokenizer. The open problem is multi-teacher AGGREGATION — and we now know AM fails, routing works (see point 9).
 7. **Teacher diversity vs quality**: DiverseDistill suggests dynamic per-step weighting. DistillMoE uses MoE routing. **OUR FINDING (2026-04-13):** simple averaging is harmful for cross-tokenizer byte KD. Anchor-dominant confidence routing is the minimum viable aggregation. Next: uncertainty gating (per-position alpha modulation).
 8. **VRAM budget for multi-teacher**: 4-bit quantized ~2GB/teacher. With 9GB student overhead, ~15GB available → 5-7 teachers simultaneously. This is enough for meaningful diversity.
 9. **Byte-level aggregation: AM is theoretically sound BUT empirically harmful** (from Knowledge Purification, 2602.01064 + our own multi2_covering_3k results): At byte probability level, arithmetic mean is theoretically sound as Bayesian model averaging. HOWEVER, our empirical test (2026-04-13) showed AM is DESTRUCTIVE when teachers have different tokenizations: covering decomposition produces different byte conditional distributions at 68% of positions, and averaging these creates bimodal targets (+0.114 nats/position entropy injection). Result: BPB +0.044 above baseline with positive slope (getting worse). **Correction:** AM is only sound when teachers produce similar distributions. With cross-tokenizer covering, they often don't. **Solution:** Anchor-dominant confidence routing — use the anchor teacher's distribution by default, blend in auxiliary only where JSD>threshold AND auxiliary is more confident. Early data (step 20): routing KD loss 1.63 vs AM 4.05 (-60%), BPB 1.490 vs AM 1.564 (-0.074). At representation level, routing also beats averaging — teachers encode different reasoning strategies. Design implication: ROUTING for both byte probs and repr KD.
 
-**Ekalavya vs. SOTA cross-tokenizer KD (2026-04-12 analysis):**
+**Ekalavya vs. SOTA cross-tokenizer KD (UPDATED 2026-04-15):**
 
 | Method | Approach | Multi-teacher? | Byte-native student? | Key limitation |
 |--------|----------|---------------|---------------------|----------------|
-| **BLD** (2604.07466) | Cover-based byte probability decomposition | No | No (converts subword) | Large BPE→byte drops (~21pt MMLU) |
-| **ALM** (2503.20083) | Chunk-level probability matching | No | No (converts subword) | Tested only 1.5-3.3B |
+| **BLD** (2604.07466, Apr 2026) | Covering decomposition + parallel MLP byte heads | No | No (LoRA fine-tune subword) | "CTD is still an open problem" — no consistent wins |
+| **ALM** (2503.20083, Mar 2026) | Binarized f-divergence, greedy byte alignment | Post-hoc only (+0.6%) | No (converts subword) | Byte transfer "strongly destructive" (-2.6%) |
+| **DWA-KD** (2602.21669) | Dual-space weighting + time-warped alignment | No | No | Sequence-level only |
+| **CTLS** (2512.14954) | BPE recursive structure for exact probability | No | No | Vocab-specific, no multi-teacher |
 | **tokenkit** | Implementation of ALM+others | No | Supports byte output | No multi-teacher |
-| **Ekalavya** (ours) | omega_ij byte-span bridge + multi-teacher | **YES** | **YES** (native byte) | Untested — this is the novel contribution |
+| **Ekalavya** (ours) | Covering + TAID + routing + uncertainty gating | **YES (simultaneous)** | **YES** (native byte) | From-scratch at 188M params |
 
-**What makes Ekalavya unique:**
-1. Student is NATIVE byte-level (not converted from subword) — avoids BLD's conversion degradation
-2. MULTI-teacher from different architectures (Transformer + SSM + Hybrid)
-3. Near-zero inter-teacher correlation (r=0.008-0.067) → additive information
-4. omega_ij bridge is simpler than covering-based decomposition → faster, GPU-friendly
-5. Combined with from-scratch training → KD is training signal, not fine-tuning
+**What makes Ekalavya unique (6 unique contributions vs field):**
+1. **Multi-teacher simultaneous KD** — ALL competitors are single-teacher only
+2. **Per-position anchor-confidence routing** — KP (2602.01064) routes at sample level, we route at byte position level
+3. **TAID geometric interpolation** — progressive trust-region unique to byte-level KD
+4. **Uncertainty gating** — per-position alpha modulation based on student-teacher agreement
+5. **Native byte-level student** — BLD/ALM convert subword models to bytes (lossy); we ARE bytes
+6. **From-scratch training** — all competitors fine-tune; we use KD as training signal
 
 Sources: MambaByte (COLM 2024, arXiv:2401.13660), SpaceByte (NeurIPS 2024, arXiv:2404.14408), MegaByte (NeurIPS 2023, arXiv:2305.07185), BLT (Meta 2024, arXiv:2412.09871), EvaByte (HKU 2025), Bolmo (Ai2 2025), BLD (arXiv:2604.07466), ALM (NeurIPS 2025, arXiv:2503.20083)
 
@@ -1711,11 +1714,46 @@ PonderLM-2 (CRITICAL RESULT):
 
 **First method for distillation across fundamentally different tokenizers (e.g., subword to byte-level).**
 
-- Principled likelihood-matching objective.
-- Enables cross-tokenizer ensembling, tokenizer transfer, and hypernetwork training.
-- Works across subword-to-byte, specialized-to-general, and cross-family.
+- Binarized f-divergence over aligned token chunks (greedy byte-position alignment)
+- Enables cross-tokenizer ensembling, tokenizer transfer, and hypernetwork training
+- **Ensembling tested:** Transfer 3 models (Gemma 2B, Llama 3.2 3B, Qwen 1.5B) to common tokenizer, then average logits. Ensemble (77.7%) vs best single-transfer (77.1%) = **only +0.6% from ensembling**
+- Byte-level transfer is "strongly destructive": 74.3% vs 76.9% subword (-2.6%)
+- Hidden state alignment via L2 distance with learned projection (like our repr KD)
 
-**Sutra relevance:** Handles the most extreme tokenizer mismatches. Could enable distillation from ANY model regardless of tokenization scheme.
+**Sutra relevance:** (1) Validates that post-hoc ensembling after tokenizer transfer gives diminishing returns — per-position ROUTING (our approach) is needed, not averaging. (2) Their byte-level transfer degradation supports our approach of keeping the student byte-native rather than transferring. (3) Their greedy alignment is an approximation of our covering decomposition.
+
+#### 6.4.19a BLD: Byte-Level Distillation (Apr 2026) — arXiv:2604.07466
+
+**MOST DIRECTLY COMPARABLE to Ekalavya.** Concurrent independent work (published same month as our runs).
+
+- Uses covering decomposition (Phan et al. ICLR 2025) — same as us
+- Byte-level decoder: 10 parallel linear projections (MLP heads, non-autoregressive)
+- Loss: CE + byte-CE + KL at byte level (λ_KL tuned 0.1-1.0, λ_b tuned 0.5-1.0)
+- Tested: Llama 3.2 3B → Qwen2 2B (BPE-to-BPE), OpenMath2-8B → Gemma2-2B
+- Results: competitive with DSKD, MinED, ALM+SFT; NO method wins on all benchmarks
+- Pre-computes byte probs offline (~2 days) — same as our teacher caching
+- **Key quote:** "consistent improvements across all tasks and benchmarks remain elusive...CTD is still an open problem"
+- Caps at 10 bytes per token (tokens >10 bytes only get first 10 supervised)
+- LoRA fine-tuning (rank 64), NOT from-scratch training
+- **NO multi-teacher testing** — explicitly mentioned as future work
+
+**What BLD does NOT do that Ekalavya does:**
+1. Multi-teacher simultaneous KD (our unique contribution)
+2. Per-position anchor-confidence routing (unique)
+3. TAID geometric interpolation for progressive trust-region (unique)
+4. Uncertainty gating per byte position (unique)
+5. Full autoregressive byte decoder (theirs is parallel projections)
+6. From-scratch training (they do LoRA fine-tuning)
+
+**What BLD confirms about our approach:**
+1. Covering decomposition IS the right byte-level interface
+2. Pre-computing byte probs offline IS necessary for efficiency
+3. Cross-tokenizer byte-level KD produces mixed results even in the best case
+4. The field converges on bytes as the universal interface across tokenizers
+
+**Sutra relevance:** Validates our architectural choices. Multi-teacher routing at byte level is our clear novelty advantage. Their "CTD is still open" finding matches our experience — this is a HARD problem.
+
+**Novelty positioning:** We are the ONLY group doing multi-teacher cross-tokenizer byte-level KD with per-position routing. BLD, ALM, CTLS, ULD, DWA-KD — all single-teacher only.
 
 #### 6.4.20 Flex-KD: Functional Geometry Distillation (Jul 2025) — arXiv:2507.10155
 
