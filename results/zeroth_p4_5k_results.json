@@ -1,0 +1,22 @@
+{
+  "run_name": "zeroth_p4_5k",
+  "final_eval_loss": 1.3082190823554993,
+  "final_bpb": 1.8873611825105894,
+  "best_eval_loss": 1.3114491740862528,
+  "best_bpb": 1.892021219832164,
+  "steps": 5000,
+  "config": {
+    "patch_size": 4,
+    "batch_size": 24,
+    "grad_accum": 3,
+    "max_steps": 5000,
+    "warmup_steps": 100,
+    "lr": 0.0003,
+    "run_name": "zeroth_p4_5k",
+    "seq_bytes": 1536
+  },
+  "params": {
+    "total": 153158912,
+    "unique_untied": 153093376
+  }
+}

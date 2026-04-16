@@ -1,0 +1,9 @@
+{
+  "patch_size": 4,
+  "batch_size": 24,
+  "grad_accum": 3,
+  "max_steps": 5000,
+  "warmup_steps": 100,
+  "lr": 3e-4,
+  "run_name": "zeroth_p4_5k"
+}
