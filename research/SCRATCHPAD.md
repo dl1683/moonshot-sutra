@@ -60,7 +60,14 @@ Run started from step 250, using step_250.pt checkpoint.
 | 430 | 0.988 | 0.778 | 0.106 | 1.425 | 0.57 | 0.69/54% | |
 | 440 | 0.968 | 0.707 | **0.097** | 1.397 | 0.59 | 0.68/51% | Repr all-time low |
 
-**Running average BPB (260-440): 1.411.** TAID β crossed 0.50 at step 380 — target now majority-teacher. NO degradation (AM collapsed here). Repr monotonically dropping (0.197→0.097). Step 500 eval imminent — kill criterion: eval BPB > 1.430.
+**Running average BPB (260-440): 1.411.** TAID β crossed 0.50 at step 380 — target now majority-teacher. NO degradation (AM collapsed here). Repr monotonically dropping (0.197→0.086).
+
+**STEP 500 EVAL: BPB 1.398 — EXCELLENT (< 1.410 threshold).**
+- Kill criterion 1.430: PASSED by 0.032
+- vs baseline (1.430): **-0.032 improvement** (8.4% of teacher gap closed)
+- vs routing eval (1.418): **-0.020 improvement** (2.6x routing's signal)
+- New best.pt saved. Coherent English generation confirmed.
+- Decision: **CONTINUE TO 6K. Plan 3-teacher iter6.**
 
 ### Kill Criteria
 | Step | Kill if eval > | Budget relative to routing |
@@ -195,7 +202,7 @@ Near-zero correlation = maximally complementary. Different tokenizer captures di
 - Iter5 step 310 training: 1.383 (12.4% of gap — but training overstates)
 - Iter5 step 440 training: 1.397, repr=0.097 (8.7% of gap in training BPB)
 - Running average (260-440): 1.411 (5.0% of gap)
-- **Step 500 eval imminent — first real measurement of TAID+routing accumulation**
+- **Step 500 eval: 1.398 — EXCELLENT.** 8.4% of gap closed (2.6x routing's 3.2%)
 
 ### The Manifesto Metric
 Not absolute BPB, but **BPB-per-training-step** ratio:
