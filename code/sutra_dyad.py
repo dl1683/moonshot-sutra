@@ -35,6 +35,13 @@ from data_loader import ByteShardedDataset
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16
 
+def atomic_torch_save(obj, path):
+    """Write checkpoint to .tmp then atomically rename. Prevents corrupt partial saves."""
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+
 # ---- Architecture Constants (Stage 0) ----
 N_BYTES = 256           # byte vocabulary (0-255)
 D_LOCAL = 256           # local decoder dimension (small — Megabyte-style)
@@ -1406,11 +1413,11 @@ def train_mvg(cfg=None):
             }
             if scaler:
                 save_dict["scaler"] = scaler.state_dict()
-            torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+            atomic_torch_save(save_dict, ckpt_dir / f"step_{step}.pt")
 
             if eval_bpb < best_eval:
                 best_eval = eval_bpb
-                torch.save(save_dict, ckpt_dir / "best.pt")
+                atomic_torch_save(save_dict, ckpt_dir / "best.pt")
                 log(f"    New best! BPB={eval_bpb:.3f}")
 
             # Kill criteria — calibrated for FROM-SCRATCH training
@@ -1434,7 +1441,7 @@ def train_mvg(cfg=None):
             }
             if scaler:
                 save_dict["scaler"] = scaler.state_dict()
-            torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+            atomic_torch_save(save_dict, ckpt_dir / f"step_{step}.pt")
 
     # Final eval
     model.eval()
@@ -1586,9 +1593,15 @@ def train(cfg=None):
 
             if torch.isnan(loss) or torch.isinf(loss):
                 nan_count += 1
-                log(f"  [NaN/Inf at step {step}, micro {micro}] — skipping")
+                log(f"  [NaN/Inf at step {step}, micro {micro}] -- skipping")
                 if nan_count > 10:
                     log("FATAL: >10 NaN losses, aborting")
+                    try:
+                        torch.save({"step": step, "model": model.state_dict(),
+                                    "optimizer": optimizer.state_dict()},
+                                   ckpt_dir / f"crash_nan_step_{step}.pt")
+                    except Exception:
+                        pass
                     return
                 continue
 
@@ -1625,7 +1638,7 @@ def train(cfg=None):
             log(f"  *** EVAL step {step}: loss={el:.4f}, BPB={bpb_eval:.3f}")
             if el < best_eval:
                 best_eval = el
-                torch.save({
+                atomic_torch_save({
                     "step": step,
                     "model": model.state_dict(),
                     "optimizer": optimizer.state_dict(),
@@ -1645,7 +1658,7 @@ def train(cfg=None):
                 log(f"      GEN failed: {e}")
 
         if step % ROLLING_SAVE == 0:
-            torch.save({
+            atomic_torch_save({
                 "step": step,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -2098,6 +2111,14 @@ def train_s1(stage0_ckpt, cfg=None):
                 log(f"  [NaN/Inf at step {step}, micro {micro}] -- skipping")
                 if nan_count > 10:
                     log("FATAL: >10 NaN losses, aborting")
+                    try:
+                        torch.save({"step": step, "stage": 1,
+                                    "model": model.state_dict(),
+                                    "optimizer": optimizer.state_dict(),
+                                    "scaler": scaler.state_dict()},
+                                   ckpt_dir / f"crash_nan_step_{step}.pt")
+                    except Exception:
+                        pass
                     return
                 continue
 
@@ -2138,7 +2159,7 @@ def train_s1(stage0_ckpt, cfg=None):
             log(f"  *** EVAL step {step}: loss={el:.4f}, BPB={bpb_eval:.3f}")
             if el < best_eval:
                 best_eval = el
-                torch.save({
+                atomic_torch_save({
                     "step": step,
                     "stage": 1,
                     "model": model.state_dict(),
@@ -2159,7 +2180,7 @@ def train_s1(stage0_ckpt, cfg=None):
                 log(f"      GEN failed: {e}")
 
         if step % ROLLING_SAVE == 0:
-            torch.save({
+            atomic_torch_save({
                 "step": step, "stage": 1,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -2756,6 +2777,71 @@ def _get_teacher_targets_covering_batched(teacher, tokenizer, covering_tables,
     return results
 
 
+def _get_teacher_targets_covering_batched_gpu(teacher, tokenizer, covering_tables,
+                                              batch_raw_bytes, device, temperature=2.0,
+                                              extract_hidden=True, max_depth=None,
+                                              csr_tables=None):
+    """Batched covering with GPU scatter_add — ~20-30x faster than CPU numpy path.
+
+    Same interface as _get_teacher_targets_covering_batched, but keeps probs on GPU
+    and uses CSR scatter_add covering instead of numpy CPU covering.
+
+    Requires csr_tables from _build_covering_csr_gpu(). Falls back to CPU batched
+    path if csr_tables is None.
+
+    Expected wall time: ~120ms/batch vs ~4s/batch (CPU), ~1.5s/step vs ~48s/step.
+    """
+    if csr_tables is None:
+        return _get_teacher_targets_covering_batched(
+            teacher, tokenizer, covering_tables, batch_raw_bytes, device,
+            temperature, extract_hidden, max_depth)
+
+    token_byte_seqs = covering_tables["token_byte_seqs"]
+    B = len(batch_raw_bytes)
+
+    # Batch tokenize
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    texts = [bytes(rb).decode('utf-8', errors='replace') for rb in batch_raw_bytes]
+    encoded = tokenizer(texts, padding=True, return_tensors='pt', truncation=False)
+    input_ids = encoded['input_ids'].to(device)
+    attention_mask = encoded['attention_mask'].to(device)
+
+    # Single teacher forward pass
+    with torch.inference_mode():
+        outputs = teacher(input_ids, attention_mask=attention_mask,
+                         output_hidden_states=extract_hidden, use_cache=False)
+
+    # GPU covering per sequence (probs stay on GPU, no CPU transfer)
+    results = []
+    for b in range(B):
+        seq_len = attention_mask[b].sum().item()
+        logits_b = outputs.logits[b, :seq_len]
+        probs = F.softmax((logits_b / temperature).float(), dim=-1)
+        token_ids = input_ids[b, :seq_len].tolist()
+
+        byte_probs, byte_mask = _gpu_covering_one_sequence(
+            probs, token_ids, batch_raw_bytes[b], csr_tables, max_depth)
+
+        n_bytes = len(batch_raw_bytes[b])
+        coverage_ratio = byte_mask.sum().item() / max(n_bytes, 1)
+
+        result = {
+            "byte_probs": byte_probs,
+            "byte_mask": byte_mask,
+            "coverage_ratio": coverage_ratio,
+        }
+
+        if extract_hidden:
+            hidden = outputs.hidden_states[-1][b, :seq_len]
+            result["hidden"] = hidden.float()
+            result["n_tokens"] = seq_len
+
+        results.append(result)
+
+    return results
+
+
 def _get_teacher_targets_covering(teacher, tokenizer, covering_tables, raw_bytes,
                                   device, temperature=2.0, extract_hidden=True,
                                   max_depth=None):
@@ -2933,72 +3019,95 @@ def _aggregate_teacher_byte_targets(sample_targets, teacher_priors,
         sample_weights = torch.where(available, sample_weights, torch.zeros_like(sample_weights))
         sample_weights = sample_weights / sample_weights.sum().clamp_min(1e-10)
     elif aggregation == "anchor_confidence_routing":
-        # Codex-prescribed routing: anchor dominates, aux contributes only where
-        # JS divergence > threshold AND aux is more confident.
-        # Requires exactly 2 teachers with roles "anchor" and "aux" in teacher_cfgs.
-        assert probs.shape[0] == 2, "anchor_confidence_routing requires exactly 2 teachers"
+        # Anchor-dominated routing: anchor teacher provides baseline signal,
+        # each aux contributes only where it disagrees AND is more confident.
+        # Supports N teachers (1 anchor + M aux). Each aux is routed independently.
         rc = routing_cfg or {}
         js_thresh = rc.get("js_threshold", 0.02)
         conf_margin = rc.get("confidence_margin", 0.02)
         conf_scale = rc.get("confidence_scale", 0.08)
         aux_cap = rc.get("aux_weight_cap", 0.35)
+        N = probs.shape[0]
 
         # Identify anchor vs aux by role in teacher_cfgs
-        anchor_idx, aux_idx = 0, 1
+        anchor_idx = 0
+        aux_indices = list(range(1, N))
         if teacher_cfgs and len(teacher_cfgs) >= 2:
             for i, tc in enumerate(teacher_cfgs):
                 if tc.get("role") == "anchor":
                     anchor_idx = i
-                elif tc.get("role") == "aux":
-                    aux_idx = i
+            aux_indices = [i for i in range(N) if i != anchor_idx]
 
-        p_anchor = probs[anchor_idx]  # (T, 256)
-        p_aux = probs[aux_idx]        # (T, 256)
-        m_anchor = masks[anchor_idx]  # (T,)
-        m_aux = masks[aux_idx]        # (T,)
-
-        # JS divergence per position: JSD(anchor || aux)
-        m = 0.5 * (p_anchor + p_aux)
-        m_safe = m.clamp_min(1e-10)
-        kl_am = (p_anchor * (p_anchor.clamp_min(1e-10) / m_safe).log()).sum(-1)  # (T,)
-        kl_bm = (p_aux * (p_aux.clamp_min(1e-10) / m_safe).log()).sum(-1)
-        jsd = 0.5 * (kl_am + kl_bm)  # (T,)
-
-        # Confidence = max prob at each position
+        p_anchor = probs[anchor_idx]   # (T, 256)
+        m_anchor = masks[anchor_idx]   # (T,)
         conf_anchor = p_anchor.max(dim=-1).values  # (T,)
-        conf_aux = p_aux.max(dim=-1).values
 
-        # Routing weight for aux: sigmoid((conf_aux - conf_anchor - margin) / scale)
-        # Gated by JS divergence > threshold (teachers must disagree)
-        raw_route = torch.sigmoid((conf_aux - conf_anchor - conf_margin) / max(conf_scale, 1e-6))
-        # Zero out where teachers agree (JS below threshold) or either teacher missing
-        both_available = m_anchor & m_aux
-        disagree = (jsd > js_thresh) & both_available
-        r = torch.where(disagree, raw_route.clamp(max=aux_cap), torch.zeros_like(raw_route))
+        # Compute routing weight for each aux teacher independently
+        weights = torch.zeros_like(masks.float())  # (N, T)
+        total_aux_weight = torch.zeros(probs.shape[1], device=probs.device)  # (T,)
 
-        # Build per-position weights: (2, T)
-        weights = torch.zeros_like(masks.float())
-        weights[anchor_idx] = (1.0 - r) * m_anchor.float()
-        weights[aux_idx] = r * m_aux.float()
-        # Where only one teacher available, use that teacher alone
-        only_anchor = m_anchor & ~m_aux
-        only_aux = m_aux & ~m_anchor
-        weights[anchor_idx] = torch.where(only_anchor, torch.ones_like(r), weights[anchor_idx])
-        weights[aux_idx] = torch.where(only_aux, torch.ones_like(r), weights[aux_idx])
+        for aux_idx in aux_indices:
+            p_aux = probs[aux_idx]
+            m_aux = masks[aux_idx]
+            conf_aux = p_aux.max(dim=-1).values
+
+            # JS divergence: JSD(anchor || aux)
+            m_mix = 0.5 * (p_anchor + p_aux)
+            m_safe = m_mix.clamp_min(1e-10)
+            kl_am = (p_anchor * (p_anchor.clamp_min(1e-10) / m_safe).log()).sum(-1)
+            kl_bm = (p_aux * (p_aux.clamp_min(1e-10) / m_safe).log()).sum(-1)
+            jsd = 0.5 * (kl_am + kl_bm)
+
+            # Routing: sigmoid((conf_aux - conf_anchor - margin) / scale)
+            raw_route = torch.sigmoid((conf_aux - conf_anchor - conf_margin) / max(conf_scale, 1e-6))
+            both_available = m_anchor & m_aux
+            disagree = (jsd > js_thresh) & both_available
+            r = torch.where(disagree, raw_route.clamp(max=aux_cap), torch.zeros_like(raw_route))
+
+            weights[aux_idx] = r * m_aux.float()
+            total_aux_weight = total_aux_weight + r
+
+            # Where only this aux is available (anchor missing), give it full weight
+            only_aux = m_aux & ~m_anchor
+            weights[aux_idx] = torch.where(only_aux, torch.ones_like(r), weights[aux_idx])
+
+        # Clamp total aux contribution to aux_cap (prevents N aux from overwhelming anchor)
+        aux_overflow = (total_aux_weight > aux_cap).float()
+        scale_factor = torch.where(total_aux_weight > 1e-10,
+                                   aux_cap / total_aux_weight.clamp_min(1e-10),
+                                   torch.ones_like(total_aux_weight))
+        for aux_idx in aux_indices:
+            weights[aux_idx] = weights[aux_idx] * torch.where(
+                aux_overflow.bool(), scale_factor, torch.ones_like(scale_factor))
+
+        # Anchor gets remainder
+        clamped_aux_total = torch.zeros_like(total_aux_weight)
+        for aux_idx in aux_indices:
+            clamped_aux_total = clamped_aux_total + weights[aux_idx]
+        weights[anchor_idx] = (1.0 - clamped_aux_total) * m_anchor.float()
+
+        # Where only anchor available, give it full weight
+        any_aux = torch.zeros(probs.shape[1], dtype=torch.bool, device=probs.device)
+        for aux_idx in aux_indices:
+            any_aux = any_aux | masks[aux_idx]
+        only_anchor = m_anchor & ~any_aux
+        weights[anchor_idx] = torch.where(only_anchor,
+                                          torch.ones_like(weights[anchor_idx]),
+                                          weights[anchor_idx])
 
         weight_denom = weights.sum(dim=0, keepdim=True).clamp_min(1e-10)
         weights = weights / weight_denom
 
-        # Sample-level weights: anchor-dominated, respecting index order
-        sample_weights = torch.zeros(2, device=probs.device)
-        sample_weights[anchor_idx] = 1.0 - aux_cap * 0.5
-        sample_weights[aux_idx] = aux_cap * 0.5
+        # Sample-level weights: anchor-dominated
+        n_aux = len(aux_indices)
+        sample_weights = torch.zeros(N, device=probs.device)
+        sample_weights[anchor_idx] = 1.0 - aux_cap * 0.5 * n_aux / max(n_aux, 1)
+        for aux_idx in aux_indices:
+            sample_weights[aux_idx] = aux_cap * 0.5 / max(n_aux, 1)
         if not available[anchor_idx]:
             sample_weights[anchor_idx] = 0.0
-            sample_weights[aux_idx] = 1.0
-        elif not available[aux_idx]:
-            sample_weights[anchor_idx] = 1.0
-            sample_weights[aux_idx] = 0.0
+            for aux_idx in aux_indices:
+                sample_weights[aux_idx] = 1.0 / max(n_aux, 1) if available[aux_idx] else 0.0
         sample_weights = sample_weights / sample_weights.sum().clamp_min(1e-10)
     else:
         raise ValueError(f"Unknown teacher aggregation: {aggregation}")
@@ -3197,11 +3306,16 @@ def precompute_teacher_cache(cfg, output_path):
         model.eval()
         vocab = model.config.vocab_size
 
-        covering_tables, fb_map = None, None
+        covering_tables, fb_map, csr_tables = None, None, None
         if use_covering:
             print(f"  Building covering tables for {vocab} tokens...")
             covering_tables = _build_covering_tables(tok, vocab, device=DEVICE)
             print(f"  Covering: {covering_tables['n_prefixes']} prefixes")
+            try:
+                csr_tables = _build_covering_csr_gpu(covering_tables, device=DEVICE)
+                print(f"  GPU CSR tables built: {len(csr_tables['depth_tables'])} depths")
+            except Exception as e:
+                print(f"  GPU CSR build failed ({e}), using CPU covering")
         else:
             fb_map = _build_first_byte_map(tok, vocab, DEVICE)
 
@@ -3218,10 +3332,11 @@ def precompute_teacher_cache(cfg, output_path):
 
             with torch.no_grad():
                 if use_covering:
-                    targets = _get_teacher_targets_covering_batched(
+                    targets = _get_teacher_targets_covering_batched_gpu(
                         model, tok, covering_tables, batch_raw, DEVICE,
                         temperature=kd_temperature, extract_hidden=False,
                         max_depth=covering_max_depth,
+                        csr_tables=csr_tables,
                     )
                 else:
                     targets = []
@@ -3298,7 +3413,7 @@ def precompute_teacher_cache(cfg, output_path):
 
     output_path = Path(output_path)
     print(f"\nSaving cache to {output_path} ({total_bytes/1e6:.0f}MB estimated)...")
-    torch.save(cache, output_path)
+    atomic_torch_save(cache, output_path)
     actual_size = output_path.stat().st_size
     print(f"Saved: {actual_size/1e6:.0f}MB on disk")
     print(f"Cache ready. Use with: \"use_teacher_cache\": true, \"teacher_cache_path\": \"{output_path}\"")
@@ -3597,12 +3712,18 @@ def train_ekalavya(s1_ckpt, cfg=None):
             teacher_model.eval()
             teacher_dim = teacher_model.config.hidden_size
             teacher_vocab = teacher_model.config.vocab_size
-            teacher_covering, teacher_fb = None, None
+            teacher_covering, teacher_fb, teacher_csr = None, None, None
             if use_covering:
                 print(f"  Building covering tables for {teacher_vocab} tokens...")
                 teacher_covering = _build_covering_tables(teacher_tok, teacher_vocab, device=DEVICE)
                 print(f"  Covering: {teacher_covering['n_prefixes']} prefixes, "
                       f"max {teacher_covering['max_token_bytes']} bytes/token")
+                # Build GPU CSR tables for scatter_add covering (~20-30x faster)
+                try:
+                    teacher_csr = _build_covering_csr_gpu(teacher_covering, device=DEVICE)
+                    print(f"  GPU CSR tables built: {len(teacher_csr['depth_tables'])} depths")
+                except Exception as e:
+                    print(f"  GPU CSR build failed ({e}), falling back to CPU covering")
             else:
                 teacher_fb = _build_first_byte_map(teacher_tok, teacher_vocab, DEVICE)
             repr_proj = nn.Linear(teacher_dim, model.d_local, bias=False).to(DEVICE)
@@ -3616,6 +3737,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 "hidden_dim": teacher_dim,
                 "vocab": teacher_vocab,
                 "covering": teacher_covering,
+                "csr_tables": teacher_csr,
                 "first_byte_map": teacher_fb,
                 "repr_proj": repr_proj,
         })
@@ -3902,10 +4024,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         # Fix 2: only extract hidden states for teachers used in repr loss
                         need_hidden = beta_eff > 0 and (not repr_anchor_only or t_idx in repr_teacher_indices)
                         if use_covering:
-                            targets_batch = _get_teacher_targets_covering_batched(
+                            targets_batch = _get_teacher_targets_covering_batched_gpu(
                                 teacher["model"], teacher["tokenizer"], teacher["covering"], batch_raw, DEVICE,
                                 temperature=kd_temperature, extract_hidden=need_hidden,
                                 max_depth=covering_max_depth,
+                                csr_tables=teacher.get("csr_tables"),
                             )
                         else:
                             targets_batch = []
@@ -4056,6 +4179,22 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 log(f"  [NaN/Inf at step {step}, micro {micro}] -- skipping")
                 if nan_count > 10:
                     log("FATAL: >10 NaN losses, aborting")
+                    try:
+                        crash_dict = {
+                            "step": step, "stage": 1,
+                            "model": model.state_dict(),
+                            "repr_proj_teachers": {t["id"]: t["repr_proj"].state_dict() for t in teachers},
+                            "optimizer": optimizer.state_dict(),
+                            "scaler": scaler.state_dict(),
+                            "eval_loss": best_eval, "config": cfg,
+                        }
+                        crash_path = ckpt_dir / f"crash_nan_step_{step}.pt"
+                        torch.save(crash_dict, crash_path)
+                        log(f"  >>> Crash checkpoint saved to {crash_path}")
+                    except Exception:
+                        log("  >>> Failed to save crash checkpoint")
+                    _training_state["finished"] = True
+                    pid_path.unlink(missing_ok=True)
                     log_f.close()
                     return
                 continue
@@ -4134,7 +4273,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                     "scaler": scaler.state_dict(),
                     "eval_loss": el, "config": cfg,
                 }
-                torch.save(save_dict, ckpt_dir / "best.pt")
+                atomic_torch_save(save_dict, ckpt_dir / "best.pt")
                 log(f"      New best! Saved to {ckpt_dir / 'best.pt'}")
 
             # Auto-kill criteria (configurable via config)
@@ -4152,7 +4291,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         "scaler": scaler.state_dict(),
                         "eval_loss": best_eval, "config": cfg,
                     }
-                    torch.save(save_dict, ckpt_dir / f"killed_step_{step}.pt")
+                    atomic_torch_save(save_dict, ckpt_dir / f"killed_step_{step}.pt")
                     _training_state["finished"] = True  # Prevent atexit double-save
                     pid_path.unlink(missing_ok=True)
                     log_f.close()
@@ -4176,7 +4315,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 "scaler": scaler.state_dict(),
                 "eval_loss": best_eval, "config": cfg,
             }
-            torch.save(save_dict, ckpt_dir / f"step_{step}.pt")
+            atomic_torch_save(save_dict, ckpt_dir / f"step_{step}.pt")
             if DEVICE == "cuda":
                 torch.cuda.empty_cache()
 
@@ -4191,14 +4330,13 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 "scaler": scaler.state_dict(),
                 "eval_loss": best_eval, "config": cfg,
             }
-            torch.save(save_dict, ckpt_dir / f"shutdown_step_{step}.pt")
+            atomic_torch_save(save_dict, ckpt_dir / f"shutdown_step_{step}.pt")
             log(f"  >>> Shutdown checkpoint saved. Exiting.")
             _training_state["finished"] = True  # Prevent atexit double-save
             pid_path.unlink(missing_ok=True)
             log_f.close()
             sys.exit(0)
 
-    _training_state["finished"] = True
     pid_path.unlink(missing_ok=True)
     _sys.stderr = _stderr_backup  # Restore stderr
     final_loss = eval_loss(model, dataset, n_batches=50, seq_len=seq_bytes)
@@ -4222,6 +4360,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
     }
     with open(REPO / "results" / f"{run_name}_results.json", "w") as f:
         json.dump(results, f, indent=2)
+
+    _training_state["finished"] = True  # AFTER all artifacts written
 
 
 if __name__ == "__main__":

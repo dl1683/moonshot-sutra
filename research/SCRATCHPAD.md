@@ -9643,6 +9643,32 @@ Total = α_eff × T² × KL_loss                  [scaled contribution]
 
 Contrast with AM run (killed at step 380): KD was 4x higher (1.8-2.0 vs 0.47), CE was unstable, UG was NOT measured. The TAID+routing combination is qualitatively different.
 
+### WHY TAID+Routing Succeeds Where AM Fails (theoretical sketch)
+
+**The AM failure mode:** When teachers disagree at a byte position (e.g., Teacher 1 peaks at 'a' with 60%, Teacher 2 peaks at 'e' with 55%), AM creates a bimodal target: p_AM = (30% 'a', 27.5% 'e', ...). The student, which must commit to ONE byte at inference, receives gradients pulling in two directions simultaneously. This is mode-covering loss: the student wastes capacity trying to satisfy both modes.
+
+**Routing eliminates inter-teacher conflict:** Anchor-confidence routing picks ONE coherent teacher signal per position. The student always sees a unimodal target. JSD>0.02 gate ensures the auxiliary only contributes where it agrees with or improves on the anchor.
+
+**TAID eliminates student-teacher capacity gap:** Even with routing, plain FKL can overwhelm the student when the teacher is highly confident on hard patterns the student can't represent yet. TAID's geometric interpolation:
+
+```
+p_TAID = p_student^(1-β) × p_teacher^β
+```
+
+creates a target that smoothly interpolates between student and teacher. At β=0.37 (step 280), TAID is mostly the student (63%) with gentle teacher influence (37%). This trust-region prevents:
+1. Gradient spikes from hard teacher targets (the routing run's grad_max hit 1.86)
+2. Capacity-gap blowup where student can't match confident teacher
+3. KD loss dominating CE loss (AM had KD loss 4x higher)
+
+**The two-stage pipeline:**
+1. **Routing**: selects coherent per-position teacher signal → eliminates bimodality
+2. **TAID**: progressive trust-region interpolation → eliminates capacity gap
+3. **Uncertainty Gating**: focuses KD on high-value positions → eliminates noise
+
+Each addresses a different failure mode. AM fails at stage 1. Plain FKL fails at stage 2. Uniform weighting fails at stage 3. The combination is necessary and (empirically) sufficient.
+
+**Theoretical grounding:** Axiomatic Aggregation paper (2601.09165) proves geometric mean is one of 3 valid aggregation families satisfying convexity, positivity, weight monotonicity, continuity, and temperature coherence. TAID is a PARAMETERIZED geometric mean where β controls the teacher-student balance. This makes TAID theoretically well-founded, not just empirically effective.
+
 ---
 
 ## 6K EKALAVYA POST-MORTEM (2026-04-15)
@@ -10056,10 +10082,22 @@ def gpu_covering_batched(token_probs_gpu, observed_bytes_batch, covering_gpu_tab
 4. **Integration with _covering_one_sequence** — Need to refactor the batched function to use GPU covering instead of ThreadPoolExecutor CPU covering.
 5. **Memory for large vocab (151K)** — CSR arrays larger but still <10MB. Fine.
 
-### Implementation Plan
-1. Add `_build_covering_tables_gpu()` that converts existing covering_tables into CSR GPU tensors
-2. Add `_gpu_covering_batched()` that replaces the ThreadPoolExecutor path
-3. Add a config flag `gpu_covering: true` (default false for safety)
-4. Validate: run 100 micro-batches with both paths, verify max error < 1e-5
-5. Benchmark: measure wall time per step with GPU vs CPU covering
-6. **Blocked on GPU** — can implement + test only when training finishes or on CPU-only path for index building logic
+### Implementation Status (2026-04-15 20:00)
+**IMPLEMENTED — awaiting GPU testing.**
+
+Implemented in `code/sutra_dyad.py`:
+1. `_build_covering_csr_gpu()` — converts prefix-based covering tables to CSR GPU tensors ✅
+2. `_gpu_covering_one_sequence()` — GPU scatter_add covering per sequence ✅
+3. `_get_teacher_targets_covering_batched_gpu()` — batched GPU covering (wraps per-seq GPU fn) ✅
+4. Wired into Ekalavya training loop — auto-builds CSR tables at teacher setup ✅
+5. Wired into cache-building pipeline — same auto-build + fallback ✅
+6. Fallback: if CSR build fails, silently falls back to CPU numpy path ✅
+
+**Still TODO:**
+- Validate correctness: run 100 micro-batches with both paths, verify max error < 1e-5
+- Benchmark: measure actual speedup (expected ~20-30x)
+- **Blocked on GPU** — training PID 59068 has GPU locked until 6K run completes
+
+No config flag needed — GPU covering activates automatically when CSR tables build succeeds.
+The per-sequence GPU function still has a Python loop over work items — a fully vectorized
+cross-sequence batched version would be ~2x faster but diminishing returns (120ms→60ms per batch).

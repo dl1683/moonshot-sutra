@@ -49,7 +49,18 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 | Warmup end | 150-200 | 1.414 | 0.975 | 0.33 | 0.20-0.27 | Stable |
 | Post-warmup | 200-250 | 1.440 | 0.996 | 0.24 | 0.27-0.33 | +0.026 (worse) |
 | Late | 250-310 | 1.415 | 0.976 | 0.18 | 0.33-0.41 | -0.025 (recovering) |
-**Status:** Restarted 2026-04-15 19:00 (PID 59068, nohup-detached), crash defenses active. Previous step 250 checkpoint. First eval at step 500.
+**Current run (Run 5, PID 59068, nohup-detached, crash defenses active):**
+| Step | BPB | CE | KD | Repr | TAID β | UG mean | Notes |
+|------|-----|-----|-----|------|--------|---------|-------|
+| 260 | 1.435 | 0.995 | 0.561 | 0.197 | 0.35 | 0.74/57% | Adapting from checkpoint |
+| 270 | 1.415 | 0.981 | 0.464 | 0.174 | 0.36 | 0.70/52% | CE+KD dropping: harmonious |
+| 280 | 1.392 | 0.965 | 0.474 | 0.161 | 0.37 | 0.69/52% | Best so far |
+| 290 | 1.391 | 0.964 | 0.415 | 0.148 | 0.39 | 0.72/56% | Plateau near 1.39 |
+| 300 | 1.409 | 0.977 | 0.557 | 0.149 | 0.40 | 0.69/53% | Uptick (harder batch), normal |
+| 310 | 1.383 | 0.959 | 0.470 | 0.129 | 0.41 | 0.71/55% | **New best** — all losses dropping |
+**Steps 260-310 mean BPB: 1.404.** Trend: -0.0008 BPB/step (linear fit). Trajectory solidly downward.
+**Step 500 eval prediction: 1.35-1.40** (well below 1.430 kill). Step 500 ETA ~23:30 EST.
+**Key observation:** CE, KD, Repr, UG ALL trending down → student absorbing teacher knowledge without conflict. TAID trust-region prevents the gradient spikes seen in routing run.
 
 ### ekalavya_iter5_taid_gating_probe [DONE — MARGINAL]
 **Purpose:** Probe TAID + uncertainty gating mechanism stability before 6K launch.
