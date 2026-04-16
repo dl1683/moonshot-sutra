@@ -58,7 +58,24 @@ Run started from step 250, using step_250.pt checkpoint.
 | 410 | 0.992 | 0.651 | 0.110 | 1.432 | 0.55 | 0.69/53% | |
 | 420 | 1.001 | 0.939 | 0.106 | 1.444 | 0.56 | 0.70/54% | |
 | 430 | 0.988 | 0.778 | 0.106 | 1.425 | 0.57 | 0.69/54% | |
-| 440 | 0.968 | 0.707 | **0.097** | 1.397 | 0.59 | 0.68/51% | Repr all-time low |
+| 440 | 0.968 | 0.707 | **0.097** | 1.397 | 0.59 | 0.68/51% | |
+| 450 | 0.990 | 0.891 | 0.099 | 1.429 | 0.60 | 0.68/52% | |
+| 460 | 0.995 | 0.783 | 0.097 | 1.436 | 0.61 | 0.75/59% | |
+| 470 | 1.058 | 0.751 | 0.099 | 1.527 | 0.63 | 0.74/58% | Hard batch |
+| 480 | 1.004 | 0.977 | 0.098 | 1.448 | 0.64 | 0.69/53% | |
+| 490 | 0.963 | 0.770 | 0.090 | 1.389 | 0.65 | 0.67/52% | |
+| 500 | 0.993 | 0.747 | 0.086 | 1.432 | 0.67 | 0.74/59% | **EVAL: 1.398** |
+| 510 | 1.131 | 2.148 | 0.109 | 1.631 | 0.68 | 0.71/53% | Hard batch spike |
+| 520 | 1.049 | 1.039 | 0.088 | 1.513 | 0.69 | 0.67/51% | Recovering |
+| 530 | 0.954 | 0.865 | 0.085 | **1.376** | 0.71 | 0.66/50% | **New best** |
+| 540 | 1.008 | 1.301 | 0.089 | 1.454 | 0.72 | 0.66/51% | |
+| 550 | 0.996 | 1.010 | 0.086 | 1.437 | 0.73 | 0.67/52% | |
+| 560 | 0.983 | 1.078 | 0.084 | 1.419 | 0.75 | 0.66/50% | |
+| 570 | 0.866 | 0.890 | 0.092 | 1.249 | 0.76 | 0.63/48% | Easy batch |
+| 580 | 0.975 | 0.961 | 0.090 | 1.406 | 0.77 | 0.66/50% | |
+| 590 | 1.033 | 1.427 | 0.094 | 1.491 | 0.79 | 0.64/49% | |
+| 600 | 0.988 | 1.328 | 0.093 | 1.425 | **0.80** | 0.65/49% | **β MAX reached** |
+| 610 | 0.957 | 1.052 | **0.000** | 1.380 | 0.80 | 0.66/50% | Repr beta=0, clean transition |
 
 **Running average BPB (260-440): 1.411.** TAID β crossed 0.50 at step 380 — target now majority-teacher. NO degradation (AM collapsed here). Repr monotonically dropping (0.197→0.086).
 
@@ -68,6 +85,10 @@ Run started from step 250, using step_250.pt checkpoint.
 - vs routing eval (1.418): **-0.020 improvement** (2.6x routing's signal)
 - New best.pt saved. Coherent English generation confirmed.
 - Decision: **CONTINUE TO 6K. Plan 3-teacher iter6.**
+
+**Step 600: β MAX (0.80) reached. Repr beta decayed to 0 at step 610.**
+Main absorption window active: CE + logit KD at max teacher influence, alpha decaying.
+Post-β-max steps 600-610: BPB 1.425→1.380, clean transition, no instability.
 
 ### Kill Criteria
 | Step | Kill if eval > | Budget relative to routing |
