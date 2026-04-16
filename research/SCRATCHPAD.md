@@ -10101,3 +10101,52 @@ Implemented in `code/sutra_dyad.py`:
 No config flag needed — GPU covering activates automatically when CSR tables build succeeds.
 The per-sequence GPU function still has a Python loop over work items — a fully vectorized
 cross-sequence batched version would be ~2x faster but diminishing returns (120ms→60ms per batch).
+
+---
+
+## KD CEILING ANALYSIS — Theoretical Limits (2026-04-15)
+
+**Question:** What's the maximum BPB improvement achievable from byte-level KD with 1.7B teachers → 188M student?
+
+### Teacher Performance (byte BPB on our data)
+| Teacher | Byte BPB | Confidence | Vocab |
+|---------|----------|------------|-------|
+| SmolLM2-1.7B | ~1.05 | 43.8% top-1 | 49K |
+| Pythia-1.4B | ~1.10 | 39.6% top-1 | 50K |
+| Qwen3-1.7B | 1.055 | 39.8% top-1 | 151K |
+| Ensemble (oracle) | ~0.95 (est.) | — | — |
+
+### Student Performance
+- Baseline (CE-only, step 250): eval BPB 1.430
+- Dense baseline estimate (CE-only, 10K steps): ~1.20 BPB
+- Current (iter5, step 310): training BPB 1.383 (eval TBD)
+
+### Gap Analysis
+- Student-to-best-teacher gap: 1.430 - 1.05 = **0.380 BPB**
+- Cross-arch cross-tokenizer KD in literature: closes **5-20%** of gap
+- **Conservative estimate: 0.380 × 0.10 = 0.038 BPB** (eval ~1.392)
+- **Optimistic estimate: 0.380 × 0.20 = 0.076 BPB** (eval ~1.354)
+- **Aggressive (multi-teacher with routing): maybe 25% = 0.095 BPB** (eval ~1.335)
+
+### Observed So Far
+- iter5 step 250 eval: 1.418 (gain = 0.012 BPB, 3.2% of gap)
+- iter5 step 310 training: 1.383 (gain = 0.047 BPB, 12.4% of gap) — but training BPB overstates real gain
+- Routing run step 250 eval: 1.418 (gain = 0.012 BPB)
+
+**Assessment:** We're in the early regime (3-12% of gap closed). The 6K run should close to 5-10% by step 1500 (main absorption window). 3-teacher 12K should push to 10-15%.
+
+### Comparison to Dense Baseline
+The real question isn't "how much KD improves vs no-KD" but "how much faster KD reaches a given BPB compared to CE-only". If dense CE at 10K reaches 1.20 BPB, then KD's value is reaching that BPB in fewer steps.
+
+**Efficiency metric:** CE-only BPB at step N vs KD BPB at step N.
+- If KD at step 3K matches CE at step 10K, that's 3.3x data efficiency — the manifesto wins.
+- If KD at step 6K matches CE at step 6K, KD is overhead for no benefit — pivot.
+
+**This is the metric that matters for the manifesto.** Not absolute BPB, but BPB-per-training-step ratio.
+
+### What Would Change the Ceiling?
+1. **More teachers (3→5):** Diminishing returns per teacher, but oracle ensemble BPB keeps dropping
+2. **Better routing:** Currently 35% aux cap. Adaptive cap based on agreement quality.
+3. **Representation KD from all teachers:** Currently anchor-only. 3-teacher repr could help.
+4. **Curriculum-aware KD:** Focus teacher signal on areas where student is weakest.
+5. **Larger student:** 188M → 350M would increase capacity for absorbing teacher knowledge.

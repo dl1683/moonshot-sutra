@@ -33,6 +33,16 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 
 ## Phase 6: Ekalavya Protocol — Byte-Level Covering KD (2026-04-12 → ongoing)
 
+### ekalavya_iter6_3teacher_12k [PENDING — blocked on iter5 completion + cache build]
+**Purpose:** 3-teacher iteration: SmolLM2 (anchor) + Pythia + Qwen3-1.7B (2 aux), 12K steps with teacher cache.
+**Key changes from iter5:** 3rd teacher (Qwen3, near-zero correlation with anchor), 2x training steps, pre-computed teacher cache (eliminates covering bottleneck), proportionally stretched schedules, GPU scatter_add covering.
+**Config:** `results/config_ekalavya_iter6_3teacher_12k.json`
+**Cache config:** `results/config_cache_3teacher_12k.json`
+**Seed:** Best checkpoint from iter5 6K run
+**Prerequisites:** (1) iter5 completes, (2) teacher cache built (~15-20h with GPU covering)
+**Kill:** eval > 1.430 at step 1000, > 1.410 at step 3000, > 1.400 at step 6000
+**Hypothesis:** 3rd teacher with near-zero anchor correlation provides complementary signal. Extended training allows deeper knowledge absorption. VRAM budget: ~13GB (safe with 24GB available).
+
 ### ekalavya_iter5_full_6k [RUNNING — 6000 steps]
 **Purpose:** Full TAID + uncertainty gating + piecewise alpha decay run. Codex T+L iteration 5 design.
 **Mechanism:** TAID β 0→0.8/600, uncertainty gating exp 1→2/600 (ug_clamp=1.5), soft-sigmoid anchor routing (JSD>0.02 gate, sigmoid confidence weighting, aux_cap=0.35), covering, piecewise alpha decay (0.03→0.015→0.005→0.0 at steps 150/1500/3000/4500), no hold, grad_clip=0.8. Global layers unfreeze at 700/1800.
