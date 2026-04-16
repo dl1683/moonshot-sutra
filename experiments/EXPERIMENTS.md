@@ -68,8 +68,11 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 | 290 | 1.391 | 0.964 | 0.415 | 0.148 | 0.39 | 0.72/56% | Plateau near 1.39 |
 | 300 | 1.409 | 0.977 | 0.557 | 0.149 | 0.40 | 0.69/53% | Uptick (harder batch), normal |
 | 310 | 1.383 | 0.959 | 0.470 | 0.129 | 0.41 | 0.71/55% | **New best** — all losses dropping |
-**Steps 260-310 mean BPB: 1.404.** Trend: -0.0008 BPB/step (linear fit). Trajectory solidly downward.
-**Step 500 eval prediction: 1.35-1.40** (well below 1.430 kill). Step 500 ETA ~23:30 EST.
+| 320 | 1.445 | 1.002 | 0.594 | 0.144 | 0.43 | 0.78/61% | Hard batch |
+| 330 | 1.425 | 0.988 | 0.489 | 0.124 | 0.44 | 0.72/56% | |
+| 340 | 1.392 | 0.965 | 0.577 | 0.120 | 0.45 | 0.70/54% | Near-best, repr new low |
+**Steps 260-340 mean BPB: 1.410.** Repr loss monotonically dropping (0.197→0.120). All systems stable.
+**Step 500 eval prediction: 1.38-1.42** (well below 1.430 kill). Step 500 ETA ~22:50 EST.
 **Key observation:** CE, KD, Repr, UG ALL trending down → student absorbing teacher knowledge without conflict. TAID trust-region prevents the gradient spikes seen in routing run.
 
 ### ekalavya_iter5_taid_gating_probe [DONE — MARGINAL]
