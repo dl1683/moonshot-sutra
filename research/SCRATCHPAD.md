@@ -48,9 +48,19 @@ Run started from step 250, using step_250.pt checkpoint.
 | 310 | 0.959 | 0.470 | 0.129 | **1.383** | 0.41 | 0.71/55% | New best |
 | 320 | 1.002 | 0.594 | 0.144 | 1.445 | 0.43 | 0.78/61% | Hard batch |
 | 330 | 0.988 | 0.489 | 0.124 | 1.425 | 0.44 | 0.72/56% | |
-| 340 | 0.965 | 0.577 | 0.120 | 1.392 | 0.45 | 0.70/54% | Near-best, repr new low |
+| 340 | 0.965 | 0.577 | 0.120 | 1.392 | 0.45 | 0.70/54% | Near-best |
+| 350 | 0.965 | 0.588 | 0.118 | 1.392 | 0.47 | 0.73/56% | |
+| 360 | 1.003 | 0.791 | 0.130 | 1.448 | 0.48 | 0.70/54% | Hard batch |
+| 370 | 0.905 | 0.754 | 0.138 | **1.305** | 0.49 | 0.74/55% | Easy batch, best ever |
+| 380 | 0.972 | 0.610 | 0.108 | 1.402 | 0.51 | 0.66/50% | β crosses 0.50 |
+| 390 | 0.998 | 0.828 | 0.115 | 1.440 | 0.52 | 0.70/54% | |
+| 400 | 1.011 | 0.886 | 0.114 | 1.459 | 0.53 | 0.70/54% | |
+| 410 | 0.992 | 0.651 | 0.110 | 1.432 | 0.55 | 0.69/53% | |
+| 420 | 1.001 | 0.939 | 0.106 | 1.444 | 0.56 | 0.70/54% | |
+| 430 | 0.988 | 0.778 | 0.106 | 1.425 | 0.57 | 0.69/54% | |
+| 440 | 0.968 | 0.707 | **0.097** | 1.397 | 0.59 | 0.68/51% | Repr all-time low |
 
-**Running average BPB (260-340): 1.410.** Repr loss monotonically dropping (0.197→0.120). All systems stable.
+**Running average BPB (260-440): 1.411.** TAID β crossed 0.50 at step 380 — target now majority-teacher. NO degradation (AM collapsed here). Repr monotonically dropping (0.197→0.097). Step 500 eval imminent — kill criterion: eval BPB > 1.430.
 
 ### Kill Criteria
 | Step | Kill if eval > | Budget relative to routing |

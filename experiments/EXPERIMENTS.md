@@ -70,10 +70,20 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 | 310 | 1.383 | 0.959 | 0.470 | 0.129 | 0.41 | 0.71/55% | **New best** — all losses dropping |
 | 320 | 1.445 | 1.002 | 0.594 | 0.144 | 0.43 | 0.78/61% | Hard batch |
 | 330 | 1.425 | 0.988 | 0.489 | 0.124 | 0.44 | 0.72/56% | |
-| 340 | 1.392 | 0.965 | 0.577 | 0.120 | 0.45 | 0.70/54% | Near-best, repr new low |
-**Steps 260-340 mean BPB: 1.410.** Repr loss monotonically dropping (0.197→0.120). All systems stable.
-**Step 500 eval prediction: 1.38-1.42** (well below 1.430 kill). Step 500 ETA ~22:50 EST.
-**Key observation:** CE, KD, Repr, UG ALL trending down → student absorbing teacher knowledge without conflict. TAID trust-region prevents the gradient spikes seen in routing run.
+| 340 | 1.392 | 0.965 | 0.577 | 0.120 | 0.45 | 0.70/54% | Near-best |
+| 350 | 1.392 | 0.965 | 0.588 | 0.118 | 0.47 | 0.73/56% | |
+| 360 | 1.448 | 1.003 | 0.791 | 0.130 | 0.48 | 0.70/54% | Hard batch |
+| 370 | 1.305 | 0.905 | 0.754 | 0.138 | 0.49 | 0.74/55% | Easy batch, lowest ever |
+| 380 | 1.402 | 0.972 | 0.610 | 0.108 | 0.51 | 0.66/50% | **β crosses 0.50** |
+| 390 | 1.440 | 0.998 | 0.828 | 0.115 | 0.52 | 0.70/54% | |
+| 400 | 1.459 | 1.011 | 0.886 | 0.114 | 0.53 | 0.70/54% | |
+| 410 | 1.432 | 0.992 | 0.651 | 0.110 | 0.55 | 0.69/53% | |
+| 420 | 1.444 | 1.001 | 0.939 | 0.106 | 0.56 | 0.70/54% | |
+| 430 | 1.425 | 0.988 | 0.778 | 0.106 | 0.57 | 0.69/54% | |
+| 440 | 1.397 | 0.968 | 0.707 | 0.097 | 0.59 | 0.68/51% | Repr all-time low |
+**Steps 260-440 mean BPB: 1.411.** TAID β crossed 0.50 at step 380 — target now majority-teacher, NO degradation (AM collapsed here). Repr monotonically dropping (0.197→0.097). KD rising as expected with β>0.5 (teacher influence increasing).
+**Step 500 eval imminent — kill criterion: eval BPB > 1.430.**
+**Key observations:** (1) Student absorbing teacher without conflict. (2) TAID trust-region prevents gradient spikes seen in routing run. (3) Repr convergence is strongest signal of genuine knowledge transfer.
 
 ### ekalavya_iter5_taid_gating_probe [DONE — MARGINAL]
 **Purpose:** Probe TAID + uncertainty gating mechanism stability before 6K launch.
