@@ -66,7 +66,7 @@
 **Implications for Ekalavya (UPDATED 2026-04-15):**
 1. Byte-level KD from tokenized teachers is HARDER than initially assumed. BLD (2604.07466) confirms: "consistent improvements across all tasks remain elusive." ALM byte-transfer: -2.6% vs subword.
 2. Our advantage: Sutra IS already byte-level, so we're not converting a subword model TO bytes — we're using byte-level KD as additional training signal on a natively byte-level model. This avoids the worst degradation mode (ALM's "strongly destructive" byte transfer).
-3. **Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL** — BLD (Apr 2026), ALM (Mar 2026), ULD, CDM, MultiLevelOT, CTLS, DWA-KD — ALL single-teacher only. Multi-teacher acknowledged as "future work" in BLD. ALM tests post-hoc ensembling (+0.6%) but not simultaneous multi-teacher KD during training. **We are the ONLY group doing per-position routed multi-teacher byte-level KD.**
+3. **Multi-teacher cross-architecture KD at byte level is GENUINELY NOVEL** — BLD (Apr 2026), ALM (Mar 2026), ULD, CDM, MultiLevelOT, CTLS, DWA-KD, PerSyn (ACL 2026) — ALL single-teacher or sample-level routing only. PerSyn validates routing over averaging but at sample level, not position level. Multi-teacher acknowledged as "future work" in BLD. ALM tests post-hoc ensembling (+0.6%) but not simultaneous multi-teacher KD during training. **We are the ONLY group doing per-position routed multi-teacher byte-level KD.**
 4. BLD uses covering decomposition (same as us) + pre-computes byte probs offline (~2 days on 4×3090). We also pre-compute (teacher caching). Covering is the validated approach.
 5. BLD uses parallel linear projections (10 MLP heads, non-autoregressive). We use a full autoregressive local byte decoder. Our decoder captures byte-level dependencies; theirs treats byte positions independently. Tradeoff: ours is more expressive, theirs is faster.
 6. **The byte interface eliminates the cross-tokenizer ALIGNMENT problem entirely.** ALL teacher outputs can be projected to byte probabilities via covering decomposition regardless of tokenizer. The open problem is multi-teacher AGGREGATION — and we now know AM fails, routing works (see point 9).
@@ -1754,6 +1754,17 @@ PonderLM-2 (CRITICAL RESULT):
 **Sutra relevance:** Validates our architectural choices. Multi-teacher routing at byte level is our clear novelty advantage. Their "CTD is still open" finding matches our experience — this is a HARD problem.
 
 **Novelty positioning:** We are the ONLY group doing multi-teacher cross-tokenizer byte-level KD with per-position routing. BLD, ALM, CTLS, ULD, DWA-KD — all single-teacher only.
+
+#### 6.4.19b PerSyn: Router-Guided Multi-Teacher Distillation (ACL 2026) — arXiv:2510.10925
+
+**"Route then Generate" paradigm: assign each prompt to its optimal teacher via a query-level router.**
+
+- Router jointly considers: (1) student learnability (can student absorb this teacher's output?) and (2) teacher response quality
+- Key insight: "stronger models are not always optimal teachers" — validates our anchor-confidence routing
+- Operates at SAMPLE level (which teacher for which prompt), not position level
+- Eliminates redundant computation: only assigned teachers synthesize data
+
+**Sutra relevance:** Validates routing over averaging for multi-teacher KD. However, PerSyn routes at sample granularity; we route at per-byte-position granularity (finer control). Their "student learnability" criterion is analogous to our uncertainty gating (suppress KD where student can't absorb). Confirms our approach is on the right track but more granular.
 
 #### 6.4.20 Flex-KD: Functional Geometry Distillation (Jul 2025) — arXiv:2507.10155
 
