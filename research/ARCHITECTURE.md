@@ -1,6 +1,50 @@
 # Sutra Architecture Reference
 
+---
+
+## CURRENT STATE (2026-04-17) — READ THIS FIRST
+
+**Active architecture: Sutra-Dyad Stage 1 (`SutraDyadS1` in `code/sutra_dyad.py`, class at line 412). ~188.2M params. Byte-level, NOT token-level.**
+
+**Everything below this banner is HISTORICAL decision-tree context from the March 2026 token-level campaign.** That campaign locked Sutra-24A-90M on 2026-03-26. On 2026-04-01 the project executed a **strategic reset to byte-level** (see RESEARCH.md §11 and Stage 0 section further down). The April byte-level architecture supersedes the March token-level architecture. Code is the source of truth.
+
+### Current dimensions (from `code/sutra_dyad.py` constants)
+
+| Component | Value | Line |
+|---|---|---|
+| Byte vocabulary | 256 | L46 |
+| Patch size | 6 bytes | L57 |
+| Sequence length | 1536 bytes (256 patches) | L58 |
+| Global transformer: depth | 12 layers | L54 |
+| Global transformer: d | 1024 | L52 |
+| Global transformer: heads | 16 (GQA) | L53 |
+| Global transformer: ff | 2730 (SwiGLU, ~2.67x d) | L55 |
+| Within-patch encoder | 2 bidirectional layers | L332 |
+| Local decoder: depth | 4 layers | L333 |
+| Local decoder: d | 640 | L329 |
+| Local decoder: heads | 10 | L330 |
+| Local decoder: ff | 1920 (SwiGLU, ~3x d) | L331 |
+| Byte-residual bypass dim | 160 | L334 |
+
+### Current training system
+
+**Ekalavya Protocol** — multi-teacher cross-tokenizer byte-level knowledge distillation. Teachers: SmolLM2-1.7B (anchor) + Pythia-1.4B (aux). Covering decomposition converts teacher token probs to byte conditionals. TAID, uncertainty gating, anchor-confidence routing are current mechanisms.
+
+**Status (2026-04-17):** iter5 closed at step 1430 (crashed). Step 500 eval BPB 1.398, step 1000 eval BPB 1.402 — flat plateau. design KM-R1 designed ZAR-gJSD replacement mechanism. Probes running (task #473). See RESEARCH.md §12 for full mechanism research and §12.8 for ALM deep-dive.
+
+### What this doc below contains (and doesn't)
+
+**DOES contain (still relevant):** Round 1-8 reasoning on token-level architecture search — useful history showing what was tried and why 24A-90M token-level was chosen. History is preserved because it informs the questioning principle — knowing what's been falsified prevents repeating it.
+
+**DOES NOT contain (needs future cleanup):** Sutra-Dyad design rationale, Stage 0 vs Stage 1 differences, byte-level pivot reasoning, current Ekalavya mechanism details. For the byte-level design rationale, read `research/RESEARCH.md §10` and the Stage 0 Results section appended later. The authoritative code is `code/sutra_dyad.py`.
+
+---
+
+# === HISTORICAL CONTENT BELOW (March 2026 token-level campaign, SUPERSEDED) ===
+
 **Status: ARCHITECTURE LOCKED (2026-03-26). Pure 24-layer Transformer (Sutra-24A-90M). Hybrid campaign complete — 7 rounds, all variants tested. Now pivoting to RMFD (Routed Multi-Family Distillation) as the main training system.**
+
+**This lock was superseded by the April 2026 byte-level pivot. See banner at top.**
 
 This file is the architecture source of truth for Sutra. It is written so a fresh session can read it without prior conversation context.
 
@@ -21,7 +65,7 @@ Kill rule applied to all hybrid variants:
 
 **Verdict:** All hybrid variants showed better stability but insufficient BPT advantage. P-GQA (V2) had the best stability profile (max_act 28.9 vs 41.7) but only +0.028 BPT. Per the pre-declared kill rule, we lock the simpler architecture.
 
-**Codex R8 reasoning:** "The architecture campaign has found a real hybrid signal, but the entire spread between recent architectural variants is on the order of 0.07-0.18 BPT. That is too small to justify spending Round 8 on more backbone churn when every competitive small model we care about is distilled."
+**Design Round 8 reasoning:** "The architecture campaign has found a real hybrid signal, but the entire spread between recent architectural variants is on the order of 0.07-0.18 BPT. That is too small to justify spending Round 8 on more backbone churn when every competitive small model we care about is distilled."
 
 **No further hybrid variants after this.** The main lever is now KD.
 
@@ -78,7 +122,7 @@ Both architectures produce identical near-random benchmarks at 5K steps, confirm
 
 ## RMFD: Routed Multi-Family Distillation System (Round 8 Design)
 
-Key elements (from Codex R8 design, ingested into RESEARCH.md §6.4.21):
+Key elements (from Design Round 8 design, ingested into RESEARCH.md §6.4.21):
 
 ### 4 Distillation Surfaces
 1. **Token surface:** final logits at depth 24 — for decoder-like teachers
@@ -124,7 +168,7 @@ PCGrad on three loss buckets: L_base, L_gen, L_aux. Auto-halve KD weights if gra
 | 3. Logit-only | Cross-tok ETA, T=2.0, α=1.0 | 4.783 | +0.285 | HARMFUL at flat α, 1:19 ratio |
 | 4. Rep+logit | Combined, total α=1.0 | 4.651 | +0.153 | INTERFERENCE — IF peaked 2.14 at plateau, kurtosis=12.4. Multi-surface toxic at extreme ratios. |
 
-**Conclusion:** Flat α=1.0 is the mechanism failure, not the surface choice. At 1:19 ratio (5.3% capacity), student cannot absorb teacher signal without α scheduling. Next: inverted-U α schedule at 15K, pending Codex approval.
+**Conclusion:** Flat α=1.0 is the mechanism failure, not the surface choice. At 1:19 ratio (5.3% capacity), student cannot absorb teacher signal without α scheduling. Next: inverted-U α schedule at 15K, pending review approval.
 
 ---
 
@@ -731,7 +775,7 @@ This is the cleanest way to make the "Intelligence = Geometry" thesis concrete w
 
 ## 5. Per-Outcome Confidence
 
-**Round 1 note:** There is no previous T+L round. These are initial scores grounded in repo evidence only. They are not victory claims.
+**Round 1 note:** There is no previous design round. These are initial scores grounded in repo evidence only. They are not victory claims.
 
 - **Outcome 1 (Intelligence): `3/10`** - There is no trained Round 1 model yet. Confidence is above zero only because the repo already established three relevant facts: the 16K tokenizer was a major win, warm-starting consistently helped, and elastic depth repeatedly preserved quality surprisingly well. That is enough to justify a concrete architecture, but not enough to trust it.
 - **Outcome 2 (Improvability): `6/10`** - The proposed design has explicit module boundaries: local mixer, global mixer, memory port, teacher ports, and exit heads. That is directly aligned with the repo's constitution and better than a monolithic transformer stack. Confidence is not higher because modular interfaces are still a design claim, not an empirical composition result.
@@ -1700,7 +1744,7 @@ The main Round 2 conclusion is therefore:
 
 ## 10. Round 3 Addendum (2026-03-26)
 
-**Codex T+L session:** `019d28df-dc73-7f61-ae2a-ecb91f2d3d97`
+**review design session:** `019d28df-dc73-7f61-ae2a-ecb91f2d3d97`
 **Full output:** `results/tl_round3_output.md`
 
 Round 3 incorporates new probe evidence (DyT, TOP, Muon optimizer, MTP, halting) and field research (Falcon-H1, Hymba, NorMuon, MiniPLM). Several Round 2 decisions are **superseded**.
@@ -1891,7 +1935,7 @@ Round 4 incorporates new evidence: trunk-choice probe V3 (hybrid wins by 0.19 BP
 | FFN dim 2048 | **FFN dim 1792** | Adjusted for dim=640 (~2.8x ratio, SwiGLU-appropriate). |
 | Exit layers 5/10/14 | **Exit layers 6/12/18** | Adjusted for 18 blocks (early/mid/final). |
 
-### 11.2 HEMD-R4-S Scout Specification (Codex R4 Output — Authoritative)
+### 11.2 HEMD-R4-S Scout Specification (Design Round 4 Output — Authoritative)
 
 **Name:** HEMD-R4-S (Hybrid Elastic Memory Decoder, Round 4 Scout)
 **Supersedes HEMD-R3-S. Source: `results/tl_round4_output.md`.**
@@ -1932,7 +1976,7 @@ Key design choices (R4):
 
 #### Parameter Estimate (~98.6M at 26×512)
 
-Codex R4 estimate: ~98.6M params before tiny scalar/bias terms.
+Design Round 4 estimate: ~98.6M params before tiny scalar/bias terms.
 - Embeddings: ~8.2M
 - Each hybrid block: ~3.48M
 - Total trunk: ~90.4M
@@ -1974,7 +2018,7 @@ L = CE_18 + 0.35 * CE_12 + 0.2 * CE_6
 - seq=512, microbatch=16, grad_accum=2: ~12-14GB
 - seq=1024: ~18-20GB (requires activation checkpointing)
 
-### 11.3 Updated Probe Queue (Round 4 — from Codex R4 output)
+### 11.3 Updated Probe Queue (Round 4 — from Design Round 4 output)
 
 1. **42M parallel hybrid probe** (DONE/RUNNING): k=64+mean (BPT=4.9536 ✓), k=4+mean (running).
 2. **42M R4 microprobe** (QUEUED): concat-project k=4/k=16/k=64 (1:1 ratio) + concat 2:3 at k=16. Resolves kernel + fusion + ratio.
@@ -1984,7 +2028,7 @@ L = CE_18 + 0.35 * CE_12 + 0.2 * CE_6
 6. **O4 multi-source pilot** (after plain scout positive): one decoder teacher + one embedding teacher, one family per batch, pooled-state alignment at 0.05 after step 1000.
 7. **Quantized exit fidelity probe** (after 100M scout): PTQ/NVFP4 full-depth quality, exit ordering after PTQ, real latency savings.
 
-### 11.4 Per-Outcome Confidence After Round 4 (from Codex R4)
+### 11.4 Per-Outcome Confidence After Round 4 (from Design Round 4)
 
 | Outcome | R3 | R4 | Δ | Key Evidence |
 |---|---|---|---|---|
@@ -1994,13 +2038,13 @@ L = CE_18 + 0.35 * CE_12 + 0.2 * CE_6
 | O4: Data Efficiency | 3 | 3 | = | MiniPLM/filtering concrete but unvalidated. Cross-tokenizer issue unresolved. |
 | O5: Inference Efficiency | 5 | 5 | = | Fixed exits only live path. Healthier activations are good news, but no new exit/PTQ/latency evidence. |
 
-### 11.5 What Would Raise/Lower Confidence (Codex R4)
+### 11.5 What Would Raise/Lower Confidence (Design Round 4)
 
 **Raise:** O1: 100M hybrid beats matched pure transformer + better generations. O2: frozen-trunk module swap improves behavior. O3: new branch/teacher added without full retrain, gain composes. O4: filtering + MiniPLM + multi-source beats raw at equal compute. O5: exits ordered after PTQ + real latency savings.
 
 **Lower:** O1: 100M hybrid loses to transformer. O2: every improvement still requires full model touch. O3: branch/teacher swap breaks model. O4: all O4 pilots neutral/negative. O5: exit collapse, PTQ breaks ordering, poor speculation acceptance.
 
-### 11.5 Round 4 Design Intuitions (Codex R4)
+### 11.5 Round 4 Design Intuitions (Design Round 4)
 
 1. **Hybrid win is conservative.** Achieved with plain RMSNorm; SS-RMSNorm (validated separately) should add more. Conviction: medium-high.
 2. **Small-k conv will beat k=64 in intra-layer blocks** because inter-layer used k=64 to compensate for infrequent mixing. Conviction: medium.
@@ -2028,7 +2072,7 @@ Round 5 incorporates: complete R4 microprobe results (4 concat variants), parall
 | 2:3 branch ratio option | **1:1 only for now** | 2:3 win was capacity-confounded (+7% params), not ratio-driven. Revisit only after stronger local branch. |
 | Gate: 100M, plain concat | **Gate: 100M, normalized additive** | Concat not ready to promote. New block synthesizes mean stability + GQA efficiency. |
 
-### 12.2 HEMD-R5-G Gate Specification (Codex R5 Output — Authoritative)
+### 12.2 HEMD-R5-G Gate Specification (Design Round 5 Output — Authoritative)
 
 **Name:** HEMD-R5-G (Hybrid Elastic Memory Decoder, Round 5 Gate)
 **Supersedes HEMD-R4-S for the 100M gate. R4-S remains the theoretical target spec pending gate results.**
@@ -2117,7 +2161,7 @@ Key findings:
 3. **O4 parallel pilot**: MiniPLM 10% corpus scoring with Qwen3-1.7B teacher, Qwen3-0.6B reference. Infrastructure validation.
 4. **100M optimizer probe** (after gate): AdamW vs NorMuon on winning architecture.
 
-### 12.6 Per-Outcome Confidence After Round 5 (from Codex R5)
+### 12.6 Per-Outcome Confidence After Round 5 (from Design Round 5)
 
 | Outcome | R4 | R5 | Δ | Key Evidence |
 |---|---|---|---|---|
@@ -2127,7 +2171,7 @@ Key findings:
 | O4: Data Efficiency | 3 | 3 | = | MiniPLM concrete but unvalidated locally. |
 | O5: Inference Efficiency | 5 | 5 | = | Fixed exits remain only live path. Better trunk stability, not exit evidence. |
 
-### 12.7 R5 Design Intuitions (Codex R5)
+### 12.7 R5 Design Intuitions (Design Round 5)
 
 1. **Best gate block is normalized additive with projected branches.** Mean gave stability signal, concat exposed balancing failure. Conviction: high.
 2. **2:3 only becomes clearly right after stronger local branch or fixed fusion.** Current 2:3 win is capacity-confounded. Conviction: medium.
@@ -2164,7 +2208,7 @@ Per-channel β vectors amplify branch magnitude differences over training. Even 
 - Source ranking: gutenberg (0.37) > wikipedia (0.29) > fineweb (0.28) > math (0.23) > wildchat (0.21)
 - Infrastructure validated end-to-end.
 
-### 13.5 R6 Codex Output (2026-03-26) — Stabilization Design
+### 13.5 R6 review Output (2026-03-26) — Stabilization Design
 
 **Full output:** `results/tl_round6_output.md`
 
@@ -2244,9 +2288,9 @@ Three-way comparison at 100M scale, 5K steps:
 2. ~~BPT gain comes from complementarity, not β.~~ **CONFIRMED but irrelevant.** Removing β didn't help — confirming complementarity is real, but projection amplification destroys it.
 3. **Gutenberg/Wikipedia-heavy filtering validated** by 500-window MiniPLM (0.268 diff score, consistent ranking).
 
-### 13.9 T+L Round 7 Decisions (2026-03-26)
+### 13.9 design Round 7 Decisions (2026-03-26)
 
-**Codex verdict: Projected branches are empirically dead at 100M.**
+**review verdict: Projected branches are empirically dead at 100M.**
 
 Key decisions:
 1. **Abandon projected branches as the 100M mainline.** Three consecutive variants (N, F, S) failed. The instability is structural — branch projections (256→512) amplify magnitude while branches diverge in direction.

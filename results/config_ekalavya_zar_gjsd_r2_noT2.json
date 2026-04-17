@@ -1,0 +1,90 @@
+{
+  "_doc": "Ekalavya ZAR-gJSD Round 1 — Codex T+L KM-R1 design. Warm-start from iter5 best.pt (step 500, eval BPB 1.398). Tests whether ZPD-masked gJSD replaces classical KL-KD's plateau.",
+  "_seed_checkpoint": "results/checkpoints_ekalavya_iter5_full_6k/best.pt",
+  "_expected_total_steps_in_checkpoint": 500,
+
+  "max_steps": 2500,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 50,
+
+  "run_name": "ekalavya_zar_gjsd_r2_noT2",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.05,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 100,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 100,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 0.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+  "kd_alpha_decay_points": [[100, 1.0], [1200, 1.0], [1600, 0.0], [2500, 0.0]],
+  "kd_beta_decay_points": [[0, 0.0]],
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "repr_anchor_only": true,
+
+  "use_zar_gjsd": true,
+  "zar_zpd_q_lo": 0.60,
+  "zar_zpd_q_hi": 0.95,
+  "zar_utility_topk_pct": 0.15,
+  "zar_utility_min": 0.02,
+  "zar_gjsd_pi": 0.7,
+  "zar_t2_scale": false,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 200,
+  "unfreeze_phase2_step": 1300,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "300": 1.405,
+    "800": 1.3976,
+    "1500": 1.390
+  },
+
+  "rolling_save_every": 50,
+  "rolling_save_keep": 5,
+
+  "_notes": {
+    "mechanism": "ZAR-gJSD = Zone-of-Proximal-Advantage Routed generalized JSD. Per-token mask: (1) ZPD band q60-q95 of student entropy, (2) top-15% by utility=Advantage*JSD within ZPD, (3) U>0.02. Loss: 0.7*KL(p_t || m) + 0.3*KL(p_s || m) where m=0.7 p_t + 0.3 p_s.",
+    "scope": "Single-anchor (SmolLM2 only) for first validation. If decisive, add Pythia with competitive routing in R2.",
+    "kill_rules": "Codex R1 design: step 300 > 1.405 kill; step 800 not beating best (1.3976) kill; step 1500 not <=1.390 do not extend.",
+    "promotion_threshold": "Replicated eval <= 1.385 + clearly better fixed generations",
+    "changes_from_iter5": [
+      "Removed TAID (use_taid=false)",
+      "Removed uncertainty gating (use_uncertainty_gating=false)",
+      "Removed confidence-based routing (single teacher)",
+      "Removed repr KD (kd_beta=0, beta decay to 0 immediately)",
+      "Added ZAR-gJSD loss (use_zar_gjsd=true)",
+      "Shortened schedule: 3000 steps not 6000",
+      "Tighter kill rules at each milestone",
+      "Warmup 50 steps (was 150 — faster ramp since warm-start)",
+      "Unfreeze absolute-step-equivalent: layers 4-7 at +200, layers 0-3 at +1300 (best.pt is at step 500, so equivalent to iter5's 700/1800 absolute)"
+    ]
+  }
+}

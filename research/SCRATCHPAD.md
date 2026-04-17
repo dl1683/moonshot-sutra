@@ -8,7 +8,7 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 ## EKALAVYA ITER5 — ACTIVE RUN (2026-04-15)
 
-**Design:** Codex T+L prescribed routing + covering + TAID + uncertainty gating + piecewise decay.
+**Design:** review design prescribed routing + covering + TAID + uncertainty gating + piecewise decay.
 **Config:** results/config_ekalavya_iter5_full_6k.json
 **Seed:** best.pt from routing run step 250 (eval BPB=1.418)
 
@@ -34,9 +34,9 @@ Working space for half-finished thoughts, emerging ideas, and in-progress reason
 
 **Probe verdict:** MARGINAL but stable. 6K launched based on: final eval below baseline, mechanism stability, KD budget only 13% of routing (real test needs 6K).
 
-### Full 6K Run #5 (CURRENTLY ACTIVE — PID 59068)
+### Full 6K Run #5 (RESTARTED — PID 16240, 46s/step with aux_frequency=4)
 
-Run started from step 250, using step_250.pt checkpoint.
+Run originally started from step 250. Crashed silently at step 690. Restarted from step_600.pt at 05:45 EDT 2026-04-16 with aux_frequency=4 active (1.9x speedup: 88→46s/step).
 
 | Step | CE | KD | Repr | BPB | TAID_b | UG | Notes |
 |------|-----|-----|------|-----|--------|-----|-------|
@@ -76,6 +76,89 @@ Run started from step 250, using step_250.pt checkpoint.
 | 590 | 1.033 | 1.427 | 0.094 | 1.491 | 0.79 | 0.64/49% | |
 | 600 | 0.988 | 1.328 | 0.093 | 1.425 | **0.80** | 0.65/49% | **β MAX reached** |
 | 610 | 0.957 | 1.052 | **0.000** | 1.380 | 0.80 | 0.66/50% | Repr beta=0, clean transition |
+| — | — | — | — | — | — | — | **(RESTART from step_600.pt at 05:45, aux_freq=4, ~40s/step)** |
+| 610r | 1.058 | 2.342 | 0.000 | 1.526 | 0.80 | 0.74/54% | Hard batch (different data post-restart) |
+| 620r | 0.975 | 1.001 | 0.000 | 1.407 | 0.80 | 0.68/53% | Normal range, confirms no regression |
+| 630r | 0.971 | 0.885 | 0.000 | **1.401** | 0.80 | 0.69/53% | Trending down |
+| 640r | 0.976 | 1.043 | 0.000 | 1.408 | 0.80 | 0.68/53% | |
+| 650r | 0.962 | 1.015 | 0.000 | **1.388** | 0.80 | 0.67/51% | Best since restart |
+| 660r | 1.031 | 0.818 | 0.000 | 1.487 | 0.80 | 0.73/57% | Hard batch |
+| 670r | 0.982 | 1.070 | 0.000 | 1.417 | 0.80 | 0.66/51% | Recovery, normal |
+| 680r | 0.965 | 0.973 | 0.000 | 1.393 | 0.80 | 0.66/51% | Near-best |
+| 690r | 1.013 | 1.631 | 0.000 | 1.461 | 0.80 | 0.67/51% | Last before unfreeze |
+| **700r** | **0.937** | **0.841** | 0.000 | **1.351** | 0.80 | 0.65/48% | **UNFREEZE phase 1. grad=1.90 (clipped).** |
+| 710r | **0.868** | 0.848 | 0.000 | **1.253** | 0.80 | 0.64/49% | grad→0.80 (recovered). VRAM 11.8G (+0.7GB). CE lowest ever. |
+| 720r | 0.968 | 1.268 | 0.000 | 1.396 | 0.80 | 0.65/50% | grad→0.74. Back to ~1.40 band. |
+| 730r | 0.975 | 1.102 | 0.000 | 1.407 | 0.80 | 0.67/52% | grad→0.59. Fully settled. |
+| 740r | 0.965 | 0.958 | 0.000 | 1.391 | 0.80 | 0.65/50% | grad→0.50. Normal. |
+| 750r | 0.973 | 1.308 | 0.000 | 1.404 | 0.80 | 0.68/52% | |
+| 760r | 1.052 | 2.079 | 0.000 | 1.517 | 0.80 | 0.68/52% | Hard batch |
+| 770r | 0.952 | 0.965 | 0.000 | **1.374** | 0.80 | 0.63/48% | Strong recovery |
+| 780r | 1.027 | 0.973 | 0.000 | 1.481 | 0.80 | 0.65/50% | |
+| 790r | 1.016 | 1.698 | 0.000 | 1.466 | 0.80 | 0.66/50% | |
+| 800r | 0.969 | 1.234 | 0.000 | 1.399 | 0.80 | 0.66/51% | 1/3 done. VRAM 11.8G stable. |
+| 810r | 1.022 | 0.980 | 0.000 | 1.474 | 0.80 | 0.68/53% | grad=1.24 (hard batch) |
+| 820r | 1.043 | 1.061 | 0.000 | 1.505 | 0.80 | 0.70/54% | grad=1.18 (hard batch) |
+| 830r | 0.964 | 0.965 | 0.000 | 1.390 | 0.80 | 0.66/51% | grad=0.60 (recovered) |
+| 840r | 1.049 | 2.068 | 0.000 | 1.514 | 0.80 | 0.68/53% | Hard batch. Last before 2nd crash. |
+| — | — | — | — | — | — | — | **SYSTEM SHUTDOWN — 12h downtime. Restart from step_840.pt at 20:32 EDT** |
+| 850r | 0.999 | 1.719 | 0.000 | 1.441 | 0.80 | 0.64/49% | VRAM 11.8G ✓ unfreeze re-applied |
+| 860r | 1.013 | 1.008 | 0.000 | 1.462 | 0.80 | 0.68/53% | |
+| 870r | 0.992 | 0.918 | 0.000 | 1.431 | 0.80 | 0.68/53% | |
+| 880r | 1.033 | 1.618 | 0.000 | 1.490 | 0.80 | 0.75/56% | grad=1.44, hard batch |
+| 890r | 1.056 | 2.971 | 0.000 | 1.523 | 0.80 | 0.67/51% | KD spike (3x), noisy batch |
+| 900r | 0.979 | 1.189 | 0.000 | 1.413 | 0.80 | 0.66/50% | Recovered |
+| 910r | 0.963 | 1.245 | 0.000 | **1.390** | 0.80 | 0.67/52% | grad=0.39, best post-unfreeze |
+| 920r | 0.993 | 1.639 | 0.000 | 1.433 | 0.80 | 0.68/50% | |
+| 930r | 1.021 | 1.800 | 0.000 | 1.473 | 0.80 | 0.68/53% | |
+| 940r | 0.947 | 0.966 | 0.000 | **1.366** | 0.80 | 0.66/50% | New best training BPB |
+| 950r | 0.831 | 0.814 | 0.000 | 1.199 | 0.80 | 0.60/44% | Easy batch outlier |
+| 960r | 0.864 | 0.819 | 0.000 | 1.247 | 0.80 | 0.60/44% | 2nd easy batch |
+| 970r | 0.962 | 1.068 | 0.000 | 1.388 | 0.80 | 0.66/50% | Back to normal |
+| 980r | 1.013 | 1.703 | 0.000 | 1.461 | 0.80 | 0.66/51% | |
+| 990r | 1.001 | 1.010 | 0.000 | 1.443 | 0.80 | 0.71/57% | |
+| 1000r | 1.022 | 0.848 | 0.000 | 1.475 | 0.80 | 0.65/51% | |
+| **EVAL** | **0.972** | — | — | **1.402** | — | — | **POSITIVE — kill 1.430 PASSED by 0.028** |
+| 1010r | 0.948 | 0.910 | 0.000 | 1.368 | 0.80 | 0.68/52% | |
+| 1020r | 0.969 | 1.050 | 0.000 | 1.398 | 0.80 | 0.69/54% | |
+| 1030r | 0.964 | 1.146 | 0.000 | 1.391 | 0.80 | 0.63/48% | |
+| 1040r | 0.981 | 1.118 | 0.000 | 1.415 | 0.80 | 0.67/51% | |
+| 1050r | 1.032 | 1.981 | 0.000 | 1.488 | 0.80 | 0.68/52% | Hard batch |
+| 1060r | 0.968 | 1.177 | 0.000 | 1.396 | 0.80 | 0.65/51% | |
+| 1070r | 0.853 | 0.754 | 0.000 | 1.230 | 0.80 | 0.59/43% | Easy data outlier |
+| 1080r | 0.782 | 0.688 | 0.000 | 1.129 | 0.80 | 0.66/51% | All-time low CE, data variance |
+| 1090r | 0.977 | 1.186 | 0.000 | 1.410 | 0.80 | 0.66/51% | Reverted to normal |
+| 1100r | 0.986 | 1.378 | 0.000 | 1.423 | 0.80 | 0.68/52% | |
+| 1110r | 0.994 | 1.494 | 0.000 | 1.435 | 0.80 | 0.71/55% | |
+| 1120r | 0.996 | 1.215 | 0.000 | 1.438 | 0.80 | 0.61/46% | |
+| 1130r | 1.008 | 1.092 | 0.000 | 1.454 | 0.80 | 0.65/49% | grad=0.94 |
+| 1140r | 0.973 | 1.357 | 0.000 | 1.404 | 0.80 | 0.64/50% | |
+| 1150r | 1.013 | 1.120 | 0.000 | 1.462 | 0.80 | 0.63/48% | grad=0.97 |
+| 1160r | 0.961 | 1.183 | 0.000 | 1.387 | 0.80 | 0.65/50% | |
+| 1170r | 0.954 | 1.001 | 0.000 | 1.376 | 0.80 | 0.66/51% | Strong reading |
+| 1180r | 1.016 | 1.396 | 0.000 | 1.466 | 0.80 | 0.65/49% | |
+| 1190r | 0.968 | 1.362 | 0.000 | 1.396 | 0.80 | 0.65/50% | |
+| 1200r | 1.027 | 1.008 | 0.000 | 1.481 | 0.80 | 0.67/51% | |
+| 1210r | 0.981 | 0.963 | 0.000 | 1.415 | 0.80 | 0.69/53% | |
+| 1220r | 1.048 | 1.441 | 0.000 | 1.512 | 0.80 | 0.67/51% | Hard batch |
+| 1230r | 0.963 | 0.969 | 0.000 | 1.389 | 0.80 | 0.67/52% | |
+| 1240r | 1.012 | 1.153 | 0.000 | 1.460 | 0.80 | 0.67/51% | |
+| 1250r | 0.948 | 0.945 | 0.000 | 1.368 | 0.80 | 0.67/52% | Strong |
+| 1260r | 0.958 | 0.950 | 0.000 | 1.382 | 0.80 | 0.67/51% | |
+| 1270r | 0.952 | 1.033 | 0.000 | 1.374 | 0.80 | 0.63/48% | |
+| 1280r | 0.953 | 1.235 | 0.000 | 1.374 | 0.80 | 0.65/50% | |
+| 1290r | 1.035 | 1.156 | 0.000 | 1.493 | 0.80 | 0.70/55% | Hard batch |
+| 1300r | 1.004 | 0.965 | 0.000 | 1.449 | 0.80 | 0.72/57% | |
+| 1310r | 1.014 | 0.888 | 0.000 | 1.463 | 0.80 | 0.66/51% | |
+| 1320r | 0.993 | 1.284 | 0.000 | 1.432 | 0.80 | 0.66/51% | |
+| 1330r | 0.949 | 0.915 | 0.000 | 1.369 | 0.80 | 0.65/50% | Strong, grad=0.40 |
+| 1340r | 0.955 | 1.269 | 0.000 | 1.378 | 0.80 | 0.65/51% | |
+| 1350r | 1.015 | 0.868 | 0.000 | 1.465 | 0.80 | 0.65/50% | |
+| 1360r | 0.976 | 1.003 | 0.000 | 1.408 | 0.80 | 0.66/51% | |
+| 1370r | 0.984 | 1.101 | 0.000 | 1.420 | 0.80 | 0.66/51% | |
+| 1380r | 1.019 | 1.750 | 0.000 | 1.469 | 0.80 | 0.66/51% | Hard batch |
+| 1390r | 0.950 | 1.038 | 0.000 | 1.370 | 0.80 | 0.65/51% | |
+| 1400r | 0.962 | 1.283 | 0.000 | 1.387 | 0.80 | 0.60/46% | |
 
 **Running average BPB (260-440): 1.411.** TAID β crossed 0.50 at step 380 — target now majority-teacher. NO degradation (AM collapsed here). Repr monotonically dropping (0.197→0.086).
 
@@ -89,6 +172,35 @@ Run started from step 250, using step_250.pt checkpoint.
 **Step 600: β MAX (0.80) reached. Repr beta decayed to 0 at step 610.**
 Main absorption window active: CE + logit KD at max teacher influence, alpha decaying.
 Post-β-max steps 600-610: BPB 1.425→1.380, clean transition, no instability.
+
+**Post-restart recovery (620r-650r):** Running avg BPB 1.401. Step 610r spike (1.526) was different random data after restart (random state not saved in checkpoints — seeds are fixed but data order shuffled). Recovery to 1.388 by step 650r confirms: (a) model state is healthy, (b) no regression from restart, (c) aux_frequency=4 has no negative impact on BPB (running avg 1.401 vs pre-restart 1.411 — same or better).
+
+**BPB trend analysis (steps 260-660r):** Training BPB is FLAT (slope +0.004/100 steps). Expected in β=0.80 absorption phase — teacher signal drives KD loss down but CE improvement is gradual. Step 500 eval (1.398) was 0.086 below training mean (1.484), so train BPB overestimates eval. **Step 1000 eval prediction: ~1.36-1.41 (likely POSITIVE/DECISIVE).** Kill criterion 1.430: very likely to pass.
+
+**2nd restart recovery (850r-920r):** System shutdown killed training at step 840. Restarted from step_840.pt at 20:32 EDT. Recovery clean: BPB 1.441→1.431→1.490→1.523→1.413→1.390→1.433. Steps 880-890 had a noisy batch spike (KD=2.97, BPB=1.523) that recovered in one step. Post-restart mean BPB (850-920): 1.438. Slightly above pre-shutdown mean (1.411) — batch variance, not regression. Step 910 best post-unfreeze at 1.390. Step 1000 eval on track.
+
+**STEP 1000 EVAL: BPB 1.402 — POSITIVE (22:20 EDT 2026-04-16).**
+- Kill criterion 1.430: **PASSED** by 0.028
+- vs step 500 eval (1.398): +0.004 — essentially FLAT
+- vs routing seed (1.418): **-0.016 improvement** still holds
+- vs baseline (1.430): **-0.028 improvement**
+- Classification: POSITIVE (1.39-1.410 range)
+- Concern: no improvement over steps 500-1000 despite unfreeze phase 1. Alpha decaying (now ~0.73). Teacher signal reducing. Need to see improvement by step 1500.
+- Decision: **CONTINUE.** Next eval at step 1500 (kill if >1.420). Unfreeze phase 2 at step 1800.
+- New best.pt NOT saved (1.402 > best 0.9688 CE from step 500).
+
+**Step 700 UNFREEZE PHASE 1 — COMPLETE AND CLEAN (07:01 EDT):**
+- Gradient spike: 1.90 → 0.80 → 0.74 → 0.59 → 0.50. Recovered in 1 step, fully settled by step 730. ✅
+- VRAM: 11.1G → 11.8G (+0.7GB). Optimizer states for layers 4-7 now active. ✅
+- BPB: 700/710 dip (1.351/1.253) was partly easy batches. 720-740 stabilized at ~1.40. No degradation. ✅
+- Post-unfreeze mean BPB (720-740): 1.398 — identical to step 500 eval. Model is absorbing, not degrading.
+
+**Original unfreeze expectations (for reference):** Global layers 4-7 unfrozen. Watch for:
+- VRAM increase: ~+0.6GB (optimizer states for 4 more layers)
+- Potential gradient spike: grad_clip=0.8 should contain it
+- BPB transient: expect 1-2 step volatility, not sustained degradation
+- Alpha at step 700: piecewise decay ≈ 0.93 (between [150,1.0] and [1500,0.5])
+- If BPB jumps >1.50 and doesn't recover within 30 steps: flag concern
 
 ### Kill Criteria
 | Step | Kill if eval > | Budget relative to routing |
@@ -163,12 +275,20 @@ Compare to AM (killed at step 380): BPB slope +0.000214/step, CE avg 1.002 (abov
 | < 1.410 | EXCELLENT: Continue to 6K, plan 3-teacher iter6 | KD accumulating beyond probe |
 | 1.410 - 1.420 | GOOD: Continue, step 1000 is real test | Matching probe, need more budget |
 | 1.420 - 1.430 | NEUTRAL: Continue cautiously | At routing baseline, watch for degradation |
-| > 1.430 | KILL: T+L redesign session | KD mechanism failing |
+| > 1.430 | KILL: design redesign session | KD mechanism failing |
 
 ### Improvements for Iter6
-1. **Teacher caching** — Pre-compute covering byte probs. Eliminates 77% wall-time bottleneck. Config: results/config_cache_3teacher_12k.json. ~15-20h with GPU covering.
+1. **Teacher caching** — Pre-compute covering byte probs. Eliminates 77% wall-time bottleneck. Chunked cache (v2) implemented: directory-based with manifest.json, lazy-loads one chunk at a time (~1.7GB RAM). Config: results/config_ekalavya_iter5_cache.json. End-to-end neutral for single run (covering dominates both paths), but 5-7x faster per-step during training and resumable.
 2. **GPU scatter_add covering** — FAILED. Per-item GPU kernel launch overhead (`.item()`, scatter, gather) makes it SLOWER than CPU numpy. With Pythia's 512-depth covering: ~10+ min/step (GPU) vs ~100s/step (CPU). **Fix applied:** CPU numpy covering (threaded ThreadPoolExecutor) with max_depth=8. The covering math doesn't parallelize well on GPU because each work item has variable-size gather/scatter — classic "embarrassingly serial on GPU, fast on CPU" pattern.
-3. **Qwen3-1.7B as 3rd teacher** — Byte BPB 1.055, near-zero correlation with anchor (0.008). Same hidden dim (2048). 151K vocab.
+3. **review speedup analysis (2026-04-16):** Key finding — "the problem is not a 512-depth trie, it is a shallow hot path with a few long-token outliers" (p99=14 bytes for both teachers). Current GPU CSR code is dead ("replace, don't tune"). Recommendations ranked:
+   - **Chunked teacher cache**: 88→13-18s/step (5-7x). IMPLEMENTED. Best for current run.
+   - **Padded GPU hot-depth trie**: 88→28-40s/step (2.2-3.1x). Dense per-depth tensors for depths 1-14, pad widths ~32/8/4 at depths 1/2/3+. Best NEXT-RUN investment for online covering.
+   - **Cython nogil/C++**: 88→35-50s/step (1.8-2.5x). Flatten trie to integer arrays, prange over positions.
+   - **Numba flattened CPU**: 88→46-63s/step (1.4-1.9x). Quick prototype.
+   - **Combined (cache + compiled covering)**: Cache build with Cython covering → ~4x end-to-end speedup.
+   - **aux_frequency=4** (QUICK WIN): Pythia runs 1/4 of steps. IMPLEMENTED + WIRED IN. **MEASURED: 88→46.4s/step (1.9x). Better than projected.** Active since restart at step 600 (2026-04-16 05:45).
+4. **Covering kernel optimization — DEAD END (2026-04-16):** Benchmarked three approaches: (a) Flat CSR array indexing replacing dict lookups: 1.1x, negligible. (b) Vectorized sparse matrix covering across positions: 0.62x, SLOWER. (c) Cython/Numba: not available on this system. **Root cause of non-improvement:** Covering is only ~7% of step time (~570ms/seq, ~3.4s/step). Teacher forward pass (GPU inference + data transfer) is the true bottleneck at ~40s/step for anchor-only. Covering optimization has diminishing returns. **Correct next-run optimization: teacher cache (5-7x by eliminating teacher forward pass entirely).**
+5. **Qwen3-1.7B as 3rd teacher** — Byte BPB 1.055, near-zero correlation with anchor (0.008). Same hidden dim (2048). 151K vocab.
 4. **12K steps** — Proportionally stretched schedules from 6K config.
 5. **Config ready:** results/config_ekalavya_iter6_3teacher_12k.json
 
@@ -178,7 +298,7 @@ Compare to AM (killed at step 380): BPB slope +0.000214/step, CE avg 1.002 (abov
   "teachers": [
     {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"},
     {"id": "EleutherAI/pythia-1.4b", "weight": 1.0, "role": "aux"},
-    {"id": "Qwen/Qwen3-1.7B", "weight": 1.0, "role": "aux"}
+    {"id": "Qwen/Qwen3-1.7B-Base", "weight": 1.0, "role": "aux"}
   ],
   "teacher_aggregation": "anchor_confidence_routing",
   "teacher_aux_weight_cap": 0.35,
@@ -197,6 +317,50 @@ Compare to AM (killed at step 380): BPB slope +0.000214/step, CE avg 1.002 (abov
 | Qwen3-1.7B (aux) | 1.055 | 0.008 | 151K | 2048 |
 
 Near-zero correlation = maximally complementary. Different tokenizer captures different byte patterns.
+
+### Iter5 Lessons Learned (for iter6 design session, UPDATED 2026-04-16 step 800)
+
+**What worked:**
+1. **TAID geometric interpolation** — Stable through full beta ramp (0→0.80). No degradation at any point. AM collapsed at beta=0.50; TAID sailed through.
+2. **Anchor-confidence routing** — Per-position teacher selection. ~50% of positions use aux signal. JSD threshold (0.02) and confidence margin (0.02) are well-calibrated.
+3. **Uncertainty gating** — 50-53% positions gated in. Steady across all phases. Prevents harmful signal.
+4. **Progressive unfreeze** — Gradient spike (1.90) resolved in 1 step. No instability. VRAM increase exactly as predicted (+0.7GB).
+5. **aux_frequency=4** — Aux teacher 1/4 of steps with ZERO BPB impact. Post-restart mean identical to pre-restart. Saves 1.9x wall time.
+6. **Piecewise alpha decay** — Smooth, no sharp transitions.
+
+**What we learned:**
+1. **Training BPB is flat but eval improves** — Mean training BPB ~1.41 throughout, but eval at step 500 was 1.398 (vs baseline 1.430). KD signal is internalized gradually; eval metrics are the truth.
+2. **Batch variance is enormous** — BPB ranges 1.25-1.63 on single batches. Train BPB is a safety check, not a progress metric. Only eval (50-batch average) matters.
+3. **Covering is NOT the bottleneck** — Only 7% of step time. Teacher forward pass is 93%. Caching eliminates the real bottleneck.
+4. **Step time is ~42s with aux_frequency=4** — Faster than projected 46s. Use 42s for iter6 ETA calculations.
+5. **Random state not saved in checkpoints** — Restart shuffles data order. Causes a transient BPB spike (1 step) then recovers.
+6. **VRAM overhead is minimal** — Student + 2 teachers + optimizer = 11.8G post-unfreeze. Leaves 12.6GB free for a 3rd teacher (~2GB 4-bit).
+
+**Questions for iter6 design:**
+1. Should TAID beta go higher (0.85, 0.90)? We never tested past 0.80.
+2. Should alpha decay be slower? (Current: 0→0 by step 4500 in 6K run. Proportional 12K: 0→0 by step 9000.)
+3. Will Qwen3-1.7B's 151K vocab covering be significantly slower than Pythia (50K) or SmolLM2 (49K)?
+4. Should we try AMiD's learnable alpha-divergence instead of fixed geometric? (RESEARCH.md §6.4, arXiv 2510.15982)
+5. Should interleaved aux be per-step or per-block? (SCRATCHPAD design below)
+
+### Interleaved Aux Frequency (iter6 design idea, 2026-04-16)
+Current: `run_aux = (step % 4 == 0)` runs ALL aux teachers on same steps.
+Problem for 3 teachers: 2 aux on same step = 2× covering + 2× forward → slow steps.
+
+**Proposal: interleave aux across steps.**
+```python
+# Each aux teacher gets its own phase offset
+for i, t_idx in enumerate(aux_indices):
+    run_this_aux = (step % (aux_frequency * len(aux_indices)) == i * aux_frequency)
+```
+With aux_frequency=4, 2 aux teachers:
+- Step 0: both (phase 0 and 4→0 mod 8 = 0, so both run? No...)
+- Better: `run_aux_i = (step % n_aux == i) and (step % aux_frequency == 0)`
+- Or simpler: `run_aux_i = ((step // aux_frequency) % n_aux == i)` → each aux runs 1/8 of steps
+
+Result: same total compute, but no step ever runs 2 aux. Smoother step times.
+Average step time: (3×40s anchor-only + 1×84s with 1 aux) / 4 = 51s/step.
+vs current bunched: (3×40s + 1×128s with 2 aux) / 4 = 62s/step.
 
 ---
 

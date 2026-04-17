@@ -1,0 +1,58 @@
+{
+  "_doc": "DIAGNOSTIC: classical KL-KD (no ZAR, no RRDSD). If this runs fine, the problem is in my RRDSD code. If this ALSO stalls, it's system-level (OneDrive sync, disk I/O, etc). Same warm-start + kill rules + schedule as r1b for comparability.",
+
+  "max_steps": 300,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 50,
+
+  "run_name": "diagnostic_classical_kd",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.05,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 100,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 100,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 0.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+  "kd_alpha_decay_points": [[100, 1.0], [300, 1.0]],
+  "kd_beta_decay_points": [[0, 0.0]],
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "use_rrdsd": false,
+  "repr_anchor_only": true,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 2000,
+  "unfreeze_phase2_step": 3000,
+
+  "grad_clip": 0.8,
+
+  "rolling_save": 50,
+  "rolling_keep": 3
+}

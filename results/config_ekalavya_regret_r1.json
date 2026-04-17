@@ -1,0 +1,77 @@
+{
+  "_doc": "Committee-regret sampler training run per §12.15 diagnostic. Tests whether window-level dilution is the rate ceiling bottleneck. 50% uniform + 50% regret-weighted windows from pre-scored pool. Keeps KD mechanism minimal (low alpha, no RRDSD) to ISOLATE the data-side effect.",
+  "_seed_checkpoint": "/c/sutra_fast/checkpoints_ekalavya_iter5_full_6k/best.pt",
+  "_expected_behavior_if_hypothesis_correct": "eval slope jumps from -0.007/100 to <=-0.015/100 OR train-eval gap shrinks >=0.01 BPB by step 400",
+
+  "max_steps": 600,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 50,
+
+  "run_name": "ekalavya_regret_r1",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.03,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 50,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 50,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 0.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+  "kd_alpha_decay_points": [[50, 1.0], [400, 1.0], [600, 0.0]],
+  "kd_beta_decay_points": [[0, 0.0]],
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "use_rrdsd": false,
+  "repr_anchor_only": true,
+
+  "regret_scores_path": "results/committee_regret_scores.npz",
+  "regret_weighted_fraction": 0.5,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 200,
+  "unfreeze_phase2_step": 500,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "100": 1.430,
+    "300": 1.405,
+    "500": 1.385
+  },
+
+  "rolling_save": 50,
+  "rolling_keep": 3,
+
+  "_notes": {
+    "mechanism": "Plain classical KL-KD at alpha=0.03 (matches iter5 baseline). NO RRDSD, NO multi-teacher, NO CKA, NO TAID, NO UG. The ONE variable under test is: does 50/50 regret-weighted window sampling break the -0.007/100 eval slope ceiling?",
+    "prerequisite": "Run code/probe_committee_regret.py FIRST to produce results/committee_regret_scores.npz (needs GPU, ~5-10 min).",
+    "success_test": "If step 400 eval BPB <= 1.385 (delta vs iter5 seed: -0.013, over 400 steps = -0.033/100 effective rate), window-selection thesis is CONFIRMED and becomes new mainline.",
+    "failure_test": "If step 400 eval >= 1.400 (no faster than r1b), window-selection is disproven — pivot to long-horizon/structural objectives per §12.15 Phase C table.",
+    "kill_rules_rationale": "Standard iter5-era kill thresholds (not tighter than RRDSD) — this is a DATA test not a mechanism test, so give it room."
+  }
+}

@@ -132,12 +132,12 @@ Everything in Sutra serves exactly 5 non-negotiable outcomes:
 
 ## The Process: How We Build
 
-Sutra uses a **Tesla+Leibniz design workflow** — a rigorous iterative loop that combines deep theoretical reasoning with empirical probes:
+Sutra uses a rigorous iterative design workflow combining deep theoretical reasoning with empirical probes:
 
 1. **Research**: Survey the field. Understand fundamentals. Find the mathematical structure.
-2. **Design**: Codex (GPT-5.4) acts as senior architect. Every mechanism is derived from first principles.
+2. **Design**: Every mechanism is derived from first principles — no inherited assumptions.
 3. **Implement**: Small incremental steps. Warm-start everything. Test every assumption.
-4. **Review**: 8 specialized reviewer personas audit every change — correctness, performance, scaling, integrity, novelty, architecture, deployment, competitive positioning.
+4. **Review**: Systematic audits for correctness, performance, scaling, integrity, novelty, architecture, deployment, and competitive positioning.
 5. **Iterate**: Theory proposes, experiment disposes, theory refines.
 
 No design choice survives without both mathematical justification and empirical validation.

@@ -700,7 +700,7 @@ class SutraDyadS1(nn.Module):
 
 
 # ---- MVG Scout: BPE-aligned variable patching ----
-# Designed by Tesla R1-R3 Codex review (§16 of tesla_session_design.md).
+# Designed by design review (§16 of RESEARCH.md).
 # Tests the core hypothesis: semantic (BPE-aligned) patch boundaries give the
 # global transformer better context than fixed 6-byte patches.
 
@@ -875,7 +875,7 @@ class BPEPatcher:
 class SutraDyadMVG(nn.Module):
     """MVG scout: BPE-aligned variable patches, same global trunk as Stage0.
 
-    Designed by Tesla R1-R3 (§16 of tesla_session_design.md).
+    Designed by design review (§16 of RESEARCH.md).
     Differences from SutraDyad Stage0:
     - patch_proj: Linear(d_local, d_global) instead of Linear(P*d_local, d_global)
     - Accepts patch_ids, patch_mask from CPU-side BPEPatcher
@@ -1068,7 +1068,7 @@ class SutraDyadMVG(nn.Module):
 
 def test_mvg():
     """MVG scout unit tests — run on CPU before any GPU training.
-    Tests from §16.6 of tesla_session_design.md (R3 convergence round).
+    Tests from §16.6 of RESEARCH.md (R3 convergence round).
     Usage: python code/sutra_dyad.py --test-mvg
     """
     import traceback
@@ -3255,21 +3255,89 @@ def _get_teacher_targets(teacher, tokenizer, first_byte_map, raw_bytes, device,
     return result
 
 
-def precompute_teacher_cache(cfg, output_path):
-    """Pre-compute teacher byte probs for all training windows (offline caching).
+class ChunkedTeacherCache:
+    """Lazy-loading chunked teacher cache. Loads one chunk at a time (~1.7GB RAM).
 
-    Eliminates teacher forward passes during training → 8-10x per-step speedup.
-    Saves per-teacher sparse byte probs (top-K) + masks + metadata.
-    Routing, TAID, and gating all compose with cached probs at train time.
+    Cache directory layout:
+        manifest.json           — metadata + chunk list
+        windows_chunk_NNN.pt    — {x: list[(B,T) uint8], y: list[(B,T) uint8]}
+        teacher_<safe_id>_chunk_NNN.pt — {topk_vals: list[(B,T,K) fp16],
+                                          topk_idx: list[(B,T,K) u8], masks: list[(B,T) bool]}
+
+    Absolute indexing: mb_idx = (step - cache_start_step) * grad_accum + micro
+    This is independent of training resume point.
+    """
+
+    def __init__(self, cache_dir):
+        cache_dir = Path(cache_dir)
+        with open(cache_dir / "manifest.json") as f:
+            self.manifest = json.load(f)
+        self.cache_dir = cache_dir
+        self.chunk_size = self.manifest["chunk_size"]
+        self.cache_start_step = self.manifest["cache_start_step"]
+        self.n_microbatches = self.manifest["n_microbatches"]
+        self.grad_accum = self.manifest["grad_accum"]
+        self._loaded_win_chunk = (-1, None)
+        self._loaded_teacher_chunks = {}  # teacher_id -> (chunk_idx, data)
+
+    @property
+    def teachers(self):
+        return self.manifest["teachers"]
+
+    @property
+    def cache_topk(self):
+        return self.manifest["cache_topk"]
+
+    def _abs_mb(self, step, micro):
+        return (step - self.cache_start_step) * self.grad_accum + micro
+
+    def has_data(self, step):
+        abs_mb = (step - self.cache_start_step) * self.grad_accum
+        return 0 <= abs_mb < self.n_microbatches
+
+    def _safe_teacher_id(self, teacher_id):
+        return teacher_id.replace("/", "_").replace("\\", "_")
+
+    def get_windows(self, step, micro):
+        """Return (x, y) tensors for this microbatch. x,y are (B,T) uint8."""
+        abs_mb = self._abs_mb(step, micro)
+        chunk_idx = abs_mb // self.chunk_size
+        local_idx = abs_mb % self.chunk_size
+        if self._loaded_win_chunk[0] != chunk_idx:
+            path = self.cache_dir / f"windows_chunk_{chunk_idx:03d}.pt"
+            self._loaded_win_chunk = (chunk_idx, torch.load(path, map_location='cpu', weights_only=False))
+        data = self._loaded_win_chunk[1]
+        return data["x"][local_idx], data["y"][local_idx]
+
+    def get_teacher(self, step, micro, teacher_id):
+        """Return (topk_vals, topk_idx, mask) for this teacher+microbatch."""
+        abs_mb = self._abs_mb(step, micro)
+        chunk_idx = abs_mb // self.chunk_size
+        local_idx = abs_mb % self.chunk_size
+        cache_key = teacher_id
+        if cache_key not in self._loaded_teacher_chunks or self._loaded_teacher_chunks[cache_key][0] != chunk_idx:
+            safe_id = self._safe_teacher_id(teacher_id)
+            path = self.cache_dir / f"teacher_{safe_id}_chunk_{chunk_idx:03d}.pt"
+            self._loaded_teacher_chunks[cache_key] = (chunk_idx, torch.load(path, map_location='cpu', weights_only=False))
+        data = self._loaded_teacher_chunks[cache_key][1]
+        return data["topk_vals"][local_idx], data["topk_idx"][local_idx], data["masks"][local_idx]
+
+
+def precompute_teacher_cache(cfg, output_path):
+    """Pre-compute teacher byte probs as chunked files in a directory.
+
+    Eliminates teacher forward passes during training → 5-7x per-step speedup.
+    Saves per-teacher sparse byte probs (top-K) + masks, chunked to avoid OOM.
 
     Usage:
         python code/sutra_dyad.py --cache-teachers results/config_xxx.json
-        # Then train with: "use_teacher_cache": true, "teacher_cache_path": "results/teacher_cache_xxx.pt"
+        # Then train with: "use_teacher_cache": true, "teacher_cache_path": "results/teacher_cache_xxx/"
     """
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
     import numpy as np
 
-    max_steps = cfg.get("max_steps", 250)
+    cache_start_step = cfg.get("cache_start_step", 0)
+    cache_end_step = cfg.get("cache_end_step", cfg.get("max_steps", 250))
     batch_size = cfg.get("batch_size", 12)
     grad_accum = cfg.get("grad_accum", 6)
     seq_bytes = cfg.get("seq_bytes", SEQ_BYTES)
@@ -3277,45 +3345,90 @@ def precompute_teacher_cache(cfg, output_path):
     use_covering = cfg.get("use_covering", False)
     covering_max_depth = cfg.get("covering_max_depth", None)
     teacher_cfgs = cfg.get("teachers", [{"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0}])
-    cache_topk = cfg.get("cache_topk", 16)  # Top-K sparse storage per position
+    cache_topk = cfg.get("cache_topk", 16)
     cache_seed = cfg.get("cache_seed", 42)
+    chunk_size = cfg.get("cache_chunk_size", 1000)  # microbatches per chunk
 
-    n_microbatches = max_steps * grad_accum
+    n_steps = cache_end_step - cache_start_step
+    n_microbatches = n_steps * grad_accum
+    n_chunks = (n_microbatches + chunk_size - 1) // chunk_size
+
+    output_dir = Path(output_path)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "manifest.json"
+
     print(f"\n{'='*60}")
-    print(f"TEACHER CACHE PRE-COMPUTATION")
+    print(f"CHUNKED TEACHER CACHE PRE-COMPUTATION")
     print(f"{'='*60}")
-    print(f"Steps: {max_steps}, micro-batches: {n_microbatches}, batch: {batch_size}, seq: {seq_bytes}")
+    print(f"Steps: {cache_start_step}->{cache_end_step} ({n_steps}), micro-batches: {n_microbatches}")
+    print(f"Chunks: {n_chunks} x {chunk_size} mb, batch: {batch_size}, seq: {seq_bytes}")
     print(f"Top-K: {cache_topk}, seed: {cache_seed}")
+    print(f"Output: {output_dir}")
+
+    # Check for resume: which chunks are already built?
+    done_chunks = set()
+    if manifest_path.exists():
+        with open(manifest_path) as f:
+            old_manifest = json.load(f)
+        done_chunks = set(old_manifest.get("completed_chunks", []))
+        print(f"  Resuming: {len(done_chunks)}/{n_chunks} chunks already done")
 
     # Dataset
     dataset = ByteShardedDataset()
     print(f"Dataset: {dataset.total_bytes / 1e9:.1f}B est bytes")
 
-    # Pre-sample all windows with fixed seed for reproducibility
-    print(f"\nPre-sampling {n_microbatches} micro-batches ({n_microbatches * batch_size} windows)...")
+    # Pre-sample ALL windows deterministically (must match training data order)
+    print(f"\nPre-sampling {n_microbatches} micro-batches...")
     rng_state = random.getstate()
     random.seed(cache_seed)
-    windows_x, windows_y = [], []
+    # Skip windows for steps before cache_start_step (maintain deterministic order)
+    skip_mbs = cache_start_step * grad_accum
+    for _ in range(skip_mbs):
+        dataset.sample_batch(batch_size, seq_bytes, device='cpu', split='train')
+    # Sample the actual cached windows
+    all_windows_x, all_windows_y = [], []
     for i in range(n_microbatches):
         x, y = dataset.sample_batch(batch_size, seq_bytes, device='cpu', split='train')
-        windows_x.append(x.to(torch.uint8))
-        windows_y.append(y.to(torch.uint8))
-        if (i + 1) % 500 == 0:
-            print(f"  Sampled {i+1}/{n_microbatches} micro-batches")
+        all_windows_x.append(x.to(torch.uint8))
+        all_windows_y.append(y.to(torch.uint8))
+        if (i + 1) % 2000 == 0:
+            print(f"  Sampled {i+1}/{n_microbatches}")
     random.setstate(rng_state)
-    print(f"  Done. Total windows: {len(windows_x) * batch_size}")
+    print(f"  Done. Total windows: {len(all_windows_x) * batch_size}")
 
-    # Load teachers + build covering tables
+    # Save window chunks
+    for c in range(n_chunks):
+        win_path = output_dir / f"windows_chunk_{c:03d}.pt"
+        if win_path.exists():
+            continue
+        start = c * chunk_size
+        end = min(start + chunk_size, n_microbatches)
+        torch.save({"x": all_windows_x[start:end], "y": all_windows_y[start:end]}, win_path)
+        print(f"  Saved windows chunk {c} ({end-start} mbs, {win_path.stat().st_size/1e6:.0f}MB)")
+
+    # Load teachers + build covering tables, process per-teacher
     bnb_cfg = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_quant_type="nf4",
     )
 
-    teacher_cache_data = {}
+    teacher_meta = {}
     for t_cfg in teacher_cfgs:
         teacher_id = t_cfg["id"]
         teacher_role = t_cfg.get("role", "equal")
+        safe_id = teacher_id.replace("/", "_").replace("\\", "_")
+
+        # Check if this teacher is fully cached already
+        teacher_done = all(
+            (output_dir / f"teacher_{safe_id}_chunk_{c:03d}.pt").exists()
+            for c in range(n_chunks)
+        )
+        if teacher_done:
+            print(f"\nTeacher {teacher_id}: all {n_chunks} chunks exist, skipping")
+            teacher_meta[teacher_id] = {"role": teacher_role, "weight": float(t_cfg.get("weight", 1.0))}
+            continue
+
         print(f"\nLoading teacher: {teacher_id} (4-bit, role={teacher_role})")
         tok = AutoTokenizer.from_pretrained(teacher_id)
         model = AutoModelForCausalLM.from_pretrained(
@@ -3327,110 +3440,97 @@ def precompute_teacher_cache(cfg, output_path):
         if use_covering:
             print(f"  Building covering tables for {vocab} tokens...")
             covering_tables = _build_covering_tables(tok, vocab, device=DEVICE)
-            print(f"  Covering: {covering_tables['n_prefixes']} prefixes, "
-                  f"max {covering_tables['max_token_bytes']} bytes/token")
-            print(f"  Using CPU numpy covering (threaded, max_depth={covering_max_depth})")
+            print(f"  Covering: {covering_tables['n_prefixes']} prefixes, max_depth={covering_max_depth}")
+            print(f"  Using CPU numpy covering (threaded)")
         else:
             fb_map = _build_first_byte_map(tok, vocab, DEVICE)
 
-        # Process all micro-batches
-        print(f"  Computing byte probs for {n_microbatches} micro-batches...")
-        all_topk_vals = []   # list of (B, T, K) float16
-        all_topk_idx = []    # list of (B, T, K) uint8
-        all_masks = []       # list of (B, T) bool
+        # Process chunk by chunk
         t0 = time.time()
+        for c in range(n_chunks):
+            chunk_path = output_dir / f"teacher_{safe_id}_chunk_{c:03d}.pt"
+            if chunk_path.exists():
+                print(f"  Chunk {c}/{n_chunks}: exists, skipping")
+                continue
 
-        for mb_idx in range(n_microbatches):
-            x = windows_x[mb_idx]
-            batch_raw = [x[b].tolist() for b in range(x.shape[0])]
+            start = c * chunk_size
+            end = min(start + chunk_size, n_microbatches)
+            chunk_vals, chunk_idx, chunk_masks = [], [], []
 
-            with torch.no_grad():
-                if use_covering:
-                    targets = _get_teacher_targets_covering_batched(
-                        model, tok, covering_tables, batch_raw, DEVICE,
-                        temperature=kd_temperature, extract_hidden=False,
-                        max_depth=covering_max_depth,
-                    )
-                else:
-                    targets = []
-                    for raw in batch_raw:
-                        targets.append(_get_teacher_targets(
-                            model, tok, fb_map, raw, DEVICE,
+            for mb_idx in range(start, end):
+                x = all_windows_x[mb_idx]
+                batch_raw = [x[b].tolist() for b in range(x.shape[0])]
+
+                with torch.no_grad():
+                    if use_covering:
+                        targets = _get_teacher_targets_covering_batched(
+                            model, tok, covering_tables, batch_raw, DEVICE,
                             temperature=kd_temperature, extract_hidden=False,
-                        ))
+                            max_depth=covering_max_depth,
+                        )
+                    else:
+                        targets = []
+                        for raw in batch_raw:
+                            targets.append(_get_teacher_targets(
+                                model, tok, fb_map, raw, DEVICE,
+                                temperature=kd_temperature, extract_hidden=False,
+                            ))
 
-            # Stack and sparsify
-            bp = torch.stack([t["byte_probs"] for t in targets])   # (B, T, 256)
-            bm = torch.stack([t["byte_mask"] for t in targets])    # (B, T)
+                bp = torch.stack([t["byte_probs"] for t in targets])
+                bm = torch.stack([t["byte_mask"] for t in targets])
+                topk_v, topk_i = bp.topk(cache_topk, dim=-1)
+                chunk_vals.append(topk_v.half().cpu())
+                chunk_idx.append(topk_i.to(torch.uint8).cpu())
+                chunk_masks.append(bm.cpu())
 
-            # Top-K sparse storage
-            topk_v, topk_i = bp.topk(cache_topk, dim=-1)  # (B, T, K)
-            all_topk_vals.append(topk_v.half().cpu())
-            all_topk_idx.append(topk_i.to(torch.uint8).cpu())
-            all_masks.append(bm.cpu())
+                if (mb_idx - start + 1) % 50 == 0:
+                    elapsed = time.time() - t0
+                    done = sum(1 for cc in range(c) if (output_dir / f"teacher_{safe_id}_chunk_{cc:03d}.pt").exists()) * chunk_size + (mb_idx - start + 1)
+                    total_todo = n_microbatches - sum(1 for cc in range(n_chunks) if (output_dir / f"teacher_{safe_id}_chunk_{cc:03d}.pt").exists()) * chunk_size
+                    rate = max(done / elapsed, 1e-6) if elapsed > 0 else 1e-6
+                    eta = max(0, total_todo - done) / rate
+                    print(f"    [{mb_idx+1}/{n_microbatches}] {rate:.2f} mb/s, ETA {eta/60:.1f}min")
 
-            if (mb_idx + 1) % 100 == 0:
-                elapsed = time.time() - t0
-                rate = (mb_idx + 1) / elapsed
-                eta = (n_microbatches - mb_idx - 1) / max(rate, 1e-6)
-                print(f"    [{mb_idx+1}/{n_microbatches}] {rate:.1f} mb/s, "
-                      f"ETA {eta/60:.1f}min")
+            torch.save({"topk_vals": chunk_vals, "topk_idx": chunk_idx, "masks": chunk_masks}, chunk_path)
+            elapsed_chunk = time.time() - t0
+            print(f"  Chunk {c}/{n_chunks}: saved ({end-start} mbs, {chunk_path.stat().st_size/1e6:.0f}MB, {elapsed_chunk/60:.1f}min elapsed)")
 
-        elapsed = time.time() - t0
-        print(f"  Done in {elapsed/60:.1f}min ({n_microbatches/elapsed:.1f} mb/s)")
+        teacher_meta[teacher_id] = {"role": teacher_role, "weight": float(t_cfg.get("weight", 1.0))}
 
-        teacher_cache_data[teacher_id] = {
-            "topk_vals": all_topk_vals,
-            "topk_idx": all_topk_idx,
-            "masks": all_masks,
-            "role": teacher_role,
-            "weight": float(t_cfg.get("weight", 1.0)),
-        }
-
-        # Free teacher model VRAM before loading next
         del model, tok, covering_tables, fb_map
         gc.collect()
         if DEVICE == "cuda":
             torch.cuda.empty_cache()
 
-    # Package and save
-    cache = {
-        "version": 1,
-        "config": cfg,
+    # Write manifest
+    manifest = {
+        "version": 2,
+        "cache_start_step": cache_start_step,
+        "cache_end_step": cache_end_step,
         "n_microbatches": n_microbatches,
-        "max_steps": max_steps,
         "batch_size": batch_size,
         "grad_accum": grad_accum,
         "seq_bytes": seq_bytes,
         "temperature": kd_temperature,
         "cache_topk": cache_topk,
         "cache_seed": cache_seed,
-        "windows_x": windows_x,
-        "windows_y": windows_y,
-        "teachers": teacher_cache_data,
+        "chunk_size": chunk_size,
+        "n_chunks": n_chunks,
+        "teachers": teacher_meta,
+        "completed_chunks": list(range(n_chunks)),
+        "config": {k: v for k, v in cfg.items() if not isinstance(v, (list, dict)) or k in ("teachers", "kill_rules")},
     }
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
 
-    # Compute cache size
-    total_bytes = 0
-    for tid, td in teacher_cache_data.items():
-        for v in td["topk_vals"]:
-            total_bytes += v.nelement() * 2
-        for i in td["topk_idx"]:
-            total_bytes += i.nelement()
-        for m in td["masks"]:
-            total_bytes += m.nelement()
-    for x in windows_x:
-        total_bytes += x.nelement()
-    for y in windows_y:
-        total_bytes += y.nelement()
-
-    output_path = Path(output_path)
-    print(f"\nSaving cache to {output_path} ({total_bytes/1e6:.0f}MB estimated)...")
-    atomic_torch_save(cache, output_path)
-    actual_size = output_path.stat().st_size
-    print(f"Saved: {actual_size/1e6:.0f}MB on disk")
-    print(f"Cache ready. Use with: \"use_teacher_cache\": true, \"teacher_cache_path\": \"{output_path}\"")
-    return cache
+    # Report
+    total_size = sum(f.stat().st_size for f in output_dir.glob("*.pt"))
+    print(f"\n{'='*60}")
+    print(f"Cache complete: {n_chunks} chunks, {total_size/1e9:.1f}GB on disk")
+    print(f"Steps {cache_start_step}->{cache_end_step}, {n_microbatches} microbatches")
+    print(f"Use with: \"use_teacher_cache\": true, \"teacher_cache_path\": \"{output_dir}\"")
+    print(f"{'='*60}")
+    return manifest
 
 
 def _reconstruct_byte_probs_from_cache(topk_vals, topk_idx, n_bytes=256):
@@ -3609,10 +3709,62 @@ def train_ekalavya(s1_ckpt, cfg=None):
     # s_match = student prob at teacher's top byte (not max student prob)
     use_uncertainty_gating = cfg.get("use_uncertainty_gating", False)
     ug_renormalize = cfg.get("ug_renormalize", True)
-    ug_clamp = cfg.get("ug_clamp", 1.5)  # v2: lowered from 4.0 per Codex correctness review
+    ug_clamp = cfg.get("ug_clamp", 1.5)  # v2: lowered from 4.0 per correctness review
     ug_exp_start = cfg.get("ug_exp_start", 1.0)
     ug_exp_end = cfg.get("ug_exp_end", 2.0)
     ug_exp_ramp = cfg.get("ug_exp_ramp_steps", 600)
+
+    # ZAR-gJSD (Zone-of-Proximal-Advantage Routed generalized JSD)
+    # Per design review design. Replaces classical KL-KD when active.
+    # See research docs and RESEARCH.md §12 for full rationale.
+    # When use_zar_gjsd=True: TAID, UG, confidence routing, repr KD are IGNORED.
+    use_zar_gjsd = cfg.get("use_zar_gjsd", False)
+    zar_zpd_q_lo = cfg.get("zar_zpd_q_lo", 0.60)   # entropy lower quantile
+    zar_zpd_q_hi = cfg.get("zar_zpd_q_hi", 0.95)   # entropy upper quantile
+    zar_utility_topk_pct = cfg.get("zar_utility_topk_pct", 0.15)  # top-k fraction within ZPD
+    zar_utility_min = cfg.get("zar_utility_min", 0.02)  # minimum utility threshold
+    zar_gjsd_pi = cfg.get("zar_gjsd_pi", 0.7)      # gJSD teacher weight (student = 1-pi)
+    # correctness review flagged T^2 scaling as not-in-spec for gJSD (m depends on s, so
+    # Hinton-style 1/T^2 gradient compensation doesn't cleanly apply). Default True for
+    # r1 launch (current behavior); set False in r2 if r1 plateaus.
+    zar_t2_scale = cfg.get("zar_t2_scale", True)
+    # Multi-teacher competitive routing per design review spec: argmax_m U_m,t per position,
+    # use winning teacher's probs in gJSD. Requires ≥2 active teachers.
+    # R1 = single anchor (False). R2+ can enable for 2+ teachers.
+    zar_multi_teacher = cfg.get("zar_multi_teacher", False)
+
+    # RRDSD (Regret-Routed Dual-Surface Distillation) — design review design.
+    # Replaces classical KL-KD AND ZAR-gJSD when active. See research docs.
+    # Differences from ZAR-gJSD R1:
+    #   - Multi-teacher competitive routing (argmax_m U_m,t) — requires ≥2 active teachers
+    #   - Utility: A × sqrt(D) (softer disagreement moderator)
+    #   - ZPD band: q45-q98 (wider)
+    #   - Density: cumulative 65% utility mass, clamped to [10%, 20%]
+    #   - Loss: routed forward-KL at T_loss=0.7 (sharper), no T² scaling
+    #   - Structural: anchor patch-CKA auxiliary (uses kd_beta schedule)
+    use_rrdsd = cfg.get("use_rrdsd", False)
+    rrdsd_t_loss = cfg.get("rrdsd_t_loss", 0.7)
+    rrdsd_zpd_q_lo = cfg.get("rrdsd_zpd_q_lo", 0.45)
+    rrdsd_zpd_q_hi = cfg.get("rrdsd_zpd_q_hi", 0.98)
+    rrdsd_util_mass = cfg.get("rrdsd_util_mass", 0.65)
+    rrdsd_density_min = cfg.get("rrdsd_density_min", 0.10)
+    rrdsd_density_max = cfg.get("rrdsd_density_max", 0.20)
+    # R2 extensions — disabled in R1-lite, enabled in R2 full:
+    rrdsd_multi_teacher = cfg.get("rrdsd_multi_teacher", False)  # competitive routing across teachers
+    rrdsd_cka_weight = cfg.get("rrdsd_cka_weight", 0.0)          # anchor patch-CKA aux loss weight (λ_cka)
+
+    # Committee-regret window sampler — Codex diagnostic top-upside per §12.15
+    # When regret_scores_path is set, replaces dataset.sample_batch with mixed_regret_uniform_batch:
+    # 50% (configurable) of each batch is drawn from the pre-scored window pool weighted by R(w),
+    # the other 50% from uniform distribution over training shards.
+    regret_scores_path = cfg.get("regret_scores_path", None)
+    regret_weighted_fraction = cfg.get("regret_weighted_fraction", 0.5)
+    regret_pool = None
+    if regret_scores_path:
+        from data_loader import RegretWeightedPool
+        regret_pool = RegretWeightedPool.load(regret_scores_path)
+        print(f"Committee-regret sampler: loaded pool from {regret_scores_path} "
+              f"(n={regret_pool.n}, weighted_fraction={regret_weighted_fraction})")
 
     # Teacher config
     anchor_id = cfg.get("anchor_teacher", "HuggingFaceTB/SmolLM2-1.7B")
@@ -3648,7 +3800,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
     model.load_state_dict(ckpt["model"], strict=False)
     s1_step = ckpt.get("step", "?")
 
-    # Progressive unfreeze schedule (Codex design):
+    # Progressive unfreeze schedule (design):
     # Phase 0 (step 0-400): only local + bridge + global 8-11
     # Phase 1 (step 400-1200): + global 4-7
     # Phase 2 (step 1200+): + global 0-3 (all unfrozen)
@@ -3668,19 +3820,28 @@ def train_ekalavya(s1_ckpt, cfg=None):
     # Load teacher cache OR live teacher models
     teacher_cache = None
     if use_teacher_cache and teacher_cache_path:
-        print(f"\nLoading teacher cache from {teacher_cache_path}...")
-        teacher_cache = torch.load(teacher_cache_path, map_location='cpu', weights_only=False)
-        assert teacher_cache["version"] == 1, f"Unsupported cache version: {teacher_cache['version']}"
-        assert teacher_cache["n_microbatches"] >= max_steps * grad_accum, \
-            f"Cache has {teacher_cache['n_microbatches']} micro-batches, need {max_steps * grad_accum}"
-        print(f"  Cache: {teacher_cache['n_microbatches']} micro-batches, "
-              f"top-{teacher_cache['cache_topk']} sparse, "
-              f"teachers: {list(teacher_cache['teachers'].keys())}")
-        # Build teacher_cfgs from cache metadata
-        if teacher_cfgs is None:
-            teacher_cfgs = []
-            for tid, td in teacher_cache["teachers"].items():
-                teacher_cfgs.append({"id": tid, "weight": td["weight"], "role": td["role"]})
+        cache_path = Path(teacher_cache_path)
+        if cache_path.is_dir():
+            # v2 chunked cache (directory with manifest.json)
+            print(f"\nLoading chunked teacher cache from {cache_path}...")
+            teacher_cache = ChunkedTeacherCache(cache_path)
+            print(f"  Cache v2: steps {teacher_cache.cache_start_step}->{teacher_cache.manifest['cache_end_step']}, "
+                  f"{teacher_cache.n_microbatches} mbs, {teacher_cache.manifest['n_chunks']} chunks, "
+                  f"top-{teacher_cache.cache_topk} sparse")
+            print(f"  Teachers: {list(teacher_cache.teachers.keys())}")
+            if teacher_cfgs is None:
+                teacher_cfgs = [{"id": tid, "weight": td["weight"], "role": td["role"]}
+                                for tid, td in teacher_cache.teachers.items()]
+        else:
+            # v1 legacy monolithic cache (.pt file)
+            print(f"\nLoading legacy teacher cache from {cache_path}...")
+            teacher_cache = torch.load(cache_path, map_location='cpu', weights_only=False)
+            assert teacher_cache["version"] == 1
+            print(f"  Cache v1: {teacher_cache['n_microbatches']} mbs, "
+                  f"top-{teacher_cache['cache_topk']} sparse")
+            if teacher_cfgs is None:
+                teacher_cfgs = [{"id": tid, "weight": td["weight"], "role": td["role"]}
+                                for tid, td in teacher_cache["teachers"].items()]
         # No live teachers needed — create lightweight teacher entries for logging/routing only
         teachers = []
         for idx, t_cfg in enumerate(teacher_cfgs):
@@ -3701,7 +3862,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
             kd_beta = 0.0
     else:
         # Live teacher loading (original path)
-        # 4-bit quantization config for teachers (Codex VRAM budget: ~2GB per teacher)
+        # 4-bit quantization config for teachers (VRAM budget: ~2GB per teacher)
         bnb_cfg = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.bfloat16,
@@ -3752,7 +3913,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 "repr_proj": repr_proj,
         })
 
-    # Optimizer: layerwise LR groups per Codex spec
+    # Optimizer: layerwise LR groups per design spec
     # bridge: patch_encoder, patch_pool, patch_proj, global_to_local
     # local: byte_embed, bypass_proj, local_decoder, local_norm, output_head
     # global_top: global_layers.8-11, global_norm
@@ -3849,6 +4010,16 @@ def train_ekalavya(s1_ckpt, cfg=None):
     if use_uncertainty_gating:
         log(f"Uncertainty gating: exp {ug_exp_start}->{ug_exp_end} over {ug_exp_ramp} steps, "
             f"clamp={ug_clamp}, renorm={ug_renormalize}")
+    if use_zar_gjsd:
+        log(f"ZAR-gJSD: ACTIVE (replaces classical KL-KD). "
+            f"ZPD q=[{zar_zpd_q_lo},{zar_zpd_q_hi}], top-{zar_utility_topk_pct:.0%} utility, "
+            f"U_min={zar_utility_min}, gJSD pi={zar_gjsd_pi}. "
+            f"TAID/UG/repr ignored when active.")
+    if use_rrdsd:
+        log(f"RRDSD: ACTIVE (replaces classical KL-KD AND ZAR-gJSD). "
+            f"Utility=A*sqrt(D), ZPD q=[{rrdsd_zpd_q_lo},{rrdsd_zpd_q_hi}], "
+            f"cum-mass={rrdsd_util_mass}, density=[{rrdsd_density_min:.0%},{rrdsd_density_max:.0%}], "
+            f"T_loss={rrdsd_t_loss}, no T^2 scaling. Forward-KL loss.")
     log(f"Teachers ({len(teachers)}), aggregation={teacher_aggregation}, agg_temp={teacher_aggregation_temp}:")
     for i, teacher in enumerate(teachers):
         role = teacher_cfgs[i].get("role", "equal") if teacher_cfgs and i < len(teacher_cfgs) else "equal"
@@ -3997,12 +4168,34 @@ def train_ekalavya(s1_ckpt, cfg=None):
 
         for micro in range(grad_accum):
             # --- Data: cached windows or live sampling ---
-            if teacher_cache is not None:
-                mb_idx = (step - start_step) * grad_accum + micro
-                x = teacher_cache["windows_x"][mb_idx].to(dtype=torch.long, device=DEVICE)
-                y = teacher_cache["windows_y"][mb_idx].to(dtype=torch.long, device=DEVICE)
+            # v2 chunked cache: absolute indexing from cache_start_step
+            # v1 legacy cache: relative indexing from start_step
+            _use_cache_this_step = False
+            if isinstance(teacher_cache, ChunkedTeacherCache):
+                _use_cache_this_step = teacher_cache.has_data(step)
+            elif teacher_cache is not None:
+                _use_cache_this_step = True
+
+            if _use_cache_this_step:
+                if isinstance(teacher_cache, ChunkedTeacherCache):
+                    wx, wy = teacher_cache.get_windows(step, micro)
+                    x = wx.to(dtype=torch.long, device=DEVICE)
+                    y = wy.to(dtype=torch.long, device=DEVICE)
+                else:
+                    mb_idx = (step - start_step) * grad_accum + micro
+                    x = teacher_cache["windows_x"][mb_idx].to(dtype=torch.long, device=DEVICE)
+                    y = teacher_cache["windows_y"][mb_idx].to(dtype=torch.long, device=DEVICE)
             else:
-                x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
+                if regret_pool is not None:
+                    # Committee-regret sampler — mixed uniform + regret-weighted per §12.15
+                    from data_loader import mixed_regret_uniform_batch
+                    x, y = mixed_regret_uniform_batch(
+                        dataset, regret_pool, batch_size, seq_bytes,
+                        device=DEVICE, split='train',
+                        weighted_fraction=regret_weighted_fraction,
+                    )
+                else:
+                    x, y = dataset.sample_batch(batch_size, seq_bytes, device=DEVICE, split='train')
 
             # --- Teacher targets: cached reconstruction or live forward ---
             # Gate: skip teacher computation entirely when KD weights are zero
@@ -4025,17 +4218,22 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 )
                 teacher_results = []
 
-                if teacher_cache is not None:
+                if _use_cache_this_step:
                     # Reconstruct per-teacher byte probs from sparse cache
-                    mb_idx = (step - start_step) * grad_accum + micro
                     for teacher in teachers:
                         tid = teacher["id"]
-                        td = teacher_cache["teachers"][tid]
-                        topk_v = td["topk_vals"][mb_idx].to(DEVICE)  # (B, T, K) float16
-                        topk_i = td["topk_idx"][mb_idx].to(DEVICE)   # (B, T, K) uint8
-                        mask = td["masks"][mb_idx].to(DEVICE)         # (B, T) bool
+                        if isinstance(teacher_cache, ChunkedTeacherCache):
+                            topk_v, topk_i, mask = teacher_cache.get_teacher(step, micro, tid)
+                            topk_v = topk_v.to(DEVICE)
+                            topk_i = topk_i.to(DEVICE)
+                            mask = mask.to(DEVICE)
+                        else:
+                            mb_idx = (step - start_step) * grad_accum + micro
+                            td = teacher_cache["teachers"][tid]
+                            topk_v = td["topk_vals"][mb_idx].to(DEVICE)
+                            topk_i = td["topk_idx"][mb_idx].to(DEVICE)
+                            mask = td["masks"][mb_idx].to(DEVICE)
                         byte_probs = _reconstruct_byte_probs_from_cache(topk_v, topk_i)
-                        # Build per-sample target dicts (same format as live path)
                         targets_batch = []
                         for b in range(B_actual):
                             targets_batch.append({
@@ -4045,7 +4243,15 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         teacher_results.append(targets_batch)
                 else:
                     batch_raw = [x[b].tolist() for b in range(B_actual)]
+                    # aux_frequency: skip non-anchor teachers on most steps
+                    run_aux = (step % aux_frequency == 0) if len(teachers) > 1 else True
+                    active_indices = []
                     for t_idx, teacher in enumerate(teachers):
+                        role = teacher_cfgs[t_idx].get("role", "equal") if teacher_cfgs else "equal"
+                        if role == "anchor" or role == "equal" or run_aux:
+                            active_indices.append(t_idx)
+                    for t_idx in active_indices:
+                        teacher = teachers[t_idx]
                         # Fix 2: only extract hidden states for teachers used in repr loss
                         need_hidden = beta_eff > 0 and (not repr_anchor_only or t_idx in repr_teacher_indices)
                         if use_covering:
@@ -4066,17 +4272,27 @@ def train_ekalavya(s1_ckpt, cfg=None):
                                 ))
                         teacher_results.append(targets_batch)
 
+                # Build active teacher subset for aggregation
+                if _use_cache_this_step or not hasattr(teacher_results, '__len__') or len(teacher_results) == len(teachers):
+                    active_priors = teacher_priors
+                    active_cfgs = teacher_cfgs
+                    active_teacher_indices = list(range(len(teachers)))
+                else:
+                    active_priors = teacher_priors[active_indices]
+                    active_cfgs = [teacher_cfgs[i] for i in active_indices]
+                    active_teacher_indices = active_indices
+
                 teacher_patch_hidden = None
                 teacher_patch_mask = None
                 for b in range(B_actual):
                     sample_targets = [targets_batch[b] for targets_batch in teacher_results]
                     combined_probs, combined_mask, sample_teacher_weights = _aggregate_teacher_byte_targets(
                         sample_targets=sample_targets,
-                        teacher_priors=teacher_priors,
+                        teacher_priors=active_priors,
                         aggregation=teacher_aggregation,
                         aggregation_temp=teacher_aggregation_temp,
                         routing_cfg=teacher_routing_cfg,
-                        teacher_cfgs=teacher_cfgs,
+                        teacher_cfgs=active_cfgs,
                     )
                     all_byte_probs.append(combined_probs)
                     all_byte_masks.append(combined_mask)
@@ -4085,9 +4301,10 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         patch_hidden_list = []
                         patch_mask_list = []
                         raw_len = len(batch_raw[b])
-                        for teacher_idx, teacher in enumerate(teachers):
+                        for ri, teacher_idx in enumerate(active_teacher_indices):
+                            teacher = teachers[teacher_idx]
                             patch_hidden_t, patch_mask_t = _teacher_patch_targets(
-                                targets_t=sample_targets[teacher_idx],
+                                targets_t=sample_targets[ri],
                                 raw_len=raw_len,
                                 patch_size=model.patch_size,
                                 teacher_dim=teacher["hidden_dim"],
@@ -4110,7 +4327,307 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 # Supports TAID (progressive target) and uncertainty gating (per-position weighting)
                 kd_loss = torch.tensor(0.0, device=DEVICE)
                 ug_stats = {}
-                if alpha_eff > 0:
+                zar_stats = {}
+                rrdsd_stats = {}
+                if alpha_eff > 0 and use_rrdsd:
+                    # ========================================================
+                    # RRDSD: Regret-Routed Dual-Surface Distillation (R2)
+                    # Per design review — research docs §8.
+                    # - Single-anchor mode (rrdsd_multi_teacher=False): uses pre-aggregated teacher_byte_probs
+                    # - Multi-teacher mode (rrdsd_multi_teacher=True): per-position argmax routing
+                    #   over per-teacher utility U_m,t = A_m,t × √(D_m,t + ε)
+                    # Structural (CKA) wired through beta_eff below (see L_repr block).
+                    # ========================================================
+                    T_logits = student_logits.shape[1]
+
+                    # --- Multi-teacher competitive routing (R3 Path C probe) ---
+                    # When enabled, compute per-teacher utility then route (argmax_m U_m,t).
+                    # Result: replace t_probs with per-position winner's probs; mask = ANY teacher supervision.
+                    router_stats = {}
+                    if rrdsd_multi_teacher and len(teacher_results) > 1:
+                        # Build per-teacher tensors: (M, B, T, 256) and (M, B, T)
+                        per_t_probs_list = []
+                        per_t_mask_list = []
+                        for m_idx, teacher_batch in enumerate(teacher_results):
+                            bprobs = torch.stack([teacher_batch[b]["byte_probs"][:T_logits] for b in range(B_actual)])
+                            bmask = torch.stack([teacher_batch[b]["byte_mask"][:T_logits] for b in range(B_actual)])
+                            per_t_probs_list.append(bprobs.float())
+                            per_t_mask_list.append(bmask)
+                        per_t_probs = torch.stack(per_t_probs_list)  # (M, B, T, 256)
+                        per_t_mask = torch.stack(per_t_mask_list)    # (M, B, T)
+                        joint_mask = per_t_mask.any(dim=0)           # (B, T)
+
+                        # Student log-probs at T_route=1.0 for routing computation (no grad for utility)
+                        with torch.no_grad():
+                            s_logp_rt = F.log_softmax(student_logits.float(), dim=-1)  # (B, T, 256)
+                            s_p_rt = s_logp_rt.exp()
+                            y_sl = y[:, :T_logits]  # (B, T)
+
+                            # Per-teacher advantage and JSD
+                            M = per_t_probs.shape[0]
+                            y_bcast = y_sl.unsqueeze(0).unsqueeze(-1).expand(M, -1, -1, 1)  # (M, B, T, 1)
+                            t_logp_at_y = torch.log(per_t_probs.gather(-1, y_bcast).squeeze(-1).clamp_min(1e-10))  # (M, B, T)
+                            s_logp_at_y = s_logp_rt.gather(-1, y_sl.unsqueeze(-1)).squeeze(-1).unsqueeze(0)  # (1, B, T)
+                            A_m = (t_logp_at_y - s_logp_at_y).clamp_min(0.0) * per_t_mask.float()  # (M, B, T)
+
+                            # JSD(p_m || stopgrad(s)) per teacher — compute in chunks if memory tight
+                            s_p_bcast = s_p_rt.unsqueeze(0)  # (1, B, T, 256)
+                            s_logp_bcast = s_logp_rt.unsqueeze(0)  # (1, B, T, 256)
+                            m_jsd_per = 0.5 * (per_t_probs + s_p_bcast)  # (M, B, T, 256)
+                            log_m_jsd_per = torch.log(m_jsd_per.clamp_min(1e-10))
+                            kl_t = (per_t_probs * (torch.log(per_t_probs.clamp_min(1e-10)) - log_m_jsd_per)).sum(-1)
+                            kl_s = (s_p_bcast * (s_logp_bcast - log_m_jsd_per)).sum(-1)
+                            D_m = (0.5 * (kl_t + kl_s)).clamp_min(0.0)  # (M, B, T)
+
+                            # Per-teacher utility and argmax routing
+                            U_m = A_m * torch.sqrt(D_m + 1e-8)  # (M, B, T)
+                            # Mask out positions where a teacher has no supervision (U_m becomes 0 for them via A_m)
+                            U_max, m_star = U_m.max(dim=0)  # (B, T), (B, T)
+
+                            # Teacher-share stats for routing diagnostics
+                            if joint_mask.any():
+                                win_mask_per_teacher = torch.zeros(M, dtype=torch.float32, device=DEVICE)
+                                for m_idx in range(M):
+                                    wins_m = ((m_star == m_idx) & joint_mask & (U_max > 0)).float().sum()
+                                    win_mask_per_teacher[m_idx] = wins_m
+                                total_wins = win_mask_per_teacher.sum().clamp_min(1e-10)
+                                router_stats = {
+                                    f"rr_win_{m_idx}": float((win_mask_per_teacher[m_idx] / total_wins).item())
+                                    for m_idx in range(M)
+                                }
+
+                        # Gather winner's probs: (B, T, 256). Need to use argmax index to index into per_t_probs along dim 0.
+                        # per_t_probs shape (M, B, T, 256), m_star shape (B, T). Expand m_star and gather.
+                        m_star_exp = m_star.unsqueeze(0).unsqueeze(-1).expand(1, -1, -1, 256)  # (1, B, T, 256)
+                        winner_probs = per_t_probs.gather(0, m_star_exp).squeeze(0)  # (B, T, 256)
+                        # Winner's per-position mask (supervision at that teacher for that position)
+                        winner_mask = per_t_mask.gather(0, m_star.unsqueeze(0)).squeeze(0)  # (B, T)
+
+                        # Replace t_probs and mask with winner's view
+                        t_probs = winner_probs
+                        mask = winner_mask & (U_max > 0)  # only route positions where some teacher is useful
+                        # Free memory
+                        del per_t_probs, per_t_mask, per_t_probs_list, per_t_mask_list
+                        del m_jsd_per, log_m_jsd_per, kl_t, kl_s, D_m, A_m, U_m, U_max, m_star
+                    else:
+                        mask = teacher_byte_mask[:, :T_logits]  # (B, T) bool
+                        t_probs = teacher_byte_probs[:, :T_logits, :].float()  # (B, T, 256)
+
+                    if mask.any():
+                        # Routing distribution: student at T_route = 1.0
+                        s_logprobs_route = F.log_softmax(student_logits.float(), dim=-1)
+                        s_probs_route = s_logprobs_route.exp()
+
+                        # Gold next byte
+                        y_slice = y[:, :T_logits]  # (B, T)
+
+                        with torch.no_grad():
+                            # Student entropy at T_route=1.0
+                            s_H = -(s_probs_route * s_logprobs_route).sum(dim=-1)  # (B, T)
+
+                            # Advantage at actual label
+                            t_logp_at_y = torch.log(t_probs.gather(-1, y_slice.unsqueeze(-1)).squeeze(-1).clamp_min(1e-10))
+                            s_logp_at_y_route = s_logprobs_route.gather(-1, y_slice.unsqueeze(-1)).squeeze(-1)
+                            A = (t_logp_at_y - s_logp_at_y_route).clamp_min(0.0)  # (B, T)
+
+                            # JSD(p_t || sg(s))
+                            m_jsd = 0.5 * (t_probs + s_probs_route)
+                            log_m_jsd = torch.log(m_jsd.clamp_min(1e-10))
+                            kl_t_m = (t_probs * (torch.log(t_probs.clamp_min(1e-10)) - log_m_jsd)).sum(-1)
+                            kl_s_m = (s_probs_route * (s_logprobs_route - log_m_jsd)).sum(-1)
+                            D = (0.5 * (kl_t_m + kl_s_m)).clamp_min(0.0)  # (B, T)
+
+                            # Utility: A × sqrt(D + eps) — softer disagreement moderator
+                            U = A * torch.sqrt(D + 1e-8)
+
+                            # ZPD band: q_lo-q_hi entropy quantile + A>0
+                            H_valid = s_H[mask]
+                            if H_valid.numel() >= 2:
+                                q_lo = torch.quantile(H_valid, rrdsd_zpd_q_lo)
+                                q_hi = torch.quantile(H_valid, rrdsd_zpd_q_hi)
+                                zpd_cand = (s_H >= q_lo) & (s_H <= q_hi) & mask & (A > 0)
+                            else:
+                                zpd_cand = mask & (A > 0)
+
+                            # Dynamic density: cumulative 65% utility mass, clamped [10%, 20%] of valid
+                            n_valid = mask.sum().item()
+                            n_cand = zpd_cand.sum().item()
+                            density_min = max(1, int(rrdsd_density_min * n_valid))
+                            density_max = max(density_min + 1, int(rrdsd_density_max * n_valid))
+
+                            if n_cand > 0:
+                                U_cand = U[zpd_cand]  # 1-D, length n_cand
+                                U_sorted, sort_idx = torch.sort(U_cand, descending=True)
+                                U_total = U_sorted.sum().item()
+                                if U_total > 1e-10:
+                                    cumsum = torch.cumsum(U_sorted, dim=0)
+                                    mass_thr = rrdsd_util_mass * U_total
+                                    # First index where cumulative >= mass threshold (inclusive)
+                                    mass_idx = int((cumsum >= mass_thr).float().argmax().item())
+                                    n_keep = mass_idx + 1
+                                    # Clamp to density floor/ceiling, bounded by available candidates
+                                    n_keep = max(density_min, min(density_max, n_keep))
+                                    n_keep = min(n_keep, n_cand)
+                                else:
+                                    # No positive utility available — don't fabricate signal
+                                    n_keep = 0
+                                if n_keep > 0:
+                                    # Always use exact topk selection to enforce n_keep precisely
+                                    # (handles ties correctly; no threshold-overshoot ambiguity)
+                                    flat_U = U.flatten()
+                                    flat_cand = zpd_cand.flatten()
+                                    U_masked = torch.where(flat_cand, flat_U, torch.full_like(flat_U, float('-inf')))
+                                    topk_idx = torch.topk(U_masked, n_keep).indices
+                                    final_mask_flat = torch.zeros_like(flat_U, dtype=torch.bool)
+                                    final_mask_flat[topk_idx] = True
+                                    final_mask = final_mask_flat.reshape(U.shape)
+                                else:
+                                    final_mask = torch.zeros_like(mask)
+                            else:
+                                final_mask = torch.zeros_like(mask)
+
+                        # Output loss: routed forward-KL at T_loss
+                        if final_mask.any():
+                            # Teacher sharpening: Q_k = softmax(log p_t / T_loss) = p_t^(1/T_loss) / Z
+                            log_t_sharp = torch.log(t_probs.clamp_min(1e-10)) / rrdsd_t_loss
+                            Q_k = F.softmax(log_t_sharp, dim=-1)  # (B, T, 256), sharpened teacher
+                            # Student at T_loss
+                            S_k_log = F.log_softmax(student_logits.float() / rrdsd_t_loss, dim=-1)
+
+                            # Forward KL(Q_k || S_k) = sum_b Q_k(b) * (log Q_k(b) - S_k_log(b))
+                            log_Q_k = torch.log(Q_k.clamp_min(1e-10))
+                            kl_per_pos = (Q_k * (log_Q_k - S_k_log)).sum(-1)  # (B, T)
+
+                            kd_loss_raw = kl_per_pos[final_mask].mean()
+                            kd_loss = kd_loss_raw  # No T² scaling per R2 spec
+
+                            with torch.no_grad():
+                                rrdsd_stats = {
+                                    "rr_cand_frac": float(zpd_cand.float().mean().item()),
+                                    "rr_sel_frac": float(final_mask.float().mean().item()),
+                                    "rr_A_mean": float(A[mask].mean().item()) if mask.any() else 0.0,
+                                    "rr_D_mean": float(D[mask].mean().item()) if mask.any() else 0.0,
+                                    "rr_U_mean": float(U[mask].mean().item()) if mask.any() else 0.0,
+                                    "rr_U_sel": float(U[final_mask].mean().item()) if final_mask.any() else 0.0,
+                                    "rr_kl_raw": float(kd_loss_raw.item()),
+                                }
+                                rrdsd_stats.update(router_stats)
+                        else:
+                            with torch.no_grad():
+                                rrdsd_stats = {
+                                    "rr_cand_frac": float(zpd_cand.float().mean().item()),
+                                    "rr_sel_frac": 0.0,
+                                    "rr_A_mean": float(A[mask].mean().item()) if mask.any() else 0.0,
+                                    "rr_D_mean": float(D[mask].mean().item()) if mask.any() else 0.0,
+                                    "rr_U_mean": float(U[mask].mean().item()) if mask.any() else 0.0,
+                                    "rr_U_sel": 0.0,
+                                    "rr_kl_raw": 0.0,
+                                }
+                                rrdsd_stats.update(router_stats)
+                elif alpha_eff > 0 and use_zar_gjsd:
+                    # ========================================================
+                    # ZAR-gJSD: Zone-of-Proximal-Advantage Routed gen. JSD
+                    # Single-anchor implementation per design review
+                    # ========================================================
+                    T_logits = student_logits.shape[1]
+                    mask = teacher_byte_mask[:, :T_logits]  # (B, T) bool
+                    t_probs = teacher_byte_probs[:, :T_logits, :].float()  # (B, T, 256)
+                    if mask.any():
+                        # Student distribution at KD temperature (float32 for stability)
+                        s_log_probs = F.log_softmax(student_logits.float() / kd_temperature, dim=-1)  # (B, T, 256)
+                        s_probs = s_log_probs.exp()  # (B, T, 256)
+
+                        # Ground-truth next byte (shift y by nothing — y is already next-byte labels)
+                        y_slice = y[:, :T_logits]  # (B, T) int64
+
+                        # Student entropy per position, in nats
+                        with torch.no_grad():
+                            s_H = -(s_probs * s_log_probs).sum(dim=-1)  # (B, T)
+
+                        # Actual-label advantage: max(0, log p_t(y) - log p_s(y))
+                        # Clamp teacher probs above epsilon for numerical stability
+                        t_log_at_y = torch.log(t_probs.gather(-1, y_slice.unsqueeze(-1)).squeeze(-1).clamp_min(1e-10))
+                        s_log_at_y = s_log_probs.gather(-1, y_slice.unsqueeze(-1)).squeeze(-1)
+                        with torch.no_grad():
+                            A = (t_log_at_y - s_log_at_y).clamp_min(0.0)  # (B, T) — "advantage"
+
+                        # JSD(p_t || sg(s)) — stopgrad on student per design spec
+                        with torch.no_grad():
+                            s_probs_sg = s_probs
+                            m_jsd = 0.5 * (t_probs + s_probs_sg)
+                            log_m_jsd = torch.log(m_jsd.clamp_min(1e-10))
+                            kl_t_m = (t_probs * (torch.log(t_probs.clamp_min(1e-10)) - log_m_jsd)).sum(-1)
+                            kl_s_m = (s_probs_sg * (s_log_probs - log_m_jsd)).sum(-1)
+                            JSD = 0.5 * (kl_t_m + kl_s_m)  # (B, T)
+                            JSD = JSD.clamp_min(0.0)  # guard against numerical negatives
+
+                            # Utility = Advantage × JSD
+                            U = A * JSD  # (B, T) — no grad
+
+                            # ZPD band: entropy between q_lo and q_hi quantiles (within-batch, over valid mask only)
+                            H_valid = s_H[mask]
+                            if H_valid.numel() >= 2:
+                                q_lo = torch.quantile(H_valid, zar_zpd_q_lo)
+                                q_hi = torch.quantile(H_valid, zar_zpd_q_hi)
+                                zpd_band = (s_H >= q_lo) & (s_H <= q_hi) & mask
+                            else:
+                                zpd_band = mask
+
+                            # Top-k% by utility within ZPD band
+                            U_masked = torch.where(zpd_band, U, torch.zeros_like(U))
+                            n_zpd = zpd_band.sum().item()
+                            n_keep = max(1, int(zar_utility_topk_pct * n_zpd))
+                            if n_zpd > 0:
+                                U_flat = U_masked.flatten()
+                                threshold = torch.topk(U_flat, n_keep).values.min()
+                                final_mask = (U >= threshold) & zpd_band & (U > zar_utility_min)
+                            else:
+                                final_mask = torch.zeros_like(mask)
+
+                        # gJSD loss on final_mask positions
+                        if final_mask.any():
+                            pi_t = zar_gjsd_pi
+                            # m = pi_t * p_t + (1 - pi_t) * s_t   (s_t has grad, p_t is constant)
+                            m_gjsd = pi_t * t_probs + (1.0 - pi_t) * s_probs
+                            log_m_gjsd = torch.log(m_gjsd.clamp_min(1e-10))
+                            # KL(p_t || m): sum over byte dim
+                            log_t = torch.log(t_probs.clamp_min(1e-10))
+                            kl_t_gjsd = (t_probs * (log_t - log_m_gjsd)).sum(-1)
+                            # KL(s || m): use s_log_probs directly, grad flows
+                            kl_s_gjsd = (s_probs * (s_log_probs - log_m_gjsd)).sum(-1)
+                            gjsd_per_pos = pi_t * kl_t_gjsd + (1.0 - pi_t) * kl_s_gjsd  # (B, T)
+
+                            kd_loss_raw = gjsd_per_pos[final_mask].mean()
+                            # T^2 scaling: Hinton convention for KL logit-KD. Flagged by design review v2
+                            # review as not-in-spec for gJSD (m depends on s, so 1/T^2 gradient
+                            # compensation doesn't cleanly apply). Config-gated for quick ablation.
+                            if zar_t2_scale:
+                                kd_loss = kd_temperature ** 2 * kd_loss_raw
+                            else:
+                                kd_loss = kd_loss_raw
+
+                            with torch.no_grad():
+                                zar_stats = {
+                                    "zar_zpd_frac": float(zpd_band.float().mean().item()),
+                                    "zar_final_frac": float(final_mask.float().mean().item()),
+                                    "zar_A_mean": float(A[mask].mean().item()) if mask.any() else 0.0,
+                                    "zar_JSD_mean": float(JSD[mask].mean().item()) if mask.any() else 0.0,
+                                    "zar_U_mean": float(U[mask].mean().item()) if mask.any() else 0.0,
+                                    "zar_U_selected_mean": float(U[final_mask].mean().item()) if final_mask.any() else 0.0,
+                                    "zar_gjsd_raw": float(kd_loss_raw.item()),
+                                }
+                        else:
+                            with torch.no_grad():
+                                zar_stats = {
+                                    "zar_zpd_frac": float(zpd_band.float().mean().item()),
+                                    "zar_final_frac": 0.0,
+                                    "zar_A_mean": float(A[mask].mean().item()) if mask.any() else 0.0,
+                                    "zar_JSD_mean": float(JSD[mask].mean().item()) if mask.any() else 0.0,
+                                    "zar_U_mean": float(U[mask].mean().item()) if mask.any() else 0.0,
+                                    "zar_U_selected_mean": 0.0,
+                                    "zar_gjsd_raw": 0.0,
+                                }
+                elif alpha_eff > 0:
                     # Compute in float32 outside autocast for log-space stability
                     student_log_probs = F.log_softmax(student_logits.float() / kd_temperature, dim=-1)
                     mask = teacher_byte_mask[:, :student_logits.shape[1]]
@@ -4167,7 +4684,9 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         kl = (kl * mask.float()).sum() / mask.float().sum()
                         kd_loss = kd_temperature ** 2 * kl
 
-                # KD Loss 2: Representation alignment (cosine on global_local bottleneck)
+                # KD Loss 2: Representation alignment
+                # - Default (non-RRDSD): cosine similarity per Stage 1 spec
+                # - RRDSD mode: linear CKA (centered kernel alignment) per design review
                 repr_loss = torch.tensor(0.0, device=DEVICE)
                 if beta_eff > 0 and teacher_patch_hidden_by_teacher:
                     global_local = internals["global_local"]  # (B, N, d_local=640)
@@ -4191,12 +4710,38 @@ def train_ekalavya(s1_ckpt, cfg=None):
                     proj_teacher = torch.stack(teacher_proj_batches)      # (B, N, d_local)
                     teacher_patch_mask = torch.stack(teacher_proj_masks)  # (B, N)
 
-                    gl_norm = F.normalize(global_local.float(), dim=-1)
-                    pt_norm = F.normalize(proj_teacher, dim=-1)
-                    cos_sim = (gl_norm * pt_norm).sum(dim=-1)  # (B, N)
-                    pmask = teacher_patch_mask[:, :cos_sim.shape[1]]
-                    if pmask.any():
-                        repr_loss = ((1.0 - cos_sim) * pmask.float()).sum() / pmask.float().sum()
+                    if use_rrdsd:
+                        # Linear CKA on centered retained-patch states per design review spec.
+                        # CKA(X, Y) = ||X^T Y||_F^2 / (||X^T X||_F * ||Y^T Y||_F + eps)
+                        # loss = 1 - CKA
+                        X_all = global_local.float()  # (B, N, d_local)
+                        Y_all = proj_teacher  # (B, N, d_local)
+                        pmask = teacher_patch_mask[:, :X_all.shape[1]]
+                        if pmask.any():
+                            X_flat = X_all.reshape(-1, X_all.shape[-1])[pmask.reshape(-1)]  # (M, d)
+                            Y_flat = Y_all.reshape(-1, Y_all.shape[-1])[pmask.reshape(-1)]  # (M, d)
+                            if X_flat.shape[0] >= 2:
+                                # Center
+                                X_c = X_flat - X_flat.mean(dim=0, keepdim=True)
+                                Y_c = Y_flat - Y_flat.mean(dim=0, keepdim=True)
+                                # Compute CKA numerator & denominators via cross-covariance
+                                # ||X^T Y||_F^2 = sum over (i,j) of (sum_m X_c[m,i] * Y_c[m,j])^2
+                                xTy = X_c.t() @ Y_c  # (d, d)
+                                xTx = X_c.t() @ X_c  # (d, d)
+                                yTy = Y_c.t() @ Y_c  # (d, d)
+                                hsic_xy = (xTy * xTy).sum()
+                                hsic_xx = (xTx * xTx).sum()
+                                hsic_yy = (yTy * yTy).sum()
+                                cka = hsic_xy / (torch.sqrt(hsic_xx * hsic_yy) + 1e-8)
+                                repr_loss = (1.0 - cka).clamp(min=0.0)
+                    else:
+                        # Original cosine-based repr loss (Stage 1 default)
+                        gl_norm = F.normalize(global_local.float(), dim=-1)
+                        pt_norm = F.normalize(proj_teacher, dim=-1)
+                        cos_sim = (gl_norm * pt_norm).sum(dim=-1)  # (B, N)
+                        pmask = teacher_patch_mask[:, :cos_sim.shape[1]]
+                        if pmask.any():
+                            repr_loss = ((1.0 - cos_sim) * pmask.float()).sum() / pmask.float().sum()
 
                 total_loss = ce_loss + alpha_eff * kd_loss + beta_eff * repr_loss
                 loss_scaled = total_loss / grad_accum
@@ -4280,11 +4825,26 @@ def train_ekalavya(s1_ckpt, cfg=None):
             if use_taid:
                 bt = taid_beta_start + (taid_beta_end - taid_beta_start) * min(1.0, step / max(taid_beta_ramp, 1))
                 taid_suffix = f" | taid_b={bt:.2f}"
+            zar_suffix = ""
+            if use_zar_gjsd and zar_stats:
+                zar_suffix = (f" | zar zpd={zar_stats.get('zar_zpd_frac',0):.0%}"
+                              f" sel={zar_stats.get('zar_final_frac',0):.1%}"
+                              f" A={zar_stats.get('zar_A_mean',0):.2f}"
+                              f" J={zar_stats.get('zar_JSD_mean',0):.3f}"
+                              f" U*={zar_stats.get('zar_U_selected_mean',0):.3f}")
+            rr_suffix = ""
+            if use_rrdsd and rrdsd_stats:
+                rr_suffix = (f" | rr cand={rrdsd_stats.get('rr_cand_frac',0):.0%}"
+                             f" sel={rrdsd_stats.get('rr_sel_frac',0):.1%}"
+                             f" A={rrdsd_stats.get('rr_A_mean',0):.2f}"
+                             f" D={rrdsd_stats.get('rr_D_mean',0):.3f}"
+                             f" U*={rrdsd_stats.get('rr_U_sel',0):.3f}"
+                             f" kl={rrdsd_stats.get('rr_kl_raw',0):.3f}")
             log(f"  step {step:>5d} | CE {running_ce/n:.4f} | KD {running_kd/n:.4f} | "
                 f"Repr {running_repr/n:.4f} | Total {running_total/n:.4f} | BPB {bpb:.3f} | "
                 f"lr {local_lr:.2e} | grad {grad_norm:.2f} | "
                 f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}"
-                f"{taid_suffix}{ug_suffix}")
+                f"{taid_suffix}{ug_suffix}{zar_suffix}{rr_suffix}")
             running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
 
         if step % eval_every == 0:
@@ -4461,7 +5021,7 @@ if __name__ == "__main__":
         with open(args.cache_teachers) as f:
             cache_cfg = json.load(f)
         cache_name = cache_cfg.get("run_name", "teacher_cache")
-        output_path = REPO / "results" / f"teacher_cache_{cache_name}.pt"
+        output_path = REPO / "results" / f"teacher_cache_{cache_name}"
         precompute_teacher_cache(cache_cfg, output_path)
     elif args.verify_cache:
         verify_teacher_cache(args.verify_cache)

@@ -1,0 +1,91 @@
+{
+  "_doc": "RRDSD Round 2 — full Codex R2 spec: multi-teacher competitive routing (SmolLM2+Pythia) + anchor patch-CKA structural loss. Warm-start from RRDSD-lite best.pt (if it survives step 300) or iter5 best.pt otherwise.",
+  "_seed_checkpoint_primary": "results/checkpoints_ekalavya_rrdsd_r1/best.pt",
+  "_seed_checkpoint_fallback": "results/checkpoints_ekalavya_iter5_full_6k/best.pt",
+
+  "max_steps": 1800,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 50,
+
+  "run_name": "ekalavya_rrdsd_r2",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.06,
+  "kd_beta": 0.01,
+  "kd_temperature": 1.0,
+  "kd_ramp_steps": 50,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 50,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 0.0,
+  "kd_peak_beta_mult": 1.0,
+  "kd_final_beta_mult": 0.0,
+  "kd_alpha_decay_points": [[50, 1.0], [700, 1.0], [1400, 0.333], [1800, 0.0]],
+  "kd_beta_decay_points": [[50, 1.0], [700, 1.0], [1000, 0.0]],
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "repr_anchor_only": true,
+
+  "use_rrdsd": true,
+  "rrdsd_t_loss": 0.7,
+  "rrdsd_zpd_q_lo": 0.45,
+  "rrdsd_zpd_q_hi": 0.98,
+  "rrdsd_util_mass": 0.65,
+  "rrdsd_density_min": 0.10,
+  "rrdsd_density_max": 0.20,
+  "rrdsd_multi_teacher": true,
+  "rrdsd_cka_weight": 0.01,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"},
+    {"id": "EleutherAI/pythia-1.4b", "weight": 1.0, "role": "aux"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 200,
+  "unfreeze_phase2_step": 1000,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "100": 1.425,
+    "300": 1.402,
+    "800": 1.392,
+    "1400": 1.386
+  },
+
+  "rolling_save_every": 50,
+  "rolling_save_keep": 5,
+
+  "_notes": {
+    "blocked_on": [
+      "RRDSD-lite r1 step 100+ eval data (decides whether multi-teacher OR CKA is the bigger lever)",
+      "Implementation of rrdsd_multi_teacher branch in train_ekalavya (per-teacher byte-prob collection + argmax routing)",
+      "Implementation of CKA structural loss (reuse existing repr_proj; compute linear CKA on global_local vs projected anchor hidden)"
+    ],
+    "design_source": "results/codex_km_r2_output.md section 8",
+    "mechanism_diffs_from_rrdsd_r1_lite": [
+      "Multi-teacher: SmolLM2 anchor + Pythia aux, competitive argmax_m U_m,t per position, winner's probs used in loss",
+      "CKA: anchor patch-CKA with kd_beta=0.01 (λ_cka), ramp-hold-decay schedule",
+      "aux_frequency: 1 (both teachers every step; cost budget per probe results)"
+    ]
+  }
+}

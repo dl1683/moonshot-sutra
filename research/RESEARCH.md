@@ -14,7 +14,7 @@
 
 ---
 
-## Competitive Landscape (to be expanded by T+L sessions)
+## Competitive Landscape (to be expanded by design sessions)
 
 | Model | Params | Training Data | Key Benchmarks |
 |-------|--------|--------------|----------------|
@@ -737,7 +737,7 @@ Three interventions that prevent outlier formation during training:
 - Phone/tablet: GGUF Q4_K_M or ONNX INT4
 - Extreme edge: BitNet ternary via bitnet.cpp (if we train a ternary variant)
 
-**Open questions for T+L sessions:**
+**Open questions for design sessions:**
 1. At 200M params, is the 2x capacity tax of BitNet ternary worth the inference gains vs. INT4/FP4?
 2. Can DyT + OSP-style training make standard INT4 PTQ reliable enough to skip QAT entirely?
 3. For elastic compute with early exits: should early-exit heads use higher precision than full-depth heads?
@@ -783,7 +783,7 @@ We ran several experiments at 98M scale with a 12-layer dense decoder (d=768, 16
 - **16K custom tokenizer** was consistently the biggest single win.
 - **The model was severely undertrained** — at step 5000 (~82M tokens) it was at only 4% of Chinchilla-optimal (~2B tokens for 98M params).
 
-**These observations inform but do not constrain future architecture decisions.** The next T+L session should treat the architecture as an open question.
+**These observations inform but do not constrain future architecture decisions.** The next design session should treat the architecture as an open question.
 
 ---
 
@@ -1171,7 +1171,7 @@ Compare against:
 9. **Flex-KD finding (2025): final-layer-only matching often beats multi-layer** — start simple, add complexity only if justified.
 10. **Our custom 16K tokenizer creates a vocabulary mismatch** — logit-level distillation requires either (a) teacher fine-tuned on our tokenizer, (b) token-level alignment mapping, or (c) representation-level distillation only. This is a critical implementation detail.
 
-**Open questions for T+L:**
+**Open questions for design:**
 1. **Vocabulary mismatch problem:** Our 16K custom tokenizer vs. teachers' tokenizers (GPT-2 50K, Qwen 152K, etc.). How to align logits across different vocabularies? Options: (a) use a shared tokenizer, (b) learn a vocabulary projection, (c) skip logit KD and use only representation matching, (d) retokenize teacher outputs with our tokenizer.
 2. **Optimal teacher weighting:** Static (hand-tuned alpha per teacher) vs. dynamic (learned per-batch or per-token teacher attention)?
 3. **When to start KD during training:** From step 0, or delay until student has basic competence (step 1K+)?
@@ -1181,7 +1181,7 @@ Compare against:
 
 ### 5.12 Meta-Learning KD: Disagreement-Driven Self-Improving Distillation (2026-03-26)
 
-**Status: THEORETICAL FRAMEWORK — needs Codex evaluation and probe design**
+**Status: THEORETICAL FRAMEWORK — needs review evaluation and probe design**
 
 **Core thesis:** Multi-teacher KD should have ACCELERATING returns (inverted power law), not diminishing returns. Each training round produces not just a better model, but a better understanding of WHAT to learn next and FROM WHOM.
 
@@ -1220,13 +1220,13 @@ If the diagnostic improves faster than the model, learning ACCELERATES.
 - If weighted KD doesn't beat uniform KD, the routing is useless
 - If learning efficiency doesn't accelerate over training, the meta-learning claim is false
 
-**Open questions for Codex:** Full list in `research/SCRATCHPAD.md` under "Meta-Learning KD" section.
+**Open questions for review:** Full list in `research/SCRATCHPAD.md` under "Meta-Learning KD" section.
 
 ---
 
 ## 6. March 2026 Research Survey: Architecture Design Inputs
 
-**Date:** 2026-03-26. Comprehensive web research across 5 areas to feed the next Tesla+Leibniz architecture design session.
+**Date:** 2026-03-26. Comprehensive web research across 5 areas to feed the next design architecture design session.
 
 ---
 
@@ -2040,7 +2040,7 @@ Key takeaways for quantization-native architecture:
 
 8. **32+ layers optimal even at 70-100M scale.** Deep-and-thin with weight sharing is the right structural prior.
 
-**Open questions for T+L session:**
+**Open questions for design session:**
 1. Mamba-3 vs RWKV-7 vs Gated DeltaNet for the non-attention component?
 2. PonderLM-2 style latent pondering vs MoR router-based adaptive depth?
 3. Hymba-style hybrid heads (SSM+attention within layers) vs layer-interleaving?
@@ -2197,19 +2197,19 @@ This addendum records the specific evidence that drove the Round 2 architecture 
   - Requires custom Triton kernels. Implementation complexity: HIGH.
   - Implication: conv branch could evolve toward Mamba-3 style recurrence later. Start with simpler GatedConv for scout.
 
-### T+L Round 4 Architectural Decisions (2026-03-26)
+### design Round 4 Architectural Decisions (2026-03-26)
 
-**Source: `results/tl_round4_output.md` (Codex R4 — authoritative)**
+**Source: `results/tl_round4_output.md` (Design Round 4 — authoritative)**
 
 **Key design pivots from Round 3 → Round 4:**
 
 1. **Depth/width: 14×768 → 24-26×512.** "Depth should dominate width." Falcon-H1, Hymba, and local 12×512 probe all point to depth wins. 24×512 for promotion gate, 26×512 for full scout. Keeps proven width from 42M probes.
 
-2. **Conv kernel: k=64 → k=16 (pending microprobe).** Not k=8 as pre-R4 proposed — Codex leans k=16 as default but requests k=4/k=16/k=64 sweep. Rationale: sparse inter-layer probe used k=64 to compensate for infrequent mixing; intra-layer blocks can use shorter kernels since local mixing happens every layer.
+2. **Conv kernel: k=64 → k=16 (pending microprobe).** Not k=8 as pre-R4 proposed — review leans k=16 as default but requests k=4/k=16/k=64 sweep. Rationale: sparse inter-layer probe used k=64 to compensate for infrequent mixing; intra-layer blocks can use shorter kernels since local mixing happens every layer.
 
-3. **Branch ratio: 2:3 → 1:1 (d_attn=256, d_conv=256).** Major pivot from pre-R4 proposal. Codex challenge #6: pure conv losing "argues for more attention while the branch is only GatedConv." 1:1 for GatedConv scout; revisit conv-heavy only after a stronger SSM branch exists. Pending microprobe confirmation.
+3. **Branch ratio: 2:3 → 1:1 (d_attn=256, d_conv=256).** Major pivot from pre-R4 proposal. review challenge #6: pure conv losing "argues for more attention while the branch is only GatedConv." 1:1 for GatedConv scout; revisit conv-heavy only after a stronger SSM branch exists. Pending microprobe confirmation.
 
-4. **Fusion: concat-then-project confirmed.** Branch scales ga=gc=1.0 init (Codex proposes equal init, unlike pre-R4's sqrt(d_a/d_c)). Microprobe to compare: mean 1:1 vs scaled-concat 1:1 vs scaled-concat 2:3.
+4. **Fusion: concat-then-project confirmed.** Branch scales ga=gc=1.0 init (review proposes equal init, unlike pre-R4's sqrt(d_a/d_c)). Microprobe to compare: mean 1:1 vs scaled-concat 1:1 vs scaled-concat 2:3.
 
 5. **NorMuon replaces Muon lr=0.005 in optimizer probe.** Same as pre-R4. Per-neuron normalization targets observed late-stage spike failure mode.
 
@@ -2279,7 +2279,7 @@ Also relevant: **tokenkit** (github.com/bminixhofer/tokenkit) provides tools for
 
 ---
 
-### T+L Round 5 Findings (2026-03-26)
+### design Round 5 Findings (2026-03-26)
 
 #### R4 Microprobe Results (Complete)
 
@@ -2351,7 +2351,7 @@ BPT: +0.11 (passes ≥0.10 criterion). Stability: FAILS (kurtosis 2.4x worse).
 
 **Root cause hypothesis:** Per-channel β vectors (dim=512 each) reintroduce unbounded scale after normalization. Compounds across 24 layers. Evidence: the 42M P-block (fixed 0.5 mean, no β) was stable (kurtosis 0.82).
 
-**R6 fix strategy (Codex-designed):**
+**R6 fix strategy (review-designed):**
 - **R6-F (primary):** Remove β entirely, use SS-RMSNorm for branches, keep projected branches + 0.5*(a+c) mean fusion
 - **R6-S (backup):** Replace β with softmax mixing (α_a + α_c = 1 per channel)
 - Both include per-layer telemetry for branch RMS, norm scales, fused RMS
@@ -2556,9 +2556,9 @@ Key theoretical results for block scheduling in hybrid architectures:
 6. **Mamba-3 BCNorm** (ICLR 2026): RMSNorm after B,C projections stabilizes SSM training, analogous to QK-norm in transformers.
 7. **Falcon-H1 dampening multipliers**: 35 fine-grained muP groups with non-learnable dampening tensors for activation control.
 
-### 6.4.21 Codex Architecture Theorist Review: Meta-Learning KD Framework (2026-03-26)
+### 6.4.21 review Architecture Theorist Review: Meta-Learning KD Framework (2026-03-26)
 
-**Source:** Codex GPT-o4-mini-high, Architecture Theorist persona, reviewing SCRATCHPAD.md meta-learning framework.
+**Source:** review GPT-o4-mini-high, Architecture Theorist persona, reviewing SCRATCHPAD.md meta-learning framework.
 
 **Key verdicts on the meta-learning KD framework from SCRATCHPAD.md:**
 
@@ -2580,9 +2580,9 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Decision:** Do NOT implement full category theory or 5-way ontology first. Start with routed KD + 4-bucket audit + exit-depth tracking. Kill the framework if it doesn't beat static multi_3family at equal teacher FLOPs.
 
-### 6.4.22 Codex Correctness Engineer Audit: KD Training Code (2026-03-26)
+### 6.4.22 review Correctness Engineer Audit: KD Training Code (2026-03-26)
 
-**Source:** Codex GPT-o4-mini-high, Correctness Engineer persona, auditing dense_baseline.py KD infrastructure.
+**Source:** review GPT-o4-mini-high, Correctness Engineer persona, auditing dense_baseline.py KD infrastructure.
 
 **Bugs found and status:**
 - **HIGH: Multi-teacher unfair loss scaling** — alpha applied per-teacher, so 2-teacher arm gets 2x total KD weight. **FIXED: divide alpha by n_teachers per surface.**
@@ -2596,9 +2596,9 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Assumption note:** HF tokenizer offset_mapping returns character offsets, not byte offsets. The "byte-span bridge" is technically a character-span bridge on Unicode text. Functionally equivalent for most content.
 
-### 6.4.23 Codex Strategic Review: KD Approach and Next Steps (2026-03-26)
+### 6.4.23 review Strategic Review: KD Approach and Next Steps (2026-03-26)
 
-**Source:** Codex GPT-o4-mini-high, comprehensive strategic review of all KD hypotheses and decisions.
+**Source:** review GPT-o4-mini-high, comprehensive strategic review of all KD hypotheses and decisions.
 
 **Major decisions:**
 
@@ -2615,9 +2615,9 @@ Key theoretical results for block scheduling in hybrid architectures:
 **Meta-process corrections:**
 - Architecture search too long: AGREED.
 - RMFD before signal validation: AGREED.
-- "Fundamentals produced understanding not novelty": Codex correction — novelty was wrong KPI. The real mistake was letting theory pull implementation order ahead of signal validation.
+- "Fundamentals produced understanding not novelty": review correction — novelty was wrong KPI. The real mistake was letting theory pull implementation order ahead of signal validation.
 
-**Codex-mandated execution plan:**
+**review-mandated execution plan:**
 1. Let arm 2 finish to 3000
 2. Kill arm 3
 3. Reconcile probe-state inconsistency in ledger
@@ -2628,9 +2628,9 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Process rule:** One teacher, one new surface, one clean codepath → short ablation → 15K gate → only then: teacher-size ablation → fair static multi-teacher → routing.
 
-### 6.4.24 Codex Correctness Engineer Review: Cross-Tokenizer Logit KD (2026-03-26)
+### 6.4.24 review Correctness Engineer Review: Cross-Tokenizer Logit KD (2026-03-26)
 
-**Source:** Codex GPT-o4-mini, Correctness Engineer persona, read-only review of `compute_cross_tok_logit_kd()` and integration in `train_kd()`.
+**Source:** review GPT-o4-mini, Correctness Engineer persona, read-only review of `compute_cross_tok_logit_kd()` and integration in `train_kd()`.
 
 **3 HIGH issues found (ALL FIXED):**
 1. **Causal alignment bug:** Nearest byte-end alignment could pair student position to a LATER teacher position, leaking future text. Fix: Changed from `abs()` distance to causal `signed_diff >= 0` with argmin — only aligns to teacher positions whose char-end <= student char-end.
@@ -2646,7 +2646,7 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Gradient flow:** Confirmed correct — student path stays in-graph, teacher under `no_grad()`.
 
-**Status:** All HIGH and MEDIUM fixes applied. **Re-review PASSED (2026-03-26):** Codex Correctness Engineer confirmed all 6 fixes correct, no new regressions. Tier 1 loop CLEAN.
+**Status:** All HIGH and MEDIUM fixes applied. **Re-review PASSED (2026-03-26):** review Correctness Engineer confirmed all 6 fixes correct, no new regressions. Tier 1 loop CLEAN.
 
 ### 6.4.25 KD First Probe Final Results: Rep KD = Head-Start Only (2026-03-26)
 
@@ -2677,9 +2677,9 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 **Implication for logit KD:** Logit KD provides TOKEN-LEVEL PREDICTION supervision (not global structure). Should be harder to saturate because the student must match the teacher's output distribution, not just its representation geometry. The 4-arm surface ablation (NOW RUNNING) tests whether logit KD provides persistent vs transient advantage.
 
-### 6.4.26 Codex Scaling Expert + Architecture Theorist: KD Probe Interpretation (2026-03-26)
+### 6.4.26 review Scaling Expert + Architecture Theorist: KD Probe Interpretation (2026-03-26)
 
-**Source:** Codex GPT-5.4, Scaling Expert + Architecture Theorist combined persona.
+**Source:** the senior review, Scaling Expert + Architecture Theorist combined persona.
 
 **Key findings:**
 
@@ -2695,11 +2695,11 @@ Key theoretical results for block scheduling in hybrid architectures:
 
 6. **90M is below the common KD comfort zone.** Ratio 1:19 (90M/1.7B). Literature success at 1:1.5 to 1:9. Recommendation: if logit KD weak at 15K, scale student to 166-200M rather than scaling teacher.
 
-**Codex verdict:** "Rep KD is acting like a fast geometric regularizer, not a durable teacher. Logit KD is the right next surface, T=2.0/K=64 is a good first shot, 15K is the real persistence gate, and 90M is usable for scouting but probably below the size where a 1.7B teacher's gains become durable."
+**review verdict:** "Rep KD is acting like a fast geometric regularizer, not a durable teacher. Logit KD is the right next surface, T=2.0/K=64 is a good first shot, 15K is the real persistence gate, and 90M is usable for scouting but probably below the size where a 1.7B teacher's gains become durable."
 
-### 6.4.27 Codex Architecture Theorist: KD Probe Deep Interpretation (2026-03-26)
+### 6.4.27 review Architecture Theorist: KD Probe Deep Interpretation (2026-03-26)
 
-**Source:** Codex GPT-5.4, Architecture Theorist persona (separate session from §6.4.26).
+**Source:** the senior review, Architecture Theorist persona (separate session from §6.4.26).
 
 **Unique insights not captured in §6.4.26:**
 
@@ -2899,9 +2899,9 @@ N(t) = NTP gradient signal strength (varies with training phase)
 3. **Temporal separation > spatial combination.** For multi-surface KD (future RMFD), use one surface at a time with explicit switching, not simultaneous application.
 4. **Kurtosis as instability detector.** Combined-surface kurtosis (12.4) was 2.5× control — a clear early warning of basin instability. Monitor kurtosis to detect destructive interference before BPT degrades.
 
-### 6.4.31 Codex Strategic Review: 15K Gate Design (2026-03-26)
+### 6.4.31 review Strategic Review: 15K Gate Design (2026-03-26)
 
-**Codex role:** Scaling Expert + Architecture Theorist. Reviewed full ablation evidence and proposed 15K gate design.
+**review role:** Scaling Expert + Architecture Theorist. Reviewed full ablation evidence and proposed 15K gate design.
 
 **Decision 1:** Test mechanism fixes (α schedule + τ schedule + confidence gating), NOT teacher swap. Keep Qwen3-1.7B. Answer one clean question: can repaired token-level KD persist at 90M?
 
@@ -2917,9 +2917,9 @@ N(t) = NTP gradient signal strength (varies with training phase)
 
 **Decision 5:** Stop rules — by 6K: non-positive vs control; by 10K: ΔBPT ≤ -0.02; by 15K: ΔBPT ≤ -0.015 + lm-eval lift. Abort if kurtosis > 2× control or max_act > 1.15× control. If fail → scale to 166M (d=768, 24L, 12H, 1:8.8 ratio).
 
-### 6.4.32 Codex Correctness Engineer Audit: 15K Gate Mechanisms (2026-03-26)
+### 6.4.32 review Correctness Engineer Audit: 15K Gate Mechanisms (2026-03-26)
 
-**Codex role:** Correctness Engineer (Tier 1). Reviewed alpha schedule, tau schedule, confidence gating code. **Verdict: CLEAN (zero HIGH, two MEDIUM).**
+**review role:** Correctness Engineer (Tier 1). Reviewed alpha schedule, tau schedule, confidence gating code. **Verdict: CLEAN (zero HIGH, two MEDIUM).**
 
 **MEDIUM-1:** Off-by-one at step=1 — alpha_frac=0.1674 vs desired 0.167 (0.04%). Negligible; all other boundaries exact. Not fixing.
 
@@ -3055,7 +3055,7 @@ N(t) = NTP gradient signal strength (varies with training phase)
 - **The failure modes predict our routing buckets.** Consensus = all teachers agree (high accuracy, low diversity → easy knowledge). Specialist = one teacher disagrees (high diversity, maybe high accuracy → valuable knowledge). Uncertain = all teachers disagree with each other (may be high diversity but LOW accuracy → dangerous, use cautiously).
 - **"Negative diversity" predicts when routing MUST default to single teacher.** If teachers disagree and averaging their signals increases student error, routing to the single most confident teacher is better than combining.
 
-#### 7.4 Synthesis: Novel Mechanism Candidates for Codex Review
+#### 7.4 Synthesis: Novel Mechanism Candidates for review Review
 
 From combining the three fundamental domains, several novel mechanisms emerge that don't exist in any published KD paper:
 
@@ -3069,7 +3069,7 @@ From combining the three fundamental domains, several novel mechanisms emerge th
 
 5. **Multi-marginal transport loss**: Replace the sum of pairwise KD losses with a multi-marginal OT loss that finds the joint-optimal transport from all teachers to student simultaneously. Captures cross-teacher dependencies that pairwise losses miss.
 
-**Status:** These are DERIVED mechanisms from fundamentals. NOT yet validated. Requires Codex evaluation for feasibility at our scale (90M student, M=16 spans, 3 teachers) before any implementation.
+**Status:** These are DERIVED mechanisms from fundamentals. NOT yet validated. Requires review evaluation for feasibility at our scale (90M student, M=16 spans, 3 teachers) before any implementation.
 
 #### 7.5 Rate-Distortion Theory & Information Bottleneck — The Fundamental Limits of Knowledge Compression
 
@@ -3101,9 +3101,9 @@ From combining the three fundamental domains, several novel mechanisms emerge th
 
 - **Capacity saturation predicts routing kill point.** When the student's rate R reaches the fundamental R(D) limit, no additional teacher information helps — the bottleneck is student capacity, not teacher signal. This predicts WHEN to stop adding teachers and start increasing student capacity instead.
 
-#### 7.6 Codex Architecture Theorist Evaluation: Fundamentals-Derived Mechanisms (2026-03-26)
+#### 7.6 review Architecture Theorist Evaluation: Fundamentals-Derived Mechanisms (2026-03-26)
 
-**Source:** Codex GPT-o4-mini-high, Architecture Theorist persona, evaluating §7.4 novel mechanisms.
+**Source:** review GPT-o4-mini-high, Architecture Theorist persona, evaluating §7.4 novel mechanisms.
 
 **Compute context:** Student training ~13.8 TFLOPs/step, current KD ~3.6 GFLOPs/step, step time ~4-6s with 3 online teachers. Any mechanism on 16×16 span geometry is cheap; anything needing Fisher/Jacobian is not.
 
@@ -3132,15 +3132,15 @@ From combining the three fundamental domains, several novel mechanisms emerge th
 
 **Implementation order:** (1) Ambiguity-aware scheduling on top of 4 buckets → must beat static multi_3family at equal teacher FLOPs. (2) GW routing for specialist state-surface with stop-grad routing. (3) WB consensus only if bucket is large enough and simple averaging is measurably lossy. (4) Defer Fisher routing. (5) Kill full MMOT as mainline.
 
-### 8. Codex Tier 2 Review: Post-6K Stop (2026-03-27)
+### 8. review Tier 2 Review: Post-6K Stop (2026-03-27)
 
-**Source:** Codex GPT-o4-mini-high, panel of 3 (Scaling Expert, Architecture Theorist, Competitive Analyst).
+**Source:** review GPT-o4-mini-high, panel of 3 (Scaling Expert, Architecture Theorist, Competitive Analyst).
 
 **Context:** 15K benchmark gate at 90M. KD arm (logit-only, inverted-U alpha, rising tau 1.5→3.0, Qwen3-1.7B teacher at 1:19 ratio) stopped at step 6K per pre-registered stop rule (gap +0.195, kurtosis spike 214.1). Control arm completed 15K at BPT 4.082.
 
 **Verdict:** 6K stop was correct. "KD is dead" is wrong — mechanism was partially validated (4K-5K recovery at 4.7x control rate) but ratio-blocked. Gap peaked at 3K (+0.273), closed to +0.174 at 5K, then regressed at 6K (kurtosis spike).
 
-#### 8.1 Scale-Up Decisions (Codex-Approved)
+#### 8.1 Scale-Up Decisions (review-Approved)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -3211,7 +3211,7 @@ ARC-E 38.5% with 90M params within 1.5pp of Pythia-160M (40.0%) using 1200x less
 
 ## 9. Multi-Teacher KD Methods: Implementation Deep-Dive (2023-2026)
 
-**Purpose:** Exact loss formulas, routing mechanics, teacher-disagreement handling, and cross-architecture compatibility for the 6 methods most relevant to Ekalavya. This is the technical reference for T+L design sessions.
+**Purpose:** Exact loss formulas, routing mechanics, teacher-disagreement handling, and cross-architecture compatibility for the 6 methods most relevant to Ekalavya. This is the technical reference for design design sessions.
 
 ---
 
@@ -3547,7 +3547,7 @@ Subject to `w_m >= 0`, `sum w_m = 1`. This finds the minimum-norm direction in t
 
 **Cross-architecture:** Works for any teacher that provides gradients through its KD loss (logit or feature). Not inherently cross-tokenizer.
 
-**Ekalavya relevance:** DIRECTLY applicable to our multi-teacher setup. When Qwen3, LFM2.5, and EmbeddingGemma produce conflicting gradients, MGDA finds the compromise direction. CRITICAL INSIGHT: This is complementary to routing — routing selects WHICH teachers supervise each sample, MGDA resolves conflicts WHEN multiple teachers are active on the same sample. AE-KD handles the "Consensus" bucket where all teachers contribute. Alternative: PCGrad (from Codex review §6.4.21) is simpler — just project conflicting gradients to be orthogonal.
+**Ekalavya relevance:** DIRECTLY applicable to our multi-teacher setup. When Qwen3, LFM2.5, and EmbeddingGemma produce conflicting gradients, MGDA finds the compromise direction. CRITICAL INSIGHT: This is complementary to routing — routing selects WHICH teachers supervise each sample, MGDA resolves conflicts WHEN multiple teachers are active on the same sample. AE-KD handles the "Consensus" bucket where all teachers contribute. Alternative: PCGrad (from review review §6.4.21) is simpler — just project conflicting gradients to be orthogonal.
 
 ---
 
@@ -3688,7 +3688,7 @@ Where `C = cover_{M'->M}(e_{M'})` — the set of valid encodings in `V_M` that d
 | CDM | NO | YES | YES | N/A | Low | MEDIUM — coverage improvement over ETA |
 | BPE Recursive | NO | YES | YES | N/A | HIGH (0.5s/tok) | LOW — offline only |
 
-**Recommended Ekalavya stack (to be validated by T+L):**
+**Recommended Ekalavya stack (to be validated by design):**
 1. **Cross-tokenizer alignment:** DSKD projectors with CDM-enhanced coverage
 2. **Divergence:** DistiLLM's skew reverse KL (D_SRKL, alpha~0.1-0.3) instead of forward KL
 3. **Capacity gap:** TAID-style interpolation schedule (start near student, shift toward teacher)
@@ -3734,9 +3734,9 @@ All three are independently implementable and may compose.
 
 ---
 
-### 10. Ekalavya T+L Design Session Results
+### 10. Ekalavya design Design Session Results
 
-#### 10.1 T+L R8 — Multi-Teacher Validation + Schedule Redesign (2026-03-30)
+#### 10.1 design R8 — Multi-Teacher Validation + Schedule Redesign (2026-03-30)
 
 **Key finding: Direct-sum multi-teacher (Qwen logit + Gemma semantic) is a valid composition rule, but the TAID schedule is the bottleneck.**
 
@@ -3759,7 +3759,7 @@ All three are independently implementable and may compose.
 - LFM↔Gemma cosine: -0.104 (CONFLICT — justified dropping LFM)
 - Qlogit↔Gemma cosine: +0.012 (no conflict)
 
-**Codex R8 decisions:**
+**Design Round 8 decisions:**
 1. WSD-alpha schedule is #1 priority — literature shows +8.0% vs TAID's +1.1% (Peng et al. ACL 2025)
 2. Experiment sequence: WSD-alpha → matched qlogit-only → shuffled Gemma → 6K extension
 3. Kill criteria: BPT > 3.65 at step 1500, promote if BPT ≤ 3.58
@@ -3827,9 +3827,9 @@ Training dynamics showed Gemma prevents the dead zone at step 1500 (gap 0.042) b
 
 **Open question for R9:** Does a 9x+ teacher (Qwen3-1.7B) change the picture, or is pre-training KD at 197M fundamentally limited?
 
-#### 10.5 T+L R9 — Strategic Pivot: Learning Mechanism is Broken (2026-03-31)
+#### 10.5 design R9 — Strategic Pivot: Learning Mechanism is Broken (2026-03-31)
 
-**Codex R9 verdict:** "Dense online forward-KL on random pretraining windows is the wrong mechanism for Ekalavya at 197M."
+**Design Round 9 verdict:** "Dense online forward-KL on random pretraining windows is the wrong mechanism for Ekalavya at 197M."
 
 **Root cause (strongest diagnosis): Target-density mismatch.** The teacher's advantage over the student is SPARSE — concentrated in hard tokens, benchmark-like contexts, uncertain positions. Dense KD on random FineWeb windows washes this out. The teacher knows more, but we're asking the wrong questions.
 
@@ -3840,7 +3840,7 @@ Training dynamics showed Gemma prevents the dead zone at step 1500 (gap 0.042) b
 4. Cross-tokenizer degradation on logit transport (medium)
 5. 3K too short — weak, TAID 6K already disproved this
 
-**The better mechanism (Codex R9):**
+**The better mechanism (Design Round 9):**
 - Teacher-guided CURRICULUM (teacher selects data, not provides loss)
 - SPARSE benchmark-relevant supervision (top 10-20% student-uncertain tokens only)
 - Dedicated KNOWLEDGE PORTS (adapter/sidecar, not whole-trunk overwriting)
@@ -3945,11 +3945,11 @@ First empirical evidence for the target-density mismatch hypothesis. Scored 10K 
 - The ONLY remaining levers are: (a) longer runs (6K-15K steps), (b) from-scratch KD (no warm-start), or (c) offline KD (pre-computed teacher logits, no runtime overhead)
 - The q17_rkl_hard10 recovery signal (0.077 BPT) suggests the 1.7B teacher HAS valuable structure — we just can't extract it without the overhead penalty.
 
-#### 10.10 T+L R10 — Strategic Pivot: Offline Sparse Replay (2026-03-31)
+#### 10.10 design R10 — Strategic Pivot: Offline Sparse Replay (2026-03-31)
 
-**Codex R10 verdict:** "Dense online KD from the 60K warm start is dead. Ekalavya is not dead. The next move is not 'run longer online.' The next move is 'change the transport': offline, sparse, asymmetric, mixed."
+**Design Round 10 verdict:** "Dense online KD from the 60K warm start is dead. Ekalavya is not dead. The next move is not 'run longer online.' The next move is 'change the transport': offline, sparse, asymmetric, mixed."
 
-**Key challenges to our interpretations (Codex):**
+**Key challenges to our interpretations (review):**
 1. "The problem is overhead, not information" — maybe, but 0.077 recovery could be regularization + delayed CE. Offline is the definitive test.
 2. "WSD-alpha almost wins" — +0.005 is inside single-seed noise. Stop treating as real.
 3. "Bigger teacher is better" — in dense form, bigger teacher created more novelty AND more damage.
@@ -3969,9 +3969,9 @@ From-scratch 20K: Qwen-0.6B scaffolds early (CE + forward KL), Qwen-1.7B adds re
 
 Offline sparse replay: pre-computed Q1.7B logits for 200 highest-gap windows, trained 6K steps with 85% random CE + 15% cached replay. **KILLED at step 3000**: BPT=3.6474 vs CE-60K baseline 3.573. Gap of +0.074 and *widening*. Even with overhead eliminated, teacher signal couldn't escape the warm-start basin.
 
-#### 10.12 T+L R11 — Ekalavya-RKP: Routed Knowledge Ports (2026-03-31)
+#### 10.12 design R11 — Ekalavya-RKP: Routed Knowledge Ports (2026-03-31)
 
-**Root cause diagnosis (Codex R11):** "KD fails because the project is trying to push a sparse, capability-specific teacher advantage through a weak, lossy, whole-trunk logit channel on mostly irrelevant windows. The student is not at its global capacity frontier. It is at the frontier of what small-alpha, dense, random-window, logit-only continuation can do."
+**Root cause diagnosis (Design Round 11):** "KD fails because the project is trying to push a sparse, capability-specific teacher advantage through a weak, lossy, whole-trunk logit channel on mostly irrelevant windows. The student is not at its global capacity frontier. It is at the frontier of what small-alpha, dense, random-window, logit-only continuation can do."
 
 **Design: Ekalavya-RKP (Routed Knowledge Ports)**
 1. Teacher-specific low-rank ports at layers 8/16/24 (0-indexed: 7/15/23). Formula: h_{l+1} = f_l(h_l) + A_{l,m}(h_l), with A = W_up * sigma(W_down * h), rank=64. Zero-init so starts as identity.
@@ -4028,7 +4028,7 @@ Literature (Gemma 2 +7.4pp, ACL 2025 +8.0pp) shows from-scratch KD produces mass
 
 **What this does NOT kill:** Hidden-state KD (vocabulary-independent), same-tokenizer KD (proven in literature), multi-source learning via non-logit channels.
 
-**Next:** T+L R13 pivots to hidden-state representation matching or other vocabulary-independent knowledge transfer.
+**Next:** design R13 pivots to hidden-state representation matching or other vocabulary-independent knowledge transfer.
 
 ## 10. Data-Centric Knowledge Transfer: The Fallback Plan (April 2026)
 
@@ -4113,7 +4113,7 @@ At 3K from scratch, CKA is ALREADY 0.91+ at all layers. At 60K, L23 has DIVERGED
 - Teacher-side vocab overlap: 14822/151669 = 9.8%
 - **CONCLUSION: Cross-tokenizer logit KD is formally ill-posed for all Qwen teachers**
 
-### 11.3 Codex Mathematical Analysis (T+L Root Cause Session)
+### 11.3 review Mathematical Analysis (design Root Cause Session)
 
 **Root cause is mathematical, not hyperparametric.**
 
@@ -4170,7 +4170,7 @@ At 3K from scratch, CKA is ALREADY 0.91+ at all layers. At 60K, L23 has DIVERGED
 
 **Hypothesis:** VICReg's kurtosis explosion (0.5 → 10.7) during WSD cooldown caused performance degradation. Decoupling var/cov with independent decay schedules should fix kurtosis and close the R13 gap.
 
-**Design (Codex):** var_w=0.0015 decays [2000,2400]→0. cov_w=0.0035 decays [2400,3000]→0.001.
+**Design (review):** var_w=0.0015 decays [2000,2400]→0. cov_w=0.0035 decays [2400,3000]→0.001.
 
 | Step | Decoupled BPT | Scalar VICReg BPT | Control BPT | R13 BPT |
 |------|---------------|-------------------|-------------|---------|
@@ -4190,7 +4190,7 @@ Kurtosis at 3000: 1.5 (decoupled) vs 10.7 (scalar) vs 0.8 (control) vs 0.7 (R13)
 
 **Hypothesis:** If VICReg (anti-collapse regularization) and InfoNCE (teacher alignment) act on orthogonal aspects of representation quality, their effects should be additive.
 
-**Design:** R13 config (InfoNCE with alpha ramp/hold/decay, byte-span-pooled) + constant scalar VICReg (spectral_reg=0.005, same weight proven in Track 1). VICReg runs inside autocast(enabled=False) for FP32 precision. Codex correctness audit: CLEAN.
+**Design:** R13 config (InfoNCE with alpha ramp/hold/decay, byte-span-pooled) + constant scalar VICReg (spectral_reg=0.005, same weight proven in Track 1). VICReg runs inside autocast(enabled=False) for FP32 precision. review correctness audit: CLEAN.
 
 | Step | Option A | R13 | Scalar VICReg | CE Control |
 |------|----------|-----|---------------|------------|
@@ -4203,7 +4203,7 @@ Kurtosis at 3000: 1.5 (decoupled) vs 10.7 (scalar) vs 0.8 (control) vs 0.7 (R13)
 
 Kurtosis at 3000: 23.0 (Option A) vs 10.7 (scalar VICReg) vs 0.7 (R13) vs ~1.0 (control).
 
-**Result: SUCCESS — effects are additive.** BPT=4.845 beats R13 (4.858) by 0.013. Total improvement over CE control: -0.125 BPT. The Codex decision tree criterion (BPT<=4.86) is met.
+**Result: SUCCESS — effects are additive.** BPT=4.845 beats R13 (4.858) by 0.013. Total improvement over CE control: -0.125 BPT. The review decision tree criterion (BPT<=4.86) is met.
 
 **Decomposition of the 0.125 BPT improvement:**
 - ~0.056 from VICReg alone (anti-collapse regularization)
@@ -4219,7 +4219,7 @@ Kurtosis at 3000: 23.0 (Option A) vs 10.7 (scalar VICReg) vs 0.7 (R13) vs ~1.0 (
 
 ### 11.5 STRATEGIC RESET: Sutra-Dyad Architecture (2026-04-01)
 
-**Source:** Codex T+L design session (full-auto, GPT-o4-mini-high). Prompted with: "Everything we're doing is too incremental. Design a from-scratch reset."
+**Source:** review design design session (full-auto, GPT-o4-mini-high). Prompted with: "Everything we're doing is too incremental. Design a from-scratch reset."
 
 **Core thesis:** "Language is not a sequence of tokens. It is a variable-rate compression tree over raw bytes."
 
@@ -4246,7 +4246,7 @@ Kurtosis at 3000: 23.0 (Option A) vs 10.7 (scalar VICReg) vs 0.7 (R13) vs ~1.0 (
 - Fixed patch_size=6, byte vocab=256
 - VRAM: 13.1GB stable, 11GB headroom
 
-### 11.6 Codex Correctness Engineer Review: Sutra-Dyad Byte Model (2026-04-01)
+### 11.6 review Correctness Engineer Review: Sutra-Dyad Byte Model (2026-04-01)
 
 **Scope:** `code/sutra_dyad.py` and `ByteShardedDataset` in `code/data_loader.py`.
 
@@ -4276,7 +4276,7 @@ Kurtosis at 3000: 23.0 (Option A) vs 10.7 (scalar VICReg) vs 0.7 (R13) vs ~1.0 (
 
 - `ByteShardedDataset` uses estimated byte counts from file size (`code/data_loader.py:371-390`) and never back-fills the true decoded byte length into metadata. This does not create overlap by itself, but it can skew sampling weights and make the effective held-out size differ from the intended one when the bytes-per-token ratio differs from the `4.5` estimate.
 
-### 11.9 Codex Performance Engineer Review: Sutra-Dyad Byte Model (2026-04-01)
+### 11.9 review Performance Engineer Review: Sutra-Dyad Byte Model (2026-04-01)
 
 **Scope:** `code/sutra_dyad.py` and `ByteShardedDataset` in `code/data_loader.py`.
 
@@ -4413,7 +4413,7 @@ batch=64, grad_accum=2 (eff=128), seq=1536 bytes, LR=3e-4, WSD (70/30), warmup=3
 
 Dense baseline equivalent: 3.65 BPT = **0.852 BPB** (target)
 
-### Codex Triple Review (Scaling + Competitive + Theorist)
+### review Triple Review (Scaling + Competitive + Theorist)
 
 **Scaling Expert projections (unchanged architecture):**
 - 10K steps: 1.7-1.9 BPB
@@ -4443,9 +4443,9 @@ Dense baseline equivalent: 3.65 BPT = **0.852 BPB** (target)
 
 ---
 
-## T+L Design Session: Stage 1 Architecture (2026-04-01)
+## design Design Session: Stage 1 Architecture (2026-04-01)
 
-**Source:** Codex GPT-5.4, xhigh reasoning. Tesla+Leibniz design session for Sutra-Dyad Stage 1.
+**Source:** the senior review, xhigh reasoning. design design session for Sutra-Dyad Stage 1.
 
 ### Architecture: Sutra-Dyad-S1-194M
 
@@ -4508,7 +4508,7 @@ Teacher projection: z_j^teacher = Σ_i ω_ij * h_i^teacher
 
 **Confidence: 7/10** — high on local rebalance + global warm-start, medium on bypass and patcher stability
 
-### 11.10 Tesla+Leibniz Design Session: Sutra-Dyad Stage 1 (2026-04-01)
+### 11.10 design Design Session: Sutra-Dyad Stage 1 (2026-04-01)
 
 **Decision:** Stage 1 should be a warm-started evolution, not a reset. Keep the trained 12-layer global transformer intact, make patching adaptive under a hard global-token budget, and spend the entire remaining parameter budget on byte-side modeling and retrieval.
 
@@ -4709,7 +4709,7 @@ Stage 2 then adds small teacher-specific projection heads on top of `patch_state
 
 ### 11.11 Stage 1 Phase A+B Training Results (2026-04-12)
 
-**Implementation note:** The actual Stage 1 implementation is a simplified version of the T+L spec above. We implemented the fixed-patch local upgrade (Phase A) and partial global unfreeze (Phase B) first, deferring adaptive patching to Phase C. This lets us isolate the contribution of local capacity rebalancing before adding the patcher complexity.
+**Implementation note:** The actual Stage 1 implementation is a simplified version of the design spec above. We implemented the fixed-patch local upgrade (Phase A) and partial global unfreeze (Phase B) first, deferring adaptive patching to Phase C. This lets us isolate the contribution of local capacity rebalancing before adding the patcher complexity.
 
 **Actual Stage 1 architecture (SutraDyadS1, 196.7M):**
 - Global trunk: 12 layers, d=1024, 16h SwiGLU = 151M (warm-started from Stage 0)
@@ -4756,20 +4756,20 @@ Stage 2 then adds small teacher-specific projection heads on top of `patch_state
 - ✅ After 1500 Stage 1 steps: improvement vs Stage 0 = 0.128 BPB (threshold: ≥0.10) — PASSED
 - 🔄 After 3000 steps: need ≥0.30 BPB improvement (current: 0.128 at step 1500, trending favorably)
 
-**Codex adversarial audit answers (2026-04-12, GPT-5.4 T+L session):**
+**review adversarial audit answers (2026-04-12, GPT-5.4 design session):**
 
 1. **Geometry vs scale?** — Needs ablation probes (written, ready to run: `--ablate`). The 2.1x trainable param increase is a confound. Control: zero out cross-attn and bypass → if BPB regresses significantly, architecture contributes; if not, it's just more parameters.
 2. **Cross-attention utility?** — Ablation probe ready. Zero global KV → measure BPB hit.
 3. **Bypass utility?** — Ablation probe ready. Zero bypass → measure BPB hit.
 4. **How good is ~1.5 BPB?** — Published baselines (PG-19): MambaByte-353M = 0.930, MegaByte-1B = 1.000, ByteTransformer-320M = 1.057. At 150-200M, realistic target = 1.05-1.15 BPB. Our 1.499 at 3K steps is above target but improving, and on different (mixed-domain) data.
-5. **Ekalavya hooks for Stage 2?** — Codex recommends:
+5. **Ekalavya hooks for Stage 2?** — review recommends:
    - Named teacher ports (UTI): per-family projection heads attached to patch_states and byte_residuals
    - Offline difficulty reweighting (MiniPLM): pre-compute teacher-reference NLL gap per document
    - Teacher rotation curriculum: one family per batch, delayed activation, diversity floors
    - Hard-document sparse logit bank: top-K logits for hardest 1-5% of documents only
-   - Confidence scores from Codex: O1=3/10, O2=6/10, O3=4/10, **O4=1/10**, O5=5/10. O4 is the critical gap.
+   - Confidence scores from review: O1=3/10, O2=6/10, O3=4/10, **O4=1/10**, O5=5/10. O4 is the critical gap.
 
-**Codex adversarial audit #2: WSD regression analysis (2026-04-12, GPT-5.4 read-only):**
+**review adversarial audit #2: WSD regression analysis (2026-04-12, GPT-5.4 read-only):**
 
 Key findings on the Phase B training trajectory:
 
@@ -4831,9 +4831,9 @@ Best: **BPB 1.430** at step 4500. Total Stage 0→1 gain: **0.295 BPB** (1.725 �
 
 **Generation quality (step 4500):** Grammatically passable English, diverse vocabulary, but semantically incoherent ("word salad"). Cannot follow topic, cannot generate code. Expected for 197M byte-level at 5K steps. Ekalavya KD specifically targets this coherence gap.
 
-### 11.12 Ekalavya Phase C Design — Codex-Validated (2026-04-12)
+### 11.12 Ekalavya Phase C Design — review-Validated (2026-04-12)
 
-**Source:** 3 independent Codex T+L sessions converged on this design. Validated by empirical teacher probes.
+**Source:** 3 independent review design sessions converged on this design. Validated by empirical teacher probes.
 
 **Teacher probes:**
 | Teacher | Byte BPB | Top-1 | Gap to Student | Oracle Gain (dual) |
@@ -4841,7 +4841,7 @@ Best: **BPB 1.430** at step 4500. Total Stage 0→1 gain: **0.295 BPB** (1.725 �
 | SmolLM2-1.7B | 0.490 | 0.887 | -0.925 | — |
 | Pythia-1.4B | 0.539 | 0.881 | -0.876 | 0.054 BPB |
 
-**Loss design (Codex-specified):**
+**Loss design (review-specified):**
 ```
 L = L_ce + λ_byte(s) * L_byte + λ_ctx(s) * L_ctx
 L_byte = T² * KL(teacher_byte_probs || student_byte_probs)  [T=1.5]
@@ -4857,7 +4857,7 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 
 **VRAM:** batch=12, accum=6. SmolLM2 Q4 ~2GB + Pythia Q4 ~1.5GB + student ~15GB = ~19.5GB. Fits in 24GB.
 
-### 11.13 Ekalavya Smoke Test v1 + Codex Correctness Audit (2026-04-12)
+### 11.13 Ekalavya Smoke Test v1 + review Correctness Audit (2026-04-12)
 
 **Smoke v1 (500 steps, alpha=0.5, T=2.0):** BPB trajectory:
 | Step | CE | KD | Repr | BPB |
@@ -4869,7 +4869,7 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 
 **Verdict:** KD mechanism works (KD loss dropped 81%, repr loss dropped 82%) but alpha=0.5 is catastrophically aggressive. CE degraded from 1.415 baseline to 2.6 BPB.
 
-**Codex correctness audit found 6 issues (3 HIGH, 3 MEDIUM):**
+**review correctness audit found 6 issues (3 HIGH, 3 MEDIUM):**
 1. HIGH: Off-by-one byte KD alignment — student_logits[k] predicts byte k+1, so teacher target for byte k must align to student_logits[k-1]. **Fixed.**
 2. HIGH: Repr KD causality violation — teacher hidden states for patch j included future bytes. Must use last teacher state whose byte start <= j*P. **Fixed.**
 3. HIGH: Resume + progressive unfreeze — optimizer/scaler not loaded, `==` gates missed resumed steps. **Fixed.**
@@ -4885,7 +4885,7 @@ L_ctx = 1 - cosine(norm(student_global_local), norm(W_ctx * teacher_hidden))
 - Converts teacher token probs → byte probs, attaches byte decoder head to (token-level) student
 - Competitive with/surpasses more sophisticated CTD methods across 1B-8B
 - Key caveat: "consistent improvements across all tasks remain elusive — CTD is still an open problem"
-- **KL weight = 0.1** — independently validates our Codex-designed alpha=0.10
+- **KL weight = 0.1** — independently validates our review-designed alpha=0.10
 - Uses full byte marginal (all tokenization coverings), not just first-byte. More info-rich but more expensive.
 - **Ekalavya advantage:** Our student IS byte-level natively — no extra head needed. Simpler, less information loss.
 
@@ -5066,7 +5066,7 @@ Saved: results/first_byte_marginal_info_loss.json
 4. **Min-divergence mixture** — Find mixture weights that minimize KL from student to mixture. From ensemble distillation.
 5. **Progressive addition** — Start with 1 teacher, add more as student stabilizes. Our invention.
 
-**Open questions for T+L session:**
+**Open questions for design session:**
 - Does teacher diversity (architecture variety) help more than teacher quality (bigger models)?
 - Should repr-level KD also be multi-teacher or just logit-level?
 - Optimal scheduling: all teachers always, or teacher curriculum (easy→hard)?
@@ -5111,7 +5111,7 @@ First to enable "rapid transfer of subword models to byte-level." Also supports 
 
 **Our unique niche: multi-teacher cross-architecture byte-level KD with progressive position-selective targets. No published work combines these.**
 
-### 10.8 Codex Strategic Review: TAID+Gating Ceiling Analysis (April 15, 2026)
+### 10.8 review Strategic Review: TAID+Gating Ceiling Analysis (April 15, 2026)
 
 **Source:** Architecture Theorist + Scaling Expert review of full Ekalavya trajectory (iter1-5).
 
@@ -5146,7 +5146,7 @@ First to enable "rapid transfer of subword models to byte-level." Also supports 
 
 **Decision criteria:** If TAID does not beat FKL by ≥0.003 BPB on fixed eval windows, drop TAID. Then move to transfer-bank curriculum as primary lever.
 
-### 10.9 Codex Correctness Review: Uncertainty Gating Amplification (April 15, 2026)
+### 10.9 review Correctness Review: Uncertainty Gating Amplification (April 15, 2026)
 
 **Finding 1 (HIGH): ug_clamp=4.0 makes gate a KD amplifier.** With raw gate mean ~0.17, renorm multiplies by ~6x before clamp. At peak ramp, effective alpha for capped position = `0.03 * 1.3² * 4.0 = 0.203`. This is 4x above the α=0.05 that caused gradient spikes in routing run. **Fix: lower ug_clamp to 1.5** (effective = 0.076, safely below prior 0.0845). Treat 2.0 as absolute experimental ceiling, not safe value.
 
@@ -5160,7 +5160,7 @@ First to enable "rapid transfer of subword models to byte-level." Also supports 
 
 **Decision:** Let current probe run as diagnostic — dangerous zone is steps 140-160 (peak ramp). If gradient spikes appear, confirms finding. Apply all fixes before full run launch.
 
-### 10.10 Codex Competitive Analyst Review (April 15, 2026)
+### 10.10 review Competitive Analyst Review (April 15, 2026)
 
 **Honest positioning:** Sutra-Dyad-188.2M is NOT competitive with SmolLM2-135M on published downstream benchmarks yet. Current evidence supports "early positive signal," not a public first.
 
@@ -5193,7 +5193,7 @@ First to enable "rapid transfer of subword models to byte-level." Also supports 
 
 **Failure modes identified:** (1) Length inflation — on-policy rollouts generate longer sequences as training progresses, (2) Truncation collapse — abrupt inflation causes truncated sequences to dominate, destabilizing dynamics.
 
-**Relevance to Ekalavya:** Our uncertainty gating serves a similar stabilization role — concentrating KD on high-utility positions prevents the student from being forced into teacher modes everywhere. The divergence constraint concept aligns with TAID's trust-region interpretation (Codex §10.8). Could formalize our gating as a position-level divergence constraint: "apply KD only where KL(teacher||student) is within a learnable threshold."
+**Relevance to Ekalavya:** Our uncertainty gating serves a similar stabilization role — concentrating KD on high-utility positions prevents the student from being forced into teacher modes everywhere. The divergence constraint concept aligns with TAID's trust-region interpretation (review §10.8). Could formalize our gating as a position-level divergence constraint: "apply KD only where KL(teacher||student) is within a learnable threshold."
 
 ### 10.12 Performance Engineer Analysis — 6K Full Run (2026-04-15)
 
@@ -5244,11 +5244,11 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 3. ✅ ThreadPoolExecutor parallelism for per-sequence covering (numba blocked by numpy 2.4 incompatibility). Expected 1.5-2x covering speedup. Combined with offline cache for remaining speedup.
 4. ✅ Deduplicated TAID/gating softmax into shared `s_probs_shared`
 
-### 10.13 Codex T+L: 6K Config Schedule Validation (2026-04-15)
+### 10.13 review design: 6K Config Schedule Validation (2026-04-15)
 
 **Session:** 019d915a-7047-71c1-9a18-4bd5033f0241 (GPT-5.4, xhigh)
 
-**Verdict:** Use fast no-hold schedule. Original config (600 ramp, 1400 hold, decay to 0.009) is WRONG. Updated to match prior Codex prescription.
+**Verdict:** Use fast no-hold schedule. Original config (600 ramp, 1400 hold, decay to 0.009) is WRONG. Updated to match prior review prescription.
 
 **Key decisions:**
 1. **Hold phase: 0 steps.** Routing run proved hold catastrophic at alpha=0.05. TAID+gating doesn't justify prolonged plateau.
@@ -5261,9 +5261,9 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 
 **Config updated:** `results/config_ekalavya_iter5_full_6k.json` — all discrepancies resolved.
 
-### 10.14 Codex Correctness Engineer: Teacher Computation Gating (2026-04-15)
+### 10.14 review Correctness Engineer: Teacher Computation Gating (2026-04-15)
 
-**Source:** Codex Correctness Engineer review of Ekalavya training loop in sutra_dyad.py.
+**Source:** review Correctness Engineer review of Ekalavya training loop in sutra_dyad.py.
 
 **Finding 1 [MEDIUM]: Teacher computation not gated by KD weight**
 - Lines 2788-2871: Teacher forward pass + covering decomposition runs every microbatch even when `alpha_eff=0` AND `beta_eff=0` (steps 4500-6000 in piecewise decay).
@@ -5306,9 +5306,9 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 
 **6K run launched 2026-04-15 11:04.** Config: `results/config_ekalavya_iter5_full_6k.json`. Log: `results/ekalavya_iter5_full_6k.log`.
 
-### 10.16 Codex Pre-Training Gate Review — 6K at Step 250 (2026-04-15)
+### 10.16 review Pre-Training Gate Review — 6K at Step 250 (2026-04-15)
 
-**Reviewer:** GPT-5.4 (Codex CLI), Correctness + Performance + Robustness
+**Reviewer:** GPT-5.4 (the review tool), Correctness + Performance + Robustness
 
 **Findings:**
 
@@ -5350,3 +5350,586 @@ Analysis of throughput, VRAM, stability, and optimization for the Ekalavya iter5
 11. **All-NaN accumulation guard.** If every microbatch is skipped, the trainer still performs optimizer/scaler steps with no valid gradients. Track `valid_microbatches`; if zero, skip LR update/optimizer step and count toward fatal NaN. Prevents: misleading step advancement and optimizer state changes after invalid batches.
 
 **Lesson learned:** This gate should have run BEFORE launch. Caught post-launch at step 250 — documentation was wrong about the routing mechanism for 2+ days. Future runs: gate runs FIRST, always.
+
+---
+
+## 12. Knowledge Transfer Mechanism Research — Parallel Sweeps (2026-04-17)
+
+**Context:** Ekalavya iter5 showed flat eval (BPB 1.398 → 1.402, steps 500→1000) despite all mechanisms (TAID, UG, routing, covering). Suspected classical KD may be fundamentally limited for our setup. Ran TWO parallel research sweeps:
+- **Sweep A:** ML literature survey on KD variants + frontier mechanisms (2024-2026)
+- **Sweep B:** Cross-domain pass — biology, cognition, information theory, collective intelligence
+
+**Both sweeps independently converged on the same diagnosis.**
+
+### 12.1 Convergent Diagnosis: Four Universal Properties KD Lacks
+
+Every efficient natural learner has these; classical KD has none:
+
+| Universal Property | Classical KD | ML Literature Support | Biological/Cognitive Support |
+|---|---|---|---|
+| 1. **Transfer compressed generators, not behavioral distributions** | ✗ (matches softmax surfaces) | Hidden-state CKA matching (ICLR 2025), SAE transcoders, MDL | GRN/genome, Solomonoff, reading a book, analogical structure-mapping (Gentner) |
+| 2. **Selective/curated signal, not uniform data** | ✗ (every token equal) | MiniPLM data-weighting, on-policy sampling, implicit curriculum | Hippocampal replay selection, Vygotsky ZPD, active inference (Friston) |
+| 3. **Bidirectional/competitive dynamics, not one-way copy** | ✗ (student passive) | GKD (+15pp), DistiLLM-2 contrastive, self-distillation | Affinity maturation (immune), stigmergy, Piaget accommodation, Peirce abduction |
+| 4. **Structural invariants preserved, surface variation discarded** | ✗ (commensurable-only) | RKD relational, attention distillation, MultiLevelOT | STDP causal timing, analogical transfer, UG constraints, Kuhn incommensurability |
+
+**The one-sentence diagnosis:** classical KD transfers *uniform, uncompressed, surface-behavioral* signals through a *passive* mechanism. Every efficient natural system transfers *selected, compressed, structural* signals through *competitive or active* dynamics. Our plateau is consistent with fighting a 10⁴× efficiency gap.
+
+### 12.2 Kuhnian Incommensurability (Structural Diagnosis)
+
+**The most important theoretical finding of these sweeps:** byte-level Sutra and BPE teachers occupy incommensurable output spaces (Kuhn). Classical KD across this gap may be **information-theoretically capped regardless of training steps or scheduling tricks**.
+
+Test proposed: measure how much of teacher logit information survives a principled byte↔token projection. If <30% survives, no amount of scheduling (TAID, UG, alpha decay) fixes it. This would explain plateau independent of all our mechanism tuning.
+
+### 12.3 Top Candidate Mechanisms — Ranked by Expected Gain × Feasibility
+
+| Rank | Mechanism | Expected Gain | Cost | Theoretical Frame |
+|---|---|---|---|---|
+| 1 | **ZPD-masked distillation** — per-token gating based on student entropy + teacher-student KL. Easy tokens → CE only. Hopeless tokens → skip. ZPD tokens → full teacher. | HIGH (expected 3-7pp) | Minimal (one mask op) | Vygotsky ZPD + hippocampal replay + active inference (universal pattern #2) |
+| 2 | **ALM (Approximate Likelihood Matching)** — Minixhofer 2025 — explicitly targets subword→byte transfer. "Substantially outperforms prior methods." Paper describes our exact setup. | MEDIUM-HIGH | Medium (reimplement covering) | Addresses Kuhnian incommensurability |
+| 3 | **On-policy GKD + JSD** — replace forward-KL with Jensen-Shannon, add student-generated sequence mixing. ICLR 2024, powers Gemma-2. | HIGH (+15pp historical) | Medium (sampling overhead) | Universal pattern #3 (bidirectional, active learner) |
+| 4 | **Hidden-state CKA matching** — cross-dim, cross-tokenizer compatible auxiliary loss on pooled teacher representations. ICLR 2025 validated for pretraining-from-scratch. | MEDIUM (+1-5pp) | Medium (projection head) | Universal pattern #1 (structural transfer) |
+| 5 | **WRAP synthetic data rephrasing** — off-the-shelf instruct model rephrases C4 in multiple styles. 3× pretraining speedup, +10% perplexity. | HIGH (orthogonal) | Low (one-time inference) | Orthogonal axis — compressed abstractions from teacher |
+| 6 | **Progressive Pythia checkpoints** — use intermediate teacher checkpoints instead of final. ICLR 2025 provable sample-complexity benefit. Pythia publishes all checkpoints. | MEDIUM (free win) | None — Pythia has checkpoints | Implicit curriculum (universal pattern #2) |
+| 7 | **Structural/relational distillation** — match teacher attention-graph topology (rank correlation over pooled byte→token spans) rather than logits. Tokenizer-agnostic. | UNKNOWN (radical) | High | Gentner structure-mapping + Kuhnian fix |
+
+### 12.4 Three Radical Cross-Domain-Derived Alternatives
+
+**Alternative A — Ekalavya-ZPD (Scaffolded Distillation)** [Vygotsky + hippocampal replay + active inference]:
+- Per-token ZPD mask from student entropy + teacher KL
+- Teacher signal concentrated on productive-difficulty tokens only
+- Mask updates every N steps as student competence grows
+- Cheapest test of central diagnosis
+
+**Alternative B — Structural Distillation** [Gentner + Kuhn]:
+- Distill teacher attention-graph topology, not logits
+- Match rank correlations over pooled byte-window → teacher-token spans
+- Tokenizer-invariant by construction
+- Solves the incommensurability problem directly
+
+**Alternative C — Affinity-Maturation KD** [immune + Valiant + stigmergy]:
+- Spawn N student variants (dropout masks, routing perturbations)
+- Teacher is a limited resource — only top-K variants selected each batch
+- Stigmergic replay buffer with pheromone-like weighting
+- Population-based knowledge absorption, gradient-free at top level
+
+### 12.5 The Five Provocative Questions
+
+From the cross-domain synthesis — these are the questions we should be asking:
+
+1. **Are teachers commensurable with the student?** Byte vs BPE. If logit information survives less than ~30% through any projection, classical KD is capped.
+2. **Why distill outputs instead of generative programs?** Solomonoff/MDL say we should find the shortest student-program reproducing teacher. No term in our loss rewards compressed student computation.
+3. **Is global LR the wrong primitive?** Biology uses phasic, circuit-specific, inhibition-gated plasticity (Hensch critical periods).
+4. **Why is the student passive?** No natural efficient learner is passive. Active inference, immune system, stigmergy — the learner selects what to consume.
+5. **Why copy behavior when we could transfer invariants?** Tomasello ratchet, Gentner structure, UG — every cultural/cognitive learner transfers structure, not surfaces.
+
+### 12.6 Key References (Priority Read List)
+
+**ML frontier (2024-2026):**
+- Distillation Scaling Laws (Apple 2025) — arXiv 2502.08606 [mandatory]
+- ALM cross-tokenizer (Minixhofer 2025) — arXiv 2503.20083 [our exact problem]
+- GKD on-policy (Agarwal 2024 ICLR) — arXiv 2306.13649
+- MiniLLM reverse-KL (Gu 2024 ICLR) — arXiv 2306.08543
+- TAID (Sakana 2025 Spotlight) — arXiv 2501.16937 [already in our design]
+- MiniPLM data-weighting (Gu 2025 ICLR) — arXiv 2410.17215
+- DistiLLM-2 contrastive (Ko 2025 ICML Oral) — arXiv 2503.07067
+- Progressive Distillation Implicit Curriculum (Panigrahi 2025 ICLR) — arXiv 2410.05464
+- WRAP (Apple 2024 ACL) — arXiv 2401.16380
+- Byte-level interface KD (2026) — arXiv 2604.07466
+- Distilling Token→Byte (2026) — arXiv 2602.01007
+- Improving LM Distillation through Hidden State Matching (2025 ICLR) — openreview IcVSKhVpKu
+
+**Cross-domain foundations:**
+- McClelland et al. 1995 — Complementary Learning Systems (hippocampus + cortex, replay)
+- Kuhn 1962 — The Structure of Scientific Revolutions (incommensurability)
+- Vygotsky 1978 + Wood/Bruner/Ross 1976 — ZPD and scaffolding
+- Tomasello 1999 + Tennie/Call/Tomasello 2009 — cultural ratchet, teaching vs imitation
+- Gentner 1983 — structure-mapping theory of analogy
+- Hensch 2005 — critical period plasticity (inhibition-gated learning rates)
+- Friston 2010 — free-energy principle (active inference)
+- Tishby et al. 1999 — information bottleneck
+- Solomonoff 1964 — universal induction / shortest program
+- Valiant 2008 — evolvability / PAC learning under aggregate signals
+- Victora & Nussenzweig 2022 — germinal centers, affinity maturation
+
+### 12.7 Recommendation for Next design Session
+
+The convergent finding is unambiguous: **the highest-leverage single change is ZPD-masking (Alternative A)**. It is:
+- Cheap (one mask op per batch)
+- Derived simultaneously from four independent fields (Vygotsky, McClelland, Friston, on-policy GKD)
+- A concrete test of the central diagnosis (if uniform signal is the problem, concentrating signal should show decisive improvement)
+- Compatible with existing TAID, UG, routing, covering infrastructure
+
+**If ZPD-masking alone breaks the plateau → diagnosis confirmed, iterate.**
+**If not → ALM + structural distillation is the Kuhnian pivot.**
+
+iter5 continues as baseline; no changes until design session designs the replacement.
+
+### 12.8 ALM Deep-Dive (Minixhofer 2025, arXiv 2503.20083 v4, NeurIPS 2025 accepted)
+
+Fetched 2026-04-17 in response to review design KM-R1 research request. Claude's deep read.
+
+**Core idea:** Binarized f-divergence (KL by default) over aligned chunk probabilities across teacher/student tokenizers, with outcome-chunk debiasing.
+
+**Loss formulation:**
+```
+L_ALM(x) = Σ_{(i,j,k,l) ∈ aligned chunks} [
+    KL(p_T(chunk_T)^{1/τ} || p_S(chunk_S)^{1/τ}) +
+    KL(1-p_T(chunk_T)^{1/τ} || 1-p_S(chunk_S)^{1/τ})
+]
+```
+Where `p(chunk) = Π p(token_i | prefix)` is the chain-rule probability of the chunk tokens.
+
+**Alignment:** greedy, find `(i,j,k,l)` such that `decode(T_T(x)[i:j]) == decode(T_S(x)[k:l])`.
+
+**Debiasing (Section 3.1):** multiply chunk probability by marginal probability of tokens starting with a "pretoken-boundary byte" (whitespace, newlines — bytes that never appear mid-token). Removes tokenization bias that would otherwise penalize finer tokenizers.
+
+**Hyperparameters recommended:**
+- Temperature τ=100 (with debiasing) or τ=5 (without)
+- Learning rate 1e-5 (range 2e-6 to 5e-5)
+- Distance function: KL (TVD performs similarly)
+- Loss weighting: GradMag (per-task gradient-norm normalization; simpler than GradNorm, on par)
+- Sequence length 512-1024
+- Batch 32-64
+
+**Computational cost:**
+- No cross-attention (unlike DSKD): cheaper than DSKD
+- No |V|-sized matrices (unlike MinED): cheaper than MinED
+- Signal density: |A_c| × 32 bits per text vs |T(x)| × |V| × 32 for same-tokenizer KD — addressed by auxiliary hidden-state alignment loss
+
+**Critical — reported gains on byte transfer (Table 1, Use Case 1):**
+
+| Method | Gemma2-2B → byte | Llama3.2-3B → byte |
+|---|---|---|
+| Original model | 79.6 | 76.9 |
+| SFT baseline | 70.7 (7.7pp drop) | 75.2 |
+| DSKD | 70.5 | — |
+| MinED | 69.4 | 73.2 |
+| **ALM** | **72.0 (2.2pp gap, 34% gap reduction)** | **73.7 (3.2pp gap)** |
+
+**ALM closes ONLY 34% of the byte-transfer gap. Residual 5.6pp gap remains.**
+
+**Explicit failure modes (Section 6):**
+1. Limited training data (~0.6B tokens, same regime as ours — caveat applies)
+2. Greedy chunk selection may be suboptimal
+3. **"A gap with respect to the original model remains in all cases"** for byte transfer. Authors suggest needing:
+   - Distillation on pretraining data (we have this)
+   - Architectural retrofitting (hourglass + token merging — we don't have this)
+   - Multi-byte prediction
+4. Binarized f-divergence is upper bound to true categorical divergence — loses information
+5. Supervised KD only; no rejection sampling, no on-policy
+
+**Scaling finding:** gap reduction improves with scale (55% at 2B, 70% at 12B). At our 153M scale this argues ALM may be less effective.
+
+**Implication for Sutra:**
+- ALM is NOT a silver bullet for byte-level students. Reported byte-transfer gains of 1.3-1.5pp on end-benchmarks are NOT decisive (target: 5-7pp per decisive_margins memory).
+- ALM may close a fraction of the incommensurability gap (IF the Kuhnian probe strengthens that diagnosis) but will not cross the decisive threshold alone.
+- ALM should be considered a COMPONENT in a composite mechanism, not a standalone replacement.
+- If Kuhnian probe says covering retains ≥80% of teacher info, ALM is unmotivated — the Kuhnian gap isn't the bottleneck.
+- If Kuhnian probe says <30%, ALM partially helps but needs to be paired with something else (e.g., ALM + hidden-state CKA + ZPD masking together).
+
+**Actionable integration with existing Sutra code:**
+1. Byte-covering decomposition in `sutra_dyad.py` is NOT compatible with ALM — different primitive (chunks vs next-byte conditionals). Would need parallel code path.
+2. Alignment algorithm: greedy O(seq_len × max_chunk) per batch. Can precompute offline for cached teachers.
+3. Debiasing: requires marginal over boundary bytes — additional ~|boundary_tokens| softmax evaluation per teacher per position.
+4. Warmstart-compatible: loss change only, no parameter addition.
+5. Min viable test: anchor-only (SmolLM2) ALM run from best.pt, 300 steps, compare BPB against matched covering run.
+
+**Recommendation:** Do NOT pivot to ALM as primary replacement unless Kuhnian probe says <30% retention. Even then, ALM is a component in a composite mechanism, not a silver bullet.
+
+### 12.9 Progressive Distillation Implicit Curriculum Deep-Dive (Panigrahi et al. 2025 ICLR, arXiv 2410.05464)
+
+Fetched 2026-04-17 in response to review design KM-R1 research request. Claude's deep read.
+
+**Core claim (Theorem 3.2):** For (d,k)-sparse parity with student width Θ̃(2^k), progressive (multi-checkpoint) distillation achieves sample complexity Θ̃(2^k·d²·ε⁻² + k³) vs. Ω(d^(k-1)·ε⁻²) for one-shot distillation.
+
+**CRITICAL CAVEAT: the theoretical result is for SPARSE PARITY, not language modeling.** Language experiments are qualitative (better top-1 masked accuracy, no decisive number reported).
+
+**Methodology:**
+- Identify teacher's phase transition (inflection point in loss curve)
+- Pick checkpoint C₁ from middle of that phase
+- Subsequent checkpoints at multiples {1000, 2000, ..., 8000} steps in their experiments
+- (N,T)-progressive: train student T steps on each of N checkpoints, then finalize on final
+
+**Switching:** hard switch (not interpolation). Each checkpoint gets a fixed step budget, then advance.
+
+**Hyperparameters:**
+- Teacher temperature τ = 10⁻⁴ (sparse parity, PCFG) or **τ = 10⁻²⁰** (language with ~30k vocab)
+- Student temperature τ = 1 always
+- **Our current Ekalavya uses τ=1.3 — 22 orders of magnitude off the paper's language setting.**
+- Paper explicitly says: "Varying τ can lead to greater performance gain than changing distillation."
+
+**Failure modes:**
+1. **Checkpoint selection is CRITICAL** — checkpoints from before/after phase transition FAIL to converge at all. "(2,1M)-progressive distillation with wrong checkpoint → no convergence."
+2. **Teacher-student capacity gap**: "A better teacher does not always yield a stronger student" when gap too large. Our 153M ↔ 1.4B has 9x gap — flagged by Apple distillation scaling laws too.
+3. **NO Pythia experiments in the paper.** The paper uses BERT-family models on Wikipedia+Books; does NOT validate Pythia checkpoint ladder for byte-level LM pretraining.
+4. **Temperature sensitivity likely dominates**: their own footnote says τ choice matters more than scheme choice.
+
+**Implication for Sutra:**
+- Progressive Pythia checkpoints as a "free win" is **not as validated as review implied**. Paper's theoretical guarantee is for sparse parity; language results are qualitative.
+- To use it, we would need to (a) identify Pythia's phase transitions — non-trivial, requires loss-curve analysis; (b) drop temperature 20 orders of magnitude (1.3 → 10⁻²⁰); (c) handle switching logistics in data pipeline.
+- The probe 3 (Pythia checkpoint ladder) we're running is a reasonable empirical test, but a negative result would not surprise us — the paper's evidence for our regime is thin.
+- **Highest-value takeaway for our design: temperature is dominant.** Our τ=1.3 is questionable. A simple ablation run at τ ∈ {0.1, 0.01, 1e-4} on best.pt would be a cheap informative probe.
+
+**New probe recommendation (not in original Design Round 1 plan):** temperature ablation on iter5's best.pt. Run 300-step continuations with τ ∈ {0.1, 0.5, 1.0, 1.3, 2.0} and record eval BPB. If τ=0.1 or lower markedly outperforms τ=1.3, that's a decisive cheap win before touching mechanism design.
+
+### 12.10 Hidden-State CKA Matching (Dasgupta & Cohn, ICLR 2025, openreview IcVSKhVpKu)
+
+Fetched 2026-04-17 (OpenReview PDF blocked with 403; slides PDF image-only. Summary from ICLR abstract + search results.)
+
+**Core idea:** Centered Kernel Alignment (CKA) on hidden states, as auxiliary distillation loss. CKA is invariant to orthogonal transforms and scaling — so it natively handles teacher/student with **different dimensions**, the main compatibility constraint for small-student setups.
+
+**Demonstrated on:** BART, mBART, T5 (encoder-decoder), BERT (encoder-only). Architecture coverage is the main gap for us.
+
+**NOT demonstrated on:** decoder-only models (GPT/Pythia/Qwen-style). Our teachers (SmolLM2-1.7B = Llama-style decoder, Pythia-1.4B = GPT-NeoX decoder) and student (Sutra-Dyad decoder) are all decoder-only. The paper's experimental validation doesn't cover this regime.
+
+**Claimed properties (from ICLR abstract):**
+- Cosine-based hidden-state matching (DistilBERT style) restricts student to teacher's dimensionality — CKA removes this restriction.
+- Works from-scratch pretraining distillation (not just fine-tuning).
+- Competitive with SOTA at comparable compression rates.
+- No training/inference overhead.
+
+**What we know about CKA (mathematically, independent of this paper):**
+
+Linear CKA between two representation matrices X ∈ R^{n×d1} and Y ∈ R^{n×d2}:
+```
+CKA(X, Y) = ||X^T Y||_F^2 / (||X^T X||_F · ||Y^T Y||_F)
+```
+Properties:
+- Invariant to orthogonal transforms in X and Y separately
+- Invariant to isotropic scaling
+- ∈ [0, 1] for real matrices
+- Can be computed without requiring d1 = d2
+
+For byte-level student vs BPE teacher with different sequence lengths, would need a pooling step: aggregate student byte-window representations to teacher-token spans before computing CKA. That pooling is THE design decision — not specified in the search result summary.
+
+**Implication for Sutra:**
+- CKA is a genuine mathematical primitive for cross-dim auxiliary loss. The cross-tokenizer challenge reduces to: how to pool byte representations into teacher-token units for matrix alignment?
+- The paper doesn't specifically validate our regime (decoder-only, byte-vs-BPE, 188M student). We would be applying the primitive off-distribution from the paper's experiments.
+- **review should direct the layer-pairing and pooling design if we go this route.** The paper's guidance on "which teacher layers match which student layers" is not accessible from our fetches; review would need to derive from first principles or we'd need to access the full paper.
+
+**Action:** if design KM-R2 recommends CKA auxiliary, a small feasibility probe is warranted before full integration — confirm CKA computation is stable at our batch sizes and that byte-to-token pooling doesn't create alignment artifacts.
+
+### 12.7.1 ZAR-gJSD Run 1 — Launched 2026-04-17 05:07 EDT
+
+Per review design KM-R1 design (results/design_round_output.md). Single-anchor (SmolLM2-1.7B only) implementation — competitive routing deferred pending first validation.
+
+**Config:** results/config_ekalavya_zar_gjsd_r1.json
+**Code:** `train_ekalavya()` in code/sutra_dyad.py with new `use_zar_gjsd` branch at lines ~4259-4361
+
+**Mechanism (per-batch per-position):**
+1. Student entropy H_s via -sum(p_s * log p_s)
+2. Advantage A = max(0, log p_t(y_true) - log p_s(y_true)) — uses actual next-byte label
+3. Disagreement D = JSD(p_t || stopgrad(p_s))
+4. Utility U = A × D
+5. ZPD band: H_s in [q60, q95] within-batch entropy quantile
+6. Final mask: top-15% by U inside ZPD band AND U > 0.02
+7. Loss: gJSD = 0.7 KL(p_t || m) + 0.3 KL(p_s || m), m = 0.7 p_t + 0.3 p_s
+
+**Step 10 signal (sanity check):**
+- BPB 1.453, grad 0.44, VRAM 9.2G, no NaN
+- zpd=34%, sel=5.0%, U*=0.945 — mechanism engaging, concentrated on productive positions
+
+**Launch history:**
+- First attempt (05:03) crashed: numpy OOM from interleaved python processes eating RAM
+- Cleanup: killed 25GB zombie + 8.5GB zombie + 1.5GB zombie from earlier runs
+- Relaunch (05:07) healthy at step 10
+
+**Kill rules (absolute relative-from-0 steps, s1_ckpt loads weights only, step counter resets):**
+- step 300 > 1.405 → kill
+- step 800 > 1.3976 (iter5 best) → kill
+- step 1500 > 1.390 → do not extend
+
+**Promotion threshold:** replicated eval ≤ 1.385 + clearly better fixed generations.
+
+**Schedule (absolute new steps):**
+- 0-100: KD alpha ramps 0→0.05
+- 100-1200: hold at 0.05 (main absorption window)
+- 1200-1600: decay 0.05→0
+- 1600-2500: CE-only consolidation
+- Unfreeze phase 1 (global 4-7) at new step 200
+- Unfreeze phase 2 (global 0-3) at new step 1300
+
+**review Correctness review v2 finding (2026-04-17 05:51 EDT, 6 items OK, 1 ISSUE):**
+- Line 4351 applies T² = kd_temperature² scaling to gJSD loss. Not in Design Round 1 design spec. Hinton-style T² compensates for the ~1/T² gradient magnitude of standard KL — but our gJSD has student-live in m (the mixture), so the gradient scaling behavior is different and the T² correction is not obviously appropriate.
+- Effect: at kd_temperature=1.3, effective KD weight is 1.69× intended. Overweights KD relative to CE.
+- Matches observed symptoms: frequent grad spikes (0.8-1.9) with grad_clip=0.8 firing.
+- Fix: remove the `kd_temperature ** 2 *` prefactor on line 4351.
+- Decision: NOT a BLOCK. Let current training proceed to step 200 eval as falsification test. If step 200 eval ≤ 1.410, proceed. If > 1.410, kill + relaunch with fix (r2).
+
+**Step 100 EVAL results (2026-04-17 05:38 EDT):**
+- BPB 1.430 — tied with no-KD baseline, +0.032 vs iter5 best.pt seed (1.398).
+- Interpretation: fresh optimizer + KD just fully ramped on → expected ramp-up cost. Real signal from step 100 onward.
+- Post-eval trend (steps 110-130): 1.396, 1.229 (easy-batch outlier), 1.411. Normal variance band, mean ~1.41.
+- Step 200 eval is the gate: need trajectory to 1.39 range to have decisive survival path at step 300 kill (1.405).
+
+**Step 200 EVAL results (2026-04-17 06:15 EDT):**
+- BPB **1.419** (vs 1.430 at step 100). Delta -0.011 over 100 steps.
+- Still above iter5 seed (1.398) by +0.021.
+- At current rate, step 300 would land near 1.405 — on the edge of kill threshold.
+- Unfreeze phase 1 fired at step 200 (global layers 4-7). Step 210 showed transient BPB 1.435 (expected unfreeze cost).
+
+### 12.7.2 review design KM-R2 — RRDSD Design (2026-04-17 06:22 EDT)
+
+Design Round 2 output: results/design_round_output.md
+
+**Verdict on R1 (ZAR-gJSD):** "The idea is not dead, but it is not on a decisive survival path." Mechanism engages cleanly (sel≈5%, U*≈1.0 stable) but empirical gains are marginal. Three major diagnoses:
+1. **Over-sparsified**: sel_frac ≈5% vs iter5's uncertainty-gated ~25%. Signal density too low for decisive improvement.
+2. **Temperature blind spot**: kd_temperature=1.3 used for teacher targets, routing, AND loss simultaneously. On 256-byte vocabulary, T>1 washes out useful teacher sharpness. Paper evidence (§12.9) says T can dominate the scheme.
+3. **Output KD alone is bounded**: 15+ KD failures + R1 step-200 stall suggest output-surface matching cannot cross decisive threshold without a structural auxiliary.
+
+**Proposed replacement: RRDSD (Regret-Routed Dual-Surface Distillation)**
+
+Key mechanism differences from ZAR-gJSD:
+
+| Component | ZAR-gJSD (R1) | RRDSD (R2) |
+|---|---|---|
+| Teachers | Single anchor (SmolLM2) | SmolLM2 + Pythia competitive |
+| Teacher sharpening | None (T=1.3 baked in) | P_m^(1/T_loss) explicit at loss time |
+| Utility | A × D | **A × √D** (softer disagreement moderator) |
+| ZPD band | q60-q95 | **q45-q98** (wider) |
+| Density control | Fixed top-15% | **Cumulative 65% utility mass, clamped [10%, 20%]** |
+| Routing | Single teacher | **argmax_m U_m,t** per position (hard competitive) |
+| Output loss | gJSD(0.7, 0.3) with T² scaling | **Forward KL(Q_k(t) || S_k(t))**, T_loss=0.7, no T² |
+| Structural loss | None | **λ_cka × (1 - CKA(X, proj(teacher_hidden)))** anchor only |
+| Loss weights | λ_kd = 0.05 | λ_out = 0.06 ramp, λ_cka = 0.01 |
+| Schedule | 2500 steps | 1800 steps, shorter absorption window |
+
+**Full design specification:** results/design_round_output.md section 8.
+
+**RRDSD kill rules (tighter than R1):**
+- step 100 > 1.425 → kill
+- step 300 > 1.402 → kill
+- step 800 > 1.392 → kill
+- step 1400 > 1.386 → do not extend
+- sel_density < 8% or > 22% for 50 consecutive steps → kill
+- Pythia selected < 5% of positions for 200 steps → drop Pythia
+
+**Probe requests (for Claude to execute):**
+1. Transport survival probe (prefix-likelihood retention through covering) — gate any transport rewrite
+2. Temperature × T² matrix (300-step continuations from best.pt)
+3. Density × band sweep
+4. Utility functional sweep (A×D vs A×√D vs A+0.25D)
+5. Competitive two-teacher routing probe
+6. Dual-surface probe (add patch-CKA to best output-surface variant)
+7. Committee-regret sampler probe (offline data weighting)
+8. Multi-source encoder probe (BGE/E5 chunk alignment at λ=0.005)
+
+**Decision tree for R1 → R2 transition:**
+- R1 step 300 eval ≤ 1.405 → let R1 finish, add RRDSD components incrementally in R3
+- R1 step 300 eval > 1.405 (kill) → launch RRDSD immediately from iter5 best.pt
+
+### 12.7.3 RRDSD-lite R1 Empirics + review design KM-R3 (2026-04-17 08:40 EDT)
+
+**RRDSD-lite launched 07:24 EDT, auto-killed step 100 (BPB 1.431 vs 1.425 threshold, margin 0.006).** Relaunched as r1b at 08:40 with step-100 kill removed (step 300 gate at 1.402 retained).
+
+**Step 10-90 trajectory (r1a run):**
+| Step | BPB | CE | Grad | cand% | sel% | U* |
+|---|---|---|---|---|---|---|
+| 10 | 1.473 | 1.02 | 0.66 | 44 | 9.6 | 1.88 |
+| 30 | 1.404 | 0.97 | 0.53 | 43 | 9.7 | 1.54 |
+| 50 | 1.420 | 0.98 | 0.69 | 40 | 9.7 | 1.78 |
+| 70 | 1.393 | 0.97 | 0.56 | 43 | 10.2 | 1.48 |
+| 80 | 1.319 | 0.91 | 1.38 | 45 | 9.9 | 1.24 |
+| 90 | 1.372 | 0.95 | 1.44 | 44 | 9.9 | 1.59 |
+| 100 train | 1.421 | 0.98 | 0.59 | 40 | 9.7 | 1.60 |
+| **100 EVAL** | **1.431** | — | — | — | — | — |
+
+Train 40-90 mean: 1.391 (review correction). Eval-train gap: +0.040. Density floor binding (sel≈10% = rrdsd_density_min).
+
+**Design Round 3 decisions (see results/design_round_output.md):**
+
+1. **Path C → Path D.** Don't launch full RRDSD R2 yet. Let r1b reach step 300, then fork-probe single-lever additions (+CKA only, +multi-teacher only), only combine if a single lever is positive by +150.
+
+2. **Critical implementation insight:** current cosine-based repr_loss in code/sutra_dyad.py is NOT the true linear CKA that Design Round 2 specified. Need separate implementation.
+
+3. **Refined CKA design:** λ_cka ramp 0→0.005 over 25 steps, hold to 150, decay to 0 by 250. Earlier-and-shorter than R2 spec (past repo evidence shows multi-surface at long hold becomes toxic during consolidation).
+
+4. **Pythia role reframe:** 58/4180 unique wins (1.4%) suggests specialist/scorer, not permanent co-equal teacher. Gate live launch on offline probe: keep only if Pythia wins ≥10% of RRDSD-selected positions under regret routing.
+
+5. **Density control diagnosis:** "dynamic" mass gate behaves like fixed 10% floor in current data. Evidence that forks may want 12-15% density (lever for r3 tuning).
+
+6. **Promotion rules (+300 step probes):**
+   - +CKA fork: promote only if ≥0.003 BPB improvement AND runtime penalty ≤15%
+   - +multi-teacher fork: promote only if Pythia wins ≥10% of retained positions AND ≥0.003 BPB improvement
+   - +both: only if single-lever arm already positive at +150
+
+7. **Radical fallback prep (Path D):** committee-regret data reweighting — score windows by `R(w) = mean_t max_m [log P_m(y_t) - log S(y_t)]_+`, train 50% uniform + 50% regret-weighted. Prepare as the next-mainline move if forks tie or fail.
+
+**Probe requests (from R3):**
+1. Replicated eval probe (3 fixed-slice evals) to distinguish 0.003-0.006 BPB moves from noise
+2. Forked RRDSD probes: lite-control, +CKA, +multi-teacher (short 300-step each)
+3. Offline teacher-share probe (2048 fixed positions, per-teacher utility, RRDSD routing)
+4. Transport survival probe (prefix-likelihood retention — still open from R1)
+5. Committee-regret sampler probe (50% regret-weighted windows)
+
+### 12.12 Multi-Source Encoder Alignment Probe (2026-04-17 09:47 EDT)
+
+Design Round 3 Probe #8 (+ Design Round 2 Research Request #5 B.1 multi-source mandate). Executed offline on iter5 best.pt (step 500, eval BPB 1.398) on 48 validation windows × 12 chunks = 576 chunks of 126 bytes each.
+
+**Method:** Mean-pool student global_local over 21 patches per chunk → (576, 640). BGE-small-en-v1.5 [CLS] embedding per chunk → (576, 384). Compute linear CKA (dim-invariant) and RSA Spearman correlation (rank-based).
+
+**Results:**
+
+| Metric | Value | Interpretation |
+|---|---|---|
+| Linear CKA (student, BGE) | **0.6017** | HIGH alignment |
+| Linear CKA (student, BGE shuffled) | 0.0575 | Near-zero baseline validates measurement |
+| RSA Spearman ρ | 0.3685 | Statistically significant (p≈0) |
+
+**Decision: SKIP_ALIGNMENT_LOSS.** Student already aligns well with BGE semantic space.
+
+**Implications:**
+1. Sutra's byte-level student at iter5 step 500 (188M params, ~600M bytes trained) has learned representations with 60% CKA to a pretrained 33M-param encoder trained contrastively on hundreds of millions of pairs. This is a significant positive finding about student capacity.
+2. Adding encoder alignment loss (cosine or CKA on BGE chunk embeddings) would provide small incremental signal — not a decisive lever for O4.
+3. **Rules out the B.1 "multi-source encoder probe" from Design Round 3 Probe #8 as a next mainline direction.** This saves us a training experiment cycle.
+4. **Validates the current RRDSD direction:** the bottleneck is the LEARNING SIGNAL (output KD mechanism), not the REPRESENTATION space (already good enough).
+5. Suggests data-side levers (committee-regret sampling, per-position data selection) may be more fruitful than representation-side auxiliary losses.
+
+**Script:** code/probe_multisource_encoder.py
+**Output:** results/probe_multisource_encoder.json
+
+### 12.13 RRDSD-lite r1b Density-Floor Observation (2026-04-17 10:15 EDT)
+
+Design Round 3 predicted: "selected density sits at the 10% floor almost every logged step... forks may want 12-15%."
+
+**r1b v2 empirical confirmation (first 70 steps):**
+
+| Step | cand% (ZPD) | sel% (final) | Floor bound? |
+|---|---|---|---|
+| 10 | 42 | 9.8 | yes |
+| 20 | 29 | 9.7 | yes |
+| 30 | 43 | 10.2 | no (above floor) |
+| 40 | 43 | 10.2 | no |
+| 50 | 41 | 9.7 | yes |
+| 60 | 38 | 9.7 | yes |
+| 70 | 40 | 9.6 | yes |
+
+sel_frac oscillates tightly around the density_min=10% floor. In 5/7 steps the floor is binding (cumulative utility mass reaches 65% at <10% of positions, so density_min clamps up). The "dynamic" mass gate is effectively a fixed sparsity of ~10%.
+
+**Implication:** raising density_min to 12-15% would force denser teacher signal per step. Whether that's beneficial is untested — could be more learning per step OR more noise from low-utility positions.
+
+**Action:** stage a config variant `config_ekalavya_rrdsd_fork_density_hi.json` (density [0.15, 0.22]) for optional R4 launch after fork comparison concludes.
+
+### 12.14 review design KM-R4 (2026-04-17 10:55 EDT)
+
+Full output: results/design_round_output.md
+
+**Key verdict:** R1b step 100 eval 1.418 is in "marginal-survival band" (1.402-1.425). Continue r1b only to step 300. Primary next moves:
+
+1. **Run `probe_teacher_share.py`** immediately (decides whether MT fork is worth it)
+2. **Launch fork_ctrl + fork_cka** (sequential or parallel if GPU permits)
+3. **Skip fork_mt if Pythia wins <10%** of RRDSD-selected positions (use fork_density_hi instead)
+4. **If r1b step 300 > 1.402 (kill):** fork_ctrl + fork_cka from iter5 seed, then committee-regret Path D
+
+**Most important intuition (for breaking the plateau):**
+
+> "The utility distribution is so heavy-tailed that the decisive gain is more likely to come from **window selection** than from any further per-position KL refinement."
+
+**Implication:** committee-regret sampling is likely the highest-upside probe. Per-position mechanism tuning (divergence, density, temperature, routing) has been extensively explored. The data distribution itself may be the bottleneck — we're training on uniformly-sampled windows where most tokens are low-utility regardless of per-token filtering.
+
+**Design Round 4 also says:**
+- "CKA will probably be mildly positive but not decisive" — student already densely aligned (§12.12 confirmed). Sparse teacher atoms (dictionary distillation) more likely to add information than another dense similarity loss.
+- "Pythia is more likely a scorer or rare specialist than a permanent co-equal teacher" — validate with teacher-share probe before paying live cost.
+- "De-prioritize vision-encoder text rendering and speech-codec features" — modality mismatch. Dictionary learning is much higher prior.
+
+**R4 probe requests (new since R3):**
+- Sparse teacher-dictionary probe (4k-8k atom dictionary on teacher patch states, supervise student to predict top activated atoms)
+- Long-horizon regret probe (advantage on h ∈ {4, 8, 16} byte prefixes — if horizon-regret is richer, "output KD is bounded" means "one-step KD is the wrong object")
+- Committee-regret sampler probe (50% uniform + 50% regret-weighted, 400-600 steps from best warm start)
+
+**Updated strategic pecking order (post-R4):**
+1. r1b step 300 evidence
+2. teacher-share probe
+3. fork_cka + fork_ctrl (single-lever output KD refinement)
+4. **Committee-regret sampler (data-side lever — review's #1 upside bet)**
+5. Sparse teacher-dictionary (structural lever, alternative to CKA)
+6. Long-horizon regret (object-of-KD reformulation)
+
+Items 4-6 are newly-elevated as likely more impactful than iterating on RRDSD per-position mechanism.
+
+### 12.15 URGENT DIAGNOSTIC — Rate Ceiling Cause + Pivot (2026-04-17 17:30 EDT)
+
+**DECISIVE DIAGNOSIS (9/10 confidence): Window-level dilution is the primary bottleneck.**
+
+> "The 188.2M byte student is trained on uniformly sampled windows where most positions are low-regret; RRDSD then applies teacher supervision to only about 10% of positions inside those already mostly-easy windows. That produces modest train gains but weak held-out transfer."
+
+**Top 5 hypotheses for rate ceiling (with confidence):**
+
+| # | Mechanism | Conf. |
+|---|---|---|
+| 1 | **Window-level dilution** — most updates on low-utility windows, per-position KD can't compensate | **9/10** |
+| 2 | One-step next-byte KD is wrong object — chunk-level / long-horizon would transfer more | 8/10 |
+| 3 | Per-position routing already saturated; divergence choice is second-order now | 8/10 |
+| 4 | Sidecar levers (multi-teacher, CKA) redundant on current data | 8/10 |
+| 5 | Cross-tokenizer + capacity mismatch imposes hard ceiling | 7/10 |
+
+**Hypotheses weakened (not dominant contributors):** 25-40% sparsity, different KL divergence, AdamW-wrong-optimizer, teacher-mix-wrong. Ceiling survived multiple versions of these exact changes.
+
+**THE ONE EXPERIMENT (next 4 hours):** Committee-regret window selection.
+
+- Score candidate windows with existing teachers: `R(w) = mean_t max_m [log P_m(y_t) - log S(y_t)]_+`
+- Modify sampler: 50% uniform + 50% regret-weighted windows
+- Keep objective simple: plain CE or CE+minimal KD (isolate data effect)
+- 400-600 steps from iter5 best.pt
+- **Success criterion:** eval slope jumps from −0.007/100 to ≤−0.015/100 OR train-eval gap shrinks ≥0.01 BPB
+- **Failure criterion:** rate stays flat → rules out window selection, pivots to long-horizon/structural objectives (do NOT iterate more per-position KD)
+
+**Pivot ranking (if KD output-matching is fundamentally bounded):**
+
+| Pivot | Feasibility | Decisive win prob | Cost | Byte-level novelty |
+|---|---|---|---|---|
+| **Committee-regret curriculum** | 9/10 | 7/10 | 6-10h | High |
+| WRAP-style synthetic rewrites | 7/10 | 6/10 | 12-24h | Medium |
+| Sparse teacher dictionary | 5/10 | 6/10 | 12-20h | **Very high** |
+| Long-horizon chunk objectives | 6/10 | 5/10 | 10-16h | High |
+| Retrieval-augmented training | 4/10 | 5/10 | 24-40h | Medium |
+| Weight grafting / task arithmetic | 2/10 | 3/10 | 20-40h | Very high but poor bet |
+
+**COMMITTED NEXT ACTION** (after r1b step 300 eval):
+1. Kill r1b regardless of step 300 outcome (ceiling is the same regardless)
+2. Run `probe_committee_regret.py` (already coded, needs GPU)
+3. Integrate `RegretWeightedPool` sampler into train_ekalavya (~20 lines, already prepped in data_loader.py)
+4. Launch short 400-600 step regret-weighted training from iter5 best.pt (no RRDSD — clean isolated data-side test)
+
+Success or failure of this probe is the pivot gate. Codex R5 recommendation: **stop iterating per-position KD until window-selection hypothesis is tested**.
+
+### 12.11 Non-Transformer Third Teacher Shortlist (Design Round 1 Research Request #4)
+
+Completed 2026-04-17. review asked for: public checkpoints, 4-bit loadable on 24GB card, plausible ≥0.010 BPB oracle gain over SmolLM2+Pythia pair.
+
+**Evaluation criteria applied:**
+1. Architectural diversity from decoder transformer (↑)
+2. Training-data diversity from SmolLM2 (FineWeb-Edu+DCLM) and Pythia (Pile) (↑)
+3. 4-bit loadable with ≤2GB VRAM incremental (we have ~12GB headroom after student + anchor+aux)
+4. Public HF checkpoint
+5. Tokenizer/output granularity (compatible with byte-covering projection)
+
+**Candidates evaluated:**
+
+| Model | Arch | Params | Training data | 4-bit VRAM | Data diversity | Verdict |
+|---|---|---|---|---|---|---|
+| `state-spaces/mamba2-2.7b` | Pure SSM (Mamba-2) | 2.7B | Pile (300B tokens) | ~1.5GB | LOW (Pile overlaps Pythia) | OK but redundant-data risk |
+| `BlinkDL/rwkv7-g1-1.5B` | RNN (RWKV-7) | 1.5B | Pile + web + code + synthetic | ~1GB | LOW-MEDIUM (Pile-overlapped but + other) | Better than Mamba-2 on data |
+| `tiiuae/falcon-mamba-7b` | Pure SSM | 7B | RefinedWeb | ~3.5GB | HIGH (RefinedWeb ≠ Pile ≠ FineWeb-Edu) | **Strongest data diversity** |
+| `mistralai/Codestral-Mamba-7B-v0.1` | Pure SSM | 7B | Code-heavy | ~3.5GB | HIGH for text, dominated for code | Orthogonal domain specialist |
+| `ibm-granite/granite-3.0-3b-a800m` | Transformer (MoE) | 3B active / 800M | Enterprise+code | ~1.5GB | MEDIUM | Not non-transformer |
+| `LiquidAI/LFM2-1.3B` | Hybrid conv+attn | 1.3B | Proprietary | ~700MB | HIGH (proprietary mix) | Architectural novelty |
+
+**RECOMMENDATION — PRIMARY: `tiiuae/falcon-mamba-7b`**
+
+Reasoning:
+- Pure SSM (maximal architectural orthogonality to our transformer teachers).
+- RefinedWeb training data is ~orthogonal to both Pile (Pythia) and FineWeb-Edu+DCLM (SmolLM2) — gives us three non-overlapping data distributions in the teacher committee.
+- At 4-bit: ~3.5GB, fits comfortably (we'd have SmolLM2 ~850MB + Pythia ~700MB + Falcon-Mamba ~3.5GB = ~5GB teachers total in 24GB).
+- Published 2024-08 as "the first strong attention-free 7B model" — mature, validated.
+- Failure mode: SSMs are sensitive to low precision per quantization notes — may need fp16 layernorm/projections, not pure int4 throughout.
+
+**SECONDARY: `mistralai/Codestral-Mamba-7B-v0.1`** — add ONLY if we want a code specialist (lower priority for general LM until MMLU/ARC is competitive).
+
+**SKIP: `state-spaces/mamba2-2.7b`** — Pile training data overlaps Pythia too heavily. Would waste oracle-gain budget on redundant signal.
+
+**SKIP: `BlinkDL/rwkv7-g1`** — unclear HF-transformers integration stability; requires flash-linear-attention format; more integration risk than Falcon-Mamba at same scale.
+
+**Probe before committing:** per Design Round 1 Probe #6 ("Third-teacher oracle probe"), run offline oracle computation for Falcon-Mamba-7B-4bit against the same 1024 validation positions used in Probe 1. Decision criterion: keep only if incremental oracle BPB gain ≥ 0.010 over current pair. Expected cost: ~4GB VRAM load + ~2 min inference × 1024 positions.
+
+**Integration caveat:** Falcon-Mamba uses its own tokenizer (Falcon BPE). Our covering decomposition handles any BPE tokenizer generically, so adding it to the teacher committee is the same integration cost as adding any other BPE-teacher. No new code paths required.

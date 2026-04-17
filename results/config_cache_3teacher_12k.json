@@ -1,24 +1,25 @@
 {
-  "max_steps": 12000,
+  "run_name": "cache_3teacher_12k",
+  "cache_start_step": 0,
+  "cache_end_step": 9000,
   "batch_size": 12,
   "grad_accum": 6,
   "seq_bytes": 1536,
   "kd_temperature": 1.3,
   "use_covering": true,
-  "covering_max_depth": null,
-  "cache_topk": 4,
+  "covering_max_depth": 8,
+  "cache_topk": 16,
   "cache_seed": 42,
+  "cache_chunk_size": 1000,
   "teachers": [
     {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"},
     {"id": "EleutherAI/pythia-1.4b", "weight": 1.0, "role": "aux"},
-    {"id": "Qwen/Qwen3-1.7B", "weight": 1.0, "role": "aux"}
+    {"id": "Qwen/Qwen3-1.7B-Base", "weight": 1.0, "role": "aux"}
   ],
   "_notes": {
-    "purpose": "Pre-compute teacher byte probs for 3-teacher 12K Ekalavya iteration",
-    "cache_size_estimate": "54.4 GB (top-4, 3 teachers, 72K micro-batches)",
-    "build_time_estimate": "~100-120h CPU (covering bottleneck), ~15-20h with GPU covering",
+    "purpose": "Pre-compute teacher byte probs for 3-teacher 12K Ekalavya iter6",
     "usage": "python code/sutra_dyad.py --cache-teachers results/config_cache_3teacher_12k.json",
-    "output": "results/teacher_cache_3teacher_12k.pt",
-    "top4_quality": "captures ~85% probability mass per byte position, <0.1% noise impact on KD"
+    "output": "results/teacher_cache_3teacher_12k/ (directory, chunked v2 format)",
+    "top16_quality": "captures ~95% probability mass, matches iter5 cache quality"
   }
 }

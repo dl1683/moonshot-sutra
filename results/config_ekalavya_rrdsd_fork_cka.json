@@ -1,0 +1,79 @@
+{
+  "_doc": "RRDSD Fork: +CKA (Codex R3 Path C probe). Adds linear CKA structural loss to RRDSD-lite. Warm-start from r1b best or iter5 best.pt. 300-step probe. Promotion: >=0.003 BPB over lite-control at +300, runtime penalty <=15%.",
+  "_seed_checkpoint_primary": "results/checkpoints_ekalavya_rrdsd_r1b/best.pt",
+  "_seed_checkpoint_fallback": "results/checkpoints_ekalavya_iter5_full_6k/best.pt",
+
+  "max_steps": 400,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 25,
+
+  "run_name": "ekalavya_rrdsd_fork_cka",
+  "eval_every": 50,
+  "log_every": 10,
+
+  "kd_alpha": 0.06,
+  "kd_beta": 0.005,
+  "kd_temperature": 1.0,
+  "kd_ramp_steps": 0,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 0,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 1.0,
+  "kd_peak_beta_mult": 1.0,
+  "kd_final_beta_mult": 0.0,
+  "kd_alpha_decay_points": [[0, 1.0], [400, 1.0]],
+  "kd_beta_decay_points": [[0, 0.0], [25, 1.0], [150, 1.0], [250, 0.0], [400, 0.0]],
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "repr_anchor_only": true,
+
+  "use_rrdsd": true,
+  "rrdsd_t_loss": 0.7,
+  "rrdsd_zpd_q_lo": 0.45,
+  "rrdsd_zpd_q_hi": 0.98,
+  "rrdsd_util_mass": 0.65,
+  "rrdsd_density_min": 0.10,
+  "rrdsd_density_max": 0.20,
+  "rrdsd_multi_teacher": false,
+  "rrdsd_cka_weight": 0.005,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 200,
+  "unfreeze_phase2_step": 1000,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "300": 1.399
+  },
+
+  "rolling_save_every": 50,
+  "rolling_save_keep": 3,
+
+  "_notes": {
+    "mechanism": "RRDSD-lite + linear CKA (anchor patch-hidden alignment). Forward-KL output + (1-CKA) structural.",
+    "cka_schedule": "kd_beta_decay_points implements: ramp 0->1.0 over steps 0-25, hold to 150, decay to 0 by 250. Peak beta_eff = kd_beta * mult = 0.005 * 1.0.",
+    "codex_r3_promotion": "+CKA promoted to R2-full only if eval improves by >=0.003 BPB at step +300 AND runtime penalty <=15% vs lite-control arm"
+  }
+}

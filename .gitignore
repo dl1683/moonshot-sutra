@@ -41,6 +41,10 @@ data/*.txt
 # Private methodology docs
 CLAUDE.md
 research/TESLA_LEIBNIZ_*.md
+research/tesla_*.md
+research/tesla_*.txt
+research/codex_*.txt
+research/codex_*.md
 results/tesla_leibniz_*.md
 
 # Ruff cache

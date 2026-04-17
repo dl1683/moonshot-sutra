@@ -23,9 +23,8 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **Code:** Committed b3ccb16, unit tests pass (all 6). Kill criteria fixed for from-scratch calibration.
 **Blocked on:** GPU (Ekalavya 6K running, est. ~4 days)
 
-### Tesla R1-R3 Design Session (2026-04-15)
-**Purpose:** Strategic architecture review. Are we on the best path?
-**Design doc:** `research/tesla_session_design.md` (2091 lines, 3 Codex rounds)
+### Strategic Architecture Review (2026-04-15)
+**Purpose:** Are we on the best path?
 **Key findings:** (1) Ekalavya KD ceiling with 2 teachers: 0.005-0.016 BPB. (2) Student capacity at 188M may be the bottleneck, not teacher quality. (3) Token-global/byte-local (Architecture G) scored highest across all 5 outcomes. (4) MVG scout is the minimum viable test of the core hypothesis. (5) Design confidence maxes at 6.4/10 — only experiments close the gap.
 **What we learned:** Ekalavya should remain as INFRASTRUCTURE, not the singular priority. The architecture decision (fixed byte patches vs semantic patches) may matter more than KD mechanism refinement.
 
@@ -44,14 +43,14 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **Hypothesis:** 3rd teacher with near-zero anchor correlation provides complementary signal. Extended training allows deeper knowledge absorption. VRAM budget: ~13GB (safe with 24GB available).
 
 ### ekalavya_iter5_full_6k [RUNNING — 6000 steps]
-**Purpose:** Full TAID + uncertainty gating + piecewise alpha decay run. Codex T+L iteration 5 design.
+**Purpose:** Full TAID + uncertainty gating + piecewise alpha decay run. review design iteration 5 design.
 **Mechanism:** TAID β 0→0.8/600, uncertainty gating exp 1→2/600 (ug_clamp=1.5), soft-sigmoid anchor routing (JSD>0.02 gate, sigmoid confidence weighting, aux_cap=0.35), covering, piecewise alpha decay (0.03→0.015→0.005→0.0 at steps 150/1500/3000/4500), no hold, grad_clip=0.8. Global layers unfreeze at 700/1800.
-**Codex gate review (step 250):** HIGH: routing is soft (sigmoid), not hard confidence gate — docs corrected. MEDIUM: resume loses best_eval (N/A for this run), unfreeze +0.6GB/phase (safe), kill criteria manual only.
+**review gate review (step 250):** HIGH: routing is soft (sigmoid), not hard confidence gate — docs corrected. MEDIUM: resume loses best_eval (N/A for this run), unfreeze +0.6GB/phase (safe), kill criteria manual only.
 **Config:** `results/config_ekalavya_iter5_full_6k.json`
 **Seed:** best.pt from routing run (step 250, eval BPB=1.418)
 **Kill:** eval > 1.430 at step 500, eval > 1.420 at step 1500
 **KD budget:** 7x routing's cumulative transfer (35.8 vs 5.2). Main absorption window: steps 600-1500 (β=0.8, α=0.03-0.015).
-**Crash history:** 5 restarts due to parent shell death from Claude Code context compaction. Run 1 reached step 310, runs 2-4 only reached 270-330 before dying silently. All restarts from step 250 checkpoint.
+**Crash history:** 5 restarts due to parent shell death from agent context compaction. Run 1 reached step 310, runs 2-4 only reached 270-330 before dying silently. All restarts from step 250 checkpoint.
 **Crash defenses (commit 7d380b1):** stderr tee to log file, atexit emergency checkpoint, __main__ crash log, rolling_save 250→100, nohup+disown launch.
 **Training trajectory (steps 250-310, from run 1 which had the most data):**
 | Window | Steps | Mean BPB | CE | Repr | TAID β | Trend |
@@ -126,7 +125,7 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **What we learned:** Covering >> first-byte marginal (v2 diverged at 550, covering oscillates). Alpha=0.05 needed, unfreeze must be delayed. Dense all-byte KD at high alpha creates sustained gradient conflict even under clipping.
 
 ### ekalavya_v2_2k [DONE — FAILED]
-**Purpose:** First-byte marginal KD with Codex audit fixes, single teacher SmolLM2-1.7B.
+**Purpose:** First-byte marginal KD with review audit fixes, single teacher SmolLM2-1.7B.
 **Key finding:** BPB diverged from baseline (1.421→1.565 at step 2000). First-byte marginal destroys 84% of teacher signal (3.485→0.535 bits).
 **What we learned:** First-byte marginal alignment is fundamentally too lossy for byte-level KD. Led to covering decomposition design.
 
@@ -236,10 +235,10 @@ Reverse chronological. Machine-readable details in `experiments/ledger.jsonl`.
 **Purpose:** Validate byte-level KD mechanism with aggressive alpha=0.5, T=2.0.
 **Config:** batch=8, accum=2, alpha=0.5, T=2.0, 500 steps, SmolLM2-1.7B anchor (bf16).
 **Key finding:** KD mechanism works (KD loss -81%, repr loss -82%) but alpha=0.5 catastrophically disrupts CE. Final BPB 2.598 vs baseline 1.415.
-**What we learned:** Alpha=0.5 too aggressive. Need 5x lower alpha. Off-by-one alignment bug found by Codex audit.
+**What we learned:** Alpha=0.5 too aggressive. Need 5x lower alpha. Off-by-one alignment bug found by review audit.
 
 ### ekalavya_v2_2k [RUNNING]
-**Purpose:** Corrected Ekalavya with all Codex audit fixes. Alpha=0.10, T=1.5, 4-bit teacher.
+**Purpose:** Corrected Ekalavya with all review audit fixes. Alpha=0.10, T=1.5, 4-bit teacher.
 **Config:** batch=12, accum=6, alpha=0.10, beta=0.15, T=1.5, 2000 steps, SmolLM2-1.7B (4-bit). Progressive unfreeze (8-11→4-7→0-3). 5 layerwise LR groups.
 **Fixes:** Off-by-one byte alignment, causal repr alignment, float32 KL, 4-bit quantization, resume + unfreeze logic.
 **Early signal (step 50):** CE 0.9997, BPB 1.442 — only +0.027 above baseline (vs +1.3 in v1). CE PRESERVED.

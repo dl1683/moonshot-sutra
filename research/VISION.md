@@ -42,7 +42,7 @@ These are the 5 real outcomes that define success for Sutra. They are the GOALS 
 
 **Why it's hard with limited resources:** Current frontier models achieve intelligence by throwing massive scale at the problem — trillions of tokens, billions of parameters, thousands of GPUs. We have a single GPU and a fraction of the data. To match their intelligence with our resources, the model must process information more efficiently. It needs to allocate its limited compute where it matters most — spending deep thought on hard problems and breezing past easy content. It needs to learn in a way that mirrors how thinking actually works: you don't apply the same amount of mental effort to every word you read.
 
-**Current mechanism:** To be determined by Tesla+Leibniz design sessions. See `research/ARCHITECTURE.md` for the current state. Previous architectures (recurrent state-superposition, dense with early exits) were explored but the project has reset to first principles. The T+L process will evaluate ALL options — transformers, SSMs, hybrids, gated convolutions, hyperbolic networks, sheaf-theoretic models, or something entirely novel — against the 5 outcomes.
+**Current mechanism:** To be determined by the design process. See `research/ARCHITECTURE.md` for the current state. Previous architectures (recurrent state-superposition, dense with early exits) were explored but the project has reset to first principles. The design process will evaluate ALL options — transformers, SSMs, hybrids, gated convolutions, hyperbolic networks, sheaf-theoretic models, or something entirely novel — against the 5 outcomes.
 
 **If you can propose a mechanism that produces higher intelligence from the same parameters and data — propose it.**
 
@@ -128,7 +128,7 @@ Every choice has a history. Some solve real problems (load-bearing). Others were
 
 ### Prior Experiments (implementation-specific — question before generalizing)
 
-Previous architectures (v0.5.x recurrent SSM, v0.6.x 12-pass recurrence, EDSR dense with early exits) were explored. Results are in git history. **Critical caveat:** These results are specific to our particular implementations at a specific scale. "Our implementation of X didn't work" ≠ "X doesn't work." The T+L process must question whether alternative implementations might succeed. See `research/RESEARCH.md` for field research on related approaches.
+Previous architectures (v0.5.x recurrent SSM, v0.6.x 12-pass recurrence, EDSR dense with early exits) were explored. Results are in git history. **Critical caveat:** These results are specific to our particular implementations at a specific scale. "Our implementation of X didn't work" ≠ "X doesn't work." The design process must question whether alternative implementations might succeed. See `research/RESEARCH.md` for field research on related approaches.
 
 ---
 
@@ -138,7 +138,7 @@ Sutra is NOT just a language model. It is an experiment in **building intelligen
 
 The thesis evolves through empirical testing. Multiple architectural paradigms have been explored (see git history). What survived across all implementations: elastic compute (adaptive depth), 16K tokenizer efficiency, and the fundamental belief that geometry beats scale.
 
-**See `research/ARCHITECTURE.md` for the current architecture (populated by T+L sessions). See `research/RESEARCH.md` for field research informing the design.**
+**See `research/ARCHITECTURE.md` for the current architecture. See `research/RESEARCH.md` for field research informing the design.**
 
 ### The Adaptive Compute Insight
 
@@ -208,7 +208,7 @@ These rules govern every architectural choice, every experiment design, every de
 
 ## Current Status (2026-03-25)
 
-**See `research/ARCHITECTURE.md` for current architecture (populated by T+L design sessions).**
+**See `research/ARCHITECTURE.md` for current architecture.**
 
 **See `research/RESEARCH.md` for field research informing the design.**
 

@@ -1,0 +1,91 @@
+{
+  "_doc": "RRDSD Round 1 — Regret-Routed Dual-Surface Distillation per Codex T+L KM-R2. Single-anchor lite variant (multi-teacher deferred). Warm-start from iter5 best.pt. Output-surface only; CKA structural deferred if beta_eff stays 0 in R1-lite.",
+  "_seed_checkpoint": "results/checkpoints_ekalavya_iter5_full_6k/best.pt",
+
+  "max_steps": 1800,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 50,
+
+  "run_name": "ekalavya_rrdsd_r1b",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.06,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.0,
+  "kd_ramp_steps": 50,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 50,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 0.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+  "kd_alpha_decay_points": [[50, 1.0], [700, 1.0], [1400, 0.333], [1800, 0.0]],
+  "kd_beta_decay_points": [[0, 0.0]],
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "repr_anchor_only": true,
+
+  "use_rrdsd": true,
+  "rrdsd_t_loss": 0.7,
+  "rrdsd_zpd_q_lo": 0.45,
+  "rrdsd_zpd_q_hi": 0.98,
+  "rrdsd_util_mass": 0.65,
+  "rrdsd_density_min": 0.10,
+  "rrdsd_density_max": 0.20,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 200,
+  "unfreeze_phase2_step": 1000,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "300": 1.402,
+    "800": 1.392,
+    "1400": 1.386
+  },
+
+  "rolling_save": 50,
+  "rolling_keep": 3,
+
+  "_notes": {
+    "mechanism": "RRDSD-lite: single-anchor SmolLM2 with A*sqrt(D) utility, q45-q98 ZPD, cumulative 65% mass density gating clamped [10%,20%], forward-KL at T_loss=0.7 (with teacher sharpening), no T^2 scaling. Patch-CKA structural surface deferred — would need kd_beta > 0 and repr_proj integration.",
+    "changes_from_zar_gjsd_r1": [
+      "Utility: A*D -> A*sqrt(D) (softer disagreement moderator)",
+      "ZPD band: q60-q95 -> q45-q98 (wider)",
+      "Density control: top-15% -> cumulative 65% utility mass, clamped [10%,20%]",
+      "Loss: gJSD(0.7,0.3) with T^2 -> forward-KL at T_loss=0.7, no T^2",
+      "Teacher sharpening: p_t^(1/T_loss) explicit, not just kd_temperature baked in",
+      "kd_temperature: 1.3 -> 1.0 (teacher targets built without pre-softening)",
+      "Schedule: 2500 -> 1800 steps, earlier decay start (step 700 vs 1200)",
+      "Kill rules tighter: step 100 > 1.425, step 300 > 1.402, step 800 > 1.392, step 1400 > 1.386",
+      "Unfreeze phase 2 earlier: step 1300 -> 1000"
+    ],
+    "skipped_from_full_rrdsd": [
+      "Multi-teacher competitive routing (requires per-teacher tensor collection, deferred to R2)",
+      "Patch-CKA structural loss (requires kd_beta > 0 + repr_proj wiring, deferred to R2 if output-only survives)"
+    ]
+  }
+}

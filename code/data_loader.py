@@ -610,6 +610,79 @@ class ByteShardedDataset:
             }
 
 
+class RegretWeightedPool:
+    """Pool of pre-scored training windows for regret-weighted sampling.
+
+    Per design review: Path D data-side lever. Sample ~50% uniform from training
+    distribution + ~50% weighted by committee regret scores. Hypothesis: decisive
+    gains come from concentrating training on high-utility windows, not from further
+    per-position KL tweaking.
+
+    Usage:
+        pool = RegretWeightedPool.load("results/committee_regret_scores.npz")
+        x_weighted, y_weighted = pool.sample(batch_size=6, device='cuda')  # regret-weighted
+        # Caller mixes with uniform sample_batch output to form the 50-50 batch.
+    """
+    def __init__(self, x_windows, y_windows, regret_scores):
+        self.x = x_windows  # (N, T) uint8
+        self.y = y_windows  # (N, T) uint8
+        self.scores = regret_scores  # (N,) float32 — non-negative regret scores
+        # Softmax-normalize scores to a sampling distribution (temperature adjustable)
+        # Use simple proportional sampling: p_i ∝ score_i. Clamp floor to avoid zero-weight.
+        s = np.asarray(regret_scores, dtype=np.float64)
+        s = np.clip(s, a_min=1e-6, a_max=None)
+        self.probs = s / s.sum()
+        self.n = x_windows.shape[0]
+
+    @classmethod
+    def load(cls, npz_path):
+        data = np.load(npz_path)
+        x_windows = data["x_windows"]
+        y_windows = data["y_windows"]
+        regrets = data["regrets_h1"]
+        # Defensive validation (design review review A1 hardening)
+        assert x_windows.dtype == np.uint8, f"expected uint8, got {x_windows.dtype}"
+        assert y_windows.dtype == np.uint8, f"expected uint8, got {y_windows.dtype}"
+        assert regrets.ndim == 1 and regrets.shape[0] == x_windows.shape[0], \
+            f"shape mismatch: regrets {regrets.shape} vs x_windows {x_windows.shape}"
+        return cls(x_windows, y_windows, regrets)
+
+    def sample(self, batch_size, device='cuda', seed_offset=0):
+        """Sample `batch_size` windows weighted by regret. Returns (x, y) int64 tensors."""
+        import torch as _t
+        idx = np.random.choice(self.n, size=batch_size, replace=True, p=self.probs)
+        x_sel = _t.from_numpy(self.x[idx].astype(np.int64)).to(device)
+        y_sel = _t.from_numpy(self.y[idx].astype(np.int64)).to(device)
+        return x_sel, y_sel
+
+
+def mixed_regret_uniform_batch(dataset, pool, batch_size, seq_len, device='cuda',
+                                split='train', weighted_fraction=0.5):
+    """Mix: `weighted_fraction` of batch from regret pool, rest from uniform dataset.
+
+    Returns (x, y) both (batch_size, seq_len) int64.
+
+    For a 12-batch with weighted_fraction=0.5: 6 regret-weighted + 6 uniform.
+    """
+    import torch as _t
+    n_weighted = int(weighted_fraction * batch_size)
+    n_uniform = batch_size - n_weighted
+
+    parts_x, parts_y = [], []
+    if n_weighted > 0:
+        xw, yw = pool.sample(n_weighted, device=device)
+        parts_x.append(xw); parts_y.append(yw)
+    if n_uniform > 0:
+        xu, yu = dataset.sample_batch(n_uniform, seq_len, device=device, split=split)
+        parts_x.append(xu); parts_y.append(yu)
+
+    x = _t.cat(parts_x, dim=0) if parts_x else _t.empty(0)
+    y = _t.cat(parts_y, dim=0) if parts_y else _t.empty(0)
+    # Shuffle within batch so regret positions aren't correlated with batch idx
+    perm = _t.randperm(batch_size, device=device)
+    return x[perm], y[perm]
+
+
 def migrate_shards():
     """Move existing shards from old locations into data/shards/."""
     SHARD_DIR.mkdir(parents=True, exist_ok=True)
