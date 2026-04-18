@@ -1,0 +1,81 @@
+{
+  "_doc": "SOUNDNESS-FIRST r1 (KM-R6 design). Additive top-2 margin + log-prob rejection-span aux losses on top of plain classical KD. Resumes from classical_continue_r2 best.pt to inherit optimizer state (no fresh-optimizer warm-start cost).",
+  "_TEMPLATE_FIELDS_TO_FILL_WHEN_R2_FINISHES": {
+    "resume_ckpt": "results/checkpoints_classical_continue_r2/best.pt",
+    "max_steps": "set to r2_best_step + 800",
+    "kill_rules_b_star": "fill from r2's eval_loss at best.pt"
+  },
+
+  "resume_ckpt": "results/checkpoints_classical_continue_r2/best.pt",
+  "max_steps": 1600,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 0,
+
+  "run_name": "soundness_first_r1",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.05,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 0,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 0,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 1.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "use_rrdsd": false,
+  "repr_anchor_only": true,
+
+  "use_soundness_first": true,
+  "sf_margin_weight": 0.01,
+  "sf_floor_weight": 0.01,
+  "sf_quantile": 0.01,
+  "sf_ramp_steps": 50,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 99999,
+  "unfreeze_phase2_step": 99999,
+
+  "grad_clip": 0.8,
+
+  "_kill_rules_PENDING_b_star_from_r2": {
+    "step_200": "b_star + 0.015",
+    "step_500": "b_star + 0.005",
+    "step_800": "b_star - 0.010 minimum to declare success"
+  },
+
+  "rolling_save": 50,
+  "rolling_keep": 3,
+
+  "_notes": {
+    "spec_source": "research/codex_km_r6_response.md",
+    "loss": "L_total = L_CE + 0.05 * L_fkl + 0.01 * L_margin + 0.01 * L_floor (in log-prob space, gauge-invariant)",
+    "launch_condition": "r2 must finish first; pull b_star from results/checkpoints_classical_continue_r2/best.pt eval_loss; update kill_rules object below before launch.",
+    "kill_rules_TODO": "Add proper kill_rules dict with step_200/500/800 thresholds derived from b_star."
+  }
+}

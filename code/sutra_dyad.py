@@ -3753,7 +3753,18 @@ def train_ekalavya(s1_ckpt, cfg=None):
     rrdsd_multi_teacher = cfg.get("rrdsd_multi_teacher", False)  # competitive routing across teachers
     rrdsd_cka_weight = cfg.get("rrdsd_cka_weight", 0.0)          # anchor patch-CKA aux loss weight (λ_cka)
 
-    # Committee-regret window sampler — Codex diagnostic top-upside per §12.15
+    # Soundness-First (KM-R6 design): additive auxiliaries on top of forward-KL.
+    # L_total += sf_margin_weight * MSE(s_margin - t_margin) + sf_floor_weight * MSE(s_span - t_span)
+    # where margin = log(top1) - log(top2) and span = log(top1) - log(quantile_sf_quantile),
+    # both computed in log-prob space (gauge-invariant for normalized distributions).
+    # Auxiliaries ramp to full weight over sf_ramp_steps from start_step.
+    use_soundness_first = cfg.get("use_soundness_first", False)
+    sf_margin_weight = cfg.get("sf_margin_weight", 0.01)
+    sf_floor_weight = cfg.get("sf_floor_weight", 0.01)
+    sf_quantile = cfg.get("sf_quantile", 0.01)
+    sf_ramp_steps = cfg.get("sf_ramp_steps", 50)
+
+    # Committee-regret window sampler — diagnostic top-upside per §12.15
     # When regret_scores_path is set, replaces dataset.sample_batch with mixed_regret_uniform_batch:
     # 50% (configurable) of each batch is drawn from the pre-scored window pool weighted by R(w),
     # the other 50% from uniform distribution over training shards.
@@ -4015,6 +4026,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
             f"ZPD q=[{zar_zpd_q_lo},{zar_zpd_q_hi}], top-{zar_utility_topk_pct:.0%} utility, "
             f"U_min={zar_utility_min}, gJSD pi={zar_gjsd_pi}. "
             f"TAID/UG/repr ignored when active.")
+    if use_soundness_first:
+        log(f"Soundness-First: ACTIVE (additive on top of classical KL-KD). "
+            f"margin_w={sf_margin_weight}, floor_w={sf_floor_weight}, "
+            f"quantile={sf_quantile}, ramp={sf_ramp_steps} steps. "
+            f"Both losses in log-prob space (gauge-invariant).")
     if use_rrdsd:
         log(f"RRDSD: ACTIVE (replaces classical KL-KD AND ZAR-gJSD). "
             f"Utility=A*sqrt(D), ZPD q=[{rrdsd_zpd_q_lo},{rrdsd_zpd_q_hi}], "
@@ -4326,6 +4342,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 # KD Loss 1: Byte-level KL divergence (float32 for numerical stability)
                 # Supports TAID (progressive target) and uncertainty gating (per-position weighting)
                 kd_loss = torch.tensor(0.0, device=DEVICE)
+                sf_aux_loss = torch.tensor(0.0, device=DEVICE)
+                sf_stats = {}
                 ug_stats = {}
                 zar_stats = {}
                 rrdsd_stats = {}
@@ -4684,6 +4702,51 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         kl = (kl * mask.float()).sum() / mask.float().sum()
                         kd_loss = kd_temperature ** 2 * kl
 
+                        # Soundness-First (KM-R6): additive top-2 margin + rejection-span aux losses.
+                        # CRITICAL: SF is added to total_loss DIRECTLY (not via kd_loss), so its weights
+                        # are absolute, not multiplied by alpha_eff. Spec is L_total = L_CE + alpha_kd*L_fkl
+                        # + sf_margin_weight*L_margin + sf_floor_weight*L_floor. Ramp from 0 over
+                        # sf_ramp_steps to avoid destabilizing the warm-start optimizer state.
+                        if use_soundness_first:
+                            # Ramp relative to resume point so warm-start optimizer state isn't destabilized
+                            sf_ramp = min(1.0, max(0, step - start_step) / max(sf_ramp_steps, 1))
+                            ell_T = torch.log(t_probs.clamp_min(1e-10))            # (B, T, V)
+                            ell_S = F.log_softmax(student_logits.float(), dim=-1)  # (B, T, V) — true log-prob
+                            ell_S = ell_S[:, :ell_T.shape[1], :]
+                            top2_T = torch.topk(ell_T, k=2, dim=-1)
+                            i1 = top2_T.indices[..., 0:1]                          # (B, T, 1)
+                            i2 = top2_T.indices[..., 1:2]
+                            mT_top1 = top2_T.values[..., 0]
+                            mT_top2 = top2_T.values[..., 1]
+                            mS_top1 = ell_S.gather(-1, i1).squeeze(-1)
+                            mS_top2 = ell_S.gather(-1, i2).squeeze(-1)
+                            t_margin = mT_top1 - mT_top2
+                            s_margin = mS_top1 - mS_top2
+                            sf_margin_loss = ((s_margin - t_margin) ** 2)
+                            mask_sum = mask.float().sum().clamp_min(1.0)
+                            sf_margin_loss = (sf_margin_loss * mask.float()).sum() / mask_sum
+
+                            t_floor = torch.quantile(ell_T, sf_quantile, dim=-1)
+                            s_floor = torch.quantile(ell_S, sf_quantile, dim=-1)
+                            t_span = mT_top1 - t_floor
+                            s_span = mS_top1 - s_floor
+                            sf_floor_loss = ((s_span - t_span) ** 2)
+                            sf_floor_loss = (sf_floor_loss * mask.float()).sum() / mask_sum
+
+                            sf_aux_loss = sf_ramp * (
+                                sf_margin_weight * sf_margin_loss +
+                                sf_floor_weight * sf_floor_loss
+                            )
+
+                            with torch.no_grad():
+                                sf_stats = {
+                                    "sf_margin": float(sf_margin_loss.detach().item()),
+                                    "sf_floor": float(sf_floor_loss.detach().item()),
+                                    "sf_t_margin_mean": float((t_margin * mask.float()).sum().item() / mask_sum.item()),
+                                    "sf_s_margin_mean": float((s_margin * mask.float()).sum().item() / mask_sum.item()),
+                                    "sf_ramp": sf_ramp,
+                                }
+
                 # KD Loss 2: Representation alignment
                 # - Default (non-RRDSD): cosine similarity per Stage 1 spec
                 # - RRDSD mode: linear CKA (centered kernel alignment) per design review
@@ -4743,7 +4806,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         if pmask.any():
                             repr_loss = ((1.0 - cos_sim) * pmask.float()).sum() / pmask.float().sum()
 
-                total_loss = ce_loss + alpha_eff * kd_loss + beta_eff * repr_loss
+                total_loss = ce_loss + alpha_eff * kd_loss + beta_eff * repr_loss + sf_aux_loss
                 loss_scaled = total_loss / grad_accum
 
             if torch.isnan(total_loss) or torch.isinf(total_loss):
@@ -4832,6 +4895,13 @@ def train_ekalavya(s1_ckpt, cfg=None):
                               f" A={zar_stats.get('zar_A_mean',0):.2f}"
                               f" J={zar_stats.get('zar_JSD_mean',0):.3f}"
                               f" U*={zar_stats.get('zar_U_selected_mean',0):.3f}")
+            sf_suffix = ""
+            if use_soundness_first and sf_stats:
+                sf_suffix = (f" | sf m={sf_stats.get('sf_margin',0):.3f}"
+                             f" f={sf_stats.get('sf_floor',0):.3f}"
+                             f" tm={sf_stats.get('sf_t_margin_mean',0):.2f}"
+                             f" sm={sf_stats.get('sf_s_margin_mean',0):.2f}"
+                             f" r{sf_stats.get('sf_ramp',0):.2f}")
             rr_suffix = ""
             if use_rrdsd and rrdsd_stats:
                 rr_suffix = (f" | rr cand={rrdsd_stats.get('rr_cand_frac',0):.0%}"
@@ -4844,7 +4914,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 f"Repr {running_repr/n:.4f} | Total {running_total/n:.4f} | BPB {bpb:.3f} | "
                 f"lr {local_lr:.2e} | grad {grad_norm:.2f} | "
                 f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}"
-                f"{taid_suffix}{ug_suffix}{zar_suffix}{rr_suffix}")
+                f"{taid_suffix}{ug_suffix}{zar_suffix}{rr_suffix}{sf_suffix}")
             running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
 
         if step % eval_every == 0:
