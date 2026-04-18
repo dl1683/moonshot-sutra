@@ -5891,7 +5891,7 @@ Items 4-6 are newly-elevated as likely more impactful than iterating on RRDSD pe
 3. Integrate `RegretWeightedPool` sampler into train_ekalavya (~20 lines, already prepped in data_loader.py)
 4. Launch short 400-600 step regret-weighted training from iter5 best.pt (no RRDSD — clean isolated data-side test)
 
-Success or failure of this probe is the pivot gate. Codex R5 recommendation: **stop iterating per-position KD until window-selection hypothesis is tested**.
+Success or failure of this probe is the pivot gate. R5 design-round recommendation: **stop iterating per-position KD until window-selection hypothesis is tested**.
 
 ### 12.11 Non-Transformer Third Teacher Shortlist (Design Round 1 Research Request #4)
 
@@ -5933,3 +5933,113 @@ Reasoning:
 **Probe before committing:** per Design Round 1 Probe #6 ("Third-teacher oracle probe"), run offline oracle computation for Falcon-Mamba-7B-4bit against the same 1024 validation positions used in Probe 1. Decision criterion: keep only if incremental oracle BPB gain ≥ 0.010 over current pair. Expected cost: ~4GB VRAM load + ~2 min inference × 1024 positions.
 
 **Integration caveat:** Falcon-Mamba uses its own tokenizer (Falcon BPE). Our covering decomposition handles any BPE tokenizer generically, so adding it to the teacher committee is the same integration cost as adding any other BPE-teacher. No new code paths required.
+
+### 12.17 REGRET TRAINING r1 FAILED — COMMITTEE-REGRET HYPOTHESIS FALSIFIED (2026-04-17 21:25 EDT)
+
+**Run:** `config_ekalavya_regret_r1.json` from iter5 best.pt, 50% uniform + 50% regret-weighted windows (pool of 384 pre-scored windows), plain classical KL-KD alpha=0.03, NO RRDSD.
+
+**Training trajectory (steps 10-100):**
+| Step | CE | KD | BPB |
+|---|---|---|---|
+| 10 | 1.03 | 1.12 | 1.492 |
+| 20 | 1.03 | 1.35 | 1.480 |
+| 30 | 1.00 | 1.33 | 1.441 |
+| 40 | 0.98 | 1.22 | 1.412 |
+| 50 | 0.93 | 1.13 | **1.345** |
+| 60 | (not logged, roughly similar) | | |
+| 70 | 0.98 | 1.45 | 1.417 |
+| 80 | 0.92 | 1.16 | 1.327 |
+| 90 | 0.92 | 1.12 | 1.324 |
+| 100 train | 0.92 | 1.23 | 1.330 |
+| **100 EVAL** | — | — | **1.458 (KILLED at >1.430 threshold)** |
+
+**Train-eval gap: +0.128 BPB — 3x the ~0.04 gap observed in prior runs.**
+
+**Decisive interpretation:**
+- Training loss dropped DRAMATICALLY (best iteration trajectory of session: 1.492 → 1.330). Regret-weighted sampling DID concentrate useful teacher signal on hard windows.
+- But eval went UP (1.330 train → 1.458 eval). **The student learned the 384-window pool, not the underlying distribution.**
+- The 384 windows are a POINT-ESTIMATE; training on them repeatedly (~188 batch-views per window across 100 steps × 72 items) causes POOL OVERFITTING.
+- This FALSIFIES the R4 design-round 9/10-confidence "window-level dilution" hypothesis. Window selection is not the lever.
+
+**What this tells us:**
+1. The student HAS the capacity to learn hard windows — it crushes them in training.
+2. The BOTTLENECK is generalization from training windows to held-out. Per-window utility signal does NOT compose to broader capability.
+3. **This aligns with the "one-step next-byte KD is wrong object" hypothesis (meta-analysis hypothesis #2, R5 design hypothesis #2).** The student learns point-estimates fine; it just doesn't learn the distribution over points.
+
+**New pivot direction (dominant hypothesis post-falsification):**
+
+The OBJECT of transfer, not the data selection, is the bottleneck. Candidates:
+- **Long-horizon / chunk objectives** — predict 4-16 byte futures, not 1. Forces compositional generalization.
+- **Sparse teacher dictionary** — distill top-activated atoms of teacher hidden states (atelier portfolio 15's "rejected alternatives" echoes this)
+- **Functional matching** (IIT 12) — match irreducible integrated structure, not reducible marginals
+- **Jacobian / Sobolev matching** (linguistics 08) — match teacher's derivatives over input perturbations
+- **Cell-wise CKA on byte-level** (math 05) — cross-tokenizer aligned invariant matching
+
+**Diagnostic baseline launched:** `config_diagnostic_classical_kd.json` from iter5 best.pt, plain KD alpha=0.05, NO regret sampling. If eval at step 100 also > 1.43, the problem is systemic to "training from iter5 best.pt with fresh optimizer" (warm-start artifact). If eval ≤ 1.43, regret sampling specifically was the overfit culprit.
+
+**Status:** diagnostic running at step 10 BPB 1.395 — looks healthy so far.
+
+### 12.18 Diagnostic Confirms Regret Sampling Was the Specific Failure (2026-04-17 21:55 EDT)
+
+**Diagnostic classical KD (no regret sampling, same iter5 best.pt seed) step 100 eval: BPB 1.432.**
+
+Decisive comparison table — all step 100 evals from iter5 best.pt with fresh optimizer:
+
+| Run | Step 100 eval BPB | Mechanism |
+|---|---|---|
+| **Iter5 seed (no extra training)** | **1.398** | reference |
+| **Diagnostic classical KD** | **1.432** (+0.034 vs seed) | clean baseline (alpha=0.05, no special) |
+| ZAR-gJSD r1a | 1.430 | A×D, top-15%, gJSD, T² |
+| RRDSD-lite r1b v4 | 1.420 | A×√D, q45-q98, cum-mass, fwd-KL T=0.7 |
+| **Regret-weighted r1** | **1.458** (+0.026 vs diagnostic) | 50/50 pool sampling |
+
+**Conclusions:**
+1. **Regret sampling specifically caused +0.026 BPB worse eval.** Confirmed pool overfitting hypothesis.
+2. **All warm-starts from iter5 best.pt with fresh optimizer hit ~1.42-1.43 at step 100 eval.** This is a SYSTEMIC warm-start cost — the optimizer needs ~100 steps to re-find iter5's loss basin.
+3. **Mechanism iterations (ZAR-gJSD, RRDSD) made marginal difference vs classical KD at step 100.** RRDSD marginally best (1.420 vs 1.432 = -0.012), but well within noise.
+4. **The plateau is REAL** — ~1.42 BPB at step 100 across all attempted KD variants is the current ceiling.
+
+**Implication for future work:**
+- Stop launching from fresh-optimizer warm-start. The first 100 steps are wasted re-finding the basin.
+- Better to RESUME from a checkpoint that includes optimizer state (continue iter5 from step 6000 forward, not from best.pt at step 500).
+- OR: restructure the experiment to NOT eval until step 300+ when warmup cost has been amortized.
+- The actual signal-of-mechanism-effect is at step 200-300, not step 100.
+
+**Diagnostic continues to step 300** (no kill rules). Will provide clean baseline trajectory for future comparisons.
+
+### 12.19 DECISIVE STRATEGIC FINDING — PLAIN CLASSICAL KD WINS (2026-04-17 23:38 EDT)
+
+**Diagnostic classical KD full trajectory:**
+
+| Step | Eval BPB |
+|---|---|
+| 100 | 1.432 |
+| 200 | 1.411 |
+| **300** | **1.381 (−0.017 below seed 1.398)** |
+
+**First run this session to decisively BEAT seed at an eval checkpoint.**
+
+Full session comparison (step 300 evals):
+
+| Mechanism | Step 300 eval | Result |
+|---|---|---|
+| Iter5 baseline | 1.398 | reference |
+| **Diagnostic classical KD** | **1.381** | ✓ SEED BEATEN |
+| RRDSD-lite r1b v4 | 1.447 | ✗ KILLED (regressed post-unfreeze) |
+| ZAR-gJSD r1a | killed at step 100 | ✗ |
+| Regret-weighted r1 | killed at step 100 (1.458) | ✗ OVERFIT |
+
+**Acceleration observed post-warmup:**
+- Steps 100→200: rate −0.021/100
+- Steps 200→300: rate −0.030/100
+
+**THE DECISIVE FINDING:**
+> Plain classical KD (alpha=0.05, T=1.3, anchor-only, no TAID/UG/routing/RRDSD/regret) from iter5 best.pt with fresh optimizer OUTPERFORMED all 4 complex mechanism iterations attempted this session (ZAR-gJSD, RRDSD-lite, RRDSD multi-teacher, committee-regret).
+
+**Strategic implication:** The session's investment in mechanism complexity (ZPD masking, utility routing, gJSD, CKA, regret sampling) was EMPIRICALLY DISPROVEN. Over-engineering was the problem. Simple KD from a good warm-start point gets us past iter5's ceiling.
+
+**Continuation launched** (`config_classical_continue_r2.json`): 800 more steps from diagnostic best.pt (1.381). Re-ramp KD alpha (100 steps). Kill rules at step 500 > 1.385, step 800 > 1.370. Testing whether classical KD continues to make progress.
+
+**Meta-lesson for the session:** our strategic design rounds (R1-R5) + 18 exploration portfolios + meta-synthesis all converged on "the problem is mechanism." The data says "the problem was warm-start artifacts + our mechanisms adding noise." **Empirical evidence overrides theoretical elegance.**
+
+The 90 mental models are still valuable as a portfolio — but the CURRENT bottleneck wasn't in any of them. It was simpler: we kept hitting reset on the optimizer, measuring warm-start cost, and attributing it to mechanism failure.

@@ -1,0 +1,31 @@
+{
+  "probe": "committee_regret_scoring",
+  "checkpoint": "C:\\sutra_fast\\checkpoints_ekalavya_iter5_full_6k\\best.pt",
+  "checkpoint_step": 500,
+  "n_windows": 384,
+  "teachers": [
+    "HuggingFaceTB/SmolLM2-1.7B",
+    "EleutherAI/pythia-1.4b"
+  ],
+  "regret_h1_stats": {
+    "mean": 0.5824811458587646,
+    "median": 0.5930330753326416,
+    "std": 0.17097428441047668,
+    "min": 0.038155071437358856,
+    "max": 1.0874749422073364,
+    "p90": 0.7598124146461487,
+    "p99": 0.949124276638031
+  },
+  "regret_h4_stats": {
+    "mean": 1.4388055801391602,
+    "median": 1.4719219207763672,
+    "std": 0.38097408413887024,
+    "p90": 1.8285795450210571
+  },
+  "concentration": {
+    "top10_vs_bottom50_ratio": 1.846138834953308,
+    "corr_h1_vs_h4": 0.9898627249970868
+  },
+  "decision": "MODERATE_HEAVY_TAIL",
+  "interpretation": "Modest heavy tail (1.8x). Regret-weighted sampling may help but not guaranteed."
+}

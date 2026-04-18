@@ -15,6 +15,7 @@ Usage:
 import os
 import random
 import torch
+import numpy as np
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent

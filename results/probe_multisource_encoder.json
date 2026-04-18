@@ -1,0 +1,27 @@
+{
+  "probe": "multisource_encoder_alignment",
+  "checkpoint": "C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\AI Moonshots\\moonshot-sutra\\results\\checkpoints_ekalavya_iter5_full_6k\\best.pt",
+  "checkpoint_step": 500,
+  "encoder_model": "BAAI/bge-small-en-v1.5",
+  "encoder_dim": 384,
+  "student_dim": 640,
+  "n_windows": 48,
+  "n_chunks": 576,
+  "chunk_bytes": 128,
+  "chunk_stride_bytes": 126,
+  "patches_per_chunk": 21,
+  "metrics": {
+    "linear_cka": 0.601660966873169,
+    "linear_cka_shuffled_baseline": 0.05753206089138985,
+    "rsa_spearman_rho": 0.3684998629005152,
+    "rsa_spearman_p": 0.0
+  },
+  "decision": "SKIP_ALIGNMENT_LOSS",
+  "interpretation": "HIGH \u2014 student already aligns well with BGE. Alignment loss would give small increment.",
+  "notes": [
+    "Student representation: mean-pooled global_local over 21 patches (126 bytes \u2248 128).",
+    "BGE representation: [CLS] embedding, L2-normalized.",
+    "Shuffled baseline near 0 confirms measurement is meaningful.",
+    "Decision gates a potential future integration of alignment loss into RRDSD."
+  ]
+}

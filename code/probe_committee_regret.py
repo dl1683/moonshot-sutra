@@ -70,8 +70,12 @@ def load_teacher(tid):
     model = AutoModelForCausalLM.from_pretrained(
         tid, quantization_config=bnb_cfg, device_map={"": DEVICE})
     model.eval()
-    cov = _build_covering_tables(tok, vocab_size=len(tok))
-    return {"id": tid, "tokenizer": tok, "model": model, "covering": cov}
+    # Use logits dimension (model output width), not tokenizer vocab — they can differ
+    # (Pythia: tokenizer 50277, logits 50304 for GPU-efficient dimensions).
+    vocab_size = model.get_output_embeddings().weight.shape[0]
+    cov = _build_covering_tables(tok, vocab_size=vocab_size)
+    print(f"  -> tokenizer vocab: {len(tok)}, logits vocab: {vocab_size}")
+    return {"id": tid, "tokenizer": tok, "model": model, "covering": cov, "vocab": vocab_size}
 
 
 def main(args):
