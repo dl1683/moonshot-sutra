@@ -4725,26 +4725,31 @@ def train_ekalavya(s1_ckpt, cfg=None):
                                 }
 
                         # RBOR-RB (KM-R7 v1): rigid bottleneck selection mask.
-                        # final_mask = teacher_byte_mask AND (B_p in top rbor_top_frac of valid positions),
-                        # where B_p = stopgrad(KL_p * teacher_conf_p). Falls back to teacher_byte_mask if RBOR off.
+                        # final_mask = top rbor_top_frac of VALID positions by B_p = stopgrad(KL_p * teacher_conf_p).
+                        # Uses EXACT topk index selection (like the RRDSD branch) to enforce n_keep precisely
+                        # — earlier `B_p > threshold` form silently dropped boundary elements (per Tier 1 review).
                         if use_rbor:
                             with torch.no_grad():
                                 t_conf = t_probs.max(dim=-1).values  # (B, T)
                                 B_p = (kl * t_conf).detach()         # (B, T) per-position bottleneck score
-                                B_p_for_select = B_p.masked_fill(~mask, float('-inf'))
-                                flat_B = B_p_for_select.flatten()
+                                flat_B = B_p.masked_fill(~mask, float('-inf')).flatten()
                                 n_valid = int(mask.sum().item())
-                                n_keep = max(1, int(n_valid * rbor_top_frac))
-                                if n_keep < n_valid:
-                                    threshold = torch.topk(flat_B, n_keep).values.min()
-                                    top_k_mask = (B_p > threshold) & mask
+                                n_keep = max(1, int(n_valid * rbor_top_frac)) if n_valid > 0 else 0
+                                if n_keep > 0 and n_keep < n_valid:
+                                    topk_idx = torch.topk(flat_B, n_keep).indices
+                                    final_mask_flat = torch.zeros_like(flat_B, dtype=torch.bool)
+                                    final_mask_flat[topk_idx] = True
+                                    final_mask = final_mask_flat.reshape(B_p.shape)
+                                elif n_valid > 0:
+                                    # n_keep >= n_valid — keep all valid positions
+                                    final_mask = mask.clone()
                                 else:
-                                    top_k_mask = mask.clone()
-                                final_mask = top_k_mask
+                                    final_mask = torch.zeros_like(mask)
+                                kept = int(final_mask.sum().item())
                                 rbor_stats = {
-                                    "rbor_kept": float(final_mask.sum().item()),
-                                    "rbor_kept_frac": float(final_mask.sum().item()) / max(1.0, float(n_valid)),
-                                    "rbor_B_mean_kept": float((B_p * final_mask.float()).sum().item() / max(1.0, float(final_mask.sum().item()))),
+                                    "rbor_kept": float(kept),
+                                    "rbor_kept_frac": float(kept) / max(1.0, float(n_valid)),
+                                    "rbor_B_mean_kept": float((B_p * final_mask.float()).sum().item() / max(1.0, float(kept))),
                                     "rbor_B_mean_all": float((B_p * mask.float()).sum().item() / max(1.0, float(n_valid))),
                                 }
                         else:
