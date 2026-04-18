@@ -1,0 +1,72 @@
+{
+  "_doc": "Low-LR classical KD continuation r9. Hypothesis: the session's 1.41 ceiling may be partially driven by LR being TOO HIGH when resuming — the diagnostic's stored optimizer had LRs already decayed to ~1.2e-5 (from max_steps=300 schedule), but every resume run since re-inflated them to 1.2e-4. This is the first test with intentionally LOW LR (10x smaller). Resumes from rbor_v1b best.pt (matches param structure, has optimizer state).",
+  "_hypothesis": "If our resumed-eval drift is gradient-magnitude noise from LR being mismatched to the basin we landed in, a 10x lower LR should hold eval below 1.40. If eval ALSO drifts up at low LR, the ceiling is independent of LR and we have an independent confirmation of structural limit.",
+
+  "resume_ckpt": "results/checkpoints_rbor_v1b/best.pt",
+  "max_steps": 1400,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-5,
+  "lr_bridge": 1.6e-5,
+  "lr_global_top": 6e-6,
+  "lr_global_mid": 4e-6,
+  "lr_global_bot": 2.5e-6,
+  "min_lr_local": 1.2e-6,
+  "warmup_steps": 0,
+
+  "run_name": "classical_lowlr_r9",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.05,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 0,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 0,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 1.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "use_rrdsd": false,
+  "use_soundness_first": false,
+  "use_rbor": false,
+  "repr_anchor_only": true,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 99999,
+  "unfreeze_phase2_step": 99999,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "500": 1.410,
+    "800": 1.400,
+    "1400": 1.390
+  },
+
+  "rolling_save": 50,
+  "rolling_keep": 3,
+
+  "_notes": {
+    "starting_point": "rbor_v1b/best.pt step 400, stored eval 1.407 (true mean 1.404 ± 0.009 per probe_eval_noise)",
+    "if_succeeds": "Eval drops below 1.40 → LR was real bottleneck. Continue exploring LR space. Significantly weakens structural-ceiling hypothesis.",
+    "if_fails": "5 mechanisms + 1 LR variant all plateau → ceiling is fully bounded as STRUCTURAL. Pivot must be student-architecture, teacher, or data — no remaining loss-shape or hyperparameter knobs."
+  }
+}

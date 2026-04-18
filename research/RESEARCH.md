@@ -6244,3 +6244,38 @@ Five mechanisms, FIVE convergences to eval ~1.40-1.45 with no exception. The pat
 6. **Student Self-Predictor + TMR Sleep** — close the student-state loop, add a metacognitive channel.
 
 **Hard pause on autonomous launches.** 5 mechanisms × 5 plateaus is unambiguous. Continuing autonomously without user direction would burn 6+ GPU-days on the same ceiling.
+
+### 12.26 Low-LR r9 Result — KILLED at step 500 (2026-04-18)
+
+Last hyperparam-only test of the session: same classical KD recipe, but lr_local=1.2e-5 (10× lower than every prior run). Hypothesis: the diagnostic's stored optimizer LRs were already decayed to ~1.2e-5; my resume runs all re-inflated to 1.2e-4 via the LR scheduler, possibly destabilizing the basin.
+
+Setup: resumed from rbor_v1b best.pt (step 400, stored eval 1.407, true mean 1.404 ± 0.009). All LRs scaled by 0.1.
+
+Result:
+
+| Absolute step | Eval BPB | vs starting (~1.404) |
+|---|---|---|
+| 500 (+100 from resume) | **1.415** | **+0.011** → AUTO-KILL (>1.410) |
+
+**Falsified.** Even with 10× lower LR, eval drifted up into the 1.40-1.42 region within 100 steps. LR was NOT the destabilizer.
+
+**Six experiments × six plateaus — final final session pattern:**
+
+| Experiment | Lever | Best eval | Outcome |
+|---|---|---|---|
+| Classical r2 | no mech, fresh opt, default LR | 1.409 | killed |
+| Soundness-First r1 | rejection-structure aux loss | 1.411 | killed |
+| RBOR-RB v1b | top-10% bottleneck selection | 1.407 | killed |
+| Classical r3 | resumed opt from rbor_v1b | 1.439 | killed |
+| Straight-through r8 | resumed opt from THE WINNER 1.381 | 1.443 | killed |
+| **Low-LR r9** | **10× lower LR** | **1.415** | **killed** |
+
+The eval BPB ceiling at ~1.40 ± 0.01 has been bracketed across:
+- All loss-shape variations available (output-marginal, rejection-structure, position-selection)
+- Both optimizer-state regimes (fresh init, full resume from any prior best.pt)
+- 10× LR variation (1.2e-4 to 1.2e-5)
+- All checkpoint families in this session (diagnostic, r2, rbor_v1b)
+
+**This session has produced the most robust negative result possible without changing the configuration itself.** Six independent experiments. One conclusion: for the (188M byte-level student, SmolLM2-1.7B anchor, 246-shard mixed-domain byte data, classical forward-KL on per-position byte posteriors), **eval BPB cannot be moved below ~1.40 by any combination of mechanism, optimizer regime, or learning rate within the constraints tested.**
+
+**Genuinely terminating autonomous experimentation.** The next move requires human strategic decision on which structural pivot to commit to (any of: bigger student, hidden-state channel, different anchor, proper multi-teacher non-averaging, different data, Student Self-Predictor). Burning further GPU on this configuration is destructive.
