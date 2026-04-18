@@ -1,13 +1,14 @@
 {
-  "_doc": "SOUNDNESS-FIRST r1 (KM-R6 design). Additive top-2 margin + log-prob rejection-span aux losses on top of plain classical KD. Resumes from classical_continue_r2 best.pt to inherit optimizer state (no fresh-optimizer warm-start cost).",
-  "_TEMPLATE_FIELDS_TO_FILL_WHEN_R2_FINISHES": {
-    "resume_ckpt": "results/checkpoints_classical_continue_r2/best.pt",
-    "max_steps": "set to r2_best_step + 800",
-    "kill_rules_b_star": "fill from r2's eval_loss at best.pt"
+  "_doc": "SOUNDNESS-FIRST r1 (KM-R6 design, CONCRETIZED). Additive top-2 margin + log-prob rejection-span aux losses on top of plain classical KD. Resumes from classical_continue_r2 best.pt (step 300, eval BPB 1.409 — b_star). Kill rules and max_steps are now absolute step numbers, accounting for start_step=300.",
+  "_b_star_from_r2": {
+    "checkpoint": "results/checkpoints_classical_continue_r2/best.pt",
+    "r2_best_step": 300,
+    "r2_best_eval_bpb": 1.409,
+    "source": "r2 EVAL step 300: loss=0.9765, BPB=1.409"
   },
 
   "resume_ckpt": "results/checkpoints_classical_continue_r2/best.pt",
-  "max_steps": 1600,
+  "max_steps": 1100,
   "batch_size": 12,
   "grad_accum": 6,
   "seq_bytes": 1536,
@@ -63,10 +64,10 @@
 
   "grad_clip": 0.8,
 
-  "_kill_rules_PENDING_b_star_from_r2": {
-    "step_200": "b_star + 0.015",
-    "step_500": "b_star + 0.005",
-    "step_800": "b_star - 0.010 minimum to declare success"
+  "kill_rules": {
+    "500": 1.424,
+    "800": 1.414,
+    "1100": 1.399
   },
 
   "rolling_save": 50,
@@ -75,7 +76,9 @@
   "_notes": {
     "spec_source": "research/codex_km_r6_response.md",
     "loss": "L_total = L_CE + 0.05 * L_fkl + 0.01 * L_margin + 0.01 * L_floor (in log-prob space, gauge-invariant)",
-    "launch_condition": "r2 must finish first; pull b_star from results/checkpoints_classical_continue_r2/best.pt eval_loss; update kill_rules object below before launch.",
-    "kill_rules_TODO": "Add proper kill_rules dict with step_200/500/800 thresholds derived from b_star."
+    "resume_behavior": "start_step pulled from best.pt = 300. Loss schedule runs against absolute step, SF ramp runs against (step - start_step) i.e. ramps over absolute steps 300-350.",
+    "kill_rules_interpretation": "Absolute steps. 500 = SF step 200 (200 steps post-resume). 800 = SF step 500. 1100 = SF step 800 (horizon). Thresholds: b_star=1.409 + {0.015, 0.005, -0.010} per KM-R6.",
+    "success_criterion": "Eval BPB <= 1.389 by absolute step 1100 (>= 0.020 below b_star); decisive target from KM-R6 is <= 1.350 if r2 ended above 1.350, which it did.",
+    "failure_mode_next_step": "If SF improves by <0.02 over b_star, launch RBOR per KM-R7 (research/codex_km_r7_response.md)."
   }
 }
