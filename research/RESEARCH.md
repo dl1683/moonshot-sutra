@@ -6060,3 +6060,22 @@ Clean checks:
 - No SF double-scaling bug: `sf_aux_loss` is added directly in `total_loss`, outside `alpha_eff`.
 - Teacher/student/mask shapes in the classical branch are consistent; the one-sided trimming is safe.
 - `sf_stats` is preinitialized, so there is no undefined-variable leakage when SF is inactive.
+
+### 12.21 review design KM-R7 — Post-SF Pivot Decision (2026-04-18)
+
+**Empirical trigger:** `classical_continue_r2` from the diagnostic best checkpoint is now `1.424 -> 1.411 -> 1.409` at eval steps `100/200/300`, while the diagnostic run reached `1.381` at step `300` from the same seed checkpoint. So `r2` is worse than the seed it started from and is plateauing rather than accelerating. This confirms a real classical-KD ceiling near `~1.40` when restarted with a fresh optimizer, and more importantly shows that output-surface-only KD does not preserve or recreate the basin that produced the diagnostic minimum.
+
+**Mechanistic diagnosis:** byte-level forward-KL is supervising per-position next-byte marginals only. That objective is sum-decomposable: it can sharpen local logits, but it does not specify the latent state trajectory/invariant that makes future bytes easy. Once the easy surface signal is absorbed, the remaining gap is in state organization. Classical KD therefore behaves as a stoichiometric teacher, not a catalytic one: no student-conditioned routing, no offline equilibration, and no preserved invariants beyond marginals.
+
+**Decision if Soundness-First is marginal (`<0.02` BPB better than `b*`): launch the minimal grand-unification composite, not another loss-only or selection-only variant.** Chosen mechanism: **Rigid Bottleneck + Offline Relaxation**.
+
+- Single anchor teacher only; do not average teachers.
+- Per valid byte position define `B_p = stopgrad(CE_p * KL_p * teacher_conf_p)`.
+- Keep only the top `10%` of positions by `B_p` for KD-style supervision.
+- On those positions apply forward-KL plus the already-staged SF auxiliaries (top-2 margin + log-prob rejection-span).
+- Every `500` wake steps, run `50` sleep steps replaying buffered high-`B_p` windows only, with a `10%` held-out replay buffer that is never trained on. If replay-train falls but replay-held-out does not, abort further sleep cycles.
+- Run in `teacher_cache` mode to keep the full experiment within roughly `<=12 GPU-hours`.
+
+**Why this slot:** it is the smallest experiment that attacks three missing pieces simultaneously: student-conditioned selection, structure beyond marginals, and explicit offline equilibration. Atelier alone was rejected as underpowered after the regret-pool failure; Self-Predictor + TMR Sleep remains the next pivot **if** this composite fails with a replay-overfit signature.
+
+**Success bar:** `<=1.30` eval BPB within `800` wake-equivalent steps from the SF best checkpoint. Anything materially above that is a fail, not a “promising direction.”
