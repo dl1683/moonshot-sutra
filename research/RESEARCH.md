@@ -6109,3 +6109,39 @@ SF eval trajectory:
 | Soundness-First r1 | 1.411 | -0.019 | +0.013 | ✗ Marginal, killed step 600 |
 
 **Diagnostic classical KD remains the single best result of the session.** It reached 1.381 from a fresh start (no SF/RBOR/regret/etc.) — implying the dominant factor for our 188M byte-level student is OPTIMIZER MOMENTUM CONTINUITY, not mechanism design. Every fresh-optimizer warm-start has rebounded at least +0.040 BPB from the seed and not recovered.
+
+### 12.23 RBOR-RB v1b Result — KILLED at step 700 (2026-04-18)
+
+Second KM-R7 attempt. v1 had a scaling bug (reduction divisor was `final_mask.sum()` not `mask.sum()`, making KD loss 10× stronger than KM-R7 spec). v1b fixed the divisor and relaunched from the same r2 best.pt (b_star=1.409).
+
+v1b eval trajectory:
+
+| Absolute step | Eval BPB | vs b_star (1.409) |
+|---|---|---|
+| 400 (v1b step 100) | **1.407** | **−0.002 (first below b_star this session)** |
+| 500 (v1b step 200) | 1.418 | +0.009 |
+| 600 (v1b step 300) | 1.421 | +0.012 |
+| 700 (v1b step 400) | 1.425 | +0.016 → AUTO-KILL (> 1.424) |
+
+The step 400 eval (1.407) was the first eval BELOW the seed this session. But the improvement did not sustain — eval drifted upward over the next 300 steps and tripped the kill rule at step 700.
+
+**Three-mechanism plateau pattern (session-defining finding):**
+
+| Mechanism | Starting point | Best eval BPB | vs b_star |
+|---|---|---|---|
+| Classical KD continuation r2 | diagnostic best.pt (1.409) | 1.409 | +0.000 (seed only) |
+| Soundness-First r1 | r2 best.pt (1.409) | 1.411 | +0.002 |
+| RBOR-RB v1b | r2 best.pt (1.409) | 1.407 | **−0.002** |
+
+All three mechanisms plateau in the range [1.407, 1.411]. That 0.004 BPB spread across three ORTHOGONAL mechanism changes (no-op / rejection-structure loss / bottleneck selection) is noise-level.
+
+**This session's definitive negative finding:** classical forward-KL-based KD at the byte-covering interface with a single anchor teacher and a 188M student has a ceiling around eval BPB 1.40–1.42 that loss-shape and position-selection mechanisms cannot cross. The meta-synthesis §1.12 prediction was correct ("at some teacher-query budget, the marginal BPB-per-query drops to near zero. This is structural, not a tuning failure. The cure is adding informationally distinct channels, not more queries in the same channel").
+
+**What that implies for next steps** (requires user/design input, not another KD variant):
+
+1. Informationally distinct channel: representation-matching losses (hidden state alignment, not just output alignment), or Student Self-Predictor + TMR Sleep per KM-R7's failure-mode fallback. These add a new channel rather than reshaping the output channel.
+2. Architecture change: more student capacity, or different topology (more attention heads, wider bottleneck, deeper global stack). Fundamental capacity, not optimization.
+3. Different teacher: larger anchor (Qwen3-4B, Gemma-3-4B, Phi-4) or multi-teacher done right (per meta-synthesis §1.5, NOT averaging — competition/intersection/barycenter).
+4. Different training regime: preserve optimizer momentum end-to-end (don't ever fresh-init), use teacher cache + extended training from earlier basin, or start from scratch with a different initialization.
+
+**PAUSING further autonomous mechanism launches.** Three consecutive plateaus in one session is a strategic signal, not a tuning challenge. Next design round should be human-led on which of the above directions is the real breakthrough path.

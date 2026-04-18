@@ -4755,7 +4755,12 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         else:
                             final_mask = mask
 
-                        kl = (kl * final_mask.float()).sum() / final_mask.float().sum().clamp_min(1.0)
+                        # Reduction denominator: ALL VALID positions when RBOR active (so the
+                        # selected-positions sum is divided by n_valid, matching KM-R7's spec
+                        # `0.05 * (1/|M|) * sum_p A_p * k_p`). For non-RBOR, final_mask == mask
+                        # so this equals the classical mean over valid.
+                        reduction_denom = mask.float().sum().clamp_min(1.0) if use_rbor else final_mask.float().sum().clamp_min(1.0)
+                        kl = (kl * final_mask.float()).sum() / reduction_denom
                         kd_loss = kd_temperature ** 2 * kl
 
                         # Soundness-First (KM-R6): additive top-2 margin + rejection-span aux losses.
@@ -4781,8 +4786,9 @@ def train_ekalavya(s1_ckpt, cfg=None):
                             t_margin = mT_top1 - mT_top2
                             s_margin = mS_top1 - mS_top2
                             # Gate SF auxiliaries by final_mask (= teacher mask if RBOR off, top-K mask if RBOR on)
+                            # Same denominator rule as KL: divide by all-valid count when RBOR active, else final_mask.
                             sf_margin_loss = ((s_margin - t_margin) ** 2)
-                            mask_sum = final_mask.float().sum().clamp_min(1.0)
+                            mask_sum = mask.float().sum().clamp_min(1.0) if use_rbor else final_mask.float().sum().clamp_min(1.0)
                             sf_margin_loss = (sf_margin_loss * final_mask.float()).sum() / mask_sum
 
                             t_floor = torch.quantile(ell_T, sf_quantile, dim=-1)
