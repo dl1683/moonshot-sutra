@@ -4098,8 +4098,20 @@ def train_ekalavya(s1_ckpt, cfg=None):
         if candidates:
             resume_ckpt = candidates[-1]
             log(f"Auto-resume: found {Path(resume_ckpt).name} (latest of {len(candidates)} checkpoints)")
+    # Straight-through mode guard (KM-R8): when enabled, training MUST resume from a
+    # checkpoint containing both optimizer and scaler state. Forbids silent fresh-init.
+    # Rationale: session §12.19-§12.24 showed path-dependent optimizer dynamics dominate;
+    # a run that re-inits optimizer mid-way is no longer "straight-through."
+    straight_through_mode = cfg.get("straight_through_mode", False)
     if resume_ckpt:
         rk = torch.load(resume_ckpt, map_location=DEVICE, weights_only=False)
+        if straight_through_mode:
+            if "optimizer" not in rk or "scaler" not in rk:
+                raise ValueError(
+                    f"straight_through_mode=True requires checkpoint {resume_ckpt} to contain "
+                    f"both 'optimizer' and 'scaler' state, but got keys {list(rk.keys())}. "
+                    f"Fresh-optimizer init defeats the purpose of this mode."
+                )
         model.load_state_dict(rk["model"], strict=False)
         if "repr_proj_teachers" in rk:
             saved_repr = rk["repr_proj_teachers"]
