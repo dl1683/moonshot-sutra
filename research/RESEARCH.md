@@ -6337,3 +6337,40 @@ The trade-offs balance out at the mean BPB level — that's why all three look "
 The "informationally distinct channel" or "bigger student" pivots from §12.25 are bets that the alpha class can be moved. The "more data of the under-represented classes" pivot would target digit/punct/other directly. **Worth raising with the user.**
 
 **Methodological lesson:** mean BPB hid real mechanism effects. Future evaluation should always include the per-byte-class breakdown — a "win" on punct that's offset by a loss on alpha is not really a win at the mean, but tells us WHAT each mechanism is biasing.
+
+### 12.29 Per-Position-in-Window CE Probe (2026-04-18)
+
+`probe_position_ce.py`: per-position CE bucketed into 16 groups of 96 bytes each across the 1536-byte window. Tests whether the model uses context vs is near-unigram. Run on rbor_v1b best.pt (true mean ~1.411).
+
+| Bucket | Pos range | Mean BPB |
+|---|---|---|
+| 0 | 0-96 | **1.675** |
+| 1 | 96-192 | 1.488 |
+| 2 | 192-288 | 1.440 |
+| 3 | 288-384 | 1.414 |
+| 4 | 384-480 | 1.401 |
+| 5 | 480-576 | 1.400 |
+| 6 | 576-672 | 1.418 |
+| 7 | 672-768 | 1.389 |
+| 8 | 768-864 | 1.397 |
+| 9 | 864-960 | 1.371 |
+| 10 | 960-1056 | **1.342** |
+| 11 | 1056-1152 | 1.347 |
+| 12 | 1152-1248 | 1.363 |
+| 13 | 1248-1344 | 1.363 |
+| 14 | 1344-1440 | 1.344 |
+| 15 | 1440-1536 | 1.363 |
+
+**Context strongly helps**: 312 mBPB drop from first bucket (1.675) to late buckets (1.34-1.37). The "~1.41 mean ceiling" is partly inflated by ~6% of bytes (first bucket) being high-BPB.
+
+**The model HAS reached BPB 1.34-1.37 in steady state.** The 1.41 ceiling is dominated by early-window positions where context is unavailable.
+
+**Cheap pivot candidates this opens up:**
+
+1. **Longer effective context** — train on overlapping windows so every position has prior context. Currently each batch starts at position 0 with no preceding bytes — that ~6% of bytes is essentially predicted unigram-style and contributes ~9% of total cost (1.675 × 0.06 / 1.41 ≈ 0.071). Eliminate the high-BPB start by providing context, and overall BPB should drop to ~1.36-1.37 with no architecture change.
+2. **Position-conditional teacher weighting** — add MORE teacher pressure at early positions where the gap teacher-vs-student is largest (since student lacks context, teacher's prior is most informative there).
+3. **Different window sampling** — start at random byte offsets in shards and ensure every batch position has at least N preceding bytes of context (currently the data loader may start at fresh document boundaries).
+
+Compare to the §12.25 structural pivots (bigger student, new teacher, hidden-state channel): these are 100-1000× cheaper to test and address a SPECIFIC and LARGE source of cost. Should be raised with user as "first cheap thing to try" before committing to a major structural change.
+
+**This is the most actionable finding of the probe phase.** The session's mechanism-iteration was attacking a problem (representation ceiling) that may be a much smaller fraction of cost than thought; the dominant fixable cost is sequence-start positions.
