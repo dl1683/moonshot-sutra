@@ -6279,3 +6279,29 @@ The eval BPB ceiling at ~1.40 ± 0.01 has been bracketed across:
 **This session has produced the most robust negative result possible without changing the configuration itself.** Six independent experiments. One conclusion: for the (188M byte-level student, SmolLM2-1.7B anchor, 246-shard mixed-domain byte data, classical forward-KL on per-position byte posteriors), **eval BPB cannot be moved below ~1.40 by any combination of mechanism, optimizer regime, or learning rate within the constraints tested.**
 
 **Genuinely terminating autonomous experimentation.** The next move requires human strategic decision on which structural pivot to commit to (any of: bigger student, hidden-state channel, different anchor, proper multi-teacher non-averaging, different data, Student Self-Predictor). Burning further GPU on this configuration is destructive.
+
+### 12.27 Precise Eval Probe — The 1.381 Was Almost Entirely Noise (2026-04-18)
+
+`probe_precise_eval.py`: 3 independent eval_loss() runs at **n_batches=200** (4× the in-training eval) on each session checkpoint. Reduces single-eval noise from std=0.0085 (n=50) to std≈0.001-0.004 (n=200).
+
+| Checkpoint | Stored single-eval | Precise mean ± std | Δ |
+|---|---|---|---|
+| diagnostic | **1.381** | **1.406 ± 0.001** | **−0.025** (25 mBPB underestimate) |
+| r2 | 1.409 | 1.410 ± 0.001 | −0.001 |
+| rbor_v1b | 1.407 | 1.411 ± 0.004 | −0.004 |
+
+**The diagnostic's "1.381 win" was almost entirely a noise-lucky single-eval draw.** The TRUE mean for the same checkpoint is 1.406, only ~5 mBPB better than r2's true mean (1.410) and rbor_v1b's true mean (1.411).
+
+This RESHAPES the session's interpretation:
+
+1. **The "1.381 b_star" target that drove KM-R6, KM-R7, and KM-R8 design rounds was BOGUS.** All three Codex pivots were trying to beat or reproduce a noise-lucky 25 mBPB draw, not a real basin minimum. The straight-through r8 hypothesis specifically — "preserve optimizer continuity to reproduce the 1.381 win" — was answering a question that didn't have the premise it assumed.
+
+2. **The TRUE session-best is 1.406** (diagnostic precise mean), only 4-5 mBPB ahead of any other checkpoint. The mechanism interventions (SF, RBOR) caused sub-5 mBPB regressions vs that true diagnostic best. NOT improvements, but also NOT the catastrophic 30-60 mBPB regressions that the single-eval comparisons suggested.
+
+3. **The ceiling for this configuration is real and very tight.** Three independent training runs converge to true mean 1.406-1.411 with n=200 std of 1-4 mBPB. The 5 mBPB spread between diagnostic and rbor_v1b is meaningful (>1σ at n=200) but small.
+
+4. **The single-eval reporting protocol used in training was noisy enough to mislead about mechanism effects.** A future training-eval protocol should run 3-5 independent eval batches and report the mean, or always run 200+ batches.
+
+**Refined session conclusion:** the configuration's true eval ceiling is ~1.406-1.411 BPB. Mechanism interventions in this session caused tiny (<5 mBPB) regressions, not progress. The earlier conclusions about "6-experiment plateau" remain correct in direction (no progress), but the magnitudes were inflated by single-eval noise. The ceiling is ~1.41 ± 0.005, not "~1.40 ± 0.01" as previously stated.
+
+**Actionable implication:** any future "win" claim must be measured at n=200+ batches to clear the 1.406 floor with statistical confidence. A genuine improvement here would need to land below ~1.40 with multiple precise evals confirming. Anything in the 1.395-1.41 range is within noise of the current ceiling.

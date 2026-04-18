@@ -1,0 +1,41 @@
+{
+  "_meta": {
+    "n_batches_per_eval": 200,
+    "n_runs_per_checkpoint": 3,
+    "purpose": "Precise BPB point estimates to resolve single-eval noise (training eval n_batches=50 had std=0.0085)."
+  },
+  "diagnostic_1.381": {
+    "path": "results/checkpoints_diagnostic_classical_kd/best.pt",
+    "per_run_bpb": [1.4068, 1.4058, 1.4056],
+    "mean_bpb": 1.4061,
+    "std_bpb": 0.0006,
+    "stored_bpb": 1.3811,
+    "stored_minus_precise": -0.0250
+  },
+  "r2_1.409": {
+    "path": "results/checkpoints_classical_continue_r2/best.pt",
+    "per_run_bpb": [1.4083, 1.4106, 1.4095],
+    "mean_bpb": 1.4095,
+    "std_bpb": 0.0012,
+    "stored_bpb": 1.4087,
+    "stored_minus_precise": -0.0008
+  },
+  "rbor_v1b_1.407": {
+    "path": "results/checkpoints_rbor_v1b/best.pt",
+    "per_run_bpb": [1.4099, 1.4156, 1.4077],
+    "mean_bpb": 1.4111,
+    "std_bpb": 0.0041,
+    "stored_bpb": 1.4075,
+    "stored_minus_precise": -0.0036
+  },
+  "_findings": {
+    "true_ranking_by_precise_mean": [
+      "diagnostic_1.381 -> 1.4061 (best by 4-5 mBPB)",
+      "r2_1.409 -> 1.4095",
+      "rbor_v1b_1.407 -> 1.4111"
+    ],
+    "diagnostic_was_noise_lucky": "stored 1.381 was 0.025 BPB below true mean 1.406. The 'session winner' target was based on a single anomalously-low eval draw.",
+    "structural_ceiling_re_estimated": "True ceiling for (188M byte student, SmolLM2-1.7B, current data, classical-KD) is ~1.406-1.411 BPB with sub-mBPB noise at n=200.",
+    "mechanism_effect": "All session mechanisms (SF, RBOR) produced ~0.005 BPB regressions vs diagnostic's true mean. Tiny but real (>>noise at n=200)."
+  }
+}
