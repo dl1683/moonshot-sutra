@@ -6305,3 +6305,35 @@ This RESHAPES the session's interpretation:
 **Refined session conclusion:** the configuration's true eval ceiling is ~1.406-1.411 BPB. Mechanism interventions in this session caused tiny (<5 mBPB) regressions, not progress. The earlier conclusions about "6-experiment plateau" remain correct in direction (no progress), but the magnitudes were inflated by single-eval noise. The ceiling is ~1.41 ± 0.005, not "~1.40 ± 0.01" as previously stated.
 
 **Actionable implication:** any future "win" claim must be measured at n=200+ batches to clear the 1.406 floor with statistical confidence. A genuine improvement here would need to land below ~1.40 with multiple precise evals confirming. Anything in the 1.395-1.41 range is within noise of the current ceiling.
+
+### 12.28 Per-Byte CE Distribution Probe (2026-04-18)
+
+`probe_perbyte_ce.py`: per-position CE on n_batches=50 of held-out test data, broken down by byte class (ASCII alpha, digit, whitespace, ASCII punct, other), for each of the 3 session checkpoints.
+
+| Byte class | % of data | diagnostic | r2 | rbor_v1b | spread |
+|---|---|---|---|---|---|
+| alpha | 79.4% | 1.526 | 1.539 | 1.528 | 0.013 |
+| digit | 0.8% | 3.508 | 3.559 | **3.452** | 0.107 |
+| ws | 16.5% | 0.422 | 0.423 | 0.440 | 0.018 |
+| punct | 2.7% | **2.995** | 3.221 | 3.068 | 0.226 |
+| other | 0.7% | 1.790 | **1.706** | 2.189 | 0.483 |
+
+**Mechanism interventions ARE doing different things qualitatively, despite similar mean BPB.** Each checkpoint is best on a different byte class:
+- diagnostic best on punctuation (2.995 vs 3.068-3.221 for the others)
+- r2 best on "other" (1.706 vs 1.790-2.189)
+- rbor_v1b best on digits (3.452 vs 3.508-3.559)
+
+The trade-offs balance out at the mean BPB level — that's why all three look "the same" at ~1.41.
+
+**Where the cost lives:**
+- 79% of bytes are alpha at ~1.53 BPB → ~57% of total cost
+- 17% of bytes are whitespace at ~0.42 BPB → ~7% of total cost (already saturated, low ceiling)
+- The remaining 4.2% (digit + punct + other) at ~3 BPB → ~13% of total cost
+
+**Implication for next pivot:** the ~1.41 ceiling is dominated by ALPHA prediction, where the student is at 1.53 BPB. To break below 1.40 mean, you need to either:
+- Improve alpha by 5+ mBPB (would drop overall by ~4 mBPB) — hard, 79% of bytes already well-modeled
+- Improve digit/punct/other by 100+ mBPB (would drop overall by ~5 mBPB) — easier in principle (those classes have 1+ BPB headroom vs alpha)
+
+The "informationally distinct channel" or "bigger student" pivots from §12.25 are bets that the alpha class can be moved. The "more data of the under-represented classes" pivot would target digit/punct/other directly. **Worth raising with the user.**
+
+**Methodological lesson:** mean BPB hid real mechanism effects. Future evaluation should always include the per-byte-class breakdown — a "win" on punct that's offset by a loss on alpha is not really a win at the mean, but tells us WHAT each mechanism is biasing.
