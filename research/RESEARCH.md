@@ -6078,4 +6078,34 @@ Clean checks:
 
 **Why this slot:** it is the smallest experiment that attacks three missing pieces simultaneously: student-conditioned selection, structure beyond marginals, and explicit offline equilibration. Atelier alone was rejected as underpowered after the regret-pool failure; Self-Predictor + TMR Sleep remains the next pivot **if** this composite fails with a replay-overfit signature.
 
-**Success bar:** `<=1.30` eval BPB within `800` wake-equivalent steps from the SF best checkpoint. Anything materially above that is a fail, not a “promising direction.”
+**Success bar:** `<=1.30` eval BPB within `800` wake-equivalent steps from the SF best checkpoint. Anything materially above that is a fail, not a "promising direction."
+
+### 12.22 Soundness-First r1 Result — KILLED at step 600 (2026-04-18)
+
+`config_soundness_first_r1.json` launched from r2 best.pt (step 300, eval BPB 1.409 = b_star) with optimizer state intact (no fresh-optimizer warm-start cost this time).
+
+SF eval trajectory:
+
+| Absolute step | Eval BPB | vs b_star (1.409) |
+|---|---|---|
+| 400 (SF step 100) | 1.420 | +0.011 |
+| 500 (SF step 200) | **1.411** | **+0.002 (best)** |
+| 600 (SF step 300) | 1.443 | +0.034 → AUTO-KILL (>1.424 threshold) |
+
+**Verdict: SF failed to deliver decisive improvement.** Best SF eval (1.411) essentially matched b_star (1.409). The training BPB and SF auxiliary losses BOTH dropped substantially (margin loss 9.1→5-6, floor loss 11.9→1) — SF was learning the rejection structure as designed — but eval BPB did not budge. **This is exactly the failure mode KM-R6 predicted**: "byte-level forward-KL already captured almost all usable output-surface signal, so rejection-structure auxiliaries are redundant at this interface. Signature: train KD improves a bit, generations get slightly sharper, but eval BPB stays flat."
+
+**Per KM-R7 trigger condition** (SF improvement < 0.02 vs b_star), the next mechanism is **RBOR** (Rigid Bottleneck + Offline Relaxation). Implementing minimum-viable RBOR-RB v1 first (selection mask only, no replay/sleep yet — `config_rbor_v1.json`). If RBOR-RB shows ≥ 0.02 BPB improvement → add replay/sleep cycle for v2. If RBOR-RB also plateaus → pivot to Student Self-Predictor + TMR Sleep per KM-R7's failure-mode prediction.
+
+**Cumulative session findings (KD mechanism replacement):**
+
+| Mechanism | Eval BPB best | vs no-KD baseline 1.430 | vs iter5 1.398 | Verdict |
+|---|---|---|---|---|
+| iter5 baseline | 1.398 | -0.032 | reference | reference |
+| Diagnostic classical KD | **1.381** | -0.049 | -0.017 | ✓ SEED BEATEN |
+| Classical continuation r2 | 1.409 | -0.021 | +0.011 | ✗ Plateau, killed step 500 |
+| ZAR-gJSD r1 | killed step 100 | n/a | n/a | ✗ Killed |
+| RRDSD-lite r1b v4 | 1.420 | -0.010 | +0.022 | ✗ Killed step 300 (regression) |
+| Regret-weighted r1 | killed step 100 (1.458) | n/a | n/a | ✗ Pool overfit |
+| Soundness-First r1 | 1.411 | -0.019 | +0.013 | ✗ Marginal, killed step 600 |
+
+**Diagnostic classical KD remains the single best result of the session.** It reached 1.381 from a fresh start (no SF/RBOR/regret/etc.) — implying the dominant factor for our 188M byte-level student is OPTIMIZER MOMENTUM CONTINUITY, not mechanism design. Every fresh-optimizer warm-start has rebounded at least +0.040 BPB from the seed and not recovered.

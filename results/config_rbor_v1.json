@@ -1,0 +1,88 @@
+{
+  "_doc": "RBOR v1 (KM-R7 simplified): Rigid Bottleneck only, no offline relaxation/sleep yet. Top 10% of valid byte positions selected by B_p = stopgrad(KL_p * teacher_conf_p). Forward-KL + SF margin + SF floor losses ALL gated to selected positions. Resumes from r2 best.pt (same as SF). If RBOR-RB shows >= 0.02 BPB improvement vs b_star, layer in replay/sleep cycle for v2.",
+  "_b_star_from_r2": {
+    "checkpoint": "results/checkpoints_classical_continue_r2/best.pt",
+    "r2_best_step": 300,
+    "r2_best_eval_bpb": 1.409,
+    "sf_r1_best_eval_bpb": 1.411,
+    "note": "SF r1 was killed at step 600 with BPB 1.443 > 1.424 threshold. Best SF eval (1.411) ≈ b_star. SF was marginal as KM-R6 predicted. Per KM-R7, escalate to RBOR."
+  },
+
+  "resume_ckpt": "results/checkpoints_classical_continue_r2/best.pt",
+  "max_steps": 1100,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 0,
+
+  "run_name": "rbor_v1",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.05,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 0,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 0,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 1.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "use_rrdsd": false,
+  "repr_anchor_only": true,
+
+  "use_soundness_first": true,
+  "sf_margin_weight": 0.01,
+  "sf_floor_weight": 0.01,
+  "sf_quantile": 0.01,
+  "sf_ramp_steps": 50,
+
+  "use_rbor": true,
+  "rbor_top_frac": 0.10,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 99999,
+  "unfreeze_phase2_step": 99999,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "500": 1.424,
+    "800": 1.414,
+    "1100": 1.399
+  },
+
+  "rolling_save": 50,
+  "rolling_keep": 3,
+
+  "_notes": {
+    "spec_source": "research/codex_km_r7_response.md",
+    "loss": "L = L_CE + 0.05 * mean_{p in top-10% by B_p}(KL_p) + 0.01 * mean_{...}(margin_p) + 0.01 * mean_{...}(floor_p). RBOR gates everything to ~10% selected positions.",
+    "v1_simplifications": "(a) B_p uses just KL*teacher_conf, dropping the CE_p factor in KM-R7 spec (KL subsumes most of the 'student wrong' signal). (b) No replay buffer or sleep cycle yet — that's RBOR v2 if v1 shows >=0.02 improvement.",
+    "kill_rules_interpretation": "Same absolute steps and thresholds as SF r1: 500 > 1.424, 800 > 1.414, 1100 > 1.399.",
+    "success_criterion": "Decisive bar from KM-R7: <=1.30 eval BPB by absolute step 1100. Marginal-but-meaningful: <=1.389 (b_star - 0.020). Failure: kill rules trigger or final eval > 1.389.",
+    "next_pivot_if_fails": "Student Self-Predictor + TMR Sleep (meta-synthesis §5.3) — the next mechanism per KM-R7 failure mode."
+  }
+}

@@ -3764,6 +3764,15 @@ def train_ekalavya(s1_ckpt, cfg=None):
     sf_quantile = cfg.get("sf_quantile", 0.01)
     sf_ramp_steps = cfg.get("sf_ramp_steps", 50)
 
+    # RBOR-RB (KM-R7 v1): Rigid Bottleneck without offline relaxation.
+    # Compute B_p = stopgrad(KL_p * teacher_conf_p) per valid byte position; gate the
+    # forward-KL + SF auxiliaries to the top rbor_top_frac fraction of positions only.
+    # If v1 shows >= 0.02 BPB improvement vs b_star, add replay/sleep cycle for RBOR v2.
+    # NOTE: simplified from KM-R7 spec by dropping the CE_p factor in B_p (KL_p subsumes
+    # most of the "student is wrong" signal when teacher is confident).
+    use_rbor = cfg.get("use_rbor", False)
+    rbor_top_frac = cfg.get("rbor_top_frac", 0.10)
+
     # Committee-regret window sampler — diagnostic top-upside per §12.15
     # When regret_scores_path is set, replaces dataset.sample_batch with mixed_regret_uniform_batch:
     # 50% (configurable) of each batch is drawn from the pre-scored window pool weighted by R(w),
@@ -4037,6 +4046,15 @@ def train_ekalavya(s1_ckpt, cfg=None):
             f"margin_w={sf_margin_weight}, floor_w={sf_floor_weight}, "
             f"quantile={sf_quantile}, ramp={sf_ramp_steps} steps. "
             f"Both losses in log-prob space (gauge-invariant).")
+    if use_rbor:
+        if use_zar_gjsd or use_rrdsd or use_uncertainty_gating:
+            raise ValueError(
+                "use_rbor=True is incompatible with use_zar_gjsd, use_rrdsd, or use_uncertainty_gating. "
+                "RBOR-RB gates the classical KL-KD branch with its own selection mechanism."
+            )
+        log(f"RBOR-RB: ACTIVE (top-{rbor_top_frac:.0%} positions by B_p = KL_p * teacher_conf_p). "
+            f"v1 = rigid bottleneck only (no replay/sleep yet). Forward-KL + SF aux losses both "
+            f"gated to selected positions.")
     if use_rrdsd:
         log(f"RRDSD: ACTIVE (replaces classical KL-KD AND ZAR-gJSD). "
             f"Utility=A*sqrt(D), ZPD q=[{rrdsd_zpd_q_lo},{rrdsd_zpd_q_hi}], "
@@ -4353,6 +4371,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 ug_stats = {}
                 zar_stats = {}
                 rrdsd_stats = {}
+                rbor_stats = {}
                 if alpha_eff > 0 and use_rrdsd:
                     # ========================================================
                     # RRDSD: Regret-Routed Dual-Surface Distillation (R2)
@@ -4705,7 +4724,33 @@ def train_ekalavya(s1_ckpt, cfg=None):
                                     "ug_sat": (gate[mask] >= ug_clamp - 0.01).float().mean().item() if mask.any() else 0,
                                 }
 
-                        kl = (kl * mask.float()).sum() / mask.float().sum()
+                        # RBOR-RB (KM-R7 v1): rigid bottleneck selection mask.
+                        # final_mask = teacher_byte_mask AND (B_p in top rbor_top_frac of valid positions),
+                        # where B_p = stopgrad(KL_p * teacher_conf_p). Falls back to teacher_byte_mask if RBOR off.
+                        if use_rbor:
+                            with torch.no_grad():
+                                t_conf = t_probs.max(dim=-1).values  # (B, T)
+                                B_p = (kl * t_conf).detach()         # (B, T) per-position bottleneck score
+                                B_p_for_select = B_p.masked_fill(~mask, float('-inf'))
+                                flat_B = B_p_for_select.flatten()
+                                n_valid = int(mask.sum().item())
+                                n_keep = max(1, int(n_valid * rbor_top_frac))
+                                if n_keep < n_valid:
+                                    threshold = torch.topk(flat_B, n_keep).values.min()
+                                    top_k_mask = (B_p > threshold) & mask
+                                else:
+                                    top_k_mask = mask.clone()
+                                final_mask = top_k_mask
+                                rbor_stats = {
+                                    "rbor_kept": float(final_mask.sum().item()),
+                                    "rbor_kept_frac": float(final_mask.sum().item()) / max(1.0, float(n_valid)),
+                                    "rbor_B_mean_kept": float((B_p * final_mask.float()).sum().item() / max(1.0, float(final_mask.sum().item()))),
+                                    "rbor_B_mean_all": float((B_p * mask.float()).sum().item() / max(1.0, float(n_valid))),
+                                }
+                        else:
+                            final_mask = mask
+
+                        kl = (kl * final_mask.float()).sum() / final_mask.float().sum().clamp_min(1.0)
                         kd_loss = kd_temperature ** 2 * kl
 
                         # Soundness-First (KM-R6): additive top-2 margin + rejection-span aux losses.
@@ -4730,16 +4775,17 @@ def train_ekalavya(s1_ckpt, cfg=None):
                             mS_top2 = ell_S.gather(-1, i2).squeeze(-1)
                             t_margin = mT_top1 - mT_top2
                             s_margin = mS_top1 - mS_top2
+                            # Gate SF auxiliaries by final_mask (= teacher mask if RBOR off, top-K mask if RBOR on)
                             sf_margin_loss = ((s_margin - t_margin) ** 2)
-                            mask_sum = mask.float().sum().clamp_min(1.0)
-                            sf_margin_loss = (sf_margin_loss * mask.float()).sum() / mask_sum
+                            mask_sum = final_mask.float().sum().clamp_min(1.0)
+                            sf_margin_loss = (sf_margin_loss * final_mask.float()).sum() / mask_sum
 
                             t_floor = torch.quantile(ell_T, sf_quantile, dim=-1)
                             s_floor = torch.quantile(ell_S, sf_quantile, dim=-1)
                             t_span = mT_top1 - t_floor
                             s_span = mS_top1 - s_floor
                             sf_floor_loss = ((s_span - t_span) ** 2)
-                            sf_floor_loss = (sf_floor_loss * mask.float()).sum() / mask_sum
+                            sf_floor_loss = (sf_floor_loss * final_mask.float()).sum() / mask_sum
 
                             sf_aux_loss = sf_ramp * (
                                 sf_margin_weight * sf_margin_loss +
@@ -4750,8 +4796,8 @@ def train_ekalavya(s1_ckpt, cfg=None):
                                 sf_stats = {
                                     "sf_margin": float(sf_margin_loss.detach().item()),
                                     "sf_floor": float(sf_floor_loss.detach().item()),
-                                    "sf_t_margin_mean": float((t_margin * mask.float()).sum().item() / mask_sum.item()),
-                                    "sf_s_margin_mean": float((s_margin * mask.float()).sum().item() / mask_sum.item()),
+                                    "sf_t_margin_mean": float((t_margin * final_mask.float()).sum().item() / mask_sum.item()),
+                                    "sf_s_margin_mean": float((s_margin * final_mask.float()).sum().item() / mask_sum.item()),
                                     "sf_ramp": sf_ramp,
                                 }
 
@@ -4903,6 +4949,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
                               f" A={zar_stats.get('zar_A_mean',0):.2f}"
                               f" J={zar_stats.get('zar_JSD_mean',0):.3f}"
                               f" U*={zar_stats.get('zar_U_selected_mean',0):.3f}")
+            rbor_suffix = ""
+            if use_rbor and rbor_stats:
+                rbor_suffix = (f" | rbor kept={rbor_stats.get('rbor_kept_frac',0):.1%}"
+                               f" Bsel={rbor_stats.get('rbor_B_mean_kept',0):.3f}"
+                               f" Ball={rbor_stats.get('rbor_B_mean_all',0):.3f}")
             sf_suffix = ""
             if use_soundness_first and sf_stats:
                 sf_suffix = (f" | sf m={sf_stats.get('sf_margin',0):.3f}"
@@ -4922,7 +4973,7 @@ def train_ekalavya(s1_ckpt, cfg=None):
                 f"Repr {running_repr/n:.4f} | Total {running_total/n:.4f} | BPB {bpb:.3f} | "
                 f"lr {local_lr:.2e} | grad {grad_norm:.2f} | "
                 f"{throughput/1e6:.1f}MB/s | VRAM {vram:.1f}G | ramp {ramp:.2f}"
-                f"{taid_suffix}{ug_suffix}{zar_suffix}{rr_suffix}{sf_suffix}")
+                f"{taid_suffix}{ug_suffix}{zar_suffix}{rr_suffix}{sf_suffix}{rbor_suffix}")
             running_ce, running_kd, running_repr, running_total = 0.0, 0.0, 0.0, 0.0
 
         if step % eval_every == 0:
