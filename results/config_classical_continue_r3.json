@@ -1,0 +1,78 @@
+{
+  "_doc": "Classical KD continuation r3 — minimal test from rbor_v1b best.pt (step 400, eval 1.407 — session's best). Resumes with optimizer state intact. NO SF, NO RBOR. If plain classical KD can't move below 1.40 from here, the ceiling is representation-capacity limited and loss-based mechanism iteration is exhausted.",
+  "_starting_point": {
+    "checkpoint": "results/checkpoints_rbor_v1b/best.pt",
+    "step": 400,
+    "eval_bpb": 1.407,
+    "rationale": "Session's best eval. Resumed with optimizer state (not fresh-init) to avoid the +0.04 warm-start cost that plagued every fresh-optimizer run this session."
+  },
+
+  "resume_ckpt": "results/checkpoints_rbor_v1b/best.pt",
+  "max_steps": 1200,
+  "batch_size": 12,
+  "grad_accum": 6,
+  "seq_bytes": 1536,
+
+  "lr_local": 1.2e-4,
+  "lr_bridge": 1.6e-4,
+  "lr_global_top": 6e-5,
+  "lr_global_mid": 4e-5,
+  "lr_global_bot": 2.5e-5,
+  "min_lr_local": 1.2e-5,
+  "warmup_steps": 0,
+
+  "run_name": "classical_continue_r3",
+  "eval_every": 100,
+  "log_every": 10,
+
+  "kd_alpha": 0.05,
+  "kd_beta": 0.0,
+  "kd_temperature": 1.3,
+  "kd_ramp_steps": 0,
+  "kd_hold_steps": 0,
+  "kd_decay_start_step": 0,
+  "kd_peak_alpha_mult": 1.0,
+  "kd_final_alpha_mult": 1.0,
+  "kd_peak_beta_mult": 0.0,
+  "kd_final_beta_mult": 0.0,
+
+  "use_covering": true,
+  "covering_max_depth": 8,
+
+  "use_taid": false,
+  "use_uncertainty_gating": false,
+  "use_zar_gjsd": false,
+  "use_rrdsd": false,
+  "repr_anchor_only": true,
+
+  "use_soundness_first": false,
+  "use_rbor": false,
+
+  "aux_frequency": 1,
+  "teachers": [
+    {"id": "HuggingFaceTB/SmolLM2-1.7B", "weight": 1.0, "role": "anchor"}
+  ],
+  "teacher_aggregation": "arithmetic_mean",
+  "teacher_aggregation_temp": 1.0,
+
+  "freeze_global": false,
+  "unfreeze_phase1_step": 99999,
+  "unfreeze_phase2_step": 99999,
+
+  "grad_clip": 0.8,
+
+  "kill_rules": {
+    "500": 1.415,
+    "800": 1.410,
+    "1200": 1.400
+  },
+
+  "rolling_save": 50,
+  "rolling_keep": 3,
+
+  "_notes": {
+    "hypothesis": "If plain classical KD (same recipe that reached 1.381 in diagnostic) can move eval BPB below 1.40 from rbor_v1b best.pt, the session's '1.41 ceiling' was artifact of (a) mechanism overhead or (b) quick-switching between mechanisms with fresh optimizer each time. If it ALSO plateaus at ~1.41, the ceiling is real and structural.",
+    "success_criterion": "eval <= 1.390 by step 1200 (0.017 below current best 1.407).",
+    "what_a_failure_means": "If killed or plateau persists, this is 4th mechanism confirmation that forward-KL-over-all-valid-positions cannot cross 1.40 for this student+teacher+data regime. Pivot required (architecture / teacher / representation channel)."
+  }
+}
