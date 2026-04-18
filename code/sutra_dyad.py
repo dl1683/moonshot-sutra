@@ -4027,6 +4027,12 @@ def train_ekalavya(s1_ckpt, cfg=None):
             f"U_min={zar_utility_min}, gJSD pi={zar_gjsd_pi}. "
             f"TAID/UG/repr ignored when active.")
     if use_soundness_first:
+        if use_zar_gjsd or use_rrdsd:
+            raise ValueError(
+                "use_soundness_first=True is incompatible with use_zar_gjsd or use_rrdsd. "
+                "SF attaches inside the classical KL-KD branch, which is bypassed when ZAR/RRDSD "
+                "replace classical KD. Disable ZAR/RRDSD to enable SF."
+            )
         log(f"Soundness-First: ACTIVE (additive on top of classical KL-KD). "
             f"margin_w={sf_margin_weight}, floor_w={sf_floor_weight}, "
             f"quantile={sf_quantile}, ramp={sf_ramp_steps} steps. "
@@ -4710,9 +4716,11 @@ def train_ekalavya(s1_ckpt, cfg=None):
                         if use_soundness_first:
                             # Ramp relative to resume point so warm-start optimizer state isn't destabilized
                             sf_ramp = min(1.0, max(0, step - start_step) / max(sf_ramp_steps, 1))
-                            ell_T = torch.log(t_probs.clamp_min(1e-10))            # (B, T, V)
-                            ell_S = F.log_softmax(student_logits.float(), dim=-1)  # (B, T, V) — true log-prob
-                            ell_S = ell_S[:, :ell_T.shape[1], :]
+                            # Match the classical KD branch's distributions exactly: teacher posteriors
+                            # (t_probs, effective T=1.0) and student softened at T=kd_temperature. This
+                            # keeps SF on the SAME surface as the forward-KL term being augmented.
+                            ell_T = torch.log(t_probs.clamp_min(1e-10))            # (B, T, V) teacher, T=1.0
+                            ell_S = student_log_probs[:, :ell_T.shape[1], :]       # (B, T, V) student at T=kd_temp
                             top2_T = torch.topk(ell_T, k=2, dim=-1)
                             i1 = top2_T.indices[..., 0:1]                          # (B, T, 1)
                             i2 = top2_T.indices[..., 1:2]

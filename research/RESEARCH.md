@@ -6043,3 +6043,20 @@ Full session comparison (step 300 evals):
 **Meta-lesson for the session:** our strategic design rounds (R1-R5) + 18 exploration portfolios + meta-synthesis all converged on "the problem is mechanism." The data says "the problem was warm-start artifacts + our mechanisms adding noise." **Empirical evidence overrides theoretical elegance.**
 
 The 90 mental models are still valuable as a portfolio — but the CURRENT bottleneck wasn't in any of them. It was simpler: we kept hitting reset on the optimizer, measuring warm-start cost, and attributing it to mechanism failure.
+
+### 12.20 Soundness-First Correctness Review (2026-04-18, Tier 1)
+
+Formal review output: `research/codex_sf_correctness_response.md`
+
+Launch-blocking findings from the SF integration:
+
+- **HIGH:** `code/sutra_dyad.py:4709` ramps SF with absolute `step / sf_ramp_steps` instead of post-resume progress. KM-R6 requires a 50-step ramp **from the resumed checkpoint**; with `start_step > 0`, SF turns on at full strength immediately.
+- **HIGH:** `code/sutra_dyad.py:4710-4712` compares teacher log-probs at `kd_temperature=1.3` against student log-probs at temperature 1.0. SF therefore optimizes mismatched distributions instead of the same softened surface as the classical KD branch.
+- **MEDIUM:** `results/config_soundness_first_r1.json` is still a staged placeholder. In current repo state there is `results/checkpoints_classical_continue_r2/step_50.pt` but no `best.pt`, so `resume_ckpt=.../best.pt` would fail immediately. Also `max_steps` is interpreted by the trainer as an **absolute** horizon, so it must be concretized to `best_step + 800`, not treated as a post-resume duration.
+- **MEDIUM:** `use_soundness_first=True` silently no-ops when `use_zar_gjsd` or `use_rrdsd` is also true, but startup logging still reports SF as active. This should be an explicit incompatibility/error path, not a silent ignore.
+
+Clean checks:
+
+- No SF double-scaling bug: `sf_aux_loss` is added directly in `total_loss`, outside `alpha_eff`.
+- Teacher/student/mask shapes in the classical branch are consistent; the one-sided trimming is safe.
+- `sf_stats` is preinitialized, so there is no undefined-variable leakage when SF is inactive.
