@@ -6374,3 +6374,43 @@ The "informationally distinct channel" or "bigger student" pivots from §12.25 a
 Compare to the §12.25 structural pivots (bigger student, new teacher, hidden-state channel): these are 100-1000× cheaper to test and address a SPECIFIC and LARGE source of cost. Should be raised with user as "first cheap thing to try" before committing to a major structural change.
 
 **This is the most actionable finding of the probe phase.** The session's mechanism-iteration was attacking a problem (representation ceiling) that may be a much smaller fraction of cost than thought; the dominant fixable cost is sequence-start positions.
+
+### 12.30 Generation Comparison Probe — Mechanisms Are Qualitatively Indistinguishable (2026-04-18)
+
+`probe_generation_compare.py`: 8 fixed prompts (factual, code, narrative, math, Q&A) × 3 checkpoints, 200 bytes generated at temp=0.7. Tests whether mechanism interventions produce qualitatively different generations even though mean BPB is similar.
+
+**Result: all three checkpoints produce roughly equivalent quality.**
+
+What the model HAS learned (across all 3):
+- Clean English prose structure: subject-verb-object, plausible word adjacency, consistent sentence rhythm
+- Whitespace and punctuation patterns that look like written text
+- Some persistence within a generation (topic drift but coherent local flow)
+
+What the model has NOT learned (across all 3):
+- **Factual knowledge** — "What is the capital of France?" yields nonsense (e.g., "the Charles White 1900?")
+- **Code semantics** — `def fibonacci(n)` continues into degenerate `return; return; return;` patterns or `n <= n <= n` chains
+- **Math** — "E = mc^2 means that" produces vague hand-waving with technical-sounding noise
+- **Q&A format** — none of the 3 follow the format consistently
+- **Numerical reasoning** — anything involving digits collapses
+
+**The diagnostic + r2 + rbor_v1b checkpoints are qualitatively indistinguishable.** The few mBPB differences in §12.28 reflect noise allocation, not capability differences.
+
+**Cross-section synthesis (§12.27 + §12.28 + §12.29 + §12.30):**
+
+The 188M byte-level student trained on 246-shard mixed-domain bytes with anchor-only SmolLM2-1.7B classical KD has converged to a model that:
+- Predicts ALPHA bytes (79% of data) at ~1.53 BPB — near saturation for a 188M model on this distribution
+- Predicts WHITESPACE (16%) at ~0.42 BPB — saturated, no headroom
+- Predicts DIGIT/PUNCT/OTHER (4.2%) at ~3 BPB — still 1+ BPB headroom but rare in data
+- Uses CONTEXT meaningfully (1.34-1.37 BPB at late positions) but is CONTEXT-BLIND at sequence start (~1.67 BPB)
+- Generates CLEAN ENGLISH PROSE STRUCTURE but lacks semantics for code, math, factual Q&A
+- All KD mechanism variants converge to the same qualitative model (any mBPB differences are noise allocation)
+
+**Strategic options for the user, ranked by cost:**
+
+1. **CHEAPEST: Sequence-start fix.** Train on overlapping windows (always provide N bytes of preceding context). Should drop overall BPB to ~1.36 with no architecture/teacher change. Estimated 1-2 days of GPU.
+2. **CHEAP: More structured/code/math data.** The 4.2% rare classes have huge headroom. Adding more code/data files to the 246-shard mix targets the highest-BPB regions. Estimated 1-2 days for data prep + retrain.
+3. **MEDIUM: Different anchor teacher.** Swap SmolLM2-1.7B (1.7B params) for a larger code/math-aware teacher (Qwen3-4B, Phi-4). Tests if our teacher itself is a bottleneck on the rare classes. Estimated 3-5 days.
+4. **EXPENSIVE: Bigger student.** Re-train 250-400M from scratch. Tests if 188M is the cap. Estimated 1-2 weeks.
+5. **EXPENSIVE: Hidden-state alignment channel.** Add cross-architecture representation matching as a new info channel. Significant new code + retrain. Estimated 1-2 weeks.
+
+The session's mechanism iteration (5 loss-shape variants) was the WRONG SEARCH SPACE. The right next moves are data/architecture/teacher changes, with sequence-start fix as the highest-leverage cheap option.
