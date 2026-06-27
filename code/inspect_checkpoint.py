@@ -80,9 +80,18 @@ def inspect_checkpoint(path: str):
             n = len(pg.get("params", []))
             print(f"    group {i}: lr={lr}, wd={wd}, n_params={n}")
 
-    for rng_key in ("rng_cpu", "rng_cuda", "rng_python", "rng_numpy"):
+    for rng_key in ("rng_state", "cuda_rng_state", "py_rng_state", "np_rng_state"):
         if rng_key in ckpt:
             print(f"  RNG state: {rng_key} present")
+
+    if "ports" in ckpt:
+        ports_state = ckpt["ports"]
+        n_port_params = sum(p.numel() for p in ports_state.values())
+        print(f"\n  Projection ports: {len(ports_state)} tensors, "
+              f"{n_port_params:,} params")
+
+    if "best_eval_bpb" in ckpt:
+        print(f"  Best eval BPB: {ckpt['best_eval_bpb']:.4f}")
 
     if "scaler" in ckpt:
         print(f"  GradScaler state present")

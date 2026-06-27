@@ -161,3 +161,17 @@ A5 variants provide fair static baselines (no routing). Critical for X-Token com
 ### 48-hour minimum: A2, A0, BLD, A1, A9c, A5b (all 8K steps). A5c if time.
 
 Defer A3, A4 until Phase 2 baseline numbers exist.
+
+## Automated Anomaly Detection (`monitor.py`)
+
+The monitor automatically detects 5 anomaly types during live training:
+
+| Anomaly | Trigger | Meaning |
+|---------|---------|---------|
+| Non-finite CE loss | Any step with NaN/Inf ce_loss | Model has diverged — training should have aborted via hard-fail |
+| Route entropy collapse | Last 10 readings all <0.1 | Router locked to one teacher — diversity lost |
+| Gradient budget suppression | Last 5 total_scale <0.01 | Teacher signal effectively zeroed — check CE grad norm |
+| Zero teacher signal | >50% of steps with all-zero teacher losses | Cache coverage insufficient for this data distribution |
+| No routed positions | >30% of disagreement steps with n_routed=0 | Router not activating — check JSD thresholds |
+
+Use `python monitor.py --log logs/e2_train.jsonl --watch` for live dashboard with anomaly alerts.

@@ -343,7 +343,7 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (337 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (367 tests) |
 | S0 tests | `code/test_overfit.py` (16 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
@@ -365,3 +365,4 @@ python eval_e2.py \
 3. **Mmap cache**: E2 trainer uses `E2CacheView` (memory-mapped). Record data stays on disk; only accessed records unpack at runtime. **Index RAM**: pilot (50K positions, 5 teachers) ~28 MB; production (10M positions, 5 teachers) ~5.7 GB. Check with `estimate_index_memory()` before building full-scale cache
 4. **GradScaler safety**: PORT_WARMUP phase may produce zero backward passes on some batches; the trainer handles this gracefully
 5. **Checkpoint resume**: CPU, CUDA, Python, and NumPy RNG states are all restored on resume for full reproducibility
+6. **NaN hard-fail**: E2 training aborts immediately with `RuntimeError` if CE loss or grad_norm becomes non-finite. A `HARD_FAIL` entry is written to the JSONL log before aborting. The monitor also flags non-finite CE loss values during live monitoring
