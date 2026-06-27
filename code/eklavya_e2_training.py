@@ -1255,6 +1255,19 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
 
             if phase != current_phase:
                 if optimizer is not None:
+                    if step % cfg.grad_accum != 0:
+                        all_params = list(student.parameters()) + list(ports.parameters())
+                        has_grad = any(p.grad is not None
+                                       for p in all_params if p.requires_grad)
+                        if has_grad:
+                            if scaler is not None:
+                                scaler.unscale_(optimizer)
+                            nn.utils.clip_grad_norm_(all_params, cfg.max_grad_norm)
+                            if scaler is not None:
+                                scaler.step(optimizer)
+                                scaler.update()
+                            else:
+                                optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
                 current_phase = phase
                 trainer.configure_freeze(phase)
