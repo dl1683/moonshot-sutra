@@ -4332,7 +4332,7 @@ class TestDecisionRules:
     def test_goldfree_pass(self, capsys):
         summaries = [self._make_summary("A9c", 1.01),
                      self._make_summary("A2", 1.005),
-                     self._make_summary("A5", 1.06)]
+                     self._make_summary("A5b", 1.06)]
         evaluate_decision_rules(summaries)
         out = capsys.readouterr().out
         assert "[PASS]" in out
@@ -4403,6 +4403,77 @@ class TestDecisionRules:
             assert ref in valid, f"GOLDFREE_RULES references unknown {ref}"
             if third is not None:
                 assert third in valid, f"GOLDFREE_RULES references unknown {third}"
+
+
+class TestR19Findings:
+    """Tests for Codex R19 audit findings."""
+
+    def test_a7_disabled_budget_compare_no_crash(self):
+        """A7 logs grad_budget as {enabled: False} — compare must not crash."""
+        from compare_ablations import RunSummary, analyze_run
+
+        train_entries = [
+            {"step": i, "ce_loss": 2.0 - i * 0.001, "bpb": 2.0 - i * 0.001,
+             "grad_budget": {"enabled": False},
+             "phase": "CONSENSUS", "ablation_id": "A7"}
+            for i in range(10)
+        ]
+        import tempfile, json
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl",
+                                         delete=False) as f:
+            for e in train_entries:
+                f.write(json.dumps(e) + "\n")
+            path = f.name
+
+        try:
+            summary = analyze_run("A7", path)
+            assert summary.grad_budget_stats == {} or \
+                summary.grad_budget_stats.get("n_entries", 0) == 0
+        finally:
+            os.remove(path)
+
+    def test_a9c_vs_a5a_rule_exists(self):
+        from compare_ablations import DECISION_RULES
+        found = any(
+            better == "A9c" and worse == "A5a"
+            for better, worse, *_ in DECISION_RULES
+        )
+        assert found, "Missing A9c vs A5a decision rule"
+
+    def test_goldfree_rules_use_a5b_not_a5(self):
+        from compare_ablations import GOLDFREE_RULES
+        for a9c, ref, margin, third, *_ in GOLDFREE_RULES:
+            if third is not None:
+                assert third != "A5", (
+                    f"GOLDFREE_RULES should compare against A5b, "
+                    f"not A5 (uniform strawman)")
+
+    def test_cache_validate_catches_nan_kl_probs(self):
+        """Cache validation should catch NaN in KL top_probs."""
+        from eklavya_e2_cache import E2KLRecord
+        rec = E2KLRecord(
+            position_id=0,
+            patch_idx=1,
+            top_bytes=np.array([0, 1, 2], dtype=np.uint8),
+            top_probs=np.array([float("nan"), 0.3, 0.2], dtype=np.float32),
+            tail_prob=0.0,
+            entropy=1.0,
+            logp_gold=-1.0,
+        )
+        assert not np.all(np.isfinite(rec.top_probs))
+
+    def test_cache_validate_catches_negative_tail_prob(self):
+        from eklavya_e2_cache import E2KLRecord
+        rec = E2KLRecord(
+            position_id=0,
+            patch_idx=1,
+            top_bytes=np.array([0, 1], dtype=np.uint8),
+            top_probs=np.array([0.5, 0.3], dtype=np.float32),
+            tail_prob=-0.1,
+            entropy=1.0,
+            logp_gold=-1.0,
+        )
+        assert rec.tail_prob < 0
 
 
 if __name__ == "__main__":

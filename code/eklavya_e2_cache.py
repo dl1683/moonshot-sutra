@@ -961,6 +961,30 @@ class E2CacheView:
                         f"Teacher {spec.name} has {n_kl} KL records but "
                         f"{len(kl_pid_idx)} unique PIDs (duplicates)")
 
+                n_sample = min(100, n_kl)
+                for si in range(n_sample):
+                    rec = kl_reader[si]
+                    tp = rec.top_probs
+                    if not (np.all(np.isfinite(tp)) and np.all(tp >= 0)):
+                        errors.append(
+                            f"Teacher {spec.name} KL record {si}: "
+                            "non-finite or negative top_probs")
+                        break
+                    if not (np.isfinite(rec.tail_prob)
+                            and rec.tail_prob >= 0):
+                        errors.append(
+                            f"Teacher {spec.name} KL record {si}: "
+                            f"invalid tail_prob={rec.tail_prob}")
+                        break
+
+            if spec.has_semantic:
+                align_rdr = self._align_readers.get(spec.name)
+                align_idx = self._align_pid_idx.get(spec.name, {})
+                if align_rdr is None or len(align_idx) == 0:
+                    errors.append(
+                        f"Teacher {spec.name} has_semantic=True but "
+                        "no align records for semantic loss")
+
             align_reader = self._align_readers.get(spec.name)
             align_pid_idx = self._align_pid_idx.get(spec.name, {})
             if spec.has_align and align_reader is None:

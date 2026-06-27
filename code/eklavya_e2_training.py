@@ -1305,13 +1305,13 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             ce_loss = F.cross_entropy(logits.reshape(-1, V),
                                        targets.reshape(-1))
 
-        teacher_losses = trainer.compute_teacher_losses(
-            logits, patch_states, shard_ids, seq_starts, phase, step)
+            teacher_losses = trainer.compute_teacher_losses(
+                logits, patch_states, shard_ids, seq_starts, phase, step)
 
-        bld_kl_loss = None
-        if cfg.bld_mode:
-            bld_kl_loss = trainer.compute_bld_kl_loss(
-                logits, shard_ids, seq_starts)
+            bld_kl_loss = None
+            if cfg.bld_mode:
+                bld_kl_loss = trainer.compute_bld_kl_loss(
+                    logits, shard_ids, seq_starts)
 
         grad_report = None
         if bld_kl_loss is not None:

@@ -167,7 +167,10 @@ def analyze_run(ablation_id: str, log_path: str) -> RunSummary:
                 for k, v in last_route["avg_teacher_weights"].items()
             }
 
-    gb_entries = [e for e in train if e.get("grad_budget")]
+    gb_entries = [
+        e for e in train
+        if e.get("grad_budget") and "ce_grad_norm" in e["grad_budget"]
+    ]
     if gb_entries:
         ce_norms = [e["grad_budget"]["ce_grad_norm"] for e in gb_entries]
         total_scales = [e["grad_budget"]["total_scale"] for e in gb_entries]
@@ -364,6 +367,8 @@ DECISION_RULES = [
      "Router contributes over uniform mixing"),
     ("A2", "A5a", 0.02, "Prior-weighted matches oracle -- router trivial",
      "Router contributes over prior-weighted mixing"),
+    ("A9c", "A5a", 0.02, "Prior-weighted matches gold-free router",
+     "Gold-free router beats prior-weighted static"),
     ("A9c", "A5b", 0.02, "Tuned static matches gold-free router",
      "Gold-free router beats tuned static"),
     ("A9c", "A5c", 0.02, "2-teacher static matches 5-teacher routed",
@@ -381,12 +386,12 @@ DECISION_RULES = [
 ]
 
 GOLDFREE_RULES = [
-    ("A9c", "A2", 0.01, "A5", 0.02,
-     "Gold-free router works (within 0.01 of oracle, beats mean by >0.02)"),
+    ("A9c", "A2", 0.01, "A5b", 0.02,
+     "Gold-free router works (within 0.01 of oracle, beats best static by >0.02)"),
     ("A2", "A9c", 0.02, None, None,
      "Oracle routing is material -- router depends on gold signal, not deployable as-is"),
-    ("A5", "A9c", 0.02, None, None,
-     "Gold-free routing concept unproven (A9c ~ arithmetic mean)"),
+    ("A5b", "A9c", 0.02, None, None,
+     "Gold-free routing concept unproven (A9c ~ best static baseline)"),
 ]
 
 

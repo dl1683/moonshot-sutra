@@ -343,7 +343,7 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (332 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (337 tests) |
 | S0 tests | `code/test_overfit.py` (16 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
