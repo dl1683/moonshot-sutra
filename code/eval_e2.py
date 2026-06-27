@@ -164,6 +164,10 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-batches", type=int, default=0)
     parser.add_argument("--seq-len", type=int, default=4096)
+    parser.add_argument("--shard-range", type=int, nargs=2, default=None,
+                        metavar=("START", "END"),
+                        help="Shard index range [START, END) to evaluate. "
+                             "Use to exclude training shards.")
     args = parser.parse_args()
 
     cfg = EvalConfig(
@@ -199,13 +203,17 @@ def main():
     if not all_shards:
         raise ValueError(f"No .bin shards found in {cfg.eval_shards}")
 
+    shard_range = tuple(args.shard_range) if args.shard_range else None
     eval_dataset = EklavyaDataset(
-        cfg.eval_shards, cfg.seq_len, model_cfg.patch_size)
+        cfg.eval_shards, cfg.seq_len, model_cfg.patch_size,
+        shard_range=shard_range)
     eval_loader = DataLoader(
         eval_dataset, batch_size=cfg.batch_size,
         shuffle=False, num_workers=1, pin_memory=True, drop_last=True)
 
-    print(f"Evaluating on {len(all_shards)} shards...")
+    n_eval_shards = (shard_range[1] - shard_range[0]) if shard_range else len(all_shards)
+    print(f"Evaluating on {n_eval_shards} shards"
+          f"{f' (range [{shard_range[0]}, {shard_range[1]}))' if shard_range else ''}...")
     metrics = evaluate_bpb(
         student, eval_loader, device,
         max_batches=cfg.max_eval_batches,
@@ -220,6 +228,7 @@ def main():
         "checkpoint": args.checkpoint,
         "step": ckpt.get("step", -1),
         "checkpoint_phase": str(ckpt.get("phase", "")),
+        "shard_range": list(shard_range) if shard_range else None,
         "training_config": training_config,
         "metrics": metrics,
     }
