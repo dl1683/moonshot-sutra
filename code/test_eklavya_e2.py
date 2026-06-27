@@ -3427,6 +3427,24 @@ class TestUnpackNaNGuard:
         unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
         assert math.isfinite(unpacked.tail_prob)
 
+    def test_nan_entropy_sanitized(self):
+        rec = make_kl(pid=0, K=16)
+        buf = rec.pack(16)
+        buf_arr = bytearray(buf)
+        nan_val = struct.pack("<e", float('nan'))
+        buf_arr[8:10] = nan_val  # entropy is at bytes 8:10
+        unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
+        assert math.isfinite(unpacked.entropy)
+
+    def test_nan_logp_gold_sanitized(self):
+        rec = make_kl(pid=0, K=16)
+        buf = rec.pack(16)
+        buf_arr = bytearray(buf)
+        nan_val = struct.pack("<e", float('nan'))
+        buf_arr[10:12] = nan_val  # logp_gold is at bytes 10:12
+        unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
+        assert math.isfinite(unpacked.logp_gold)
+
     def test_short_buffer_raises(self):
         with pytest.raises(ValueError, match="Buffer too short"):
             E2KLRecord.unpack(b"\x00" * 10, 16)

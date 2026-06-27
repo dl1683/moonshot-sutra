@@ -270,12 +270,18 @@ class E2KLRecord:
         tail = hdr_vals[2]
         if not math.isfinite(tail):
             tail = 0.0
+        entropy = hdr_vals[3]
+        if not math.isfinite(entropy):
+            entropy = 0.0
+        logp_gold = hdr_vals[4]
+        if not math.isfinite(logp_gold):
+            logp_gold = -20.0
         return cls(
             position_id=hdr_vals[0],
             patch_idx=hdr_vals[1],
             tail_prob=tail,
-            entropy=hdr_vals[3],
-            logp_gold=hdr_vals[4],
+            entropy=entropy,
+            logp_gold=logp_gold,
             top_bytes=top_bytes,
             top_probs=top_probs,
         )

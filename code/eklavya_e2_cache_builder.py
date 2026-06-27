@@ -294,6 +294,11 @@ def build_teacher_records(
                 ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
                 logp_gold = math.log(max(q[pos.gold_byte].item(), 1e-20))
 
+                if not (math.isfinite(ent) and math.isfinite(logp_gold)
+                        and math.isfinite(tail)
+                        and np.all(np.isfinite(top_p))):
+                    continue
+
                 kl_records.append(E2KLRecord(
                     position_id=pos.position_id,
                     patch_idx=pos.patch_idx,
