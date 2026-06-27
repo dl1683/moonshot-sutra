@@ -394,7 +394,8 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
     os.makedirs(os.path.dirname(cfg.log_file), exist_ok=True)
     os.makedirs(cfg.checkpoint_dir, exist_ok=True)
 
-    scaler = torch.amp.GradScaler("cuda")
+    amp_dtype = torch.bfloat16
+    scaler = torch.amp.GradScaler("cuda", enabled=(amp_dtype == torch.float16)) if use_cuda else None
     step = 0
     current_phase = None
     optimizer = None
@@ -427,7 +428,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         byte_ids, shard_ids, seq_offsets = batch
         byte_ids = byte_ids.to(device)
 
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_cuda):
             out = student(byte_ids)
             logits = out["logits"]
             B, Nm1, Pp, V = logits.shape
@@ -497,10 +498,15 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 scaler=scaler,
             )
         else:
-            scaler.scale(loss / cfg.grad_accum).backward()
+            scaled_loss = loss / cfg.grad_accum
+            if scaler is not None:
+                scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
 
         if (step + 1) % cfg.grad_accum == 0:
-            scaler.unscale_(optimizer)
+            if scaler is not None:
+                scaler.unscale_(optimizer)
             grad_norm = nn.utils.clip_grad_norm_(
                 trainable_params, cfg.max_grad_norm)
             if not math.isfinite(grad_norm.item()):
@@ -513,8 +519,11 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 raise RuntimeError(
                     f"E1 HARD FAIL: non-finite grad_norm at step {step} "
                     f"(phase={phase})")
-            scaler.step(optimizer)
-            scaler.update()
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             optimizer.zero_grad(set_to_none=True)
 
         if step % cfg.log_every == 0:
@@ -547,6 +556,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 "model_cfg": model_cfg,
                 "align_proj": align_proj.state_dict(),
                 "optimizer": optimizer.state_dict(),
+                "scaler": scaler.state_dict() if scaler is not None else None,
                 "config": cfg,
             }, ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")
