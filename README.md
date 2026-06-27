@@ -1,25 +1,26 @@
 # Sutra & Eklavya
 
-**Sutra** is a byte-level language model built from scratch — no tokenizer, no
-inherited vocabulary, no pretrained weights. It processes raw bytes through a
-patch-global architecture inspired by MEGABYTE, designed for efficiency on a
-single GPU.
+**Sutra** is a from-scratch language model designed to be the world's most
+efficient learning mechanism — absorbing knowledge from multiple pretrained
+teachers of diverse architectures and using their reach as signal. It currently
+uses a byte-level patch-global architecture, but the architecture serves the
+goal; the goal is not to build a byte model.
 
-**Eklavya** is the multi-teacher learning protocol that will train Sutra. It
-extracts invariants from diverse teacher models (different architectures,
-different tokenizers) and compiles them into typed lesson packets targeting
-specific student modules. The key insight: teachers are instruments, not masters.
-The student learns from their disagreements, not their consensus.
+**Eklavya** is the multi-teacher learning protocol that trains Sutra. It extracts
+invariants from diverse teacher models (different architectures, different
+tokenizers) and routes them based on measured disagreement. The key insight:
+teachers are instruments, not masters. The student learns from their
+disagreements, not their consensus.
 
-## Why Bytes?
+## Why Bytes (For Now)?
 
-Tokenizers create invisible walls. They lock models into one vocabulary, making
-cross-architecture knowledge transfer nearly impossible. Bytes eliminate this
-problem entirely — every model's output can be compared at the byte level,
-regardless of how it was tokenized internally.
+Tokenizers create invisible walls. Bytes provide a simpler and more universal
+interface for cross-architecture knowledge transfer than token-projection or
+chunk-matching alternatives. Every teacher's output can be compared at the byte
+level, regardless of internal tokenization.
 
-This is how Eklavya becomes possible: a universal substrate that can absorb
-knowledge from any teacher.
+This is how Eklavya becomes practical: a universal substrate where any teacher's
+knowledge can be absorbed without vocabulary alignment hacks.
 
 ## Current State
 
@@ -54,11 +55,12 @@ knowledge from any teacher.
 | Projection ports & losses | Built & tested | `code/eklavya_e2_losses.py` |
 | Multi-teacher gradient budget | Built & tested | `code/eklavya_e2_losses.py` |
 | Calibration loss | Built & tested | `code/eklavya_e2_training.py` |
-| Unit tests (226 E2 tests) | All passing | `code/test_eklavya_e2.py` |
+| Unit tests (251 E2 tests) | All passing | `code/test_eklavya_e2.py` |
 | Data loader tests (8 tests) | All passing | `code/test_overfit.py` |
 | Cache builder (2-pass) | Built | `code/eklavya_e2_cache_builder.py` |
 | E2 trainer with curriculum | Built & reviewed | `code/eklavya_e2_training.py` |
 | Ablation evaluation harness | Built | `code/eval_e2.py` |
+| Ablation modes (A0-A8 + BLD) | Implemented & tested | `code/eklavya_e2_training.py` |
 | Protocol document | Written | [E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) |
 
 ### S0 Architecture
@@ -133,7 +135,7 @@ cd code
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py -v
 ```
 
-All 270 tests run on CPU without any data, models, or GPU. They validate
+All 295 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality) and
 the full E1/E2 infrastructure: binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, and

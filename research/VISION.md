@@ -2,15 +2,18 @@
 
 ## What Sutra Is
 
-Sutra is a byte-level language model built from scratch. No tokenizer, no
-inherited vocabulary, no pretrained weights. It processes raw bytes through a
-patch-global architecture, designed to run on a single GPU.
+Sutra is the world's most efficient learning mechanism — a from-scratch language
+model designed to absorb knowledge from multiple pretrained teachers of diverse
+architectures, using their pretrained reach as signal. It currently uses a
+byte-level patch-global architecture, but the architecture is a means to an end.
+If a better substrate for cross-teacher learning emerges, the architecture pivots.
 
 ## What Eklavya Is
 
-Eklavya is the learning protocol that trains Sutra. It extracts transferable
-invariants from multiple diverse teacher models and compiles them into typed
-lesson packets targeting specific student modules.
+Eklavya is the multi-teacher learning protocol that trains Sutra. It extracts
+transferable invariants from diverse teacher models (different architectures,
+different tokenizers, different training data) and routes them to the student
+based on measured disagreement.
 
 The key insight: teachers are instruments, not masters. The student learns from
 their disagreements, not their consensus. A lesson is only admitted when the
@@ -40,8 +43,9 @@ The outcomes are load-bearing. The mechanisms that achieve them are replaceable.
 
 ## What We Claim
 
-- Byte-level substrate eliminates tokenizer lock-in, enabling cross-architecture
-  knowledge transfer that is impossible with tokenized models.
+- Byte-level substrate eliminates tokenizer lock-in, providing a simpler and
+  more universal interface for cross-architecture knowledge transfer than
+  token-projection or chunk-matching alternatives.
 - Multi-teacher KD from architecturally diverse sources (transformer, SSM,
   hybrid, embedding) produces retained gains that single-teacher KD cannot.
 - Gap-driven lesson selection (teach only where the student is weak) is more
@@ -61,7 +65,7 @@ The outcomes are load-bearing. The mechanisms that achieve them are replaceable.
 - **E1** (single-teacher KD): designed and tested, pending S0 checkpoint.
 - **E2** (multi-teacher KD): fully wired with mmap-backed cache, integration
   tests, and GPU launch checklist. Ready for GPU.
-- **270 unit tests passing** (16 S0 + 28 E1 + 226 E2), all CPU-only.
+- **295 unit tests passing** (16 S0 + 28 E1 + 251 E2), all CPU-only.
 
 ## Build Order
 

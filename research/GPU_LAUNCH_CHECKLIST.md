@@ -240,13 +240,19 @@ Run AFTER main E2 to validate multi-teacher value.
 | A4 | `--exclude-teachers t3_semantic_embedding` | Do embeddings help? |
 | A5 | `--disable-router` | Does routing matter? |
 | A6 | `--shuffle-teacher-targets` | Are real signals necessary? (falsification) |
+| A7 | `--disable-gradient-budget` | Does gradient budgeting help? |
+| A8 | `--no-phased-admission` | Does phased admission help? |
+| BLD | `--bld-mode --steps 8000` | Does E2 machinery beat raw byte KL? |
 
 ### Priority Order
 1. A0, A2 first (is E2 better than nothing?)
 2. A1 (is multi-teacher better than single?)
-3. A5 vs A2 (does routing matter?)
-4. A6 vs A2 (falsification)
-5. A3, A4 (teacher contribution)
+3. BLD (does E2 machinery add value over simple byte KL?)
+4. A5 vs A2 (does routing matter?)
+5. A7 vs A2 (does gradient budgeting help? — novelty claim)
+6. A8 vs A2 (does phased admission help? — novelty claim)
+7. A6 vs A2 (falsification)
+8. A3, A4 (teacher contribution)
 
 ### Example: Run A5 (No Router)
 ```bash
@@ -284,12 +290,15 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (226 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (251 tests) |
 | S0 tests | `code/test_overfit.py` (16 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
 | E2 monitoring | `research/E2_MONITORING_PROTOCOL.md` |
 | Opsec checker | `code/check_opsec.py` |
+| Ablation comparison | `code/compare_ablations.py` |
+| Log CSV export | `code/export_log_csv.py` |
+| Checkpoint inspector | `code/inspect_checkpoint.py` |
 | Training logs | `logs/*.jsonl` |
 | Checkpoints | `C:/sutra_fast/checkpoints/{s0,e1,e2}/` |
 | E1 cache | `C:/sutra_fast/eklavya_cache/` |

@@ -27,19 +27,29 @@ Each ablation is a separate training run producing its own checkpoint:
 | A4 | No semantic teachers | E2 minus embedding teacher | Do embeddings help? |
 | A5 | No router (arithmetic mean) | E2 with arithmetic mean, no router | Does routing matter? |
 | A6 | Shuffled teacher targets | E2 with position-shuffled teacher records | Are real signals necessary? |
+| A7 | No gradient budget | E2 with gradient budget disabled | Does gradient budgeting help? |
+| A8 | No phased admission | E2 with all teachers active from step 0 | Does phased admission help? |
+| BLD | Single-teacher byte KL | Raw byte KL from anchor, no E2 machinery | BLD-style baseline comparison |
 
-## Information Value Ranking
+## Information Value Ranking (Updated June 2026)
+
+Field survey (FIELD_SURVEY_JUNE2026.md) and Codex R14 strategic assessment
+revised the priority order. Gradient budget and phased admission are now
+novelty-critical — they must be ablated to defend the contribution.
 
 Run ablations in this order (highest information first):
 
 1. **A2 vs A0**: Does E2 beat doing nothing? If no, stop everything.
 2. **A2 vs A1**: Does multi-teacher beat single? Core Eklavya claim.
-3. **A5 vs A2**: Does routing matter? If A5 matches A2, delete router.
-4. **A6 vs A2**: Sanity check. If A6 matches A2, signals are noise.
-5. **A3 vs A2**: Does the strongest non-anchor teacher contribute?
-6. **A4 vs A2**: Do semantic embeddings help?
+3. **A2 vs BLD**: Does our machinery add value over simple byte KL?
+4. **A5 vs A2**: Does routing matter? If A5 matches A2, delete router.
+5. **A7 vs A2**: Does gradient budgeting help? (Novelty claim.)
+6. **A8 vs A2**: Does phased admission help? (Novelty claim.)
+7. **A6 vs A2**: Sanity check. If A6 matches A2, signals are noise.
+8. **A3 vs A2**: Does the strongest non-anchor teacher contribute?
+9. **A4 vs A2**: Do semantic embeddings help?
 
-Only run A3-A6 if A2 clearly beats A1.
+Only run A3-A9 if A2 clearly beats A1.
 
 ## Metrics
 
@@ -51,6 +61,10 @@ Each ablation measures on the same held-out eval shards:
 | First-byte accuracy | Top-1 byte prediction | >1pp gap |
 | Per-gap-class BPB | Performance on high-NLL / high-entropy / control | >0.03 BPB gap |
 | Generation quality | 50 prompted samples, human-rated coherence | Qualitative |
+| Uncommon-token BPB | Performance on rare/numeric/Unicode bytes | >0.03 BPB gap |
+| Route entropy | Teacher selection diversity (E2 runs only) | Diagnostic |
+| Uniform-JSD | Teacher disagreement independent of routing | Diagnostic |
+| Retained gain per teacher | Per-teacher contribution to final BPB | >0.005 BPB |
 
 ## Training Commands
 
@@ -91,6 +105,27 @@ python code/eklavya_e2_training.py \
   --cache-dir eklavya_e2_cache \
   --output-dir checkpoints/e2_a6_shuffled \
   --ablation-id A6 --shuffle-teacher-targets
+
+# A7: No gradient budget (uncapped teacher gradients)
+python code/eklavya_e2_training.py \
+  --student-checkpoint checkpoints/e1/e1_best.pt \
+  --cache-dir eklavya_e2_cache \
+  --output-dir checkpoints/e2_a7_no_grad_budget \
+  --ablation-id A7 --disable-gradient-budget
+
+# A8: No phased admission (all teachers from step 0)
+python code/eklavya_e2_training.py \
+  --student-checkpoint checkpoints/e1/e1_best.pt \
+  --cache-dir eklavya_e2_cache \
+  --output-dir checkpoints/e2_a8_no_phased \
+  --ablation-id A8 --no-phased-admission
+
+# BLD: Single-teacher byte KL baseline (no E2 machinery)
+python code/eklavya_e2_training.py \
+  --student-checkpoint checkpoints/e1/e1_best.pt \
+  --cache-dir eklavya_e2_cache \
+  --output-dir checkpoints/e2_bld_baseline \
+  --ablation-id BLD --bld-mode --steps 8000
 ```
 
 ## Evaluation Commands
@@ -136,7 +171,10 @@ Each evaluation produces a JSON file:
 |-----------|---------|--------|
 | A2 BPB ≤ A0 BPB | E2 doesn't help | Abandon multi-teacher KD |
 | A2 BPB ≤ A1 BPB | Multi-teacher ≤ single | Drop to single-teacher (E1 sufficient) |
+| A2 BPB ≤ BLD BPB | E2 machinery adds no value | Simplify to raw byte KL |
 | A5 BPB ≈ A2 BPB (within 0.02) | Router doesn't help | Delete router, use arithmetic mean |
+| A7 BPB ≈ A2 BPB (within 0.02) | Gradient budget doesn't help | Remove gradient budgeting |
+| A8 BPB ≈ A2 BPB (within 0.02) | Phased admission doesn't help | Remove phased admission |
 | A6 BPB ≈ A2 BPB (within 0.02) | Signals are noise | Something is fundamentally wrong |
 | A3 BPB ≈ A2 BPB (within 0.02) | Best diversity teacher expendable | Drop it, reduce cache cost |
 | A4 BPB ≈ A2 BPB (within 0.02) | Semantic embeddings expendable | Drop embedding teacher |

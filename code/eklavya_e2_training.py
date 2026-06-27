@@ -136,6 +136,16 @@ class E2Config:
     # CE-only mode: bypass phase freezing, train all params from step 0
     ce_only: bool = False
 
+    # A7: disable gradient budgeting (teacher gradients flow uncapped)
+    disable_gradient_budget: bool = False
+
+    # A8: no phased admission (all teachers active from first student-updating phase)
+    no_phased_admission: bool = False
+
+    # BLD mode: single-teacher byte KL baseline (no E2 machinery)
+    bld_mode: bool = False
+    bld_kl_weight: float = 0.10
+
 
 # ---------------------------------------------------------------------------
 # Ablation config validation
@@ -185,6 +195,26 @@ _ABLATION_RULES: dict[str, dict] = {
         "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
                       "disable_router"},
     },
+    "A7": {
+        "desc": "No gradient budget (uncapped teacher gradients)",
+        "required": {"disable_gradient_budget"},
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "disable_router", "shuffle_teacher_targets"},
+    },
+    "A8": {
+        "desc": "No phased admission (all teachers from step 0)",
+        "required": {"no_phased_admission"},
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "disable_router", "shuffle_teacher_targets",
+                      "disable_gradient_budget"},
+    },
+    "BLD": {
+        "desc": "Single-teacher byte KL baseline (no E2 machinery)",
+        "required": {"bld_mode"},
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "disable_router", "shuffle_teacher_targets",
+                      "disable_gradient_budget", "no_phased_admission"},
+    },
 }
 
 _FLAG_ACTIVE: dict[str, object] = {
@@ -193,6 +223,9 @@ _FLAG_ACTIVE: dict[str, object] = {
     "disable_router": lambda cfg: cfg.disable_router,
     "shuffle_teacher_targets": lambda cfg: cfg.shuffle_teacher_targets,
     "ce_only": lambda cfg: cfg.ce_only,
+    "disable_gradient_budget": lambda cfg: cfg.disable_gradient_budget,
+    "no_phased_admission": lambda cfg: cfg.no_phased_admission,
+    "bld_mode": lambda cfg: cfg.bld_mode,
 }
 
 
@@ -676,9 +709,58 @@ class E2Trainer:
 
         return teacher_losses
 
+    def compute_bld_kl_loss(
+        self, logits: torch.Tensor,
+        shard_ids: torch.Tensor, seq_starts: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        """BLD-mode: raw top-k tail KL from anchor teacher only.
+
+        No routing, no purification, no alignment, no semantic loss.
+        Returns a scalar KL loss or None if no anchor data found.
+        """
+        anchor_name = "t0_anchor_decoder"
+        kl_idx = self.teacher_kl_by_pid.get(anchor_name, {})
+        if not kl_idx:
+            return None
+
+        B, Nm1 = logits.shape[0], logits.shape[1]
+        batch_positions: list[tuple[int, PositionRecord]] = []
+        for b in range(B):
+            key = (int(shard_ids[b]), int(seq_starts[b]))
+            for pos in self.positions_by_loc.get(key, []):
+                batch_positions.append((b, pos))
+
+        if not batch_positions:
+            return None
+
+        sampled = random.sample(batch_positions,
+                                min(16, len(batch_positions)))
+        kl_losses = []
+        for b, pos in sampled:
+            rec = kl_idx.get(pos.position_id)
+            if rec is None:
+                continue
+            logit_idx = pos.patch_idx - 1
+            if logit_idx < 0 or logit_idx >= Nm1:
+                continue
+            student_logit = logits[b, logit_idx, 0]
+            dist = SparseByteDist(
+                top_bytes=rec.top_bytes,
+                top_probs=rec.top_probs.astype(np.float32),
+                tail_prob=rec.tail_prob,
+            )
+            loss = e2_topk_tail_kl(student_logit, dist,
+                                    self.cfg.kl_temperature)
+            if torch.isfinite(loss):
+                kl_losses.append(loss)
+
+        if kl_losses:
+            return torch.stack(kl_losses).mean()
+        return None
+
     def get_active_teachers(self, phase: str) -> list[TeacherSpec]:
         """Which teachers are active in each phase."""
-        if self.cfg.ce_only:
+        if self.cfg.ce_only or self.cfg.bld_mode:
             return []
         all_specs = self.manifest.get("teacher_specs", [])
         if isinstance(all_specs, list) and all_specs:
@@ -689,7 +771,12 @@ class E2Trainer:
         else:
             specs = TEACHER_REGISTRY
 
-        if phase == E2Phase.PORT_WARMUP:
+        if self.cfg.no_phased_admission:
+            if phase == E2Phase.PORT_WARMUP:
+                active = [s for s in specs if s.role.name == "ANCHOR"]
+            else:
+                active = [s for s in specs if s.name in self.teacher_data]
+        elif phase == E2Phase.PORT_WARMUP:
             active = [s for s in specs if s.role.name == "ANCHOR"]
         elif phase == E2Phase.CONSENSUS:
             active = [s for s in specs
@@ -751,7 +838,7 @@ class E2Trainer:
         In CE-only mode, all student params are trainable from step 0
         and ports are disabled (no teacher losses).
         """
-        if self.cfg.ce_only:
+        if self.cfg.ce_only or self.cfg.bld_mode:
             for p in self.student.parameters():
                 p.requires_grad = True
             for p in self.ports.parameters():
@@ -991,8 +1078,15 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         optimizer = trainer.build_optimizer()
         print(f"\n[Step {step}] CE-only mode — all student params trainable, no teachers")
 
+    if cfg.bld_mode and current_phase is None:
+        current_phase = "BLD"
+        trainer.configure_freeze(current_phase)
+        optimizer = trainer.build_optimizer()
+        print(f"\n[Step {step}] BLD mode — all student params trainable, "
+              f"single-teacher byte KL (weight={cfg.bld_kl_weight})")
+
     while step < total:
-        if not cfg.ce_only:
+        if not cfg.ce_only and not cfg.bld_mode:
             phase = get_e2_phase(step, cfg)
 
             if phase == E2Phase.OWNERSHIP:
@@ -1033,8 +1127,19 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         teacher_losses = trainer.compute_teacher_losses(
             logits, patch_states, shard_ids, seq_starts, phase, step)
 
+        bld_kl_loss = None
+        if cfg.bld_mode:
+            bld_kl_loss = trainer.compute_bld_kl_loss(
+                logits, shard_ids, seq_starts)
+
         grad_report = None
-        if teacher_losses:
+        if bld_kl_loss is not None:
+            total_loss = (ce_loss + cfg.bld_kl_weight * bld_kl_loss) / cfg.grad_accum
+            if scaler is not None:
+                scaler.scale(total_loss).backward()
+            else:
+                total_loss.backward()
+        elif teacher_losses and not cfg.disable_gradient_budget:
             active_specs = trainer.get_active_teachers(phase)
             per_caps = {}
             for lname in teacher_losses:
@@ -1053,6 +1158,13 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 total_teacher_cap=cfg.total_teacher_grad_cap,
                 scaler=scaler,
             )
+        elif teacher_losses and cfg.disable_gradient_budget:
+            total_loss = ce_loss / cfg.grad_accum + sum(
+                v / cfg.grad_accum for v in teacher_losses.values())
+            if scaler is not None:
+                scaler.scale(total_loss).backward()
+            else:
+                total_loss.backward()
         else:
             scaled_ce = ce_loss / cfg.grad_accum
             if scaled_ce.requires_grad:
@@ -1102,6 +1214,11 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     "total_scale": round(grad_report.total_scale, 6),
                     "per_teacher_scales": {k: round(v, 4) for k, v in grad_report.per_teacher_scales.items()},
                 }
+            elif cfg.disable_gradient_budget and teacher_losses:
+                entry["grad_budget"] = {"enabled": False}
+            if bld_kl_loss is not None:
+                entry["bld_kl_loss"] = bld_kl_loss.item()
+                entry["bld_kl_bits"] = bld_kl_loss.item() / _ln2
             log_fh.write(json.dumps(entry) + "\n")
             log_fh.flush()
 
@@ -1109,8 +1226,11 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 bpb = ce_loss.item() / _ln2
                 t_str = " ".join(f"{k}={v:.4f}"
                                  for k, v in tl_bits.items())
+                bld_str = ""
+                if bld_kl_loss is not None:
+                    bld_str = f" | BLD_KL {bld_kl_loss.item() / _ln2:.4f}"
                 print(f"  step {step:>6d} | CE {ce_loss.item():.4f} | "
-                      f"BPB {bpb:.3f} | {t_str} (bits) | {elapsed:.0f}s")
+                      f"BPB {bpb:.3f} | {t_str} (bits){bld_str} | {elapsed:.0f}s")
 
         if step > 0 and step % cfg.eval_every == 0:
             eval_metrics = evaluate_e2(student, eval_loader, device, cfg)
@@ -1201,6 +1321,14 @@ if __name__ == "__main__":
                         help="Shuffle cache position-teacher alignment")
     parser.add_argument("--ce-only", action="store_true",
                         help="CE-only continuation (no teacher losses, for A0)")
+    parser.add_argument("--disable-gradient-budget", action="store_true",
+                        help="Skip gradient budgeting (uncapped teacher grads, for A7)")
+    parser.add_argument("--no-phased-admission", action="store_true",
+                        help="All teachers active from first student-updating phase (for A8)")
+    parser.add_argument("--bld-mode", action="store_true",
+                        help="BLD baseline: single-teacher byte KL, no E2 machinery")
+    parser.add_argument("--bld-kl-weight", type=float, default=0.10,
+                        help="KL loss weight for BLD mode (default: 0.10)")
     parser.add_argument("--shuffle-seed", type=int, default=1234)
     args = parser.parse_args()
 
@@ -1214,6 +1342,10 @@ if __name__ == "__main__":
         shuffle_teacher_targets=args.shuffle_teacher_targets,
         shuffle_seed=args.shuffle_seed,
         ce_only=args.ce_only,
+        disable_gradient_budget=args.disable_gradient_budget,
+        no_phased_admission=args.no_phased_admission,
+        bld_mode=args.bld_mode,
+        bld_kl_weight=args.bld_kl_weight,
     )
     if args.steps:
         cfg.disagreement_steps = max(0, args.steps - cfg.port_warmup_steps

@@ -1195,6 +1195,145 @@ class TestAblationConfigValidation:
         with pytest.raises(ValueError, match="A0.*forbids.*--teacher-exclude"):
             validate_ablation_config(cfg)
 
+    # --- A7: no gradient budget ---
+
+    def test_a7_with_disable_gradient_budget_passes(self):
+        cfg = E2Config(ablation_id="A7", disable_gradient_budget=True)
+        validate_ablation_config(cfg)
+
+    def test_a7_without_disable_gradient_budget_fails(self):
+        cfg = E2Config(ablation_id="A7")
+        with pytest.raises(ValueError, match="A7.*requires.*disable-gradient-budget"):
+            validate_ablation_config(cfg)
+
+    def test_a7_with_ce_only_fails(self):
+        cfg = E2Config(ablation_id="A7", disable_gradient_budget=True,
+                       ce_only=True)
+        with pytest.raises(ValueError, match="A7.*forbids.*ce-only"):
+            validate_ablation_config(cfg)
+
+    def test_a7_with_disable_router_fails(self):
+        cfg = E2Config(ablation_id="A7", disable_gradient_budget=True,
+                       disable_router=True)
+        with pytest.raises(ValueError, match="A7.*forbids.*disable-router"):
+            validate_ablation_config(cfg)
+
+    def test_a7_with_shuffle_fails(self):
+        cfg = E2Config(ablation_id="A7", disable_gradient_budget=True,
+                       shuffle_teacher_targets=True)
+        with pytest.raises(ValueError, match="A7.*forbids.*shuffle"):
+            validate_ablation_config(cfg)
+
+    def test_a7_with_teacher_include_fails(self):
+        cfg = E2Config(ablation_id="A7", disable_gradient_budget=True,
+                       teacher_include=["t0_anchor_decoder"])
+        with pytest.raises(ValueError, match="A7.*forbids.*teacher-include"):
+            validate_ablation_config(cfg)
+
+    def test_a7_with_teacher_exclude_fails(self):
+        cfg = E2Config(ablation_id="A7", disable_gradient_budget=True,
+                       teacher_exclude=["t1_diversity_hybrid"])
+        with pytest.raises(ValueError, match="A7.*forbids.*teacher-exclude"):
+            validate_ablation_config(cfg)
+
+    # --- A8: no phased admission ---
+
+    def test_a8_with_no_phased_admission_passes(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True)
+        validate_ablation_config(cfg)
+
+    def test_a8_without_no_phased_admission_fails(self):
+        cfg = E2Config(ablation_id="A8")
+        with pytest.raises(ValueError, match="A8.*requires.*no-phased-admission"):
+            validate_ablation_config(cfg)
+
+    def test_a8_with_ce_only_fails(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True,
+                       ce_only=True)
+        with pytest.raises(ValueError, match="A8.*forbids.*ce-only"):
+            validate_ablation_config(cfg)
+
+    def test_a8_with_disable_router_fails(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True,
+                       disable_router=True)
+        with pytest.raises(ValueError, match="A8.*forbids.*disable-router"):
+            validate_ablation_config(cfg)
+
+    def test_a8_with_shuffle_fails(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True,
+                       shuffle_teacher_targets=True)
+        with pytest.raises(ValueError, match="A8.*forbids.*shuffle"):
+            validate_ablation_config(cfg)
+
+    def test_a8_with_disable_gradient_budget_fails(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True,
+                       disable_gradient_budget=True)
+        with pytest.raises(ValueError, match="A8.*forbids.*disable-gradient-budget"):
+            validate_ablation_config(cfg)
+
+    def test_a8_with_teacher_include_fails(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True,
+                       teacher_include=["t0_anchor_decoder"])
+        with pytest.raises(ValueError, match="A8.*forbids.*teacher-include"):
+            validate_ablation_config(cfg)
+
+    def test_a8_with_teacher_exclude_fails(self):
+        cfg = E2Config(ablation_id="A8", no_phased_admission=True,
+                       teacher_exclude=["t1_diversity_hybrid"])
+        with pytest.raises(ValueError, match="A8.*forbids.*teacher-exclude"):
+            validate_ablation_config(cfg)
+
+    # --- BLD: single-teacher byte KL baseline ---
+
+    def test_bld_with_bld_mode_passes(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True)
+        validate_ablation_config(cfg)
+
+    def test_bld_without_bld_mode_fails(self):
+        cfg = E2Config(ablation_id="BLD")
+        with pytest.raises(ValueError, match="BLD.*requires.*bld-mode"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_ce_only_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True, ce_only=True)
+        with pytest.raises(ValueError, match="BLD.*forbids.*ce-only"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_disable_router_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True, disable_router=True)
+        with pytest.raises(ValueError, match="BLD.*forbids.*disable-router"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_shuffle_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True,
+                       shuffle_teacher_targets=True)
+        with pytest.raises(ValueError, match="BLD.*forbids.*shuffle"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_disable_gradient_budget_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True,
+                       disable_gradient_budget=True)
+        with pytest.raises(ValueError, match="BLD.*forbids.*disable-gradient-budget"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_no_phased_admission_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True,
+                       no_phased_admission=True)
+        with pytest.raises(ValueError, match="BLD.*forbids.*no-phased-admission"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_teacher_include_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True,
+                       teacher_include=["t0_anchor_decoder"])
+        with pytest.raises(ValueError, match="BLD.*forbids.*teacher-include"):
+            validate_ablation_config(cfg)
+
+    def test_bld_with_teacher_exclude_fails(self):
+        cfg = E2Config(ablation_id="BLD", bld_mode=True,
+                       teacher_exclude=["t1_diversity_hybrid"])
+        with pytest.raises(ValueError, match="BLD.*forbids.*teacher-exclude"):
+            validate_ablation_config(cfg)
+
     def test_unknown_ablation_warns(self, capsys):
         cfg = E2Config(ablation_id="X99")
         validate_ablation_config(cfg)
@@ -2771,6 +2910,36 @@ class TestE2EndToEnd:
         assert "CE_ONLY" in phases, "CE-only log entries should have phase=CE_ONLY"
         assert "PORT_WARMUP" not in phases, "CE-only should skip PORT_WARMUP"
         assert "CONSENSUS" not in phases, "CE-only should skip CONSENSUS"
+
+    def test_bld_mode_trains_with_anchor_kl(self, tmp_path):
+        """BLD baseline: single-teacher byte KL, no E2 machinery."""
+        from eklavya_e2_training import train_e2
+        import torch
+
+        ckpt_path, shard_dir, cache_dir, _ = self._create_fixtures(tmp_path)
+        cfg = self._make_cfg(
+            tmp_path, shard_dir, cache_dir,
+            port_warmup_steps=2, consensus_steps=2,
+            semantic_landing_steps=2, disagreement_steps=4,
+            eval_every=5, checkpoint_every=100,
+        )
+        cfg.ablation_id = "BLD"
+        cfg.bld_mode = True
+        cfg.bld_kl_weight = 0.10
+
+        train_e2(cfg, ckpt_path, cache_dir)
+
+        final_path = os.path.join(cfg.checkpoint_dir, "e2_final.pt")
+        assert os.path.exists(final_path), "BLD must produce final checkpoint"
+
+        ckpt = torch.load(final_path, map_location="cpu", weights_only=False)
+        assert ckpt["step"] == 10, "BLD should run all 10 steps"
+
+        with open(cfg.log_file) as f:
+            entries = [json.loads(l) for l in f if l.strip()]
+        phases = {e.get("phase") for e in entries if "phase" in e}
+        assert "BLD" in phases, "BLD log entries should have phase=BLD"
+        assert "PORT_WARMUP" not in phases, "BLD should skip phase curriculum"
 
 
 # ---------------------------------------------------------------------------
