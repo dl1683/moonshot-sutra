@@ -3423,7 +3423,7 @@ class TestUnpackNaNGuard:
         buf = rec.pack(16)
         buf_arr = bytearray(buf)
         nan_val = struct.pack("<e", float('nan'))
-        buf_arr[4:6] = nan_val
+        buf_arr[6:8] = nan_val
         unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
         assert math.isfinite(unpacked.tail_prob)
 

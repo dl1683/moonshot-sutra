@@ -47,7 +47,7 @@ from eklavya_e2_cache import (
 )
 from eklavya_e2_router import (
     route_teachers, purify_byte_target, disagreement_jsd,
-    RouterConfig, RouteResult,
+    RouterConfig, RouteResult, _dist_is_valid,
 )
 from eklavya_e2_losses import (
     MultiTeacherProjectionPorts,
@@ -731,6 +731,10 @@ class E2Trainer:
                         np.sum(s_probs_np * np.log(np.maximum(s_probs_np, 1e-12))))
 
                 if cfg.disable_router:
+                    teacher_dists = {k: v for k, v in teacher_dists.items()
+                                     if _dist_is_valid(v)}
+                    if not teacher_dists:
+                        continue
                     n_t = len(teacher_dists)
                     if cfg.static_weight_mode == "prior":
                         ptotal = sum(priors.get(k, 1.0 / n_t) for k in teacher_dists)
@@ -908,6 +912,8 @@ class E2Trainer:
                 top_probs=rec.top_probs.astype(np.float32),
                 tail_prob=rec.tail_prob,
             )
+            if not _dist_is_valid(dist):
+                continue
             loss = e2_topk_tail_kl(student_logit, dist,
                                     self.cfg.kl_temperature)
             if torch.isfinite(loss):

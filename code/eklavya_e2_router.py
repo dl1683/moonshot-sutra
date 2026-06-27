@@ -385,7 +385,7 @@ def _dist_is_valid(dist: SparseByteDist) -> bool:
     if np.any(dist.top_probs < 0.0) or np.any(dist.top_probs > 1.0):
         return False
     total = float(dist.top_probs.sum()) + tail
-    if total < 0.5 or total > 1.5:
+    if total < 0.9 or total > 1.1:
         return False
     return True
 
