@@ -134,10 +134,10 @@ O0: Ownership/credit/efficiency gates                  ◻ After G1
 ```bash
 pip install torch numpy transformers pytest
 cd code
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py -v
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py -v
 ```
 
-All 492 tests run on CPU without any data, models, or GPU. They validate
+All 541 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality),
 the full E1/E2 infrastructure (binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, training
@@ -145,7 +145,9 @@ config), the E2 monitor anomaly detection (route entropy collapse,
 gradient budget suppression, zero teacher signal, disagreement routing),
 the burn-in verdict system (hard fail detection, soft concerns, trajectory
 analysis), log export (train/eval CSV with teacher losses and route stats),
-and operational security (opsec pattern scanning, OneDrive path guards).
+operational security (opsec pattern scanning, OneDrive path guards),
+ablation comparison analysis (log parsing, phase metrics, decision rules,
+CSV export), and VRAM estimation (S0 memory budget, E2 overhead).
 
 ## Hardware
 
