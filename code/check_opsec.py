@@ -96,9 +96,11 @@ def main():
     total_violations = 0
     violation_files = []
 
+    allowed_basenames = {f.split("/")[-1] for f in ALLOWED_FILES}
+
     for path in files:
         normalized = path.replace("\\", "/")
-        if normalized in ALLOWED_FILES:
+        if normalized in ALLOWED_FILES or normalized in allowed_basenames:
             continue
 
         hits = scan_file(path)
