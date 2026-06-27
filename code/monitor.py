@@ -28,6 +28,8 @@ def load_entries(log_path: str) -> tuple[list[dict], list[dict]]:
                 if "HARD_FAIL" in entry:
                     train.append(entry)
                 elif "eval_bpb" in entry or "eval_loss" in entry:
+                    if "eval_bpb" not in entry and "eval_loss" in entry:
+                        entry["eval_bpb"] = entry["eval_loss"] / math.log(2)
                     eval_.append(entry)
                 elif "bpb" in entry or "ce_loss" in entry:
                     train.append(entry)

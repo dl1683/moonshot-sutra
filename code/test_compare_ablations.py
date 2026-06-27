@@ -10,8 +10,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from compare_ablations import (
-    ce_to_bpb, load_log, analyze_run, export_csv, RunSummary,
-    evaluate_decision_rules, DECISION_RULES,
+    ce_to_bpb, load_log, load_eval_results, analyze_run, export_csv,
+    RunSummary, evaluate_decision_rules, DECISION_RULES, GOLDFREE_RULES,
 )
 
 
@@ -456,3 +456,205 @@ class TestAnalyzeRunIntegration:
             assert "t0" in s.teacher_loss_final
         finally:
             os.unlink(path)
+
+
+# ═══ Gold-free routing rules ════════════════════════════════════════════
+
+class TestGoldFreeRules:
+    def _make_summary(self, aid, eval_bpb):
+        s = RunSummary(ablation_id=aid, log_path="x.jsonl")
+        s.eval_result = {"metrics": {"bpb": eval_bpb}}
+        return s
+
+    def test_goldfree_rules_table_not_empty(self):
+        assert len(GOLDFREE_RULES) > 0
+        for rule in GOLDFREE_RULES:
+            assert len(rule) == 6
+
+    def test_goldfree_pass_triple_comparison(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0),
+            self._make_summary("A2", 4.005),
+            self._make_summary("A5b", 4.05),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "Gold-free router works" in out
+
+    def test_goldfree_fail_too_far_from_oracle(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.5),
+            self._make_summary("A2", 4.0),
+            self._make_summary("A5b", 4.6),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "Oracle routing is material" in out
+
+    def test_goldfree_unproven_matches_static(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.1),
+            self._make_summary("A2", 3.95),
+            self._make_summary("A5b", 4.0),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "unproven" in out.lower()
+
+    def test_goldfree_missing_ablation_skips(self, capsys):
+        summaries = [self._make_summary("A9c", 4.0)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "Gold-free" not in out
+
+
+# ═══ load_eval_results ══════════════════════════════════════════════════
+
+class TestLoadEvalResults:
+    def test_loads_valid_file(self):
+        data = {"ablation_id": "A2", "metrics": {"bpb": 4.0}}
+        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(data, f)
+        f.close()
+        try:
+            results = load_eval_results([f.name])
+            assert "A2" in results
+            assert results["A2"]["metrics"]["bpb"] == 4.0
+        finally:
+            os.unlink(f.name)
+
+    def test_missing_file_skipped(self):
+        results = load_eval_results(["nonexistent_file_12345.json"])
+        assert results == {}
+
+    def test_uses_stem_when_no_ablation_id(self):
+        data = {"metrics": {"bpb": 4.0}}
+        f = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, prefix="a3_results_")
+        json.dump(data, f)
+        f.close()
+        try:
+            results = load_eval_results([f.name])
+            stem = os.path.splitext(os.path.basename(f.name))[0]
+            assert stem in results
+        finally:
+            os.unlink(f.name)
+
+    def test_multiple_files(self):
+        files = []
+        for aid in ("A0", "A1"):
+            f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump({"ablation_id": aid, "metrics": {"bpb": 4.0 + len(files)}}, f)
+            f.close()
+            files.append(f.name)
+        try:
+            results = load_eval_results(files)
+            assert "A0" in results
+            assert "A1" in results
+        finally:
+            for p in files:
+                os.unlink(p)
+
+
+# ═══ Alternate key paths ════════════════════════════════════════════════
+
+class TestAlternateKeyPaths:
+    def test_teacher_losses_key_not_bits(self):
+        path = _write_jsonl([
+            _train(0, bpb=7.0, teacher_losses={"t0": 5.0, "t1": 6.0}),
+            _train(100, bpb=6.0, teacher_losses={"t0": 3.0, "t1": 4.0}),
+        ])
+        try:
+            s = analyze_run("A2", path)
+            assert s.teacher_loss_final["t0"] == pytest.approx(3.0)
+            pm = s.phase_metrics["s0"]
+            assert pm["teacher_loss_means"]["t0"] == pytest.approx(4.0)
+        finally:
+            os.unlink(path)
+
+    def test_route_stats_without_teacher_weights(self):
+        path = _write_jsonl([
+            _train(0, bpb=7.0, route_stats={
+                "mean_jsd": 0.1, "mean_route_entropy": 0.8, "n_routed": 10,
+            }),
+        ])
+        try:
+            s = analyze_run("A2", path)
+            assert "final_teacher_weights" not in s.route_stats
+            assert s.route_stats["mean_jsd"] == pytest.approx(0.1)
+        finally:
+            os.unlink(path)
+
+    def test_grad_budget_without_ce_grad_norm_skipped(self):
+        path = _write_jsonl([
+            _train(0, bpb=7.0, grad_budget={"some_other_key": 1.0}),
+        ])
+        try:
+            s = analyze_run("A2", path)
+            assert s.grad_budget_stats == {}
+        finally:
+            os.unlink(path)
+
+    def test_eval_entry_with_eval_loss_only(self):
+        path = _write_jsonl([
+            _train(0, bpb=7.0),
+            {"step": 100, "eval_loss": 3.5},
+        ])
+        try:
+            train, eval_ = load_log(path)
+            assert len(eval_) == 1
+            assert eval_[0]["eval_loss"] == 3.5
+        finally:
+            os.unlink(path)
+
+
+# ═══ CSV edge cases ═════════════════════════════════════════════════════
+
+class TestExportCSVEdgeCases:
+    def test_route_stats_missing_key_uses_get_default(self):
+        s = RunSummary(ablation_id="A0", log_path="x.jsonl")
+        s.route_stats = {"mean_jsd": 0.1}
+        out = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
+        out.close()
+        try:
+            export_csv([s], out.name)
+            with open(out.name) as f:
+                lines = f.readlines()
+            header = lines[0].strip().split(",")
+            vals = lines[1].strip().split(",")
+            jsd_idx = header.index("mean_jsd")
+            assert vals[jsd_idx] == "0.1"
+        finally:
+            os.unlink(out.name)
+
+    def test_no_eval_result_exports_empty_fields(self):
+        s = RunSummary(ablation_id="A0", log_path="x.jsonl",
+                       total_steps=100, initial_ce_bpb=7.0, final_ce_bpb=6.0)
+        out = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
+        out.close()
+        try:
+            export_csv([s], out.name)
+            with open(out.name) as f:
+                lines = f.readlines()
+            header = lines[0].strip().split(",")
+            vals = lines[1].strip().split(",")
+            bpb_idx = header.index("eval_bpb")
+            assert vals[bpb_idx] == ""
+        finally:
+            os.unlink(out.name)
+
+    def test_no_elapsed_exports_empty(self):
+        s = RunSummary(ablation_id="A0", log_path="x.jsonl",
+                       elapsed_seconds=0.0)
+        out = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
+        out.close()
+        try:
+            export_csv([s], out.name)
+            with open(out.name) as f:
+                lines = f.readlines()
+            header = lines[0].strip().split(",")
+            vals = lines[1].strip().split(",")
+            idx = header.index("elapsed_hours")
+            assert vals[idx] == ""
+        finally:
+            os.unlink(out.name)

@@ -124,6 +124,7 @@ def build_position_manifest(
     n_seqs = len(shard_data) // seq_len
     records = []
     pid_counter = pid_start
+    n_nonfinite_skips = 0
 
     for seq_idx in range(n_seqs):
         offset = seq_idx * seq_len
@@ -145,10 +146,12 @@ def build_position_manifest(
             log_p = F.log_softmax(logit_0, dim=-1)
             nll = -log_p[byte_0].item()
             if not math.isfinite(nll):
+                n_nonfinite_skips += 1
                 continue
             probs = F.softmax(logit_0, dim=-1)
             ent = -(probs * probs.clamp(min=1e-10).log()).sum().item()
             if not math.isfinite(ent):
+                n_nonfinite_skips += 1
                 continue
 
             reason = 0
@@ -174,6 +177,16 @@ def build_position_manifest(
                 reason_mask=reason,
             ))
             pid_counter += 1
+
+    if n_nonfinite_skips > 0:
+        total_positions = n_seqs * (seq_len // student.cfg.patch_size - 1)
+        pct = 100.0 * n_nonfinite_skips / max(total_positions, 1)
+        print(f"WARNING: shard {shard_id}: {n_nonfinite_skips}/{total_positions} "
+              f"positions ({pct:.2f}%) skipped due to non-finite NLL/entropy")
+        if pct > 5.0:
+            raise RuntimeError(
+                f"HARD_FAIL: shard {shard_id} has {pct:.1f}% non-finite positions — "
+                f"student checkpoint is likely corrupted")
 
     return records
 

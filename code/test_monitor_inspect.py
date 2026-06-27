@@ -116,6 +116,27 @@ class TestLoadEntries:
         finally:
             os.unlink(path)
 
+    def test_eval_loss_converted_to_bpb(self):
+        path = _write_log([
+            {"step": 500, "eval_loss": 4.5},
+        ])
+        try:
+            _, eval_ = load_entries(path)
+            assert "eval_bpb" in eval_[0]
+            assert eval_[0]["eval_bpb"] == pytest.approx(4.5 / math.log(2))
+        finally:
+            os.unlink(path)
+
+    def test_eval_bpb_not_overwritten(self):
+        path = _write_log([
+            {"step": 500, "eval_bpb": 6.0, "eval_loss": 4.0},
+        ])
+        try:
+            _, eval_ = load_entries(path)
+            assert eval_[0]["eval_bpb"] == pytest.approx(6.0)
+        finally:
+            os.unlink(path)
+
 
 # ═══ monitor.detect_mode ═══════════════════════════════════════════════
 
@@ -452,3 +473,37 @@ class TestInspectCheckpoint:
         inspect_checkpoint(path)
         out = capsys.readouterr().out
         assert "GradScaler state present" in out
+
+
+# ═══ s0_eval.bytes_to_text ══════════════════════════════════════════════
+
+from s0_eval import bytes_to_text
+
+
+class TestBytesToText:
+    def test_ascii_roundtrip(self):
+        text = "hello"
+        t = torch.tensor(list(text.encode("utf-8")), dtype=torch.uint8)
+        assert bytes_to_text(t) == "hello"
+
+    def test_utf8_multibyte(self):
+        text = "é"  # é
+        raw = list(text.encode("utf-8"))
+        t = torch.tensor(raw, dtype=torch.uint8)
+        assert bytes_to_text(t) == "é"
+
+    def test_invalid_bytes_replaced(self):
+        t = torch.tensor([0xFF, 0xFE, 0x41], dtype=torch.uint8)
+        result = bytes_to_text(t)
+        assert "A" in result
+        assert "�" in result
+
+    def test_empty_tensor(self):
+        t = torch.tensor([], dtype=torch.uint8)
+        assert bytes_to_text(t) == ""
+
+    def test_null_bytes(self):
+        t = torch.tensor([0, 0, 65, 0], dtype=torch.uint8)
+        result = bytes_to_text(t)
+        assert "A" in result
+        assert len(result) == 4

@@ -150,17 +150,18 @@ def select_kl_patches(student_logits: torch.Tensor, byte_ids: torch.Tensor,
             nll = float("inf")
         nlls.append(nll)
 
-    if nlls:
-        sorted_nlls = sorted(nlls)
-        p90_idx = int(len(sorted_nlls) * 0.90)
-        p90_nll = sorted_nlls[min(p90_idx, len(sorted_nlls) - 1)]
+    finite_nlls = [v for v in nlls if math.isfinite(v)]
+    if finite_nlls:
+        sorted_finite = sorted(finite_nlls)
+        p90_idx = int(len(sorted_finite) * 0.90)
+        p90_nll = sorted_finite[min(p90_idx, len(sorted_finite) - 1)]
         threshold = max(nll_floor, p90_nll)
     else:
         threshold = nll_floor
 
     selected = []
     for patch_idx in range(Nm1):
-        if nlls[patch_idx] > threshold:
+        if not math.isfinite(nlls[patch_idx]) or nlls[patch_idx] > threshold:
             selected.append(patch_idx + 1)
         elif torch.rand(1).item() < control_frac:
             selected.append(patch_idx + 1)

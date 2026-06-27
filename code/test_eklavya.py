@@ -741,6 +741,44 @@ def test_record_indexing():
     print("  test_record_indexing PASSED")
 
 
+def test_select_kl_patches_nan_positions():
+    """NaN NLL positions must be selected, not silently dropped."""
+    import math
+    torch.manual_seed(0)
+    P = 4
+    N = 8
+    B = 1
+    Nm1 = N - 1
+
+    logits = torch.randn(B, Nm1, P, 256)
+    byte_ids = torch.randint(0, 256, (B, N * P))
+
+    # Inject NaN into one patch's logits to produce NaN NLL
+    logits[0, 3, 0, :] = float("nan")
+
+    selected = select_kl_patches(logits, byte_ids, P=P, nll_floor=0.0, control_frac=0.0)
+    # patch_idx=3 → position 4 (1-indexed) should be selected
+    assert 4 in selected, f"NaN position should be selected, got {selected}"
+    print("  test_select_kl_patches_nan_positions PASSED")
+
+
+def test_select_kl_patches_all_nan():
+    """All-NaN logits must not produce empty selection."""
+    import math
+    torch.manual_seed(0)
+    P = 4
+    N = 8
+    B = 1
+    Nm1 = N - 1
+
+    logits = torch.full((B, Nm1, P, 256), float("nan"))
+    byte_ids = torch.randint(0, 256, (B, N * P))
+
+    selected = select_kl_patches(logits, byte_ids, P=P, nll_floor=0.0, control_frac=0.0)
+    assert len(selected) == Nm1, f"All NaN positions should be selected, got {len(selected)}/{Nm1}"
+    print("  test_select_kl_patches_all_nan PASSED")
+
+
 if __name__ == "__main__":
     print("\n=== Eklavya E1 Test Suite ===\n")
 
@@ -773,6 +811,8 @@ if __name__ == "__main__":
         test_streaming_cache_writer,
         test_stale_embeddings_not_resurrected,
         test_record_indexing,
+        test_select_kl_patches_nan_positions,
+        test_select_kl_patches_all_nan,
     ]
 
     passed = 0
