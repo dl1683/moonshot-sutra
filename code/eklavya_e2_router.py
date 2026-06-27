@@ -314,9 +314,14 @@ def route_teachers(
         scores.append(s)
 
     scores_arr = np.array(scores) / config.tau
+    np.nan_to_num(scores_arr, copy=False, nan=0.0, posinf=0.0, neginf=-30.0)
     scores_arr -= scores_arr.max()
     exp_scores = np.exp(scores_arr)
-    weights = exp_scores / exp_scores.sum()
+    denom = exp_scores.sum()
+    if not np.isfinite(denom) or denom < 1e-30:
+        weights = np.full(len(names), 1.0 / len(names))
+    else:
+        weights = exp_scores / denom
 
     w_dict = {name: float(weights[i]) for i, name in enumerate(names)}
 
@@ -377,8 +382,12 @@ def _sparse_to_full(dist: SparseByteDist) -> np.ndarray:
     full = np.full(256, float(dist.tail_prob) / n_tail, dtype=np.float64)
     for b, p in zip(dist.top_bytes, dist.top_probs):
         full[int(b)] = float(p)
+    np.nan_to_num(full, copy=False, nan=1e-12, posinf=1e-12, neginf=1e-12)
     full = np.maximum(full, 1e-12)
-    full /= full.sum()
+    total = full.sum()
+    if not np.isfinite(total) or total < 1e-12:
+        return np.full(256, 1.0 / 256, dtype=np.float64)
+    full /= total
     return full
 
 
@@ -422,6 +431,7 @@ def purify_byte_target(
         for name in names:
             w = weights.get(name, 0.0)
             mixture += w * fulls[name]
+        np.nan_to_num(mixture, copy=False, nan=1e-12, posinf=1e-12, neginf=1e-12)
         mixture = np.maximum(mixture, 1e-12)
         mixture /= mixture.sum()
 
@@ -430,6 +440,7 @@ def purify_byte_target(
         for name in names:
             w = weights.get(name, 0.0)
             log_mixture += w * np.log(fulls[name])
+        np.clip(log_mixture, -50.0, 50.0, out=log_mixture)
         mixture = np.exp(log_mixture)
         mixture = np.maximum(mixture, 1e-12)
         mixture /= mixture.sum()

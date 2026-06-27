@@ -936,6 +936,84 @@ class TestPurifyByteTarget:
         assert result is None
 
 
+class TestNaNGuards:
+    """Verify NaN in cached distributions doesn't propagate."""
+
+    def test_sparse_to_full_nan_probs(self):
+        dist = SparseByteDist(
+            top_bytes=np.array([65, 66], dtype=np.uint8),
+            top_probs=np.array([float('nan'), 0.5], dtype=np.float32),
+            tail_prob=0.3,
+        )
+        full = _sparse_to_full(dist)
+        assert np.all(np.isfinite(full))
+        assert abs(full.sum() - 1.0) < 1e-8
+
+    def test_sparse_to_full_nan_tail(self):
+        dist = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([0.5], dtype=np.float32),
+            tail_prob=float('nan'),
+        )
+        full = _sparse_to_full(dist)
+        assert np.all(np.isfinite(full))
+        assert abs(full.sum() - 1.0) < 1e-8
+
+    def test_sparse_to_full_all_nan(self):
+        dist = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=float('nan'),
+        )
+        full = _sparse_to_full(dist)
+        assert np.all(np.isfinite(full))
+        assert abs(full.sum() - 1.0) < 1e-8
+
+    def test_route_teachers_nan_dist(self):
+        d_good = _make_sparse_dist(gold=65, confidence=0.8)
+        d_bad = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        result = route_teachers(
+            {"t1": d_good, "t2": d_bad},
+            gold_byte=65,
+            priors={"t1": 0.5, "t2": 0.5},
+        )
+        assert all(np.isfinite(w) for w in result.weights.values())
+        assert abs(sum(result.weights.values()) - 1.0) < 1e-6
+
+    def test_purify_nan_dist_arithmetic(self):
+        d_good = _make_sparse_dist(gold=65, confidence=0.8)
+        d_bad = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        route = RouteResult(weights={"t1": 0.6, "t2": 0.4}, jsd=0.1,
+                            route_entropy=0.5)
+        result = purify_byte_target({"t1": d_good, "t2": d_bad}, route,
+                                     mode="arithmetic")
+        assert result is not None
+        total = result.top_probs.sum() + result.tail_prob
+        assert abs(total - 1.0) < 0.01
+
+    def test_purify_nan_dist_log_pool(self):
+        d_good = _make_sparse_dist(gold=65, confidence=0.8)
+        d_bad = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        route = RouteResult(weights={"t1": 0.6, "t2": 0.4}, jsd=0.1,
+                            route_entropy=0.5)
+        result = purify_byte_target({"t1": d_good, "t2": d_bad}, route,
+                                     mode="log_pool")
+        assert result is not None
+        assert np.all(np.isfinite(result.top_probs))
+
+
 # ---------------------------------------------------------------------------
 # MultiTeacherBatch tests
 # ---------------------------------------------------------------------------
