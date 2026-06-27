@@ -4528,6 +4528,46 @@ class TestR19Findings:
             assert len(tail_errs) >= 1, f"Expected tail_prob error, got: {errors}"
 
 
+    def test_cache_validate_catches_prob_mass_deviation(self, tmp_path):
+        """Cache validate() catches top_probs + tail_prob far from 1.0."""
+        K = 4
+        cache_dir = tmp_path / "mass_cache"
+        cache_dir.mkdir()
+        (cache_dir / "teachers").mkdir()
+
+        spec = TeacherSpec(
+            teacher_id=0, name="t_mass",
+            family=TeacherFamily.DECODER, role=TeacherRole.ANCHOR,
+            hidden_dim=16, vocab_size=32,
+            has_kl=True, has_align=False, has_semantic=False,
+            prior=1.0, vram_gb=0.1,
+        )
+        positions = [
+            PositionRecord(
+                position_id=0, shard_id=0, seq_offset=0, patch_idx=1,
+                gold_byte=65, student_nll=4.0, student_entropy=2.0,
+                reason_mask=SelectionReason.HIGH_NLL,
+            )
+        ]
+        write_position_manifest(str(cache_dir / "positions.bin"), positions)
+
+        tdir = cache_dir / "teachers" / spec.name
+        tdir.mkdir()
+        bad_rec = E2KLRecord(
+            position_id=0, patch_idx=1,
+            top_bytes=np.arange(K, dtype=np.uint8),
+            top_probs=np.full(K, 0.1, dtype=np.float16),
+            tail_prob=0.05, entropy=1.0, logp_gold=-1.0,
+        )
+        write_teacher_kl_records(str(tdir / "kl_records.bin"), [bad_rec], K=K)
+        save_e2_manifest(str(cache_dir), [spec], n_positions=1, K=K)
+
+        with E2CacheView(str(cache_dir)) as view:
+            errors = view.validate()
+            mass_errs = [e for e in errors if "prob mass" in e]
+            assert len(mass_errs) >= 1, f"Expected prob mass error, got: {errors}"
+
+
 class TestMonitorAnomalyDetection:
     """Tests for monitor._e2_anomalies() anomaly detection."""
 

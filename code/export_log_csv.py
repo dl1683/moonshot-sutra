@@ -97,9 +97,13 @@ def export_eval_csv(log_path: str, output_path: str):
                 continue
 
             step = entry.get("step", 0)
+            if "eval_bpb" in entry:
+                bpb = entry["eval_bpb"]
+            else:
+                bpb = entry["eval_loss"] / math.log(2)
             row = {
                 "step": step,
-                "eval_bpb": round(entry.get("eval_bpb", 0), 6),
+                "eval_bpb": round(bpb, 6),
                 "phase": entry.get("phase", ""),
             }
             if "eval_byte_acc" in entry:

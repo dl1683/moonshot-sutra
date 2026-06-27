@@ -252,13 +252,16 @@ class TestExportEvalCSV:
 
     def test_eval_loss_fallback(self):
         log = _write_jsonl([
-            {"step": 50, "eval_loss": 4.5, "eval_bpb": 6.2},
+            {"step": 50, "eval_loss": 4.5},
         ])
         out = _tmp_csv()
         try:
             export_eval_csv(log, out)
             rows, _ = _read_csv(out)
             assert len(rows) == 1
+            import math
+            expected_bpb = round(4.5 / math.log(2), 6)
+            assert float(rows[0]["eval_bpb"]) == expected_bpb
         finally:
             os.unlink(log)
             os.unlink(out)
