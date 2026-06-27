@@ -199,7 +199,7 @@ def evaluate(model: SutraS0, eval_loader: DataLoader, device: torch.device, cfg:
         byte_ids = batch.to(device)
         B, T = byte_ids.shape
         N = T // P
-        with torch.amp.autocast("cuda", dtype=amp_dtype):
+        with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
             out = model(byte_ids)
             losses = compute_loss(out, byte_ids, P)
         predicted_bytes = B * (T - P)
@@ -337,7 +337,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
 
             byte_ids = batch.to(device, non_blocking=True)
 
-            with torch.amp.autocast("cuda", dtype=amp_dtype):
+            with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
                 out = model(byte_ids)
                 losses = compute_loss(out, byte_ids, model_cfg.patch_size)
                 loss = losses["loss"] / train_cfg.grad_accum_steps
