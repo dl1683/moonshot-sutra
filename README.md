@@ -55,13 +55,15 @@ knowledge can be absorbed without vocabulary alignment hacks.
 | Projection ports & losses | Built & tested | `code/eklavya_e2_losses.py` |
 | Multi-teacher gradient budget | Built & tested | `code/eklavya_e2_losses.py` |
 | Calibration loss | Built & tested | `code/eklavya_e2_training.py` |
-| Unit tests (282 E2 tests) | All passing | `code/test_eklavya_e2.py` |
+| Unit tests (302 E2 tests) | All passing | `code/test_eklavya_e2.py` |
 | Data loader tests (8 tests) | All passing | `code/test_overfit.py` |
 | Cache builder (2-pass) | Built | `code/eklavya_e2_cache_builder.py` |
 | E2 trainer with curriculum | Built & reviewed | `code/eklavya_e2_training.py` |
 | Ablation evaluation harness | Built | `code/eval_e2.py` |
 | Ablation modes (A0-A9c + BLD) | Implemented & tested | `code/eklavya_e2_training.py` |
+| Ablation comparison & decisions | Built | `code/compare_ablations.py` |
 | Protocol document | Written | [E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) |
+| Monitoring protocol | Written | [E2 Monitoring](research/E2_MONITORING_PROTOCOL.md) |
 
 ### S0 Architecture
 
@@ -114,11 +116,11 @@ O0: Ownership/credit/efficiency gates                  ◻ After G1
 - [Eklavya E1 Protocol](research/EKLAVYA_E1_PROTOCOL.md) — byte-level KD design
   (single-teacher, 3-phase schedule, sparse caching)
 - [Eklavya E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) — multi-teacher KD design
-  (5-teacher roster, PL router, purifier, gradient budget, 7 ablations)
+  (5-teacher roster, PL router, purifier, gradient budget, 16 ablations)
 - [E2 Teacher Feasibility](research/EKLAVYA_E2_TEACHER_FEASIBILITY.md) — per-teacher
   admission checklist (6 checks, admit/drop rules)
 - [E2 Ablation Plan](research/EKLAVYA_E2_ABLATION_PLAN.md) — E2.5 ownership tests
-  (A0-A6 commands, decision rules, retained-gain protocol)
+  (A0-A9c + A5a/b/c + BLD, two-phase strategy, decision rules)
 - [Eklavya Doctrine](research/EKLAVYA_DOCTRINE.md) — learning protocol design
 - [Ground-Up Future Design](research/GROUND_UP_FUTURE_DESIGN.md) — first-principles
   architecture (unconstrained by prior assumptions)
@@ -135,7 +137,7 @@ cd code
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py -v
 ```
 
-All 326 tests run on CPU without any data, models, or GPU. They validate
+All 352 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality) and
 the full E1/E2 infrastructure: binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, and
