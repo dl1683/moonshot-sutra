@@ -155,7 +155,7 @@ def main():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--eval-shards", required=True)
     parser.add_argument("--ablation-id", required=True,
-                        help="Ablation label (A0-A6) from training config")
+                        help="Ablation label from training config")
     parser.add_argument("--run-label", default="",
                         help="Optional human-readable run label")
     parser.add_argument("--cache-dir", default=None,

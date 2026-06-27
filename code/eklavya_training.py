@@ -473,6 +473,17 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             else:
                 loss = L_ce + L_teacher
 
+        if not math.isfinite(loss.item()):
+            fail_entry = {"step": step, "phase": phase,
+                          "HARD_FAIL": "non-finite loss",
+                          "loss": loss.item()}
+            log_fh.write(json.dumps(fail_entry) + "\n")
+            log_fh.flush()
+            log_fh.close()
+            raise RuntimeError(
+                f"E1 HARD FAIL: non-finite loss at step {step} "
+                f"(phase={phase})")
+
         trainable_params = [
             p for p in list(student.parameters()) + list(align_proj.parameters())
             if p.requires_grad
@@ -490,7 +501,18 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
 
         if (step + 1) % cfg.grad_accum == 0:
             scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(trainable_params, cfg.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(
+                trainable_params, cfg.max_grad_norm)
+            if not math.isfinite(grad_norm.item()):
+                fail_entry = {"step": step, "phase": phase,
+                              "HARD_FAIL": "non-finite grad_norm",
+                              "grad_norm": grad_norm.item()}
+                log_fh.write(json.dumps(fail_entry) + "\n")
+                log_fh.flush()
+                log_fh.close()
+                raise RuntimeError(
+                    f"E1 HARD FAIL: non-finite grad_norm at step {step} "
+                    f"(phase={phase})")
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
