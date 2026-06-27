@@ -1,0 +1,298 @@
+"""Eklavya E2 — Multi-teacher loss functions and gradient budgeting.
+
+Components:
+  - MultiTeacherProjectionPorts: per-teacher align/semantic heads
+  - E2 KL loss: purified sparse byte distribution → student logits
+  - Semantic loss: cosine alignment for embedding teachers
+  - Multi-teacher gradient budget: per-teacher + total caps
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from eklavya_e2_cache import TeacherSpec, TEACHER_REGISTRY, SparseByteDist
+from eklavya_training import topk_tail_kl, AlignProjection
+
+
+# ---------------------------------------------------------------------------
+# Per-teacher projection ports
+# ---------------------------------------------------------------------------
+
+class SemanticTeacherPort(nn.Module):
+    """Projection for embedding/semantic teachers (cosine loss)."""
+
+    def __init__(self, student_dim: int, teacher_dim: int):
+        super().__init__()
+        self.norm = nn.LayerNorm(student_dim)
+        self.proj = nn.Linear(student_dim, teacher_dim, bias=False)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        return F.normalize(self.proj(self.norm(h)), dim=-1)
+
+
+class MultiTeacherProjectionPorts(nn.Module):
+    """Container for all per-teacher projection heads."""
+
+    def __init__(self, student_dim: int = 576,
+                 teachers: list[TeacherSpec] | None = None):
+        super().__init__()
+        if teachers is None:
+            teachers = TEACHER_REGISTRY
+
+        self.teacher_names = []
+        self.align_ports = nn.ModuleDict()
+        self.semantic_ports = nn.ModuleDict()
+
+        for spec in teachers:
+            self.teacher_names.append(spec.name)
+
+            if spec.has_align:
+                self.align_ports[spec.name] = AlignProjection(
+                    student_dim, spec.hidden_dim)
+
+            if spec.has_semantic:
+                self.semantic_ports[spec.name] = SemanticTeacherPort(
+                    student_dim, spec.hidden_dim)
+
+    def warm_start_from_e1(self, e1_align_proj: AlignProjection,
+                            anchor_name: str = "t0_anchor_decoder"):
+        """Copy E1's single AlignProjection into the anchor teacher port."""
+        if anchor_name in self.align_ports:
+            self.align_ports[anchor_name].load_state_dict(
+                e1_align_proj.state_dict())
+
+    def get_align_projection(self, teacher_name: str,
+                              patch_states: torch.Tensor) -> torch.Tensor:
+        if teacher_name not in self.align_ports:
+            raise ValueError(f"No align port for {teacher_name}")
+        return self.align_ports[teacher_name](patch_states)
+
+    def get_semantic_projection(self, teacher_name: str,
+                                 hidden_states: torch.Tensor) -> torch.Tensor:
+        if teacher_name not in self.semantic_ports:
+            raise ValueError(f"No semantic port for {teacher_name}")
+        return self.semantic_ports[teacher_name](hidden_states)
+
+
+# ---------------------------------------------------------------------------
+# E2 KL loss — purified sparse target → student logits
+# ---------------------------------------------------------------------------
+
+def e2_topk_tail_kl(
+    student_logits: torch.Tensor,
+    purified: SparseByteDist,
+    T: float = 2.0,
+) -> torch.Tensor:
+    """KL divergence from purified sparse byte distribution to student.
+
+    Same structure as E1 topk_tail_kl but takes SparseByteDist directly.
+    """
+    top_bytes = torch.from_numpy(purified.top_bytes.astype('int64')).to(student_logits.device)
+    top_probs = torch.from_numpy(purified.top_probs).to(student_logits.device)
+    tail_prob = torch.tensor(purified.tail_prob, device=student_logits.device)
+
+    return topk_tail_kl(student_logits, top_bytes, top_probs, tail_prob, T)
+
+
+def e2_batch_kl_loss(
+    student_logits_batch: torch.Tensor,
+    purified_targets: list[SparseByteDist | None],
+    T: float = 2.0,
+) -> torch.Tensor:
+    """Compute mean KL loss across a batch of purified targets.
+
+    Skips positions where purified target is None (insufficient teachers).
+    """
+    losses = []
+    for i, target in enumerate(purified_targets):
+        if target is None:
+            continue
+        loss = e2_topk_tail_kl(student_logits_batch[i], target, T)
+        if torch.isfinite(loss):
+            losses.append(loss)
+
+    if not losses:
+        return torch.tensor(0.0, device=student_logits_batch.device,
+                            requires_grad=True)
+
+    return torch.stack(losses).mean()
+
+
+# ---------------------------------------------------------------------------
+# Semantic cosine loss
+# ---------------------------------------------------------------------------
+
+def semantic_cosine_loss(
+    student_proj: torch.Tensor,
+    teacher_embedding: torch.Tensor,
+) -> torch.Tensor:
+    """1 - cosine_similarity, averaged over batch.
+
+    Both inputs should be L2-normalized already (semantic port does this).
+    teacher_embedding should also be normalized.
+    """
+    teacher_norm = F.normalize(teacher_embedding, dim=-1)
+    cos_sim = (student_proj * teacher_norm).sum(dim=-1)
+    return (1.0 - cos_sim).mean()
+
+
+# ---------------------------------------------------------------------------
+# Multi-teacher gradient budget
+# ---------------------------------------------------------------------------
+
+@dataclass
+class GradientBudgetReport:
+    ce_grad_norm: float
+    per_teacher_norms: dict[str, float]
+    per_teacher_scales: dict[str, float]
+    total_teacher_norm_before: float
+    total_teacher_norm_after: float
+    total_scale: float
+
+
+def _grad_norm(params) -> float:
+    total = 0.0
+    for p in params:
+        if p.grad is not None:
+            total += p.grad.detach().float().norm().item() ** 2
+    return total ** 0.5
+
+
+def _collect_grads(params) -> dict:
+    return {id(p): p.grad.detach().clone() for p in params if p.grad is not None}
+
+
+def _clear_grads(params):
+    for p in params:
+        p.grad = None
+
+
+def _add_grads(params, grad_dict: dict, scale: float = 1.0):
+    for p in params:
+        g = grad_dict.get(id(p))
+        if g is None:
+            continue
+        scaled = g * scale if scale != 1.0 else g
+        if p.grad is not None:
+            p.grad.add_(scaled)
+        else:
+            p.grad = scaled.clone()
+
+
+def apply_multi_teacher_gradient_budget(
+    params: list,
+    ce_loss: torch.Tensor,
+    teacher_losses: dict[str, torch.Tensor],
+    per_teacher_cap: float | dict[str, float] = 0.10,
+    total_teacher_cap: float = 0.30,
+    scaler=None,
+    retain_graph: bool = False,
+) -> GradientBudgetReport:
+    """Multi-teacher gradient budgeting.
+
+    Algorithm:
+      1. Save existing accumulated grads.
+      2. Backward CE, capture CE grads.
+      3. For each teacher loss:
+         a. Backward, capture grads.
+         b. Scale to per_teacher_cap * CE_norm.
+      4. Sum scaled teacher grads.
+      5. Scale total teacher grads to total_teacher_cap * CE_norm.
+      6. Restore: saved + CE + capped teacher grads.
+    """
+    params = list(params)
+
+    saved = _collect_grads(params)
+    _clear_grads(params)
+
+    if ce_loss.requires_grad:
+        ce_retain = bool(teacher_losses) or retain_graph
+        if scaler is not None:
+            scaler.scale(ce_loss).backward(retain_graph=ce_retain)
+        else:
+            ce_loss.backward(retain_graph=ce_retain)
+        ce_grads = _collect_grads(params)
+        ce_norm = sum(g.float().norm().item() ** 2 for g in ce_grads.values()) ** 0.5
+        _clear_grads(params)
+    else:
+        ce_grads = {}
+        ce_norm = 0.0
+
+    teacher_names = sorted(teacher_losses.keys())
+    per_teacher_grads = {}
+    per_teacher_norms = {}
+    per_teacher_scales = {}
+
+    for i, name in enumerate(teacher_names):
+        loss = teacher_losses[name]
+        is_last = (i == len(teacher_names) - 1)
+
+        if scaler is not None:
+            scaler.scale(loss).backward(retain_graph=not is_last or retain_graph)
+        else:
+            loss.backward(retain_graph=not is_last or retain_graph)
+
+        t_grads = _collect_grads(params)
+        t_norm = sum(g.float().norm().item() ** 2 for g in t_grads.values()) ** 0.5
+        per_teacher_norms[name] = t_norm
+
+        cap = per_teacher_cap.get(name, 0.10) if isinstance(per_teacher_cap, dict) else per_teacher_cap
+        scale = 1.0
+        if ce_norm > 0 and t_norm > cap * ce_norm:
+            scale = cap * ce_norm / t_norm
+        per_teacher_scales[name] = scale
+
+        per_teacher_grads[name] = t_grads
+        _clear_grads(params)
+
+    total_teacher_grads = {}
+    for name in teacher_names:
+        scale = per_teacher_scales[name]
+        for pid, g in per_teacher_grads[name].items():
+            scaled = g * scale if scale != 1.0 else g
+            if pid in total_teacher_grads:
+                total_teacher_grads[pid] = total_teacher_grads[pid] + scaled
+            else:
+                total_teacher_grads[pid] = scaled.clone()
+
+    total_norm_before = sum(
+        g.float().norm().item() ** 2 for g in total_teacher_grads.values()
+    ) ** 0.5
+
+    total_scale = 1.0
+    if ce_norm > 0 and total_norm_before > total_teacher_cap * ce_norm:
+        total_scale = total_teacher_cap * ce_norm / total_norm_before
+        for pid in total_teacher_grads:
+            total_teacher_grads[pid].mul_(total_scale)
+
+    total_norm_after = sum(
+        g.float().norm().item() ** 2 for g in total_teacher_grads.values()
+    ) ** 0.5
+
+    for p in params:
+        parts = []
+        if id(p) in saved:
+            parts.append(saved[id(p)])
+        if id(p) in ce_grads:
+            parts.append(ce_grads[id(p)])
+        if id(p) in total_teacher_grads:
+            parts.append(total_teacher_grads[id(p)])
+        for g in parts:
+            if p.grad is not None:
+                p.grad.add_(g)
+            else:
+                p.grad = g.clone()
+
+    return GradientBudgetReport(
+        ce_grad_norm=ce_norm,
+        per_teacher_norms=per_teacher_norms,
+        per_teacher_scales=per_teacher_scales,
+        total_teacher_norm_before=total_norm_before,
+        total_teacher_norm_after=total_norm_after,
+        total_scale=total_scale,
+    )

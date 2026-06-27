@@ -1,0 +1,7 @@
+{
+  "t0_anchor_decoder": "ORG/MODEL-NAME",
+  "t1_diversity_hybrid": "ORG/MODEL-NAME",
+  "t2_control_decoder": "ORG/MODEL-NAME",
+  "t3_semantic_embedding": "ORG/MODEL-NAME",
+  "t4_diversity_ssm": "ORG/MODEL-NAME"
+}

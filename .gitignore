@@ -53,7 +53,30 @@ results/tesla_leibniz_*.md
 # Logs (regenerated during training)
 results/*_log.txt
 
+# Training artifacts
+checkpoints/
+logs/
+*.jsonl
+
+# Private teacher identity config (real HF model IDs)
+config/teacher_config.json
+config/teacher_config.*.json
+!config/teacher_config.example.json
+
+# Teacher caches (built locally)
+eklavya_cache/
+eklavya_e2_cache/
+
+# Pytest
+.pytest_cache/
+.codex_tmp_pytest*/
+pytest-cache-files-*/
+pytest_run_*/
+tmp/pytest-*/
+_codex_pytest_writable/
+
 # Temporary
 *.tmp
 *.bak
 *.txt
+!requirements*.txt
