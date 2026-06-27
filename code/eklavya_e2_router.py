@@ -460,6 +460,10 @@ def route_batch(
         raise ValueError(
             "gold_free_student_jsd mode requires student_logits in route_batch"
         )
+    if student_logits is not None and student_logits.ndim != 2:
+        raise ValueError(
+            f"student_logits must be [B, 256], got shape {list(student_logits.shape)}"
+        )
 
     results = []
     for i in range(batch.batch_size):

@@ -757,6 +757,40 @@ class TestGoldFreeRouter:
         assert r_agree.weights != r_sjsd.weights, \
             "Student-JSD term with delta=1.0 should change weight distribution"
 
+    def test_router_config_defaults_locked(self):
+        cfg = RouterConfig()
+        assert cfg.mode == "oracle_gold"
+        assert cfg.beta == 0.5
+        assert cfg.alpha == 1.0
+        assert cfg.tau == 1.0
+        assert cfg.agreement_gamma == 0.5
+        assert cfg.student_delta == 0.25
+
+    def test_gold_free_same_result_regardless_of_gold_byte(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.8)
+        d2 = _make_sparse_dist(gold=66, confidence=0.8)
+        dists = {"t1": d1, "t2": d2}
+        priors = {"t1": 0.5, "t2": 0.5}
+        cfg = RouterConfig(mode="gold_free_entropy")
+        r_none = route_teachers(dists, gold_byte=None, priors=priors, config=cfg)
+        r_65 = route_teachers(dists, gold_byte=65, priors=priors, config=cfg)
+        r_200 = route_teachers(dists, gold_byte=200, priors=priors, config=cfg)
+        assert abs(r_none.weights["t1"] - r_65.weights["t1"]) < 1e-10
+        assert abs(r_none.weights["t1"] - r_200.weights["t1"]) < 1e-10
+
+    def test_route_entropy_non_negative(self):
+        d = _make_sparse_dist(gold=65, confidence=0.7)
+        for mode in _VALID_ROUTER_MODES:
+            cfg = RouterConfig(mode=mode)
+            s_probs = self._student_probs()
+            s_ent = self._student_entropy(s_probs)
+            kwargs = {"student_probs": s_probs, "student_entropy": s_ent}
+            gold = 65 if mode == "oracle_gold" else None
+            result = route_teachers({"t1": d}, gold_byte=gold,
+                                    priors={"t1": 1.0}, config=cfg, **kwargs)
+            assert result.route_entropy >= 0.0, \
+                f"Route entropy should be non-negative, got {result.route_entropy} for mode {mode}"
+
     def test_single_teacher_all_modes(self):
         dist = _make_sparse_dist(gold=65, confidence=0.7)
         s_probs = self._student_probs()
@@ -961,6 +995,26 @@ class TestBatchRouting:
         assert len(routes) == 3
         for r in routes:
             assert abs(sum(r.weights.values()) - 1.0) < 1e-5
+
+    def test_route_batch_rejects_wrong_logit_shape(self):
+        positions = [make_position(pid=i) for i in range(2)]
+        kl_specs = [s for s in TEACHER_REGISTRY if s.has_kl]
+        teacher_kl = {s.name: [make_kl(pid=i) for i in range(2)] for s in kl_specs}
+        batch = build_multi_teacher_batch(positions, teacher_kl, kl_specs)
+        cfg = RouterConfig(mode="gold_free_student_jsd")
+        bad_logits = torch.randn(2, 4, 4, 256)
+        with pytest.raises(ValueError, match="must be.*256.*got shape"):
+            route_batch(batch, config=cfg, student_logits=bad_logits)
+
+    def test_route_batch_accepts_correct_logit_shape(self):
+        positions = [make_position(pid=i) for i in range(2)]
+        kl_specs = [s for s in TEACHER_REGISTRY if s.has_kl]
+        teacher_kl = {s.name: [make_kl(pid=i) for i in range(2)] for s in kl_specs}
+        batch = build_multi_teacher_batch(positions, teacher_kl, kl_specs)
+        cfg = RouterConfig(mode="gold_free_student_jsd")
+        good_logits = torch.randn(2, 256)
+        routes = route_batch(batch, config=cfg, student_logits=good_logits)
+        assert len(routes) == 2
 
     def test_purify_batch_returns_correct_count(self):
         positions = [make_position(pid=i) for i in range(3)]
