@@ -401,6 +401,40 @@ a niche problem. Now there are 8+ competing approaches.
   training phases based on student readiness). Their peer teaching doesn't
   apply (we have one student). Validates adaptive routing over static.
 
+### MAD-OPD — Multi-Agent Debate On-Policy Distillation (May 2026)
+- **arXiv:** 2605.01347
+- **Authors:** Wang, Liu, Chen et al.
+- **Core idea:** Recasts the distillation teacher as a deliberative collective.
+  Multiple teacher LLMs debate over the student's on-policy state; debate
+  produces emergent collective intelligence that supplies token-level
+  supervision, weighted by post-debate confidence.
+- **Result:** 4B student trained under 14B+8B teacher debate SURPASSES its
+  14B teacher on LiveCodeBench v6 by +4.26 pass@1 and +10.29 BoN@16.
+  Extends to agentic tasks via On-Policy Agentic Distillation (OPAD).
+- **RELEVANCE TO E2:** VERY HIGH. Directly validates Ekalavya's core thesis:
+  teacher disagreement is signal, not noise. Their "debate produces emergent
+  collective intelligence" is conceptually identical to our "learn from
+  disagreements, not consensus." Key differences: (1) they use online debate
+  (expensive); we use offline cached distributions (cheap). (2) They have 2
+  teachers; we have 5 across different architectures. (3) They use confidence
+  weighting post-debate; we use JSD-based routing + gradient budgeting. Their
+  student-surpasses-teacher result is the strongest validation yet that
+  multi-teacher disagreement routing can exceed any single teacher.
+
+### COMPACT — Compatibility-Aware Multi-Teacher CoT Distillation (Jan 2026)
+- **arXiv:** 2601.13992
+- **Core idea:** Dynamically weights teacher gradients based on student's
+  real-time compatibility measured via Graph-based Consensus, Mutual
+  Information Adaptability, and Loss-based Difficulty. Addresses catastrophic
+  forgetting and teacher-student incompatibility in multi-teacher CoT.
+- **RELEVANCE TO E2:** MEDIUM-HIGH. Their gradient weighting by student
+  compatibility parallels our gradient budget concept. Key difference: they
+  weight by compatibility metrics; we cap by gradient norm ratio. Their
+  approach is more adaptive, ours is simpler and cheaper. **E2v2 candidate:**
+  replace uniform gradient cap with compatibility-aware weighting. However,
+  their CoT focus (reasoning chains) differs from our byte-level distribution
+  distillation.
+
 ### PCGrad-Style Gradient Surgery for Multi-Teacher KD
 - **Background:** PCGrad (Yu et al., 2020) projects conflicting gradients
   to eliminate negative transfer. AGP (above) is the multi-teacher KD
@@ -497,6 +531,10 @@ cross-architecture, but without routing or gradient management.
 - Rethinking OPD (Apr 2026): validates our phased curriculum as a form
   of "off-policy cold start" that recovers training in failing configs.
 - DistillMoE: validates multi-faceted routing in cross-tokenizer settings.
+- MAD-OPD (May 2026): student SURPASSES teacher (+4.26 pass@1) via
+  multi-teacher debate. Strongest validation of disagreement-as-signal.
+- COMPACT (Jan 2026): compatibility-aware gradient weighting from multiple
+  teachers. Validates dynamic teacher weighting over static averaging.
 
 ### Nearest Threats
 1. **X-Token multi-teacher (NVIDIA, May 2026)** — Already demonstrated
@@ -513,6 +551,12 @@ cross-architecture, but without routing or gradient management.
    aggregation. If combined with cross-tokenizer methods, could be a
    theoretically cleaner alternative to our router. Our advantage: we're
    already built and tested; their framework needs cross-tokenizer support.
+5. **MAD-OPD multi-teacher debate (May 2026)** — Strongest conceptual
+   competitor: multi-teacher disagreement → emergent intelligence. Already
+   shows student > teacher results. Their limitation: online debate is
+   expensive (multiple teacher forward passes per student step). Our
+   advantage: offline cached distributions make this cheap. If they combine
+   debate routing with byte-level interface, they directly compete.
 
 ### What the Field Validates
 1. **Bytes as cross-tokenizer interface** — BLD and Universal CT both confirm
@@ -548,6 +592,15 @@ cross-architecture, but without routing or gradient management.
     off-policy cold start (SFT warmup) recovers OPD in otherwise-failing
     configurations. Our PORT_WARMUP → CONSENSUS → SEMANTIC → DISAGREEMENT
     pipeline is a generalized version of this principle.
+11. **Disagreement produces emergent intelligence** — MAD-OPD (May 2026)
+    shows that multi-teacher debate supervision yields a 4B student that
+    SURPASSES its 14B teacher. This is the strongest published validation
+    of Ekalavya's core thesis: "teachers are instruments, not masters;
+    the student learns from their disagreements, not their consensus."
+12. **Gradient weighting by student compatibility** — COMPACT (Jan 2026)
+    validates dynamic gradient weighting from multiple teachers based on
+    student-teacher compatibility metrics. Parallels our gradient budget
+    concept but is more adaptive (compatibility-weighted vs norm-capped).
 
 ### What the Field Has NOT Solved
 1. Multi-teacher KD with >2 heterogeneous architectures (transformer + SSM +
@@ -574,6 +627,11 @@ cross-architecture, but without routing or gradient management.
 4. **Gap-based sample scoring (CaMOPD):** Score training samples by
    teacher-student gap magnitude, train only on high-gap samples. Related
    to our NLL-threshold selection but applied during training, not caching.
+5. **Debate-style teacher disagreement (MAD-OPD):** Replace offline JSD
+   routing with iterative teacher debate over student's current state.
+   More expensive but produces emergent intelligence that exceeds any
+   single teacher. Could be implemented as an online cache refresh
+   strategy where teachers "debate" at refresh time.
 
 ---
 
