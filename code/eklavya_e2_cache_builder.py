@@ -144,8 +144,12 @@ def build_position_manifest(
             logit_0 = logits[0, patch_idx, 0]
             log_p = F.log_softmax(logit_0, dim=-1)
             nll = -log_p[byte_0].item()
+            if not math.isfinite(nll):
+                continue
             probs = F.softmax(logit_0, dim=-1)
             ent = -(probs * probs.clamp(min=1e-10).log()).sum().item()
+            if not math.isfinite(ent):
+                continue
 
             reason = 0
             if nll > nll_threshold:
