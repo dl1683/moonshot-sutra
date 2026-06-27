@@ -407,6 +407,58 @@ a niche problem. Now there are 8+ competing approaches.
   specialization with asymmetric anchor-follower roles.
 - **RELEVANCE TO E2:** Superseded by AGP analysis above.
 
+### TIP — Token Importance in On-Policy Distillation (Apr 2026)
+- **arXiv:** 2604.14084
+- **Authors:** Xu, Sang, Zhou, He, Wang, Geramifard
+- **Core idea:** Not all token positions matter equally for KD. Two
+  high-value regions: (1) high student entropy (uncertain), (2) low
+  student entropy + high teacher-student divergence (overconfident and wrong).
+- **Key result:** 50% token sampling via student entropy matches full-token
+  training with 47% peak memory reduction. Training on <10% of tokens
+  (overconfident subset) nearly matches full baselines.
+- **RELEVANCE TO E2:** VERY HIGH. Directly validates our NLL-threshold-based
+  position selection in the E2 cache builder: cache positions where student NLL
+  is high (= high student entropy). Also validates our eval-failure-window
+  sampling (captures overconfident-wrong positions). Our cache selection
+  policy is already TIP-aligned by design, but we should cite for external
+  validation.
+
+### Rethinking On-Policy Distillation (Apr 2026, THUNLP)
+- **arXiv:** 2604.13016
+- **Authors:** THUNLP team
+- **Core idea:** Two conditions for successful OPD: (i) compatible thinking
+  patterns between teacher/student, (ii) teacher offers genuinely new
+  capabilities beyond student's training data.
+- **Recovery strategies:** Off-policy cold start (SFT warmup on teacher
+  rollouts before OPD) + teacher-aligned prompt selection.
+- **RELEVANCE TO E2:** MEDIUM. Validates our phased curriculum design:
+  PORT_WARMUP is an "off-policy cold start" that aligns representations
+  before full distillation. Our consensus phase builds "compatible thinking
+  patterns" before disagreement routing activates. Different mechanism
+  (byte-level offline vs token-level online), same principle.
+
+### DistillMoE — Multi-Faceted Cross-Tokenizer Embedding KD (2026)
+- **OpenReview:** VIYNWGb3TL
+- **Core idea:** Lightweight MoE for sequence-level distillation (pointwise,
+  contrastive, pairwise experts) + DynamicCKA token-level alignment.
+  Cross-tokenizer embedding transfer from LLM2Vec/BGE-M3/Qwen3 → BERT.
+- **RELEVANCE TO E2:** MEDIUM. Different domain (embedding models, not
+  generative LMs) but same structural insight: multi-faceted routing where
+  each expert captures a different semantic perspective. Parallels our
+  multi-teacher routing where each teacher covers a different architecture
+  family.
+
+### Prefix Teach, Suffix Fade (May 2026)
+- **arXiv:** 2605.13643
+- **Core idea:** Local teachability collapse in strong-to-weak OPD. Prefixes
+  are teachable (teacher and student share context), suffixes fade as the
+  student's autoregressive error compounds and diverges from teacher support.
+- **RELEVANCE TO E2:** LOW-MEDIUM. Our offline caching avoids on-policy
+  rollout issues, but the insight about position-dependent teachability
+  is relevant: earlier positions in a sequence may be more teachable than
+  later ones. Our per-position NLL selection may already capture this
+  implicitly (later positions have higher NLL in general).
+
 ---
 
 ## 4. Gap Analysis — What E2 Does That Nobody Else Does
@@ -438,6 +490,13 @@ multi-teacher learning protocol, not the byte processing itself.
 No published work combines more than three of these capabilities.
 X-Token's two-teacher result narrows the gap on multi-teacher +
 cross-architecture, but without routing or gradient management.
+
+**Additional external validation (not in table):**
+- TIP (Apr 2026): validates our NLL-based position selection as optimal
+  (student entropy = best single proxy for position importance).
+- Rethinking OPD (Apr 2026): validates our phased curriculum as a form
+  of "off-policy cold start" that recovers training in failing configs.
+- DistillMoE: validates multi-faceted routing in cross-tokenizer settings.
 
 ### Nearest Threats
 1. **X-Token multi-teacher (NVIDIA, May 2026)** — Already demonstrated
@@ -479,6 +538,16 @@ cross-architecture, but without routing or gradient management.
    provides structural conditions (normalization, bounded influence, regularity,
    ordinal safety monotonicity) that our router should satisfy. Our gradient
    budget enforces bounded influence; softmax gives normalization.
+9. **Position-level importance filtering** — TIP (Apr 2026) confirms that
+   student-entropy-based position selection matches full-token training with
+   <50% of positions. Our NLL-threshold cache selection is TIP-aligned:
+   we cache positions where student NLL is high (= high entropy) + eval
+   failure windows (overconfident-wrong positions). External validation of
+   our cache selection policy design.
+10. **Phased curriculum as cold start** — Rethinking OPD (Apr 2026) shows
+    off-policy cold start (SFT warmup) recovers OPD in otherwise-failing
+    configurations. Our PORT_WARMUP → CONSENSUS → SEMANTIC → DISAGREEMENT
+    pipeline is a generalized version of this principle.
 
 ### What the Field Has NOT Solved
 1. Multi-teacher KD with >2 heterogeneous architectures (transformer + SSM +
