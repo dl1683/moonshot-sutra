@@ -157,7 +157,9 @@ def check_tests():
     """Run all test suites (S0 + E1 + E2)."""
     import subprocess
     code_dir = os.path.dirname(__file__)
-    test_files = ["test_overfit.py", "test_eklavya.py", "test_eklavya_e2.py"]
+    test_files = ["test_overfit.py", "test_eklavya.py", "test_eklavya_e2.py",
+                   "test_burnin_verdict.py", "test_export_log_csv.py",
+                   "test_utilities.py"]
     result = subprocess.run(
         [sys.executable, "-m", "pytest"] + test_files + ["-q"],
         capture_output=True, text=True, timeout=300, cwd=code_dir,
