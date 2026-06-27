@@ -183,7 +183,7 @@ Produced through 3-round adversarial deliberation (R1-R3, June 2026). Covers:
 purifier, per-teacher gradient budget, 7-ablation suite, retained-gain tests.
 
 Implementation: `code/eklavya_e2_cache.py`, `code/eklavya_e2_router.py`,
-`code/eklavya_e2_losses.py`, `code/eklavya_e2_training.py` (371 E2 tests passing).
+`code/eklavya_e2_losses.py`, `code/eklavya_e2_training.py` (377 E2 tests passing).
 
 E2 only proceeds after E1 shows decisive gains (>2pp improvement over CE-only).
 
