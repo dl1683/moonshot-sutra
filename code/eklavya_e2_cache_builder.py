@@ -67,6 +67,8 @@ class _StreamingKLWriter:
     def close(self) -> int:
         self._fh.seek(0)
         self._fh.write(struct.pack("<II", self._count, self._K))
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
         self._fh.close()
         return self._count
 
@@ -94,6 +96,8 @@ class _StreamingAlignWriter:
     def close(self) -> int:
         self._fh.seek(0)
         self._fh.write(struct.pack("<I", self._count))
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
         self._fh.close()
         return self._count
 

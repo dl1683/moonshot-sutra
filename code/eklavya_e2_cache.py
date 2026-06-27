@@ -13,6 +13,7 @@ No parquet dependency — E1 binary style preserved.
 from __future__ import annotations
 
 import json
+import math
 import mmap
 import os
 import struct
@@ -256,15 +257,23 @@ class E2KLRecord:
 
     @classmethod
     def unpack(cls, buf: bytes, K: int = 16) -> E2KLRecord:
+        expected = cls.HEADER_SIZE + K + K * 2
+        if len(buf) < expected:
+            raise ValueError(
+                f"Buffer too short: {len(buf)} < {expected}")
         hdr_vals = cls._HEADER.unpack(buf[:cls.HEADER_SIZE])
         offset = cls.HEADER_SIZE
         top_bytes = np.frombuffer(buf[offset:offset + K], dtype=np.uint8).copy()
         offset += K
         top_probs = np.frombuffer(buf[offset:offset + K * 2], dtype=np.float16).copy()
+        np.nan_to_num(top_probs, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        tail = hdr_vals[2]
+        if not math.isfinite(tail):
+            tail = 0.0
         return cls(
             position_id=hdr_vals[0],
             patch_idx=hdr_vals[1],
-            tail_prob=hdr_vals[2],
+            tail_prob=tail,
             entropy=hdr_vals[3],
             logp_gold=hdr_vals[4],
             top_bytes=top_bytes,
@@ -487,6 +496,10 @@ class MappedPositionRecords:
         self._n = struct.unpack("<I", hdr)[0]
         self._data_offset = 4
         self._rec_size = PositionRecord.SIZE
+        file_size = os.path.getsize(path)
+        expected = self._data_offset + self._n * self._rec_size
+        if file_size < expected:
+            self._n = max(0, (file_size - self._data_offset) // self._rec_size)
         self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
 
     def __len__(self) -> int:
@@ -532,6 +545,11 @@ class MappedKLRecords:
         self._n, self._K = struct.unpack("<II", hdr)
         self._data_offset = 8
         self._rec_size = E2KLRecord.record_size(self._K)
+        file_size = os.path.getsize(path)
+        expected = self._data_offset + self._n * self._rec_size
+        if file_size < expected:
+            usable = (file_size - self._data_offset) // self._rec_size
+            self._n = max(0, usable)
         self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
 
     @property
@@ -580,6 +598,10 @@ class MappedAlignRecords:
         self._n = struct.unpack("<I", hdr)[0]
         self._data_offset = 4
         self._rec_size = E2AlignRecord.SIZE
+        file_size = os.path.getsize(path)
+        expected = self._data_offset + self._n * self._rec_size
+        if file_size < expected:
+            self._n = max(0, (file_size - self._data_offset) // self._rec_size)
         self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
 
     def __len__(self) -> int:

@@ -3362,6 +3362,76 @@ class TestMappedAlignRecords:
                 mapped[1]
 
 
+class TestTruncatedCache:
+    """Truncated cache files should degrade gracefully, not crash."""
+
+    def test_truncated_kl_file(self, tmp_path):
+        K = 16
+        recs = [make_kl(pid=i, K=K) for i in range(10)]
+        path = str(tmp_path / "kl.bin")
+        write_teacher_kl_records(path, recs, K)
+        full_size = os.path.getsize(path)
+        with open(path, "r+b") as f:
+            f.truncate(full_size - 20)
+        with MappedKLRecords(path) as mapped:
+            assert len(mapped) < 10
+            assert len(mapped) >= 8
+            for i in range(len(mapped)):
+                r = mapped[i]
+                assert r.position_id == i
+
+    def test_truncated_position_file(self, tmp_path):
+        recs = [make_position(pid=i) for i in range(10)]
+        path = str(tmp_path / "pos.bin")
+        write_position_manifest(path, recs)
+        full_size = os.path.getsize(path)
+        with open(path, "r+b") as f:
+            f.truncate(full_size - 10)
+        with MappedPositionRecords(path) as mapped:
+            assert len(mapped) < 10
+            for i in range(len(mapped)):
+                assert mapped[i].position_id == i
+
+    def test_truncated_align_file(self, tmp_path):
+        recs = [make_align(pid=i) for i in range(10)]
+        path = str(tmp_path / "align.bin")
+        write_teacher_align_records(path, recs)
+        full_size = os.path.getsize(path)
+        with open(path, "r+b") as f:
+            f.truncate(full_size - 5)
+        with MappedAlignRecords(path) as mapped:
+            assert len(mapped) < 10
+            for i in range(len(mapped)):
+                assert mapped[i].position_id == i
+
+
+class TestUnpackNaNGuard:
+    """NaN values in binary cache should be sanitized at unpack time."""
+
+    def test_nan_top_probs_sanitized(self):
+        rec = make_kl(pid=0, K=16)
+        buf = rec.pack(16)
+        buf_arr = bytearray(buf)
+        offset = E2KLRecord.HEADER_SIZE + 16
+        nan_bytes = np.array([float('nan')], dtype=np.float16).tobytes()
+        buf_arr[offset:offset + 2] = nan_bytes
+        unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
+        assert np.all(np.isfinite(unpacked.top_probs))
+
+    def test_nan_tail_sanitized(self):
+        rec = make_kl(pid=0, K=16)
+        buf = rec.pack(16)
+        buf_arr = bytearray(buf)
+        nan_val = struct.pack("<e", float('nan'))
+        buf_arr[4:6] = nan_val
+        unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
+        assert math.isfinite(unpacked.tail_prob)
+
+    def test_short_buffer_raises(self):
+        with pytest.raises(ValueError, match="Buffer too short"):
+            E2KLRecord.unpack(b"\x00" * 10, 16)
+
+
 # ---------------------------------------------------------------------------
 # CPU end-to-end integration test (train / checkpoint / resume / eval)
 # ---------------------------------------------------------------------------
@@ -4755,8 +4825,9 @@ class TestR19Findings:
 
         with E2CacheView(str(cache_dir)) as view:
             errors = view.validate()
-            nan_errs = [e for e in errors if "non-finite" in e]
-            assert len(nan_errs) >= 1, f"Expected NaN error, got: {errors}"
+            bad_errs = [e for e in errors
+                        if "non-finite" in e or "deviates" in e]
+            assert len(bad_errs) >= 1, f"Expected NaN or mass error, got: {errors}"
 
     def test_cache_validate_catches_negative_tail_prob(self, tmp_path):
         """Cache validate() catches negative tail_prob via full path."""
