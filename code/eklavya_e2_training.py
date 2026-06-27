@@ -718,7 +718,18 @@ class E2Trainer:
         No routing, no purification, no alignment, no semantic loss.
         Returns a scalar KL loss or None if no anchor data found.
         """
-        anchor_name = "t0_anchor_decoder"
+        anchor_name = None
+        specs = self.manifest.get("teacher_specs", TEACHER_REGISTRY)
+        for spec in specs:
+            if isinstance(spec, TeacherSpec) and spec.role.name == "ANCHOR":
+                anchor_name = spec.name
+                break
+        if anchor_name is None:
+            for name in self.teacher_kl_by_pid:
+                anchor_name = name
+                break
+        if anchor_name is None:
+            return None
         kl_idx = self.teacher_kl_by_pid.get(anchor_name, {})
         if not kl_idx:
             return None

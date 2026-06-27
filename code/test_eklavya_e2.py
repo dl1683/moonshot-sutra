@@ -2911,12 +2911,95 @@ class TestE2EndToEnd:
         assert "PORT_WARMUP" not in phases, "CE-only should skip PORT_WARMUP"
         assert "CONSENSUS" not in phases, "CE-only should skip CONSENSUS"
 
+    def _create_bld_fixtures(self, tmp_path, seq_len=64, n_pos=4, K=8):
+        """Like _create_fixtures but with tiny shards so every sample hits offset 0."""
+        import torch
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=32, n_layers=2, n_heads=2, n_kv_heads=1,
+            byte_dim=32, ffn_mult=2.0, local_mixer_layers=1,
+            patch_size=4, max_seq_len=256,
+            decoder_dim=32, decoder_layers=1, decoder_heads=2,
+        )
+        student = SutraS0(model_cfg)
+        ckpt_path = str(tmp_path / "student.pt")
+        torch.save({
+            "step": 1000,
+            "model": student.state_dict(),
+            "model_cfg": model_cfg,
+        }, ckpt_path)
+
+        shard_dir = tmp_path / "shards"
+        shard_dir.mkdir()
+        rng = np.random.RandomState(42)
+        for i in range(3):
+            data = rng.randint(0, 256, seq_len, dtype=np.uint8)
+            (shard_dir / f"shard_{i:04d}.bin").write_bytes(data.tobytes())
+
+        specs = [
+            TeacherSpec(
+                teacher_id=0, name="test_anchor",
+                family=TeacherFamily.DECODER, role=TeacherRole.ANCHOR,
+                hidden_dim=32, vocab_size=64,
+                has_kl=True, has_align=True, has_semantic=False,
+                prior=1.0, vram_gb=0.1,
+            ),
+        ]
+
+        cache_dir = tmp_path / "e2_cache"
+        cache_dir.mkdir()
+        (cache_dir / "teachers").mkdir()
+
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65 + i,
+                student_nll=4.0, student_entropy=2.0,
+                reason_mask=SelectionReason.HIGH_NLL,
+            )
+            for i in range(n_pos)
+        ]
+        write_position_manifest(str(cache_dir / "positions.bin"), positions)
+
+        tdir = cache_dir / "teachers" / "test_anchor"
+        tdir.mkdir()
+        kl_recs = [
+            E2KLRecord(
+                position_id=i, patch_idx=i + 1,
+                tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                top_bytes=np.arange(K, dtype=np.uint8),
+                top_probs=np.full(K, 1.0 / K, dtype=np.float16),
+            )
+            for i in range(n_pos)
+        ]
+        write_teacher_kl_records(str(tdir / "kl_records.bin"), kl_recs, K=K)
+
+        align_recs = [
+            E2AlignRecord(
+                position_id=i, byte_start=i * 4,
+                byte_len=4, token_id=i, align_quality=1.0,
+            )
+            for i in range(n_pos)
+        ]
+        write_teacher_align_records(str(tdir / "align_records.bin"), align_recs)
+
+        emb = torch.randn(64, 32).half()
+        torch.save(emb, str(tdir / "teacher_embeddings.pt"))
+
+        save_e2_manifest(
+            str(cache_dir), specs, n_positions=n_pos, K=K,
+            shard_range=(0, 3),
+        )
+
+        return ckpt_path, str(shard_dir), str(cache_dir), model_cfg
+
     def test_bld_mode_trains_with_anchor_kl(self, tmp_path):
         """BLD baseline: single-teacher byte KL, no E2 machinery."""
         from eklavya_e2_training import train_e2
         import torch
 
-        ckpt_path, shard_dir, cache_dir, _ = self._create_fixtures(tmp_path)
+        ckpt_path, shard_dir, cache_dir, _ = self._create_bld_fixtures(tmp_path)
         cfg = self._make_cfg(
             tmp_path, shard_dir, cache_dir,
             port_warmup_steps=2, consensus_steps=2,
@@ -2940,6 +3023,12 @@ class TestE2EndToEnd:
         phases = {e.get("phase") for e in entries if "phase" in e}
         assert "BLD" in phases, "BLD log entries should have phase=BLD"
         assert "PORT_WARMUP" not in phases, "BLD should skip phase curriculum"
+
+        train_entries = [e for e in entries if "bld_kl_loss" in e]
+        assert len(train_entries) > 0, "BLD should log bld_kl_loss"
+        for e in train_entries:
+            assert e["bld_kl_loss"] >= 0.0, "BLD KL loss should be non-negative"
+            assert "bld_kl_bits" in e, "BLD should log bld_kl_bits"
 
 
 # ---------------------------------------------------------------------------

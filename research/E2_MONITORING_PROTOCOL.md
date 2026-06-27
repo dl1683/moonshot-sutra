@@ -71,12 +71,53 @@ Log entries now include `grad_budget` dict with:
 3. **Real-teacher distribution pathologies**: Correlated teachers, bad top-K tail mass, or teachers with systematically wrong gold-byte likelihoods
 4. **Long-run memory behavior**: Phase-transition optimizer resets + gradient budgeting backward passes may fragment GPU memory over 13,750 steps
 
+## Ablation-Specific Monitoring
+
+### A7 (No Gradient Budget)
+
+Without gradient budgeting, teacher gradients flow uncapped.
+`grad_budget` in logs will show `{"enabled": false}`.
+
+**Watch for:**
+- Training instability (loss spikes, NaN) — teacher gradients may overwhelm CE
+- BPB suddenly improving then crashing — overfitting to teacher signal
+- If A7 matches A2: gradient budgeting is unnecessary complexity, remove it
+- If A7 is clearly worse: gradient budgeting validated as load-bearing
+
+### A8 (No Phased Admission)
+
+All teachers active from the first student-updating phase. PORT_WARMUP
+still anchor-only (port alignment needs a stable reference).
+
+**Watch for:**
+- Early training instability from conflicting teacher signals
+- Route entropy near maximum from the start (no curriculum effect)
+- If A8 matches A2: phased admission is unnecessary, simplify
+- If A8 is clearly worse: phased admission validated
+
+### BLD (Single-Teacher Byte KL Baseline)
+
+No router, no purification, no alignment, no semantic, no calibration.
+Just CE loss + weighted KL from anchor teacher's byte distributions.
+`bld_kl_loss` and `bld_kl_bits` fields appear in logs.
+
+**Watch for:**
+- BLD should converge faster than A2 (simpler loss landscape)
+- BLD's ceiling should be lower than A2 (single teacher limits richness)
+- If BLD matches or beats A2: E2 machinery adds no value, fundamental problem
+- If A2 clearly beats BLD: the machinery (routing, multi-teacher) is justified
+
 ## Ablation Priority (Limited GPU Time)
 
 If only 4 ablations can run, execute in this order:
 1. **A2** (full E2) — main system
 2. **A0** (CE-only) — does E2 beat doing nothing?
 3. **A1** (anchor-only) — does multi-teacher beat single?
-4. **A6** (shuffled targets) — falsification: are real signals necessary?
+4. **BLD** (byte KL baseline) — does E2 machinery beat simple KL?
+
+If 7 ablations can run, add:
+5. **A7** (no gradient budget) — novelty-critical
+6. **A8** (no phased admission) — novelty-critical
+7. **A6** (shuffled targets) — falsification
 
 Defer A3, A4, A5 until baseline numbers exist. Use route telemetry from A2 to decide next.

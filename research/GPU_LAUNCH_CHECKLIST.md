@@ -182,7 +182,7 @@ C:/sutra_fast/eklavya_e2_cache/
 ### Prerequisites
 - [ ] E1 best checkpoint exists
 - [ ] E2 cache built and validated (Phase 5)
-- [ ] 270 tests passing (`pytest code/ -x`)
+- [ ] 295 tests passing (`pytest code/ -x`)
 
 ### VRAM Budget (Training)
 ```
