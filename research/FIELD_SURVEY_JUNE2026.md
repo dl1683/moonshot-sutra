@@ -166,13 +166,14 @@ a niche problem. Now there are 8+ competing approaches.
 - **Key insight:** Routing > aggregation. The similarity-based router uses
   learned teacher embeddings + cosine similarity, wins on OOD because it
   needs only the question (not pre-sampled rationales) for routing.
-- **RELEVANCE TO E2:** VERY HIGH. Directly validates our design choices:
-  (1) disagreement-based routing is the right approach, (2) naive teacher
-  averaging hurts (their aggregation method has NEGATIVE CMV), (3) routing
-  methods generalize best to OOD data. Their work is at the
-  rationale/response level for LLMs; ours is at the distribution/logit level.
-  Complementary, not competing. Their similarity-router architecture parallels
-  our PL-style router.
+- **RELEVANCE TO E2:** HIGH. Validates the general principle that routing
+  beats aggregation for multi-teacher KD — their aggregation baseline has
+  NEGATIVE CMV. Routing methods generalize best to OOD data. However, their
+  work is at the rationale/response level (LLM reasoning); our E2 routing
+  operates at the distribution/logit level on byte sequences. The paper
+  supports "routing > averaging" broadly, not byte-level disagreement routing
+  or phased admission specifically. Their similarity-router architecture
+  parallels our PL-style router concept.
 
 ### MST-Distill — Mixture of Specialized Teachers (ACM MM 2025)
 - **arXiv:** 2507.07015
@@ -235,8 +236,9 @@ a niche problem. Now there are 8+ competing approaches.
 - **RELEVANCE TO E2:** HIGH. Directly addresses teacher gradient conflicts.
   Their alternating schedule maps to our phased curriculum. Their gap-based
   scoring maps to our NLL-threshold cache selection. **E2v2 candidate:**
-  implement GCG as a diagnostic metric in monitor.py — if gradient coherence
-  is negative, teacher signal is hurting more than helping. Our approach
+  implement GCG as a diagnostic metric in monitor.py — negative GCG on a
+  selected subset indicates teacher gradient conflicts (note: GCG measures
+  subset-vs-full coherence, not a direct per-teacher help/hurt detector). Our approach
   (cap gradients) is simpler; theirs (alternate + select) is more adaptive.
   Different solutions to the same problem. We should cite and differentiate.
 
@@ -387,7 +389,8 @@ cross-architecture, but without routing or gradient management.
 2. **Router-based purification** — ICLR 2026 Knowledge Purification paper
    confirms router-based methods generalize best.
 3. **More teachers can hurt** — Knowledge Purification confirms that naive
-   multi-teacher hurts. Our phased admission is the right defense.
+   multi-teacher averaging hurts. Routing-based selection is the defense;
+   our phased admission is an orthogonal mitigation (untested by this paper).
 4. **Patch-global architectures work** — BLT proves this at 8B scale.
 5. **Entropy-weighted routing** — DWA-KD (Feb 2026) and EWAD (Apr 2026)
    independently confirm that weighting by student uncertainty / teacher

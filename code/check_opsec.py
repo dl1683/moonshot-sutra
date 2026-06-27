@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 BANNED_PATTERNS = [
-    r"[Qq]wen3?[-_]\d+[._]\d+[Bb]",
+    r"[Qq]wen3?[-_]\d+(\.\d+)?[Bb]",
     r"[Qq]wen/[Qq]wen",
     r"\bLFM[\d\s(]",
     r"[Ll][Ff][Mm]2\.?5[-_]1[._]2[Bb]",

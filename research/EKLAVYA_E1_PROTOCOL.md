@@ -191,7 +191,7 @@ E2 only proceeds after E1 shows decisive gains (>2pp improvement over CE-only).
 
 - `code/eklavya_cache.py` — E1 offline teacher signal cache builder
 - `code/eklavya_training.py` — E1 distillation training loop
-- `code/test_eklavya.py` — E1 unit tests (28 passing)
+- `code/test_eklavya.py` — E1 unit tests (30 passing)
 - `code/eklavya_e2_cache.py` — E2 teacher registry + binary cache
 - `code/eklavya_e2_router.py` — E2 router + purifier
 - `code/eklavya_e2_losses.py` — E2 losses + gradient budget

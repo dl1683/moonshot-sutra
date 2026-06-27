@@ -176,6 +176,9 @@ C:/sutra_fast/eklavya_e2_cache/
 - [ ] manifest.json shows n_positions > 0 and teacher_count == 5
 - [ ] Each teacher subdir has non-empty records
 - [ ] `python -c "from eklavya_e2_cache import E2CacheView; v=E2CacheView('C:/sutra_fast/eklavya_e2_cache'); print(v.manifest); v.close()"`
+- [ ] Zero non-finite-skip warnings in cache build output (NaN positions = corrupted checkpoint)
+- [ ] Inspect S0 and E1 checkpoints: `python code/inspect_checkpoint.py C:/sutra_fast/checkpoints/s0_best.pt`
+- [ ] Run opsec scan incl. history: `python code/check_opsec.py --history` (clean before any push)
 
 ## Phase 6: E2 Training (~12-24 hours)
 
@@ -337,7 +340,7 @@ python eval_e2.py \
 | Burn-in verdict | `code/burnin_verdict.py` |
 | E1 cache builder | `code/eklavya_cache.py` |
 | E1 training loop | `code/eklavya_training.py` |
-| E1 unit tests | `code/test_eklavya.py` (28 tests) |
+| E1 unit tests | `code/test_eklavya.py` (30 tests) |
 | E2 cache builder | `code/eklavya_e2_cache_builder.py` |
 | E2 training loop | `code/eklavya_e2_training.py` |
 | E2 router/purifier | `code/eklavya_e2_router.py` |
@@ -348,9 +351,9 @@ python eval_e2.py \
 | Burnin verdict tests | `code/test_burnin_verdict.py` (44 tests) |
 | Export CSV tests | `code/test_export_log_csv.py` (16 tests) |
 | Utility tests | `code/test_utilities.py` (21 tests) |
-| Ablation comparison tests | `code/test_compare_ablations.py` (31 tests) |
+| Ablation comparison tests | `code/test_compare_ablations.py` (47 tests) |
 | VRAM profile tests | `code/test_vram_profile.py` (18 tests) |
-| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (46 tests) |
+| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (53 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
 | E2 monitoring | `research/E2_MONITORING_PROTOCOL.md` |
