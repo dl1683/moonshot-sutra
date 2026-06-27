@@ -4448,32 +4448,84 @@ class TestR19Findings:
                     f"GOLDFREE_RULES should compare against A5b, "
                     f"not A5 (uniform strawman)")
 
-    def test_cache_validate_catches_nan_kl_probs(self):
-        """Cache validation should catch NaN in KL top_probs."""
-        from eklavya_e2_cache import E2KLRecord
-        rec = E2KLRecord(
-            position_id=0,
-            patch_idx=1,
-            top_bytes=np.array([0, 1, 2], dtype=np.uint8),
-            top_probs=np.array([float("nan"), 0.3, 0.2], dtype=np.float32),
-            tail_prob=0.0,
-            entropy=1.0,
-            logp_gold=-1.0,
-        )
-        assert not np.all(np.isfinite(rec.top_probs))
+    def test_cache_validate_catches_nan_kl_probs(self, tmp_path):
+        """Cache validate() catches NaN in KL top_probs via full path."""
+        K = 4
+        cache_dir = tmp_path / "nan_cache"
+        cache_dir.mkdir()
+        (cache_dir / "teachers").mkdir()
 
-    def test_cache_validate_catches_negative_tail_prob(self):
-        from eklavya_e2_cache import E2KLRecord
-        rec = E2KLRecord(
-            position_id=0,
-            patch_idx=1,
-            top_bytes=np.array([0, 1], dtype=np.uint8),
-            top_probs=np.array([0.5, 0.3], dtype=np.float32),
-            tail_prob=-0.1,
-            entropy=1.0,
-            logp_gold=-1.0,
+        spec = TeacherSpec(
+            teacher_id=0, name="t_bad",
+            family=TeacherFamily.DECODER, role=TeacherRole.ANCHOR,
+            hidden_dim=16, vocab_size=32,
+            has_kl=True, has_align=False, has_semantic=False,
+            prior=1.0, vram_gb=0.1,
         )
-        assert rec.tail_prob < 0
+        positions = [
+            PositionRecord(
+                position_id=0, shard_id=0, seq_offset=0, patch_idx=1,
+                gold_byte=65, student_nll=4.0, student_entropy=2.0,
+                reason_mask=SelectionReason.HIGH_NLL,
+            )
+        ]
+        write_position_manifest(str(cache_dir / "positions.bin"), positions)
+
+        tdir = cache_dir / "teachers" / spec.name
+        tdir.mkdir()
+        bad_rec = E2KLRecord(
+            position_id=0, patch_idx=1,
+            top_bytes=np.arange(K, dtype=np.uint8),
+            top_probs=np.array([float("nan"), 0.3, 0.2, 0.1],
+                               dtype=np.float16),
+            tail_prob=0.0, entropy=1.0, logp_gold=-1.0,
+        )
+        write_teacher_kl_records(str(tdir / "kl_records.bin"), [bad_rec], K=K)
+        save_e2_manifest(str(cache_dir), [spec], n_positions=1, K=K)
+
+        with E2CacheView(str(cache_dir)) as view:
+            errors = view.validate()
+            nan_errs = [e for e in errors if "non-finite" in e]
+            assert len(nan_errs) >= 1, f"Expected NaN error, got: {errors}"
+
+    def test_cache_validate_catches_negative_tail_prob(self, tmp_path):
+        """Cache validate() catches negative tail_prob via full path."""
+        K = 4
+        cache_dir = tmp_path / "neg_cache"
+        cache_dir.mkdir()
+        (cache_dir / "teachers").mkdir()
+
+        spec = TeacherSpec(
+            teacher_id=0, name="t_neg",
+            family=TeacherFamily.DECODER, role=TeacherRole.ANCHOR,
+            hidden_dim=16, vocab_size=32,
+            has_kl=True, has_align=False, has_semantic=False,
+            prior=1.0, vram_gb=0.1,
+        )
+        positions = [
+            PositionRecord(
+                position_id=0, shard_id=0, seq_offset=0, patch_idx=1,
+                gold_byte=65, student_nll=4.0, student_entropy=2.0,
+                reason_mask=SelectionReason.HIGH_NLL,
+            )
+        ]
+        write_position_manifest(str(cache_dir / "positions.bin"), positions)
+
+        tdir = cache_dir / "teachers" / spec.name
+        tdir.mkdir()
+        bad_rec = E2KLRecord(
+            position_id=0, patch_idx=1,
+            top_bytes=np.arange(K, dtype=np.uint8),
+            top_probs=np.full(K, 0.2, dtype=np.float16),
+            tail_prob=-0.1, entropy=1.0, logp_gold=-1.0,
+        )
+        write_teacher_kl_records(str(tdir / "kl_records.bin"), [bad_rec], K=K)
+        save_e2_manifest(str(cache_dir), [spec], n_positions=1, K=K)
+
+        with E2CacheView(str(cache_dir)) as view:
+            errors = view.validate()
+            tail_errs = [e for e in errors if "tail_prob" in e]
+            assert len(tail_errs) >= 1, f"Expected tail_prob error, got: {errors}"
 
 
 if __name__ == "__main__":
