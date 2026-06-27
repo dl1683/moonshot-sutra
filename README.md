@@ -1,207 +1,150 @@
-# Sutra (सूत्र)
+# Sutra & Eklavya
 
-### Compression is intelligence. We're proving it.
+**Sutra** is a byte-level language model built from scratch — no tokenizer, no
+inherited vocabulary, no pretrained weights. It processes raw bytes through a
+patch-global architecture inspired by MEGABYTE, designed for efficiency on a
+single GPU.
 
-> *Panini compressed all of Sanskrit into ~4,000 sutras — the most efficient grammar ever written. We're applying the same principle to AI: compress intelligence into minimal parameters by starting from better mathematics, not by shrinking existing architectures.*
-
-**Sutra is a from-scratch byte-level language model that operates directly on raw bytes — no tokenizer, no vocabulary, no inherited assumptions.** Built on a single laptop GPU, trained from zero, learning English from the rawest possible signal. The architecture is derived from first principles across information theory, geometric deep learning, statistical mechanics, and coding theory.
-
-The question we answered: **What happens when you throw away every assumption from the large-model paradigm and rebuild intelligence from the ground up?**
-
-The answer: **It works.**
-
----
+**Eklavya** is the multi-teacher learning protocol that will train Sutra. It
+extracts invariants from diverse teacher models (different architectures,
+different tokenizers) and compiles them into typed lesson packets targeting
+specific student modules. The key insight: teachers are instruments, not masters.
+The student learns from their disagreements, not their consensus.
 
 ## Why Bytes?
 
-Every language model you've used was built on a lie: that language is a sequence of tokens.
+Tokenizers create invisible walls. They lock models into one vocabulary, making
+cross-architecture knowledge transfer nearly impossible. Bytes eliminate this
+problem entirely — every model's output can be compared at the byte level,
+regardless of how it was tokenized internally.
 
-It's not. Language is a **variable-rate compression tree over raw bytes**. High-entropy regions (code, names, rare words) carry dense information per byte. Low-entropy regions (common phrases, formatting) are highly compressible. Tokenizers destroy this signal — they impose a fixed-rate discretization on a variable-rate source.
+This is how Eklavya becomes possible: a universal substrate that can absorb
+knowledge from any teacher.
 
-Sutra operates directly on the byte stream. No tokenizer means:
-- **Zero vocabulary mismatch** across languages, code, and mixed content
-- **Perfect cross-model compatibility** for knowledge distillation (no tokenizer alignment needed)
-- **Information-theoretically grounded** — we model the actual source, not an approximation
+## Current State
 
-This isn't a limitation we're working around. This is the point.
+**S0 (Scout Build)** — implementation complete, training imminent.
 
----
+| Component | Status | Key File |
+|-----------|--------|----------|
+| Architecture (121.7M params) | Built & tested | `code/s0_architecture.py` |
+| Training loop + burn-in | Ready | `code/s0_training.py` |
+| Data pipeline (byte shards) | Complete (565 shards, 141 GiB) | `code/prepare_byte_shards.py` |
+| Pre-training preflight | All checks pass | `code/preflight.py` |
+| Causality regression tests | Passing | `code/test_overfit.py` |
+| Burn-in verdict automation | Ready | `code/burnin_verdict.py` |
+| Live training monitor | Ready | `code/monitor.py` |
+| Evaluation + generation | Ready | `code/s0_eval.py` |
 
-## The Architecture: Sutra-Dyad
+**E1 (Single-Teacher KD)** — implementation complete, tested, pending S0 checkpoint.
 
-A dual-scale byte-level model inspired by the MegaByte framework, redesigned from first principles:
+| Component | Status | Key File |
+|-----------|--------|----------|
+| Teacher signal cache builder | Built & tested | `code/eklavya_cache.py` |
+| KD training loop (3-phase) | Built & tested | `code/eklavya_training.py` |
+| Unit tests (28 tests) | All passing | `code/test_eklavya.py` |
 
-**Stage 0 — Global Byte Intelligence (153M params, COMPLETE)**
-- 12-layer global transformer (d=1024, 16 heads, SwiGLU) processes patch-level representations
-- 1-layer local decoder (d=256, 4 heads) generates individual bytes within each patch
-- Processes raw bytes in fixed patches — no learned tokenization overhead
-- Trained with WSD (Warmup-Stable-Decay) schedule for stable long-horizon training
+**E2 (Multi-Teacher KD)** — fully wired with mmap-backed cache, integration tests, and GPU launch checklist. Ready for GPU.
 
-**Stage 1 — Adaptive Local Capacity (194M params, IN DEVELOPMENT)**
-- Expanded local path: 2 within-patch encoder layers + 4 byte decoder layers (d=640, 10 heads)
-- Cross-attention from byte decoder to global context — each byte sees exactly the causal global history
-- Byte-residual bypass: raw byte information flows through a dedicated bypass channel, preventing information loss through the global bottleneck
-- Warm-started from Stage 0 — the global trunk transfers intact, new capacity layers are added around it
+| Component | Status | Key File |
+|-----------|--------|----------|
+| Teacher registry (5 teachers) | Built & tested | `code/eklavya_e2_cache.py` |
+| Binary cache records & I/O | Built & tested | `code/eklavya_e2_cache.py` |
+| PL-style router & purifier | Built & tested | `code/eklavya_e2_router.py` |
+| Projection ports & losses | Built & tested | `code/eklavya_e2_losses.py` |
+| Multi-teacher gradient budget | Built & tested | `code/eklavya_e2_losses.py` |
+| Calibration loss | Built & tested | `code/eklavya_e2_training.py` |
+| Unit tests (226 E2 tests) | All passing | `code/test_eklavya_e2.py` |
+| Data loader tests (8 tests) | All passing | `code/test_overfit.py` |
+| Cache builder (2-pass) | Built | `code/eklavya_e2_cache_builder.py` |
+| E2 trainer with curriculum | Built & reviewed | `code/eklavya_e2_training.py` |
+| Ablation evaluation harness | Built | `code/eval_e2.py` |
+| Protocol document | Written | [E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) |
 
-**The key insight:** Intelligence doesn't require a single monolithic model. It requires the right information at the right scale. Global context for long-range dependencies. Local precision for byte-level generation. A bypass channel so raw signal is never lost.
-
----
-
-## Results
-
-### Stage 0: The Foundation Works
-
-| Metric | Value |
-|--------|-------|
-| **Parameters** | 153M (all trained from scratch) |
-| **Training** | 3K steps on single RTX 5090 |
-| **Final BPB** | 2.187 (bits per byte) |
-| **Convergence** | 6.5 BPB → 2.19 BPB — rapid learning from random initialization |
-| **Generation** | Producing coherent English text from raw bytes |
-| **Data** | 80GB of pre-processed byte shards |
-
-The model learns English orthography, common word patterns, and basic grammatical structure — all from raw bytes, all from scratch, on a single GPU. No pre-trained weights. No copied architectures. No tokenizer.
-
-**Competitive context:** At 153M parameters trained on a fraction of the data that comparable models use, Sutra-Dyad Stage 0 demonstrates that byte-level modeling from scratch is viable and efficient. The architecture is designed to scale — Stage 1 adds local capacity that the global trunk can leverage without retraining.
-
-### What the Numbers Mean
-
-Bits-per-byte (BPB) measures how efficiently the model predicts the next byte. Lower is better. For reference:
-- Random prediction over ASCII: ~6.6 BPB
-- English text entropy (Shannon): ~1.0-1.3 BPB
-- State-of-the-art byte models at scale: ~0.8-1.0 BPB
-
-Sutra-Dyad at 153M params and 3K steps already achieves 2.19 BPB — well into the regime of meaningful language modeling, with a clear trajectory toward competitive performance as training continues and Stage 1 comes online.
-
----
-
-## The Ekalavya Protocol: Learning Without a Master
-
-> *In the Mahabharata, Ekalavya learns archery by observing Drona teach others — becoming the greatest archer without direct instruction. Sutra does the same with knowledge distillation.*
-
-**The problem:** Every small model today is either (a) trained from scratch on massive data, or (b) distilled from a single large teacher. Both are wasteful. The world is full of specialized models — LLMs, encoders, vision models, STEM models — each containing unique knowledge. Why learn from just one?
-
-**The Ekalavya Protocol** is multi-teacher cross-architecture knowledge distillation at the byte level:
-- **Any model is a teacher** — regardless of architecture, tokenizer, or modality
-- **Byte-level alignment** eliminates the tokenizer mismatch problem that makes cross-architecture KD intractable
-- **Each teacher contributes its specialty** — a code model teaches code, a math model teaches math, an encoder teaches representations
-
-This is the ultimate data efficiency play. Instead of training on trillions of tokens, Sutra absorbs compressed knowledge from models that already learned it. Multiple teachers, multiple architectures, one student that synthesizes everything.
-
-### The efficiency evidence
-
-Architecture alone, before any knowledge distillation:
-
-| | Sutra (197M) | Pythia-160M | Ratio |
-|---|---|---|---|
-| **Training tokens** | **1B** | 300B | **300x less** |
-| **ARC-Easy** | **45.4%** | 40.0% | **Sutra wins (+5.4pp)** |
-| **WinoGrande** | **51.3%** | 51.3% | Tie |
-| **PIQA** | 59.5% | 62.3% | 96% of Pythia |
-| **HellaSwag** | 29.0% | 30.3% | 96% of Pythia |
-
-*0-shot evals, token-level phase. SmolLM2-135M needs 2,000B tokens for state-of-the-art — that's 2,000x our training budget.*
-
-**Sutra beats Pythia on ARC-Easy and matches on WinoGrande with 300x less training data.** No knowledge distillation. No pre-trained weights. Pure architectural efficiency.
-
-Now add Ekalavya on top:
-
-1. **Proven at this scale** — Single-teacher KD delivers 2.2x training acceleration and 2.4x data efficiency (MiniPLM, ICLR 2025)
-2. **Universal teachers** — Byte-level alignment means any model can teach regardless of tokenizer: Qwen, Llama, Mistral, encoders, code models — no alignment barrier
-3. **The multiplier** — 5 specialized teachers, each encoding trillions of tokens of compressed knowledge, teaching one student simultaneously
-
-We don't need 2 trillion tokens. We need better mathematics.
-
-**Status:** Protocol designed. Targeting Stage 2-3 after the base model reaches competitive byte-level performance.
-
----
-
-## The 5 Outcomes
-
-Everything in Sutra serves exactly 5 non-negotiable outcomes:
-
-| # | Outcome | How Sutra Delivers |
-|---|---------|-------------------|
-| 1 | **Genuine Intelligence** | Competitive benchmarks against best-in-class at same param count |
-| 2 | **Improvability** | Dual-scale architecture — identify and fix failures at the right scale |
-| 3 | **Democratized Development** | Byte-level interface = universal. Any domain expert can add a teacher |
-| 4 | **Data Efficiency** | Ekalavya Protocol — learn from models, not just data |
-| 5 | **Inference Efficiency** | Variable-rate processing — easy bytes get less compute |
-
----
-
-## The Process: How We Build
-
-Sutra uses a rigorous iterative design workflow combining deep theoretical reasoning with empirical probes:
-
-1. **Research**: Survey the field. Understand fundamentals. Find the mathematical structure.
-2. **Design**: Every mechanism is derived from first principles — no inherited assumptions.
-3. **Implement**: Small incremental steps. Warm-start everything. Test every assumption.
-4. **Review**: Systematic audits for correctness, performance, scaling, integrity, novelty, architecture, deployment, and competitive positioning.
-5. **Iterate**: Theory proposes, experiment disposes, theory refines.
-
-No design choice survives without both mathematical justification and empirical validation.
-
----
-
-## Competitive Targets
-
-| Model | Params | Training Data | Status |
-|-------|--------|--------------|--------|
-| Pythia-160M | 160M | 300B tokens | **Beaten on ARC-Easy, matched on WinoGrande at 300x less data** |
-| SmolLM2-135M | 135M | 2T tokens | Target — 2,000x data gap to close via Ekalavya |
-| MobileLLM-125M | 125M | 1T tokens | Target — best architecture-optimized sub-200M baseline |
-| Gemma-3-1B | 1B | ~6T tokens | Stretch — 7x fewer params, fraction of compute |
-
-**The thesis:** SmolLM2-135M trains on 2 trillion tokens — a 2,000x data advantage over our budget. Sutra must be dramatically more data-efficient to compensate. That's not a limitation. That's the entire point. We've already shown the architecture closes a 300x gap against Pythia. Ekalavya closes the rest.
-
----
-
-## Repository Structure
+### S0 Architecture
 
 ```
-sutra/
-├── code/
-│   ├── sutra_dyad.py        # Byte-level dual-scale model + Stage 0/1 training
-│   ├── data_loader.py        # Byte-shard streaming pipeline (80GB)
-│   └── dense_baseline.py     # Token-level reference model
-├── research/
-│   ├── VISION.md             # Full infrastructure vision + design philosophy
-│   ├── RESEARCH.md           # Field research + experimental findings
-│   ├── ARCHITECTURE.md       # Architecture reference
-│   └── SCRATCHPAD.md         # Active working notes
-├── results/                  # Structured JSON metrics
-├── experiments/
-│   └── ledger.jsonl          # Every experiment logged (successes AND failures)
-└── CLAUDE.md                 # Project constitution
+ByteEncoder (P=4 bytes → 1 patch state)
+  └─ 2-layer local mixer (patch-isolated, no future leakage)
+  └─ Gated MLP aggregator → D=576 patch state
+
+GlobalReasoner (30-layer causal transformer)
+  └─ GQA: 9 heads / 3 KV heads
+  └─ SwiGLU FFN (1536 intermediate)
+  └─ RoPE positional encoding
+  └─ Activation checkpointing (5.5 GB peak VRAM)
+
+ByteDecoder (4-layer causal decoder)
+  └─ Cross-attention to nearby patch states
+  └─ Autoregressively predicts 4 bytes per patch
+  └─ Shift-by-one: hidden[i] predicts bytes of patch i+1
 ```
 
----
+### Data
+
+Three admitted Common Pile subsets (Public Domain / CC0 only):
+- `arxiv_abstracts` — scientific text
+- `caselaw_access_project` — legal text
+- `biodiversity_heritage_library` — natural history
+
+565 shards x 256 MiB = 141 GiB total. 50K training steps at batch 64 covers
+~0.09 epochs.
+
+## Build Order
+
+```
+D0: Data admission (source/license filtering)        ✅ Complete
+S0: Byte/patch scout (121.7M, fixed compute)          ⏳ Training next
+E1: Single-teacher byte-level KD (anchor teacher → S0)   📐 Designed
+E2: Multi-teacher KD (5 teachers → S0)                📐 Infrastructure built
+T0: Teacher feasibility profiling (parallel)           ◻ After S0
+G0: Gap mapping on real student traces                 ◻ After S0 trained
+P0: Packet compilation for observed gaps               ◻ After G0
+G1: Integrated runtime (350-500M, all 7 interfaces)   ◻ After P0
+O0: Ownership/credit/efficiency gates                  ◻ After G1
+```
+
+## Design Documents
+
+- [Vision](research/VISION.md) — what Sutra and Eklavya are, claims and non-claims
+- [SE1 Canonical Spec](research/SE1_CANONICAL_SPEC.md) — frozen build spec,
+  produced through multi-round adversarial deliberation (R1-R12)
+- [Eklavya E1 Protocol](research/EKLAVYA_E1_PROTOCOL.md) — byte-level KD design
+  (single-teacher, 3-phase schedule, sparse caching)
+- [Eklavya E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) — multi-teacher KD design
+  (5-teacher roster, PL router, purifier, gradient budget, 7 ablations)
+- [E2 Teacher Feasibility](research/EKLAVYA_E2_TEACHER_FEASIBILITY.md) — per-teacher
+  admission checklist (6 checks, admit/drop rules)
+- [E2 Ablation Plan](research/EKLAVYA_E2_ABLATION_PLAN.md) — E2.5 ownership tests
+  (A0-A6 commands, decision rules, retained-gain protocol)
+- [Eklavya Doctrine](research/EKLAVYA_DOCTRINE.md) — learning protocol design
+- [Ground-Up Future Design](research/GROUND_UP_FUTURE_DESIGN.md) — first-principles
+  architecture (unconstrained by prior assumptions)
+- [W0 Registries](research/W0_REGISTRIES.md) — materialized interface, lesson,
+  measurement, and threshold registries for G1
+- [Data Admission](research/DATA_ADMISSION.md) — admitted/held/rejected sources,
+  license posture, shard preparation
+
+## Quick Start (CPU-only validation)
+
+```bash
+pip install torch numpy transformers pytest
+cd code
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py -v
+```
+
+All 270 tests run on CPU without any data, models, or GPU. They validate
+the S0 architecture (config presets, loss shape, LR schedule, causality) and
+the full E1/E2 infrastructure: binary record I/O, router, purifier, losses,
+gradient budget, cache builder, position manifest, teacher records, and
+training config.
 
 ## Hardware
 
-**Single NVIDIA RTX 5090 laptop (24GB VRAM).** That's the whole compute budget. If you need a data center, you're solving the wrong problem.
+Single NVIDIA RTX 5090 Laptop (24 GB VRAM). S0 fits comfortably at 5.5 GB peak
+with activation checkpointing (batch=4, seq=4096).
 
----
+## Philosophy
 
-## The Manifesto
-
-*AI should be like electricity. It should be like vaccines. It should be cheap, ubiquitous, and useful to the poorest person on the street, not just the richest corporation in the cloud.*
-
-*To be a tool that uplifts everyone, instead of concentrating value in the tech oligarchy and their investment bankers.*
-
-**Every existing small model is a scaled-down version of a big model.** They inherit the assumptions, the tokenizers, the architectures, and the inefficiencies of the large-model paradigm. Sutra starts from scratch. From bytes. From mathematics. From first principles.
-
-**If compression is intelligence, then better compression is better intelligence.** And better compression comes from better mathematics — not bigger hardware.
-
-**Everything here is open. Follow along, challenge our assumptions, or build with us.**
-
----
-
-## Part of [AI Moonshots](https://github.com/dl1683/ai-moonshots)
-
-*By Devansh — building intelligence from first principles.*
-
-## License
-
-MIT
+Intelligence = Geometry, not Scale. Mathematical structure beats brute-force
+parameters. If the theory is right, you don't need a data center.
