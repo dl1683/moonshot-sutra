@@ -39,9 +39,15 @@ a niche problem. Now there are 8+ competing approaches.
 - **Fix:** P-KL addresses uncommon-token suppression, H-KL relaxes matching.
   Projection matrix W is built rule-based from tokenizer strings.
 - **Result:** +3.82 avg points over GOLD baseline on Llama-3.2-1B.
-- **RELEVANCE TO E2:** MEDIUM. Uses token-level projections, not byte-level.
-  Our byte interface sidesteps both failure modes entirely (every teacher
-  produces byte distributions, so there's no vocabulary mismatch).
+- **Multi-teacher result:** Two-teacher setup (Phi-4-Mini + Llama-3B) improves
+  +1.3 points over single-teacher. Static weighting, no routing. Teachers show
+  complementarity: Phi-4-Mini contributes math/reasoning, Llama-3B contributes
+  commonsense. W projection matrix extends naturally to multiple teachers.
+- **RELEVANCE TO E2:** MEDIUM-HIGH (upgraded from MEDIUM). Uses token-level
+  projections, not byte-level. Our byte interface sidesteps both failure modes.
+  But their multi-teacher extension is now a direct competitor claim-wise. Their
+  +1.3 from static two-teacher weighting is our minimum bar — we must beat this
+  with our five-teacher routed system to prove routing adds value over averaging.
 
 ### SimCT — Simple Cross-Tokenizer OPD (May 2026)
 - **arXiv:** 2605.07711
@@ -77,12 +83,20 @@ a niche problem. Now there are 8+ competing approaches.
 - **RELEVANCE TO E2:** LOW. Elegant math but BPE-specific. Doesn't apply
   to non-BPE tokenizers (SentencePiece, byte-level).
 
-### DSKD — Dual-Space KD (EMNLP 2024 + KQ extension Mar 2026)
+### DSKD — Dual-Space KD (EMNLP 2024 + extensions)
 - **GitHub:** github.com/songmzhang/DSKD
 - **Core idea:** KD in both logit space and hidden-state space, with
   key-query matching for vocabulary mismatch.
+- **KQ extension (arXiv 2603.22056, Mar 2026):** DSKD-CMA-GA adds Generative
+  Adversarial learning to address the mismatched key-query distributions between
+  teacher and student cross-attention. Analysis reveals limitations of vanilla
+  DSKD-CMA attention patterns.
+- **DSKDv2 (arXiv 2504.11426):** Generalizes to a dual-space framework for
+  arbitrary teacher-student pairs. GitHub: songmzhang/DSKDv2.
 - **RELEVANCE TO E2:** MEDIUM. Our align loss (E1) operates in hidden-state
-  space, similar to their dual-space concept.
+  space, similar to their dual-space concept. The GAN extension is interesting
+  but adds complexity we don't need (our byte interface avoids the distribution
+  mismatch problem entirely).
 
 ### DWA-KD — Dual-Space Weighting + Time-Warped Alignment (Feb 2026)
 - **arXiv:** 2602.21669
@@ -202,6 +216,30 @@ a niche problem. Now there are 8+ competing approaches.
   alternates teachers; ours caps gradients. Different solutions to the
   same problem. We should cite them and differentiate.
 
+### MT-BKD — Bayesian Multi-Teacher KD (May 2026)
+- **arXiv:** 2605.27967
+- **Authors:** Fang, Chen, Cai, Ma, Zhong
+- **Core idea:** Teacher-informed mixture prior that integrates guidance from
+  multiple teachers into one probabilistically coherent model. Uses Bayesian
+  inference to capture inherent uncertainty in the distillation process.
+- **RELEVANCE TO E2:** MEDIUM. Principled statistical framework for multi-teacher
+  aggregation. Their mixture prior is a Bayesian version of our
+  arithmetic-mean purification. More theoretically elegant, but requires
+  posterior inference (expensive). Our router + gradient budget achieves
+  similar goals more cheaply. Worth citing as theoretical support that
+  uncertainty-aware teacher aggregation is principled.
+
+### GRACE — Principled Teacher Selection (ICLR 2026)
+- **arXiv:** 2511.02833
+- **Core idea:** Lightweight score (GRACE) to predict which teacher will be
+  most effective for a given student-task pair, without requiring trial runs.
+  Measures distributional properties of student gradients. Correlates 86%
+  with final distillation performance.
+- **RELEVANCE TO E2:** LOW-MEDIUM. Focuses on SELECTING teachers before
+  training, not routing during training. Could inform our initial teacher
+  priors (replace hand-tuned prior weights with GRACE scores). But our
+  routing is dynamic (per-position), while GRACE is static (per-teacher).
+
 ### PCGrad-Style Gradient Surgery for Multi-Teacher KD
 - **Background:** PCGrad (Yu et al., 2020) projects conflicting gradients
   to eliminate negative transfer. Applied to multi-teacher KD by projecting
@@ -214,33 +252,48 @@ a niche problem. Now there are 8+ competing approaches.
 
 ## 4. Gap Analysis — What E2 Does That Nobody Else Does
 
-| Capability | BLD | X-Token | Token→Byte | KPurify | MST-Distill | CaMOPD | DWA-KD | EWAD | **E2** |
-|---|---|---|---|---|---|---|---|---|---|
-| Byte-level interface | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Multi-teacher | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Cross-architecture | ❌ | ❌ | ❌ | ❌ | ✅* | ❌ | ❌ | ❌ | ✅ |
-| Disagreement routing | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Entropy-weighted selection | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
-| Gradient conflict handling | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
-| Gold-free routing | N/A | N/A | N/A | ❌ | ❌ | N/A | N/A | Partial | ✅ |
-| Phased teacher admission | ❌ | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Small student (<200M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Capability | BLD | X-Token | Token→Byte | KPurify | MST-Distill | CaMOPD | DWA-KD | EWAD | MT-BKD | **E2** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Byte-level interface | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Multi-teacher | ❌ | ✅† | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Cross-architecture | ❌ | ✅† | ❌ | ❌ | ✅* | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Disagreement routing | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ✅ |
+| Entropy-weighted selection | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
+| Gradient conflict handling | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Gold-free routing | N/A | N/A | N/A | ❌ | ❌ | N/A | N/A | Partial | ❌ | ✅ |
+| Phased teacher admission | ❌ | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Uncertainty-aware aggregation | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Small student (<200M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 *MST-Distill crosses modalities, not neural architectures.
+†X-Token demonstrated 2-teacher multi-architecture (Phi-4-Mini + Llama-3B)
+with static weighting (+1.3 over single-teacher). No routing, no gradient
+budgeting. This is our minimum bar.
 
 **E2's unique combination:** Multi-teacher × cross-architecture ×
 disagreement routing × gradient budgeting × phased admission ×
 compact student. The byte-level substrate is our current mechanism
 for cross-tokenizer alignment, but the core novelty is the integrated
 multi-teacher learning protocol, not the byte processing itself.
-No published work combines more than two of these capabilities.
+No published work combines more than three of these capabilities.
+X-Token's two-teacher result narrows the gap on multi-teacher +
+cross-architecture, but without routing or gradient management.
 
 ### Nearest Threats
-1. **BLD + multi-teacher extension** — Someone could extend BLD to multiple
+1. **X-Token multi-teacher (NVIDIA, May 2026)** — Already demonstrated
+   two-teacher cross-architecture KD with +1.3 improvement. Uses static
+   weighting, no routing. If they add routing, they directly compete.
+   Our advantage: five teachers, dynamic routing, gradient budgeting,
+   phased admission. But they have NVIDIA resources and visibility.
+2. **BLD + multi-teacher extension** — Someone could extend BLD to multiple
    teachers. Our head start: we already have the routing, purification,
    gradient budgeting, and phased admission built and tested.
-2. **Token→Byte + multi-teacher** — Similar risk. The Feb 2026 paper's
+3. **Token→Byte + multi-teacher** — Similar risk. The Feb 2026 paper's
    two-stage curriculum could be extended to multiple teachers.
+4. **MT-BKD Bayesian framework (May 2026)** — Principled uncertainty-aware
+   aggregation. If combined with cross-tokenizer methods, could be a
+   theoretically cleaner alternative to our router. Our advantage: we're
+   already built and tested; their framework needs cross-tokenizer support.
 
 ### What the Field Validates
 1. **Bytes as cross-tokenizer interface** — BLD and Universal CT both confirm
@@ -258,12 +311,16 @@ No published work combines more than two of these capabilities.
    gating directly validates our A9 agreement penalty term (-gamma * z(A_t)).
 
 ### What the Field Has NOT Solved
-1. Multi-teacher KD with heterogeneous architectures (transformer + SSM +
-   hybrid + embedding model) — **nobody has published this**.
+1. Multi-teacher KD with >2 heterogeneous architectures (transformer + SSM +
+   hybrid + embedding model) — X-Token showed 2-teacher but with static
+   weighting; **5+ teachers with routing remains unpublished**.
 2. Disagreement-based teacher routing at the byte-distribution level —
    **nobody has published this**.
-3. Gradient budgeting for multi-teacher conflicts — **nobody has published this**.
+3. Gradient budgeting for multi-teacher conflicts — CaMOPD uses alternating
+   training; **per-teacher gradient capping remains unpublished**.
 4. Sub-200M byte-level model with multi-teacher KD — **nobody has published this**.
+5. Combined gold-free routing + gradient budgeting + phased admission —
+   **nobody has published this combination**.
 
 ---
 
@@ -281,8 +338,14 @@ No published work combines more than two of these capabilities.
 - We should cite Knowledge Purification as theoretical support for our
   routing design.
 
-### Urgency
-The field is moving fast. Six papers in 5 months (Jan-Jun 2026) on
-cross-tokenizer KD alone. Our window of novelty is the COMBINATION of
-multi-teacher + byte-level + cross-architecture. We need results to
-claim this territory.
+### Urgency — ELEVATED
+The field is accelerating. Eight+ papers in 6 months (Jan-Jun 2026) on
+cross-tokenizer KD. X-Token (NVIDIA) has already demonstrated multi-teacher
+cross-architecture KD with measured gains. MT-BKD provides a Bayesian
+framework for multi-teacher uncertainty. Our window of novelty is narrowing.
+The unique value is the FULL COMBINATION: byte-level + 5 heterogeneous
+teachers + disagreement routing + gradient budgeting + phased admission.
+We need results NOW to claim this territory before someone combines
+X-Token's multi-teacher with routing.
+
+**Updated survey date:** 2026-06-27
