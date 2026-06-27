@@ -96,11 +96,15 @@ def main():
     total_violations = 0
     violation_files = []
 
-    allowed_basenames = {f.split("/")[-1] for f in ALLOWED_FILES}
+    prefix_result = subprocess.run(
+        ["git", "rev-parse", "--show-prefix"],
+        capture_output=True, text=True)
+    git_prefix = prefix_result.stdout.strip().replace("\\", "/") if prefix_result.returncode == 0 else ""
 
     for path in files:
         normalized = path.replace("\\", "/")
-        if normalized in ALLOWED_FILES or normalized in allowed_basenames:
+        full_path = git_prefix + normalized if git_prefix else normalized
+        if normalized in ALLOWED_FILES or full_path in ALLOWED_FILES:
             continue
 
         hits = scan_file(path)

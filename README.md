@@ -55,7 +55,7 @@ knowledge can be absorbed without vocabulary alignment hacks.
 | Projection ports & losses | Built & tested | `code/eklavya_e2_losses.py` |
 | Multi-teacher gradient budget | Built & tested | `code/eklavya_e2_losses.py` |
 | Calibration loss | Built & tested | `code/eklavya_e2_training.py` |
-| Unit tests (377 E2 tests) | All passing | `code/test_eklavya_e2.py` |
+| Unit tests (387 E2 tests) | All passing | `code/test_eklavya_e2.py` |
 | Data loader tests (8 tests) | All passing | `code/test_overfit.py` |
 | Cache builder (2-pass) | Built | `code/eklavya_e2_cache_builder.py` |
 | E2 trainer with curriculum | Built & reviewed | `code/eklavya_e2_training.py` |
@@ -137,7 +137,7 @@ cd code
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py test_monitor_inspect.py -v
 ```
 
-All 622 tests run on CPU without any data, models, or GPU. They validate
+All 638 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality),
 the full E1/E2 infrastructure (binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, training

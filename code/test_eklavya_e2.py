@@ -555,7 +555,7 @@ from eklavya_e2_router import (
     build_multi_teacher_batch, route_batch, purify_batch,
     RouteResult, RouterConfig,
     _zscore, _pairwise_agreement_scores, _teacher_student_jsd,
-    _sparse_to_full, _VALID_ROUTER_MODES,
+    _sparse_to_full, _dist_is_valid, _VALID_ROUTER_MODES,
 )
 from eklavya_e2_losses import (
     MultiTeacherProjectionPorts,
@@ -1012,6 +1012,126 @@ class TestNaNGuards:
                                      mode="log_pool")
         assert result is not None
         assert np.all(np.isfinite(result.top_probs))
+
+
+class TestDistIsValid:
+    """Validate _dist_is_valid correctness."""
+
+    def test_valid_dist(self):
+        d = _make_sparse_dist(gold=65, confidence=0.8)
+        assert _dist_is_valid(d)
+
+    def test_nan_top_probs(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        assert not _dist_is_valid(d)
+
+    def test_nan_tail(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([0.5], dtype=np.float32),
+            tail_prob=float('nan'),
+        )
+        assert not _dist_is_valid(d)
+
+    def test_inf_top_probs(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('inf')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        assert not _dist_is_valid(d)
+
+
+class TestCorruptTeacherBehavior:
+    """R24 Finding 4: corrupt teachers must lose weight, not get neutral."""
+
+    def test_nan_teacher_gets_zero_weight(self):
+        """Invalid teacher should get 0 weight, valid teacher gets all."""
+        d_good = _make_sparse_dist(gold=65, confidence=0.8)
+        d_bad = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        result = route_teachers(
+            {"good": d_good, "bad": d_bad},
+            gold_byte=65,
+            priors={"good": 0.5, "bad": 0.5},
+        )
+        assert result.weights["bad"] == 0.0
+        assert result.weights["good"] == 1.0
+
+    def test_all_invalid_returns_uniform(self):
+        """All-invalid teachers → uniform fallback."""
+        d1 = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        d2 = SparseByteDist(
+            top_bytes=np.array([66], dtype=np.uint8),
+            top_probs=np.array([0.3], dtype=np.float32),
+            tail_prob=float('inf'),
+        )
+        result = route_teachers(
+            {"t1": d1, "t2": d2},
+            gold_byte=65,
+            priors={"t1": 0.5, "t2": 0.5},
+        )
+        assert abs(result.weights["t1"] - 0.5) < 1e-6
+        assert abs(result.weights["t2"] - 0.5) < 1e-6
+
+    def test_purify_all_invalid_returns_none(self):
+        """All-invalid → purify returns None (no usable target)."""
+        d1 = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        route = RouteResult(weights={"t1": 1.0}, jsd=0.0, route_entropy=0.0)
+        result = purify_byte_target({"t1": d1}, route, mode="arithmetic")
+        assert result is None
+
+    def test_purify_excludes_invalid_teacher(self):
+        """Valid teacher's dist dominates purified output when other is invalid."""
+        d_good = _make_sparse_dist(gold=65, confidence=0.9)
+        d_bad = SparseByteDist(
+            top_bytes=np.array([66], dtype=np.uint8),
+            top_probs=np.array([float('nan')], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        route = RouteResult(weights={"good": 0.6, "bad": 0.4}, jsd=0.1,
+                            route_entropy=0.5)
+        result = purify_byte_target({"good": d_good, "bad": d_bad}, route,
+                                     mode="arithmetic")
+        assert result is not None
+        mask = result.top_bytes == 65
+        assert mask.any(), "gold byte should be in top_bytes"
+        assert result.top_probs[mask][0] > 0.5
+
+    def test_nan_tail_high_topmass_detected_invalid(self):
+        """R24 F2: NaN tail + valid top mass → dist marked invalid."""
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([0.9], dtype=np.float32),
+            tail_prob=float('nan'),
+        )
+        assert not _dist_is_valid(d)
+
+    def test_oracle_gold_uses_sanitized_fulls(self):
+        """R24 F1: p_gold reads from sanitized fulls, not raw dist."""
+        d1 = _make_sparse_dist(gold=65, confidence=0.9)
+        d2 = _make_sparse_dist(gold=65, confidence=0.1)
+        result = route_teachers(
+            {"confident": d1, "diffuse": d2},
+            gold_byte=65,
+            priors={"confident": 0.5, "diffuse": 0.5},
+        )
+        assert result.weights["confident"] > result.weights["diffuse"]
 
 
 # ---------------------------------------------------------------------------

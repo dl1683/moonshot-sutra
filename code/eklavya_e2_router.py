@@ -244,9 +244,14 @@ def route_teachers(
             f"Valid: {sorted(_VALID_ROUTER_MODES)}"
         )
 
-    names = sorted(teacher_dists.keys())
-    if not names:
+    all_names = sorted(teacher_dists.keys())
+    if not all_names:
         return RouteResult(weights={}, jsd=0.0, route_entropy=0.0)
+
+    names = [n for n in all_names if _dist_is_valid(teacher_dists[n])]
+    if not names:
+        w = {n: 1.0 / len(all_names) for n in all_names}
+        return RouteResult(weights=w, jsd=0.0, route_entropy=0.0)
 
     is_gold_free = config.mode.startswith("gold_free")
 
@@ -267,15 +272,10 @@ def route_teachers(
     if not is_gold_free:
         if gold_byte is None:
             raise ValueError("oracle_gold mode requires gold_byte")
-        log_q_golds = []
-        for name in names:
-            dist = teacher_dists[name]
-            mask = dist.top_bytes == gold_byte
-            if mask.any():
-                p_gold = float(dist.top_probs[mask][0])
-            else:
-                p_gold = float(dist.tail_prob) / max(1, 256 - len(dist.top_bytes))
-            log_q_golds.append(np.log(max(p_gold, 1e-10)))
+        log_q_golds = [
+            np.log(max(float(fulls[name][gold_byte]), 1e-10))
+            for name in names
+        ]
         z_logq = _zscore(log_q_golds)
 
     agreement_scores = None
@@ -325,6 +325,9 @@ def route_teachers(
         weights = exp_scores / denom
 
     w_dict = {name: float(weights[i]) for i, name in enumerate(names)}
+    for name in all_names:
+        if name not in w_dict:
+            w_dict[name] = 0.0
 
     jsd = _compute_jsd(teacher_dists, w_dict)
     rent = max(0.0, float(-np.sum(weights * np.log(weights + 1e-10))))
@@ -372,6 +375,15 @@ def disagreement_jsd(
 # Byte distribution purification
 # ---------------------------------------------------------------------------
 
+def _dist_is_valid(dist: SparseByteDist) -> bool:
+    """Check if a SparseByteDist has all finite fields."""
+    if not np.all(np.isfinite(dist.top_probs)):
+        return False
+    if not math.isfinite(float(dist.tail_prob)):
+        return False
+    return True
+
+
 def _sparse_to_full(dist: SparseByteDist) -> np.ndarray:
     """Expand sparse byte dist to full 256-dim distribution."""
     n_top = len(dist.top_bytes)
@@ -414,7 +426,11 @@ def purify_byte_target(
     if not teacher_dists:
         return None
 
-    names = sorted(teacher_dists.keys())
+    all_names = sorted(teacher_dists.keys())
+    names = [n for n in all_names if _dist_is_valid(teacher_dists[n])]
+    if not names:
+        return None
+
     weights = route.weights
 
     if mode == "route":
@@ -422,6 +438,11 @@ def purify_byte_target(
         return teacher_dists[best]
 
     fulls = {name: _sparse_to_full(teacher_dists[name]) for name in names}
+    w_total = sum(weights.get(n, 0.0) for n in names)
+    if w_total > 1e-12:
+        weights = {n: weights.get(n, 0.0) / w_total for n in names}
+    else:
+        weights = {n: 1.0 / len(names) for n in names}
 
     if mode == "arithmetic":
         mixture = np.zeros(256, dtype=np.float64)
