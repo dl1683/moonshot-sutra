@@ -387,6 +387,17 @@ class EklavyaTrainer:
         return torch.optim.AdamW(groups, betas=(0.9, 0.95))
 
 
+def _rng_state(device: torch.device) -> dict:
+    state = {
+        "rng_state": torch.get_rng_state(),
+        "py_rng_state": random.getstate(),
+        "np_rng_state": np.random.get_state(),
+    }
+    if device.type == "cuda":
+        state["cuda_rng_state"] = torch.cuda.get_rng_state()
+    return state
+
+
 def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
     use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
     device = torch.device("cuda" if use_cuda else "cpu")
@@ -474,6 +485,14 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 optimizer.load_state_dict(resume_ckpt["optimizer"])
         if scaler is not None and "scaler" in resume_ckpt and resume_ckpt["scaler"] is not None:
             scaler.load_state_dict(resume_ckpt["scaler"])
+        if "rng_state" in resume_ckpt:
+            torch.set_rng_state(resume_ckpt["rng_state"].cpu())
+            if device.type == "cuda" and "cuda_rng_state" in resume_ckpt:
+                torch.cuda.set_rng_state(resume_ckpt["cuda_rng_state"].cpu())
+        if "py_rng_state" in resume_ckpt:
+            random.setstate(resume_ckpt["py_rng_state"])
+        if "np_rng_state" in resume_ckpt:
+            np.random.set_state(resume_ckpt["np_rng_state"])
         print(f"Resumed from step {step} phase {current_phase} "
               f"(best eval BPB: {best_eval_bpb:.3f})")
 
@@ -651,6 +670,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                     "scaler": scaler.state_dict() if scaler is not None else None,
                     "best_eval_bpb": best_eval_bpb,
                     "config": cfg,
+                    **_rng_state(device),
                 }, best_path)
                 print(f"  eval bpb={eval_metrics['eval_bpb']:.3f} "
                       f"[NEW BEST] — saved {best_path}")
@@ -676,6 +696,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 "scaler": scaler.state_dict() if scaler is not None else None,
                 "best_eval_bpb": best_eval_bpb,
                 "config": cfg,
+                **_rng_state(device),
             }, ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")
 
@@ -693,6 +714,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         "scaler": scaler.state_dict() if scaler is not None else None,
         "best_eval_bpb": best_eval_bpb,
         "config": cfg,
+        **_rng_state(device),
     }, final_path)
     print(f"\nE1 training complete. Final checkpoint: {final_path}")
     print(f"Best eval BPB: {best_eval_bpb:.3f}")
