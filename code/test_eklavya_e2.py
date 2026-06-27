@@ -4311,6 +4311,43 @@ class TestDecisionRules:
         err = capsys.readouterr().err
         assert "not found" in err
 
+    def test_a9c_beats_a5b_passes(self, capsys):
+        summaries = [self._make_summary("A9c", 1.00),
+                     self._make_summary("A5b", 1.05)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "[PASS]" in out
+        assert "Gold-free router beats tuned static" in out
+
+    def test_a9c_loses_to_a5b_fails(self, capsys):
+        summaries = [self._make_summary("A9c", 1.05),
+                     self._make_summary("A5b", 1.04)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "[FAIL]" in out
+        assert "Tuned static matches gold-free router" in out
+
+    def test_a9c_beats_a5c_passes(self, capsys):
+        summaries = [self._make_summary("A9c", 1.00),
+                     self._make_summary("A5c", 1.05)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "[PASS]" in out
+        assert "5-teacher routed beats X-Token-style 2-teacher" in out
+
+    def test_decision_rule_ids_reference_valid_ablations(self):
+        from compare_ablations import DECISION_RULES, GOLDFREE_RULES
+        from eklavya_e2_training import _ABLATION_RULES
+        valid = set(_ABLATION_RULES.keys())
+        for better, worse, *_ in DECISION_RULES:
+            assert better in valid, f"DECISION_RULES references unknown {better}"
+            assert worse in valid, f"DECISION_RULES references unknown {worse}"
+        for a9c, ref, _, third, *_ in GOLDFREE_RULES:
+            assert a9c in valid, f"GOLDFREE_RULES references unknown {a9c}"
+            assert ref in valid, f"GOLDFREE_RULES references unknown {ref}"
+            if third is not None:
+                assert third in valid, f"GOLDFREE_RULES references unknown {third}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
