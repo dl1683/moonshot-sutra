@@ -345,7 +345,7 @@ All E2 code in separate files, E1 remains frozen:
 | `code/eklavya_e2_cache.py` | Teacher registry, binary records, cache I/O | ✅ Built |
 | `code/eklavya_e2_router.py` | MultiTeacherBatch, PL router, purifier | ✅ Built |
 | `code/eklavya_e2_losses.py` | Projection ports, losses, gradient budget | ✅ Built |
-| `code/test_eklavya_e2.py` | 367 tests passing | ✅ Built |
+| `code/test_eklavya_e2.py` | 371 tests passing | ✅ Built |
 | `code/eklavya_e2_training.py` | E2 trainer with curriculum + real teacher losses | ✅ Built |
 | `code/eklavya_e2_cache_builder.py` | Two-pass cache builder (student gaps → teacher records) | ✅ Built |
 | `research/EKLAVYA_E2_PROTOCOL.md` | This document | ✅ Written |
