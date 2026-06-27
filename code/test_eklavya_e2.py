@@ -4135,5 +4135,78 @@ class TestE2TrainerWithCacheView:
             assert "align_mock_anchor" not in losses
 
 
+# ---------------------------------------------------------------------------
+# compare_ablations decision rule tests
+# ---------------------------------------------------------------------------
+
+from compare_ablations import (
+    RunSummary, evaluate_decision_rules, DECISION_RULES, GOLDFREE_RULES,
+    export_csv, load_eval_results,
+)
+
+
+class TestDecisionRules:
+
+    def _make_summary(self, ablation_id, bpb):
+        return RunSummary(
+            ablation_id=ablation_id, log_path=f"logs/{ablation_id}.jsonl",
+            eval_result={"metrics": {"bpb": bpb, "first_byte_acc": 0.30}},
+        )
+
+    def test_a2_beats_a0_passes(self, capsys):
+        summaries = [self._make_summary("A2", 1.00),
+                     self._make_summary("A0", 1.05)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "[PASS]" in out
+        assert "E2 beats CE-only" in out
+
+    def test_a2_loses_to_a0_fails(self, capsys):
+        summaries = [self._make_summary("A2", 1.05),
+                     self._make_summary("A0", 1.04)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "[FAIL]" in out
+        assert "abandon" in out.lower()
+
+    def test_goldfree_pass(self, capsys):
+        summaries = [self._make_summary("A9c", 1.01),
+                     self._make_summary("A2", 1.005),
+                     self._make_summary("A5", 1.06)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "[PASS]" in out
+        assert "Gold-free router works" in out
+
+    def test_no_matching_summaries_prints_nothing(self, capsys):
+        summaries = [self._make_summary("X1", 1.00),
+                     self._make_summary("X2", 1.05)]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "No decision rules could be evaluated" in out
+
+    def test_csv_export_includes_high_disagreement(self, tmp_path):
+        summaries = [RunSummary(
+            ablation_id="A2", log_path="x.jsonl",
+            eval_result={"metrics": {
+                "bpb": 1.0, "first_byte_acc": 0.3,
+                "bpb_high_nll": 1.5, "bpb_high_entropy": 1.3,
+                "bpb_high_disagreement": 1.4, "bpb_control": 0.8,
+            }})]
+        out = str(tmp_path / "test.csv")
+        export_csv(summaries, out)
+        with open(out) as f:
+            header = f.readline()
+            data = f.readline()
+        assert "eval_bpb_high_disagreement" in header
+        assert "1.4000" in data
+
+    def test_load_eval_results_nonexistent_skipped(self, capsys):
+        result = load_eval_results(["/nonexistent/path.json"])
+        assert result == {}
+        err = capsys.readouterr().err
+        assert "not found" in err
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
