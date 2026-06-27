@@ -146,6 +146,8 @@ def select_kl_patches(student_logits: torch.Tensor, byte_ids: torch.Tensor,
         byte_0 = targets[0, patch_idx, 0].item()
         logit_0 = student_logits[0, patch_idx, 0]
         nll = -F.log_softmax(logit_0, dim=-1)[byte_0].item()
+        if not math.isfinite(nll):
+            nll = float("inf")
         nlls.append(nll)
 
     if nlls:
