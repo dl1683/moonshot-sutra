@@ -156,12 +156,23 @@ a niche problem. Now there are 8+ competing approaches.
 - **arXiv:** 2602.01064
 - **Core finding:** Multi-teacher KD performance DECLINES as teacher count
   increases without purification. Proposes five purification methods.
-- **Key result:** Router-based methods have the best generalization.
+- **Five methods ranked (FLAN-T5 large, avg accuracy):**
+  1. RL-based selection: 67.55% (CMV +0.029) — adaptive but expensive
+  2. Similarity-based router: 67.20% (CMV +0.032) — best OOD transfer
+  3. PLM classifier router: 66.40% (CMV +0.021) — ms latency
+  4. Plackett-Luce ranking: 64.50% (CMV +0.010) — no training needed
+  5. GPT-4 aggregation: 63.32% (CMV -0.004) — AGGREGATION HURTS
+  Baseline TinyLLM (no purification): 62.53%
+- **Key insight:** Routing > aggregation. The similarity-based router uses
+  learned teacher embeddings + cosine similarity, wins on OOD because it
+  needs only the question (not pre-sampled rationales) for routing.
 - **RELEVANCE TO E2:** VERY HIGH. Directly validates our design choices:
   (1) disagreement-based routing is the right approach, (2) naive teacher
-  averaging hurts, (3) purification is necessary. Their work is at the
+  averaging hurts (their aggregation method has NEGATIVE CMV), (3) routing
+  methods generalize best to OOD data. Their work is at the
   rationale/response level for LLMs; ours is at the distribution/logit level.
-  Complementary, not competing.
+  Complementary, not competing. Their similarity-router architecture parallels
+  our PL-style router.
 
 ### MST-Distill — Mixture of Specialized Teachers (ACM MM 2025)
 - **arXiv:** 2507.07015
@@ -211,10 +222,23 @@ a niche problem. Now there are 8+ competing approaches.
 - **arXiv:** 2605.27115
 - **Core idea:** Decoupling alternating training and gap-based sample
   selection to prevent gradient counteraction between multiple teachers.
-- **RELEVANCE TO E2:** HIGH. Directly addresses teacher gradient conflicts,
-  which is the problem our gradient budgeting solves. Their approach
-  alternates teachers; ours caps gradients. Different solutions to the
-  same problem. We should cite them and differentiate.
+- **Key mechanisms:**
+  1. **Decoupled alternating schedule:** n_g general steps, then 1 domain
+     step. Updates only the active branch, avoiding gradient counteraction.
+  2. **Gap-based sample scoring:** Score = mean |teacher - student| log-prob
+     gap per sample. Select top-scoring subset, skip low-demand tail that
+     flattens useful signal ("weak-signal flattening" problem).
+  3. **Gradient Coherence Gain (GCG):** Measures gradient alignment of
+     selected subset vs full batch. GCG = (Coh(selected) - Coh(full)) /
+     Coh(full), where Coh(A) = ‖Σg_i‖ / Σ‖g_i‖.
+- **Result:** +5.74 LiveCodeBench, +19.6 Creative Writing over baseline.
+- **RELEVANCE TO E2:** HIGH. Directly addresses teacher gradient conflicts.
+  Their alternating schedule maps to our phased curriculum. Their gap-based
+  scoring maps to our NLL-threshold cache selection. **E2v2 candidate:**
+  implement GCG as a diagnostic metric in monitor.py — if gradient coherence
+  is negative, teacher signal is hurting more than helping. Our approach
+  (cap gradients) is simpler; theirs (alternate + select) is more adaptive.
+  Different solutions to the same problem. We should cite and differentiate.
 
 ### MT-BKD — Bayesian Multi-Teacher KD (May 2026)
 - **arXiv:** 2605.27967
@@ -271,13 +295,43 @@ a niche problem. Now there are 8+ competing approaches.
   routing at byte level. But the shared insight — high teacher entropy requires
   different treatment — is confirmed at a top venue. Cite for validation.
 
+### Drive-KD — Asymmetric Gradient Projection (Jan 2026)
+- **arXiv:** 2601.21288
+- **Authors:** Drive-KD team
+- **Core idea:** Asymmetric Gradient Projection (AGP) for multi-teacher
+  gradient conflict resolution. Treats CE loss as anchor, teacher losses
+  as followers. Only removes the conflicting gradient component from
+  followers, preserving non-conflicting teacher signal.
+- **AGP formula:** `g_f ← g_f − (g_f⊤g_a / ‖g_a‖²) g_a, if g_f⊤g_a < 0`
+  where g_a is the CE (anchor) gradient and g_f is the teacher (follower)
+  gradient. Non-conflicting components pass through unmodified.
+- **Result:** +7.47 reasoning points, +4.48 planning points over naive
+  multi-teacher distillation without AGP.
+- **RELEVANCE TO E2:** HIGH. Our gradient budget uniformly scales teacher
+  grads to 0.30 of CE norm. AGP is more surgical — only removes the
+  conflicting component. **E2v2 candidate:** combine AGP (remove conflicts)
+  + cap (safety bound on non-conflicting magnitude). Requires per-parameter
+  inner products (compute cost), but preserves more teacher signal. Must
+  benchmark against current cap-only approach after E2v1 baseline.
+
+### QR-Distill — Routing Diverse Reasoning Paths (2025/2026)
+- **arXiv:** 2508.16861
+- **Core idea:** Quality filtering + conditional routing + cooperative peer
+  teaching. Routes reasoning paths based on student's CURRENT learning
+  state, not static teacher quality.
+- **Key insight:** Conditional routing adapts which reasoning examples each
+  student receives based on its learning progress. Students also mutually
+  distill diverse insights (peer teaching).
+- **RELEVANCE TO E2:** MEDIUM. Their student-adaptive routing partially
+  maps to our phased admission (different teachers enter at different
+  training phases based on student readiness). Their peer teaching doesn't
+  apply (we have one student). Validates adaptive routing over static.
+
 ### PCGrad-Style Gradient Surgery for Multi-Teacher KD
 - **Background:** PCGrad (Yu et al., 2020) projects conflicting gradients
-  to eliminate negative transfer. Applied to multi-teacher KD by projecting
-  teacher gradients to the normal plane of student gradients.
-- **RELEVANCE TO E2:** MEDIUM-HIGH. Our gradient budgeting is simpler
-  (scale/cap) than projection. We should consider whether PCGrad-style
-  projection would be a stronger baseline than our budget capping.
+  to eliminate negative transfer. AGP (above) is the multi-teacher KD
+  specialization with asymmetric anchor-follower roles.
+- **RELEVANCE TO E2:** Superseded by AGP analysis above.
 
 ---
 
@@ -356,10 +410,24 @@ cross-architecture, but without routing or gradient management.
 2. Disagreement-based teacher routing at the byte-distribution level —
    **nobody has published this**.
 3. Gradient budgeting for multi-teacher conflicts — CaMOPD uses alternating
-   training; **per-teacher gradient capping remains unpublished**.
+   training; Drive-KD uses AGP projection; **per-teacher gradient capping
+   with cap + projection remains unpublished**.
 4. Sub-200M byte-level model with multi-teacher KD — **nobody has published this**.
 5. Combined gold-free routing + gradient budgeting + phased admission —
    **nobody has published this combination**.
+
+### E2v2 Upgrade Candidates (Post-Baseline)
+1. **AGP (Drive-KD):** Replace uniform gradient cap with conflict-aware
+   projection. Only remove conflicting gradient components, preserve
+   non-conflicting teacher signal. Combine with existing cap as safety bound.
+2. **Gradient Coherence Gain (CaMOPD):** Implement as diagnostic metric in
+   monitor.py. If GCG is negative, teacher signal is counterproductive.
+3. **Contrastive teacher embeddings (Knowledge Purification):** Replace
+   static teacher priors with learned embeddings and cosine routing. Their
+   similarity-based router is most robust on OOD.
+4. **Gap-based sample scoring (CaMOPD):** Score training samples by
+   teacher-student gap magnitude, train only on high-gap samples. Related
+   to our NLL-threshold selection but applied during training, not caching.
 
 ---
 
