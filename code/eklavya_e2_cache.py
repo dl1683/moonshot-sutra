@@ -498,15 +498,18 @@ class MappedPositionRecords:
 
     def __init__(self, path: str):
         self._fh = open(path, "rb")
-        hdr = self._fh.read(4)
-        self._n = struct.unpack("<I", hdr)[0]
+        file_size = os.path.getsize(path)
         self._data_offset = 4
         self._rec_size = PositionRecord.SIZE
-        file_size = os.path.getsize(path)
-        expected = self._data_offset + self._n * self._rec_size
-        if file_size < expected:
-            self._n = max(0, (file_size - self._data_offset) // self._rec_size)
-        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        hdr = self._fh.read(4)
+        if len(hdr) < 4:
+            self._n = 0
+        else:
+            self._n = struct.unpack("<I", hdr)[0]
+            expected = self._data_offset + self._n * self._rec_size
+            if file_size < expected:
+                self._n = max(0, (file_size - self._data_offset) // self._rec_size)
+        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ) if file_size > 0 else None
 
     def __len__(self) -> int:
         return self._n
@@ -519,7 +522,8 @@ class MappedPositionRecords:
         return PositionRecord.unpack(buf)
 
     def close(self):
-        self._mm.close()
+        if self._mm is not None:
+            self._mm.close()
         self._fh.close()
 
     def __enter__(self):
@@ -547,16 +551,21 @@ class MappedKLRecords:
 
     def __init__(self, path: str):
         self._fh = open(path, "rb")
-        hdr = self._fh.read(8)
-        self._n, self._K = struct.unpack("<II", hdr)
-        self._data_offset = 8
-        self._rec_size = E2KLRecord.record_size(self._K)
         file_size = os.path.getsize(path)
-        expected = self._data_offset + self._n * self._rec_size
-        if file_size < expected:
-            usable = (file_size - self._data_offset) // self._rec_size
-            self._n = max(0, usable)
-        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        self._data_offset = 8
+        hdr = self._fh.read(8)
+        if len(hdr) < 8:
+            self._n, self._K = 0, 16
+        else:
+            self._n, self._K = struct.unpack("<II", hdr)
+            self._rec_size = E2KLRecord.record_size(self._K)
+            expected = self._data_offset + self._n * self._rec_size
+            if file_size < expected:
+                usable = (file_size - self._data_offset) // self._rec_size
+                self._n = max(0, usable)
+        if not hasattr(self, "_rec_size"):
+            self._rec_size = E2KLRecord.record_size(self._K)
+        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ) if file_size > 0 else None
 
     @property
     def K(self) -> int:
@@ -573,7 +582,8 @@ class MappedKLRecords:
         return E2KLRecord.unpack(buf, self._K)
 
     def close(self):
-        self._mm.close()
+        if self._mm is not None:
+            self._mm.close()
         self._fh.close()
 
     def __enter__(self):
@@ -600,15 +610,18 @@ class MappedAlignRecords:
 
     def __init__(self, path: str):
         self._fh = open(path, "rb")
-        hdr = self._fh.read(4)
-        self._n = struct.unpack("<I", hdr)[0]
+        file_size = os.path.getsize(path)
         self._data_offset = 4
         self._rec_size = E2AlignRecord.SIZE
-        file_size = os.path.getsize(path)
-        expected = self._data_offset + self._n * self._rec_size
-        if file_size < expected:
-            self._n = max(0, (file_size - self._data_offset) // self._rec_size)
-        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        hdr = self._fh.read(4)
+        if len(hdr) < 4:
+            self._n = 0
+        else:
+            self._n = struct.unpack("<I", hdr)[0]
+            expected = self._data_offset + self._n * self._rec_size
+            if file_size < expected:
+                self._n = max(0, (file_size - self._data_offset) // self._rec_size)
+        self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ) if file_size > 0 else None
 
     def __len__(self) -> int:
         return self._n
@@ -621,7 +634,8 @@ class MappedAlignRecords:
         return E2AlignRecord.unpack(buf)
 
     def close(self):
-        self._mm.close()
+        if self._mm is not None:
+            self._mm.close()
         self._fh.close()
 
     def __enter__(self):
