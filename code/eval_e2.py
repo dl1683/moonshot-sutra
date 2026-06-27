@@ -172,11 +172,12 @@ def main():
         cache_dir=args.cache_dir,
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
     print(f"Ablation: {cfg.ablation_id}")
 
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     model_cfg = ckpt["model_cfg"]
     student = SutraS0(model_cfg).to(device)
     student.load_state_dict(ckpt["model"])

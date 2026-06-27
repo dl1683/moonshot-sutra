@@ -1010,10 +1010,11 @@ def evaluate_e2(student: SutraS0, eval_loader: DataLoader,
 def train_e2(cfg: E2Config, student_ckpt_path: str, cache_dir: str):
     """Main E2 training loop."""
     validate_ablation_config(cfg)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
 
-    ckpt = torch.load(student_ckpt_path, map_location=device, weights_only=False)
+    ckpt = torch.load(student_ckpt_path, map_location="cpu", weights_only=False)
     model_cfg = ckpt["model_cfg"]
     student = SutraS0(model_cfg).to(device)
     student.load_state_dict(ckpt["model"])
@@ -1117,7 +1118,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             scaler.load_state_dict(resume_ckpt["scaler"])
         if "rng_state" in resume_ckpt:
             torch.set_rng_state(resume_ckpt["rng_state"].cpu())
-            if torch.cuda.is_available() and "cuda_rng_state" in resume_ckpt:
+            if device.type == "cuda" and "cuda_rng_state" in resume_ckpt:
                 torch.cuda.set_rng_state(resume_ckpt["cuda_rng_state"].cpu())
         if "py_rng_state" in resume_ckpt:
             random.setstate(resume_ckpt["py_rng_state"])
@@ -1314,7 +1315,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     "config": cfg.__dict__,
                     "best_eval_bpb": best_eval_bpb,
                 }
-                if torch.cuda.is_available():
+                if device.type == "cuda":
                     best_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
                 torch.save(best_dict, best_path)
                 print(f"  New best eval BPB {best_eval_bpb:.3f} — saved {best_path}")
@@ -1335,7 +1336,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 "config": cfg.__dict__,
                 "best_eval_bpb": best_eval_bpb,
             }
-            if torch.cuda.is_available():
+            if device.type == "cuda":
                 save_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
             torch.save(save_dict, ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")

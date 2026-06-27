@@ -338,7 +338,8 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
 
     # Select teachers

@@ -425,7 +425,8 @@ def main():
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
 
     from transformers import AutoModelForCausalLM, AutoTokenizer

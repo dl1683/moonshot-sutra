@@ -353,10 +353,11 @@ class EklavyaTrainer:
 
 
 def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
 
-    ckpt = torch.load(student_ckpt_path, map_location=device, weights_only=False)
+    ckpt = torch.load(student_ckpt_path, map_location="cpu", weights_only=False)
     model_cfg = ckpt["model_cfg"]
     student = SutraS0(model_cfg).to(device)
     student.load_state_dict(ckpt["model"])

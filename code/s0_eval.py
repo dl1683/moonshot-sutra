@@ -193,10 +193,11 @@ def eval_checkpoint(ckpt_path: str, data_dir: str = "data/shards_bytes_full",
     from torch.utils.data import DataLoader
     from pathlib import Path
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
 
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     model_cfg = ckpt["model_cfg"]
     model = SutraS0(model_cfg).to(device)
     model.load_state_dict(ckpt["model"])

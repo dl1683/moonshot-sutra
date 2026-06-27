@@ -227,7 +227,8 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
     model_cfg = model_cfg or S0Config()
     train_cfg = train_cfg or TrainConfig()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if use_cuda else "cpu")
     amp_dtype = getattr(torch, train_cfg.dtype)
 
     print(f"Device: {device}")
@@ -297,14 +298,14 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
     # Resume
     start_step = 0
     if train_cfg.resume_from:
-        ckpt = torch.load(train_cfg.resume_from, map_location=device, weights_only=False)
+        ckpt = torch.load(train_cfg.resume_from, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         if "scaler" in ckpt:
             scaler.load_state_dict(ckpt["scaler"])
         if "rng_state" in ckpt:
             torch.set_rng_state(ckpt["rng_state"])
-            if torch.cuda.is_available() and "cuda_rng_state" in ckpt:
+            if device.type == "cuda" and "cuda_rng_state" in ckpt:
                 torch.cuda.set_rng_state(ckpt["cuda_rng_state"])
         start_step = ckpt["step"] + 1
         print(f"Resumed from step {start_step}")
@@ -424,7 +425,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
                 "train_cfg": train_cfg,
                 "rng_state": torch.get_rng_state(),
             }
-            if torch.cuda.is_available():
+            if device.type == "cuda":
                 ckpt_data["cuda_rng_state"] = torch.cuda.get_rng_state()
             torch.save(ckpt_data, ckpt_path)
             print(f"Saved checkpoint: {ckpt_path}")
