@@ -30,6 +30,7 @@ Thumbs.db
 *.log
 
 # Review outputs (transient)
+codex_*.md
 results/codex_*.md
 
 # Large text data
