@@ -122,22 +122,42 @@ Each variant adds more signal:
 - A9c ≈ A5 (no router) = gold-free signals too weak, routing concept unproven
 - Route entropy patterns across A9 variants: more signals should reduce entropy
 
-## Ablation Priority (Limited GPU Time)
+### A5a/A5b/A5c (Static Baseline Variants)
 
-If only 4 ablations can run, execute in this order:
-1. **A2** (full E2) — main system
+A5 variants provide fair static baselines (no routing). Critical for X-Token comparison.
+
+- A5a: prior-weighted (`--static-weight-mode prior`)
+- A5b: hand-tuned weights (`--static-weight-mode custom --static-weights "..."`)
+- A5c: best-2 teachers, prior-weighted (`--teachers t0 t1 --static-weight-mode prior`)
+
+**Watch for:**
+- A9c must beat A5b by >0.02 BPB globally and >0.03 on high-disagreement bucket
+- If A5b matches A9c: routing adds nothing over tuned static — simplify
+- If A5c matches A9c: 2-teacher static is sufficient — X-Token approach wins
+- Route entropy telemetry uses `-sum(w log w)` for non-uniform weights
+- `bpb_high_disagreement` is the key differentiating metric for routing value
+
+## Ablation Priority (Two-Phase Strategy)
+
+### Phase 1: Feasibility (does multi-teacher help at all?)
+
+1. **A2** (full E2, oracle router) — main system / oracle ceiling
 2. **A0** (CE-only) — does E2 beat doing nothing?
-3. **A1** (anchor-only) — does multi-teacher beat single?
-4. **BLD** (byte KL baseline) — does E2 machinery beat simple KL?
+3. **BLD** (byte KL baseline) — does E2 beat simple KL?
+4. **A1** (anchor-only) — does multi-teacher beat single?
 
-If 7 ablations can run, add:
-5. **A7** (no gradient budget) — novelty-critical
-6. **A8** (no phased admission) — novelty-critical
-7. **A6** (shuffled targets) — falsification
+**Stop if A2 fails any Phase 1 comparison.** A2 is oracle-aided.
 
-If 10+ ablations can run, add:
-8. **A9c** (gold-free router) — publishability-critical
-9. **A5** (no router) — routing necessity
-10. **A3/A4** (teacher contribution)
+### Phase 2: Publishability (does deployable system beat static mixing?)
 
-Defer A3, A4 until baseline numbers exist. Use route telemetry from A2 to decide next.
+5. **A9c** (gold-free full router) — the publishable system
+6. **A5b** (tuned static weights) — fairest static baseline
+7. **A5a** (prior-weighted static) — does routing beat priors?
+8. **A5c** (best-2 teachers, prior-weighted) — X-Token comparison
+9. **A7** (no gradient budget) — novelty-critical
+10. **A8** (no phased admission) — novelty-critical
+11. **A6** (shuffled targets) — falsification
+
+### 48-hour minimum: A2, A0, BLD, A1, A9c, A5b (all 8K steps). A5c if time.
+
+Defer A3, A4 until Phase 2 baseline numbers exist.
