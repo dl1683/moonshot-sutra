@@ -13,14 +13,15 @@ import subprocess
 import sys
 
 BANNED_PATTERNS = [
-    r"[Qq]wen3[-_]1[._]7[Bb]",
-    r"[Qq]wen3[-_]0[._]6[Bb]",
-    r"[Qq]wen/[Qq]wen3",
+    r"[Qq]wen3?[-_]\d+[._]\d+[Bb]",
+    r"[Qq]wen/[Qq]wen",
+    r"\bLFM[\d\s(]",
     r"[Ll][Ff][Mm]2\.?5[-_]1[._]2[Bb]",
     r"[Ll]iquid\s*AI/",
     r"[Ee]mbedding[Gg]emma",
+    r"[Gg]emma[-_]\d",
     r"google/embedding",
-    r"[Mm]amba2[-_]780[Mm]",
+    r"[Mm]amba\d?[-_]\d",
     r"state-spaces/mamba",
     r"qwen3_[01]p[67]b",
     r"lfm2_1p2b",
@@ -32,6 +33,7 @@ ALLOWED_FILES = {
     ".gitignore",
     "config/teacher_config.json",
     "code/check_opsec.py",
+    "code/test_utilities.py",
 }
 
 COMPILED = [re.compile(p) for p in BANNED_PATTERNS]
