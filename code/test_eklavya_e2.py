@@ -717,15 +717,21 @@ class TestGoldFreeRouter:
             route_teachers(dists, gold_byte=65, priors={"t1": 1.0}, config=cfg)
 
     def test_gold_free_ignores_gold_byte(self):
-        dists = {
-            "t1": _make_sparse_dist(gold=65, confidence=0.8),
-            "t2": _make_sparse_dist(gold=66, confidence=0.8),
-        }
-        cfg = RouterConfig(mode="gold_free_entropy")
-        r1 = route_teachers(dists, gold_byte=None, priors={"t1": 0.5, "t2": 0.5}, config=cfg)
-        r2 = route_teachers(dists, gold_byte=None, priors={"t1": 0.5, "t2": 0.5}, config=cfg)
-        for name in r1.weights:
-            assert abs(r1.weights[name] - r2.weights[name]) < 1e-10
+        d1 = _make_sparse_dist(gold=65, confidence=0.8)
+        d2 = _make_sparse_dist(gold=66, confidence=0.8)
+        dists = {"t1": d1, "t2": d2}
+        priors = {"t1": 0.5, "t2": 0.5}
+        cfg_gf = RouterConfig(mode="gold_free_entropy")
+        r_gf = route_teachers(dists, gold_byte=None, priors=priors, config=cfg_gf)
+
+        cfg_oracle = RouterConfig(mode="oracle_gold")
+        r_65 = route_teachers(dists, gold_byte=65, priors=priors, config=cfg_oracle)
+        r_66 = route_teachers(dists, gold_byte=66, priors=priors, config=cfg_oracle)
+        assert abs(r_65.weights["t1"] - r_66.weights["t1"]) > 0.01, \
+            "Oracle mode should produce different weights for different gold bytes"
+        assert r_gf.weights["t1"] != r_65.weights["t1"] or \
+               r_gf.weights["t1"] != r_66.weights["t1"], \
+            "Gold-free mode should differ from at least one oracle result"
 
     def test_gold_free_student_jsd_requires_student_entropy(self):
         dists = {"t1": _make_sparse_dist(gold=65, confidence=0.7)}
