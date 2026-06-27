@@ -70,6 +70,7 @@ eklavya_e2_cache/
 
 # Pytest
 .pytest_cache/
+.codex_tmp/
 .codex_tmp_pytest*/
 pytest-cache-files-*/
 pytest_run_*/
