@@ -160,7 +160,7 @@ def check_tests():
     test_files = ["test_overfit.py", "test_eklavya.py", "test_eklavya_e2.py",
                    "test_burnin_verdict.py", "test_export_log_csv.py",
                    "test_utilities.py", "test_compare_ablations.py",
-                   "test_vram_profile.py"]
+                   "test_vram_profile.py", "test_monitor_inspect.py"]
     result = subprocess.run(
         [sys.executable, "-m", "pytest"] + test_files + ["-q"],
         capture_output=True, text=True, timeout=300, cwd=code_dir,
