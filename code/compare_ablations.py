@@ -39,6 +39,7 @@ class RunSummary:
     grad_budget_stats: dict = field(default_factory=dict)
     teacher_loss_final: dict[str, float] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
+    eval_result: dict = field(default_factory=dict)
 
 
 def load_log(path: str) -> tuple[list[dict], list[dict]]:
@@ -290,13 +291,178 @@ def print_gradient_budget_analysis(summaries: list[RunSummary]):
                   "(mean scale < 0.1) ***")
 
 
+def load_eval_results(paths: list[str]) -> dict[str, dict]:
+    results = {}
+    for p in paths:
+        if not Path(p).exists():
+            print(f"WARNING: eval result {p} not found, skipping.", file=sys.stderr)
+            continue
+        with open(p) as f:
+            data = json.load(f)
+        ablation_id = data.get("ablation_id", Path(p).stem)
+        results[ablation_id] = data
+    return results
+
+
+def print_eval_results(summaries: list[RunSummary]):
+    has_eval = [s for s in summaries if s.eval_result]
+    if not has_eval:
+        return
+
+    print(f"\n{'=' * 72}")
+    print("  FROZEN-WEIGHT EVAL RESULTS (from eval_e2.py)")
+    print(f"{'=' * 72}")
+
+    header = f"{'Metric':<30s}"
+    for s in has_eval:
+        header += f" {s.ablation_id:>12s}"
+    print(f"\n{header}")
+    print("-" * (30 + 13 * len(has_eval)))
+
+    def row(label: str, vals: list, fmt: str = ".4f"):
+        line = f"  {label:<28s}"
+        for v in vals:
+            if v is None:
+                line += f" {'N/A':>12s}"
+            else:
+                line += f" {v:>12{fmt}}"
+        print(line)
+
+    def get_m(s, key):
+        return s.eval_result.get("metrics", {}).get(key)
+
+    row("Eval BPB", [get_m(s, "bpb") for s in has_eval])
+    row("First-byte accuracy", [get_m(s, "first_byte_acc") for s in has_eval])
+    row("BPB (high NLL)", [get_m(s, "bpb_high_nll") for s in has_eval])
+    row("BPB (high entropy)", [get_m(s, "bpb_high_entropy") for s in has_eval])
+    row("BPB (high disagreement)", [get_m(s, "bpb_high_disagreement") for s in has_eval])
+    row("BPB (control)", [get_m(s, "bpb_control") for s in has_eval])
+    row("Eval tokens",
+        [get_m(s, "n_eval_tokens") for s in has_eval], "d")
+    row("Checkpoint step",
+        [s.eval_result.get("step") for s in has_eval], "d")
+
+    if len(has_eval) >= 2:
+        ref = has_eval[0]
+        ref_bpb = get_m(ref, "bpb")
+        if ref_bpb is not None:
+            print(f"\n  Deltas vs {ref.ablation_id}:")
+            for s in has_eval[1:]:
+                s_bpb = get_m(s, "bpb")
+                if s_bpb is not None:
+                    print(f"    {s.ablation_id}: eval BPB {s_bpb - ref_bpb:+.4f}")
+
+
+DECISION_RULES = [
+    ("A2", "A0", 0.02, "E2 doesn't help -- abandon multi-teacher KD",
+     "E2 beats CE-only continuation"),
+    ("A2", "A1", 0.01, "Multi-teacher <= single -- E1 sufficient",
+     "Multi-teacher beats single-teacher"),
+    ("A2", "BLD", 0.02, "E2 machinery adds no value -- simplify to byte KL",
+     "E2 machinery justified over raw byte KL"),
+    ("A5", "A2", 0.02, "Uniform mixing matches oracle -- router trivial",
+     "Router contributes over uniform mixing"),
+    ("A5a", "A2", 0.02, "Prior-weighted matches oracle -- router trivial",
+     "Router contributes over prior-weighted mixing"),
+    ("A5b", "A9c", 0.02, "Tuned static matches gold-free router",
+     "Gold-free router beats tuned static"),
+    ("A5c", "A9c", 0.02, "2-teacher static matches 5-teacher routed",
+     "5-teacher routed beats X-Token-style 2-teacher"),
+    ("A7", "A2", 0.02, "Gradient budget doesn't help -- remove it",
+     "Gradient budgeting contributes"),
+    ("A8", "A2", 0.02, "Phased admission doesn't help -- remove it",
+     "Phased admission contributes"),
+    ("A6", "A2", 0.02, "Signals are noise -- fundamental problem",
+     "Teacher signals carry real information"),
+    ("A3", "A2", 0.02, "Best diversity teacher expendable -- drop it",
+     "Diversity teacher contributes"),
+    ("A4", "A2", 0.02, "Semantic embeddings expendable -- drop embedding teacher",
+     "Embedding teacher contributes"),
+]
+
+GOLDFREE_RULES = [
+    ("A9c", "A2", 0.01, "A5", 0.02,
+     "Gold-free router works (within 0.01 of oracle, beats mean by >0.02)"),
+    ("A2", "A9c", 0.02, None, None,
+     "Oracle routing is material -- router depends on gold signal, not deployable as-is"),
+    ("A9c", "A5", 0.02, None, None,
+     "Gold-free routing concept unproven (A9c ~ arithmetic mean)"),
+]
+
+
+def evaluate_decision_rules(summaries: list[RunSummary]):
+    has_eval = {s.ablation_id: s for s in summaries if s.eval_result}
+    if len(has_eval) < 2:
+        return
+
+    print(f"\n{'=' * 72}")
+    print("  DECISION RULE EVALUATION")
+    print(f"{'=' * 72}")
+
+    def get_bpb(aid):
+        s = has_eval.get(aid)
+        if s is None:
+            return None
+        return s.eval_result.get("metrics", {}).get("bpb")
+
+    evaluated = 0
+    for better_id, worse_id, margin, fail_msg, pass_msg in DECISION_RULES:
+        better_bpb = get_bpb(better_id)
+        worse_bpb = get_bpb(worse_id)
+        if better_bpb is None or worse_bpb is None:
+            continue
+        evaluated += 1
+        delta = worse_bpb - better_bpb
+        if delta < margin:
+            verdict = "FAIL"
+            msg = fail_msg
+        else:
+            verdict = "PASS"
+            msg = pass_msg
+        symbol = "[FAIL]" if verdict == "FAIL" else "[PASS]"
+        print(f"\n  {symbol} {better_id} vs {worse_id}: "
+              f"delta={delta:+.4f} BPB (threshold: {margin})")
+        print(f"    -> {verdict}: {msg}")
+
+    for a9c_id, ref_id, margin1, third_id, margin2, msg in GOLDFREE_RULES:
+        a9c_bpb = get_bpb(a9c_id)
+        ref_bpb = get_bpb(ref_id)
+        if a9c_bpb is None or ref_bpb is None:
+            continue
+        if third_id is not None:
+            third_bpb = get_bpb(third_id)
+            if third_bpb is None:
+                continue
+            delta1 = abs(ref_bpb - a9c_bpb)
+            delta2 = third_bpb - a9c_bpb
+            if delta1 <= margin1 and delta2 > margin2:
+                evaluated += 1
+                print(f"\n  [PASS] {a9c_id} vs {ref_id} (gap={delta1:.4f}<={margin1}), "
+                      f"vs {third_id} (gap={delta2:+.4f}>{margin2})")
+                print(f"    -> PASS: {msg}")
+        else:
+            delta = ref_bpb - a9c_bpb
+            if delta > margin1:
+                evaluated += 1
+                print(f"\n  [WARN] {a9c_id} vs {ref_id}: delta={delta:+.4f} (threshold: {margin1})")
+                print(f"    -> {msg}")
+
+    if evaluated == 0:
+        print("\n  No decision rules could be evaluated (need eval results "
+              "for both sides of each comparison).")
+
+
 def export_csv(summaries: list[RunSummary], path: str):
     with open(path, "w") as f:
         cols = ["ablation_id", "total_steps", "initial_ce_bpb", "final_ce_bpb",
                 "ce_bpb_delta", "best_eval_bpb", "final_eval_bpb",
+                "eval_bpb", "first_byte_acc", "eval_bpb_high_nll",
+                "eval_bpb_high_entropy", "eval_bpb_high_disagreement",
+                "eval_bpb_control",
                 "elapsed_hours", "mean_jsd", "mean_route_entropy"]
         f.write(",".join(cols) + "\n")
         for s in summaries:
+            m = s.eval_result.get("metrics", {})
             vals = [
                 s.ablation_id,
                 str(s.total_steps),
@@ -305,6 +471,12 @@ def export_csv(summaries: list[RunSummary], path: str):
                 f"{s.final_ce_bpb - s.initial_ce_bpb:.4f}",
                 f"{s.best_eval_bpb:.4f}" if s.best_eval_bpb < float("inf") else "",
                 f"{s.final_eval_bpb:.4f}",
+                f"{m['bpb']:.4f}" if "bpb" in m else "",
+                f"{m['first_byte_acc']:.4f}" if "first_byte_acc" in m else "",
+                f"{m['bpb_high_nll']:.4f}" if "bpb_high_nll" in m else "",
+                f"{m['bpb_high_entropy']:.4f}" if "bpb_high_entropy" in m else "",
+                f"{m['bpb_high_disagreement']:.4f}" if "bpb_high_disagreement" in m else "",
+                f"{m['bpb_control']:.4f}" if "bpb_control" in m else "",
                 f"{s.elapsed_seconds / 3600:.2f}" if s.elapsed_seconds else "",
                 f"{s.route_stats.get('mean_jsd', '')}" if s.route_stats else "",
                 f"{s.route_stats.get('mean_entropy', '')}" if s.route_stats else "",
@@ -315,10 +487,13 @@ def export_csv(summaries: list[RunSummary], path: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare E2 ablation training logs")
+        description="Compare E2 ablation training logs and eval results")
     parser.add_argument(
         "--logs", nargs="+", required=True,
         help="Ablation logs as ID=path pairs (e.g. A2=logs/e2_a2.jsonl)")
+    parser.add_argument(
+        "--eval-results", nargs="+", default=[],
+        help="Eval result JSON files from eval_e2.py")
     parser.add_argument(
         "--phase-breakdown", action="store_true",
         help="Show per-phase BPB breakdown")
@@ -328,6 +503,9 @@ def main():
     parser.add_argument(
         "--grad-budget", action="store_true",
         help="Show gradient budget analysis")
+    parser.add_argument(
+        "--decisions", action="store_true",
+        help="Evaluate ablation decision rules from the E2 plan")
     parser.add_argument(
         "--csv", default="",
         help="Export comparison to CSV file")
@@ -352,14 +530,24 @@ def main():
         print("No valid logs found.", file=sys.stderr)
         sys.exit(1)
 
+    if args.eval_results:
+        eval_data = load_eval_results(args.eval_results)
+        for s in summaries:
+            if s.ablation_id in eval_data:
+                s.eval_result = eval_data[s.ablation_id]
+
     print_comparison_table(summaries)
 
+    if args.eval_results or args.all:
+        print_eval_results(summaries)
     if args.phase_breakdown or args.all:
         print_phase_breakdown(summaries)
     if args.routing or args.all:
         print_routing_analysis(summaries)
     if args.grad_budget or args.all:
         print_gradient_budget_analysis(summaries)
+    if args.decisions or args.all:
+        evaluate_decision_rules(summaries)
     if args.csv:
         export_csv(summaries, args.csv)
 

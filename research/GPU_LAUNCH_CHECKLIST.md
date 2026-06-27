@@ -182,7 +182,7 @@ C:/sutra_fast/eklavya_e2_cache/
 ### Prerequisites
 - [ ] E1 best checkpoint exists
 - [ ] E2 cache built and validated (Phase 5)
-- [ ] 326 tests passing (`pytest code/ -x`)
+- [ ] All tests passing (`pytest code/ -x`)
 
 ### VRAM Budget (Training)
 ```
@@ -229,48 +229,88 @@ python eklavya_e2_training.py \
 
 ## Phase 7: E2 Ablation Controls
 
-Run AFTER main E2 to validate multi-teacher value.
+Run AFTER main E2 to validate multi-teacher value. Two-phase strategy:
+Phase 1 (feasibility) must pass before Phase 2 (publishability) runs.
 
-| ID | Command Flags | Question |
-|----|---------------|----------|
-| A0 | CE-only continuation (use E1 training, no KD) | Does E2 beat doing nothing? |
-| A1 | `--teachers t0_anchor_decoder` | Does multi-teacher beat single? |
-| A2 | (default, already done) | Full system performance |
-| A3 | `--exclude-teachers t1_diversity_hybrid` | Does best diversity teacher contribute? |
-| A4 | `--exclude-teachers t3_semantic_embedding` | Do embeddings help? |
-| A5 | `--disable-router` | Does routing matter? |
-| A6 | `--shuffle-teacher-targets` | Are real signals necessary? (falsification) |
-| A7 | `--disable-gradient-budget` | Does gradient budgeting help? |
-| A8 | `--no-phased-admission` | Does phased admission help? |
-| A9a | `--router-mode gold_free_entropy` | Does entropy-only routing work? |
-| A9b | `--router-mode gold_free_agreement` | Does agreement penalty help? |
-| A9c | `--router-mode gold_free_student_jsd` | Full gold-free router |
-| BLD | `--bld-mode --steps 8000` | Does E2 machinery beat raw byte KL? |
+### Phase 1: Feasibility (does multi-teacher help at all?)
 
-### Priority Order
-1. A0, A2 first (is E2 better than nothing?)
-2. A1 (is multi-teacher better than single?)
-3. BLD (does E2 machinery add value over simple byte KL?)
-4. A5 vs A2 (does routing matter?)
-5. A7 vs A2 (does gradient budgeting help? — novelty claim)
-6. A8 vs A2 (does phased admission help? — novelty claim)
-7. A6 vs A2 (falsification)
-8. A3, A4 (teacher contribution)
+| Priority | ID | Command Flags | Question |
+|----------|-----|---------------|----------|
+| 1 | A2 | (default) | Full system (oracle router) |
+| 2 | A0 | `--ce-only --steps 8000` | Does E2 beat doing nothing? |
+| 3 | BLD | `--bld-mode --steps 8000` | Does E2 beat raw byte KL? |
+| 4 | A1 | `--teachers t0_anchor_decoder` | Does multi-teacher beat single? |
 
-### Example: Run A5 (No Router)
+**Stop if A2 fails any Phase 1 comparison.** A2 is an oracle-aided upper bound.
+
+### Phase 2: Publishability (does the deployable system beat static mixing?)
+
+| Priority | ID | Command Flags | Question |
+|----------|-----|---------------|----------|
+| 5 | A9c | `--router-mode gold_free_student_jsd` | Full gold-free router |
+| 6 | A5b | `--disable-router --static-weight-mode custom --static-weights "..."` | Does routing beat tuned static? |
+| 7 | A5a | `--disable-router --static-weight-mode prior` | Does routing beat prior-weighted? |
+| 8 | A5c | `--disable-router --static-weight-mode prior --teachers t0 t1` | Does 5-teacher routed beat 2-teacher? |
+| 9 | A7 | `--disable-gradient-budget` | Does gradient budgeting help? |
+| 10 | A8 | `--no-phased-admission` | Does phased admission help? |
+| 11 | A6 | `--shuffle-teacher-targets` | Sanity/falsification |
+
+### 48-Hour Minimum Plan (8K steps each)
+
 ```bash
+# Phase 1: A2, A0, BLD, A1
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
-    --output-dir C:/sutra_fast/checkpoints/e2_a5 \
-    --ablation-id A5 \
-    --disable-router
+    --output-dir C:/sutra_fast/checkpoints/e2_a2 \
+    --ablation-id A2 --steps 8000
+
+python eklavya_e2_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --output-dir C:/sutra_fast/checkpoints/e2_a0 \
+    --ablation-id A0 --ce-only --steps 8000
+
+python eklavya_e2_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --output-dir C:/sutra_fast/checkpoints/e2_bld \
+    --ablation-id BLD --bld-mode --steps 8000
+
+python eklavya_e2_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --output-dir C:/sutra_fast/checkpoints/e2_a1 \
+    --ablation-id A1 --teachers t0_anchor_decoder --steps 8000
+
+# Phase 2 (only if Phase 1 passes): A9c, A5b
+python eklavya_e2_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --output-dir C:/sutra_fast/checkpoints/e2_a9c \
+    --ablation-id A9c --router-mode gold_free_student_jsd --steps 8000
+
+python eklavya_e2_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --output-dir C:/sutra_fast/checkpoints/e2_a5b \
+    --ablation-id A5b --disable-router --static-weight-mode custom \
+    --static-weights "t0_anchor_decoder:0.45,t1_diversity_hybrid:0.25,t2_control_decoder:0.15,t4_diversity_ssm:0.15" \
+    --steps 8000
+
+# A5c if time permits
+python eklavya_e2_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --output-dir C:/sutra_fast/checkpoints/e2_a5c \
+    --ablation-id A5c --disable-router --static-weight-mode prior \
+    --teachers t0_anchor_decoder t1_diversity_hybrid --steps 8000
 ```
 
 ### Evaluation
 ```bash
 python eval_e2.py \
-    --checkpoint C:/sutra_fast/checkpoints/e2/e2_best.pt \
+    --checkpoint C:/sutra_fast/checkpoints/e2_a2/e2_best.pt \
     --eval-shards data/shards_bytes_full \
     --ablation-id A2 \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \

@@ -145,6 +145,10 @@ class E2Config:
     # A8: no phased admission (all teachers active from first student-updating phase)
     no_phased_admission: bool = False
 
+    # Static weight mode when router is disabled (A5 variants)
+    static_weight_mode: str = "uniform"
+    static_weights: Optional[dict[str, float]] = None
+
     # BLD mode: single-teacher byte KL baseline (no E2 machinery)
     bld_mode: bool = False
     bld_kl_weight: float = 0.10
@@ -187,10 +191,33 @@ _ABLATION_RULES: dict[str, dict] = {
         "require_semantic_excluded": True,
     },
     "A5": {
-        "desc": "No router (arithmetic mean)",
+        "desc": "No router (uniform weights)",
         "required": {"disable_router"},
         "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
                       "shuffle_teacher_targets"},
+        "require_static_weight_mode": "uniform",
+    },
+    "A5a": {
+        "desc": "No router (protocol prior weights)",
+        "required": {"disable_router"},
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "shuffle_teacher_targets"},
+        "require_static_weight_mode": "prior",
+    },
+    "A5b": {
+        "desc": "No router (tuned static weights)",
+        "required": {"disable_router"},
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "shuffle_teacher_targets"},
+        "require_static_weight_mode": "custom",
+    },
+    "A5c": {
+        "desc": "No router, best-2 teachers (X-Token comparison)",
+        "required": {"disable_router", "teacher_include"},
+        "forbidden": {"ce_only", "teacher_exclude",
+                      "shuffle_teacher_targets"},
+        "require_static_weight_mode": "prior",
+        "require_teacher_count": 2,
     },
     "A6": {
         "desc": "Shuffled teacher targets (falsification)",
@@ -287,6 +314,29 @@ def validate_ablation_config(cfg: E2Config) -> None:
             errors.append(
                 f"{cfg.ablation_id} ({rules['desc']}) requires "
                 f"--router-mode {required_mode} but got {cfg.router_mode}"
+            )
+
+    required_swm = rules.get("require_static_weight_mode")
+    if required_swm is not None:
+        if cfg.static_weight_mode != required_swm:
+            errors.append(
+                f"{cfg.ablation_id} ({rules['desc']}) requires "
+                f"--static-weight-mode {required_swm} but got "
+                f"{cfg.static_weight_mode}"
+            )
+        if required_swm == "custom" and not cfg.static_weights:
+            errors.append(
+                f"{cfg.ablation_id} ({rules['desc']}) requires "
+                f"--static-weights to be set"
+            )
+
+    required_tc = rules.get("require_teacher_count")
+    if required_tc is not None:
+        actual = len(cfg.teacher_include) if cfg.teacher_include else 0
+        if actual != required_tc:
+            errors.append(
+                f"{cfg.ablation_id} ({rules['desc']}) requires exactly "
+                f"{required_tc} teachers but got {actual}"
             )
 
     for flag in rules.get("required", set()):
@@ -644,12 +694,24 @@ class E2Trainer:
                         np.sum(s_probs_np * np.log(np.maximum(s_probs_np, 1e-12))))
 
                 if cfg.disable_router:
-                    uniform = {k: 1.0 / len(teacher_dists)
-                               for k in teacher_dists}
-                    uniform_jsd = disagreement_jsd(teacher_dists)
+                    n_t = len(teacher_dists)
+                    if cfg.static_weight_mode == "prior":
+                        ptotal = sum(priors.get(k, 1.0 / n_t) for k in teacher_dists)
+                        static_w = {k: priors.get(k, 1.0 / n_t) / ptotal
+                                    for k in teacher_dists}
+                    elif cfg.static_weight_mode == "custom" and cfg.static_weights:
+                        wtotal = sum(cfg.static_weights.get(k, 1.0 / n_t)
+                                     for k in teacher_dists)
+                        static_w = {k: cfg.static_weights.get(k, 1.0 / n_t) / wtotal
+                                    for k in teacher_dists}
+                    else:
+                        static_w = {k: 1.0 / n_t for k in teacher_dists}
+                    static_jsd = disagreement_jsd(teacher_dists)
+                    r_ent = -sum(w * math.log(max(w, 1e-12))
+                                for w in static_w.values())
                     route_result = RouteResult(
-                        weights=uniform, jsd=uniform_jsd,
-                        route_entropy=0.0)
+                        weights=static_w, jsd=static_jsd,
+                        route_entropy=r_ent)
                     purified = purify_byte_target(
                         teacher_dists, route_result, mode="arithmetic")
                 else:
@@ -1359,6 +1421,19 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
     print(f"Final checkpoint: {final_path}")
 
 
+def _parse_static_weights(s: Optional[str]) -> Optional[dict[str, float]]:
+    if s is None:
+        return None
+    result = {}
+    for pair in s.split(","):
+        pair = pair.strip()
+        if ":" not in pair:
+            raise ValueError(f"Invalid static weight: {pair!r} (expected name:weight)")
+        name, weight = pair.rsplit(":", 1)
+        result[name.strip()] = float(weight.strip())
+    return result
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Eklavya E2 multi-teacher KD")
     parser.add_argument("--student-checkpoint", required=True)
@@ -1391,6 +1466,12 @@ if __name__ == "__main__":
                         help="Agreement penalty weight for gold-free routing")
     parser.add_argument("--router-student-delta", type=float, default=0.25,
                         help="Student-teacher JSD weight for gold-free routing")
+    parser.add_argument("--static-weight-mode", default="uniform",
+                        choices=["uniform", "prior", "custom"],
+                        help="Weight mode when router disabled: uniform (A5), "
+                             "prior (A5a), custom (A5b)")
+    parser.add_argument("--static-weights", type=str, default=None,
+                        help="Custom static weights as t0:0.4,t1:0.3,... (for A5b)")
     parser.add_argument("--bld-mode", action="store_true",
                         help="BLD baseline: single-teacher byte KL, no E2 machinery")
     parser.add_argument("--bld-kl-weight", type=float, default=0.10,
@@ -1410,6 +1491,8 @@ if __name__ == "__main__":
         ce_only=args.ce_only,
         disable_gradient_budget=args.disable_gradient_budget,
         no_phased_admission=args.no_phased_admission,
+        static_weight_mode=args.static_weight_mode,
+        static_weights=_parse_static_weights(args.static_weights),
         bld_mode=args.bld_mode,
         bld_kl_weight=args.bld_kl_weight,
         router_mode=args.router_mode,

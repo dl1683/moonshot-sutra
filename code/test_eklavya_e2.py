@@ -1182,8 +1182,35 @@ class TestMultiTeacherGradBudget:
 
 from eklavya_e2_training import (
     E2Config, E2Phase, E2Trainer, get_e2_phase, sigmoid_ramp,
-    validate_ablation_config,
+    validate_ablation_config, _parse_static_weights,
 )
+
+
+class TestParseStaticWeights:
+    def test_none_returns_none(self):
+        assert _parse_static_weights(None) is None
+
+    def test_single_pair(self):
+        result = _parse_static_weights("t0:0.5")
+        assert result == {"t0": 0.5}
+
+    def test_multiple_pairs(self):
+        result = _parse_static_weights("t0:0.4,t1:0.3,t2:0.3")
+        assert result == {"t0": 0.4, "t1": 0.3, "t2": 0.3}
+
+    def test_whitespace_tolerance(self):
+        result = _parse_static_weights("t0 : 0.5 , t1 : 0.5")
+        assert result == {"t0": 0.5, "t1": 0.5}
+
+    def test_invalid_format_raises(self):
+        with pytest.raises(ValueError, match="Invalid static weight"):
+            _parse_static_weights("t0_0.5")
+
+    def test_full_teacher_names(self):
+        result = _parse_static_weights(
+            "t0_anchor_decoder:0.6,t2_control_decoder:0.4")
+        assert result == {"t0_anchor_decoder": 0.6,
+                          "t2_control_decoder": 0.4}
 
 
 class TestSigmoidRamp:
@@ -1295,6 +1322,75 @@ class TestAblationConfigValidation:
         cfg = E2Config(ablation_id="A5", disable_router=True,
                        shuffle_teacher_targets=True)
         with pytest.raises(ValueError, match="A5.*forbids.*shuffle"):
+            validate_ablation_config(cfg)
+
+    # --- A5a: prior-weighted static ---
+    def test_a5a_prior_weighted_passes(self):
+        cfg = E2Config(ablation_id="A5a", disable_router=True,
+                       static_weight_mode="prior")
+        validate_ablation_config(cfg)
+
+    def test_a5a_wrong_weight_mode_fails(self):
+        cfg = E2Config(ablation_id="A5a", disable_router=True,
+                       static_weight_mode="uniform")
+        with pytest.raises(ValueError, match="A5a.*requires.*static-weight-mode.*prior"):
+            validate_ablation_config(cfg)
+
+    # --- A5b: custom static weights ---
+    def test_a5b_custom_weights_passes(self):
+        cfg = E2Config(ablation_id="A5b", disable_router=True,
+                       static_weight_mode="custom",
+                       static_weights={"t0_anchor_decoder": 0.5,
+                                       "t1_diversity_hybrid": 0.3,
+                                       "t2_control_decoder": 0.2})
+        validate_ablation_config(cfg)
+
+    def test_a5b_missing_weights_fails(self):
+        cfg = E2Config(ablation_id="A5b", disable_router=True,
+                       static_weight_mode="custom")
+        with pytest.raises(ValueError, match="A5b.*requires.*static-weights"):
+            validate_ablation_config(cfg)
+
+    def test_a5b_wrong_weight_mode_fails(self):
+        cfg = E2Config(ablation_id="A5b", disable_router=True,
+                       static_weight_mode="prior")
+        with pytest.raises(ValueError, match="A5b.*requires.*static-weight-mode.*custom"):
+            validate_ablation_config(cfg)
+
+    # --- A5c: best-2 teacher static (prior-weighted) ---
+    def test_a5c_best2_passes(self):
+        cfg = E2Config(ablation_id="A5c", disable_router=True,
+                       static_weight_mode="prior",
+                       teacher_include=["t0_anchor_decoder",
+                                        "t1_diversity_hybrid"])
+        validate_ablation_config(cfg)
+
+    def test_a5c_without_teacher_include_fails(self):
+        cfg = E2Config(ablation_id="A5c", disable_router=True,
+                       static_weight_mode="prior")
+        with pytest.raises(ValueError, match="A5c.*requires.*teacher-include"):
+            validate_ablation_config(cfg)
+
+    def test_a5c_without_disable_router_fails(self):
+        cfg = E2Config(ablation_id="A5c",
+                       static_weight_mode="prior",
+                       teacher_include=["t0_anchor_decoder",
+                                        "t1_diversity_hybrid"])
+        with pytest.raises(ValueError, match="A5c.*requires.*disable-router"):
+            validate_ablation_config(cfg)
+
+    def test_a5c_wrong_teacher_count_fails(self):
+        cfg = E2Config(ablation_id="A5c", disable_router=True,
+                       static_weight_mode="prior",
+                       teacher_include=["t0_anchor_decoder"])
+        with pytest.raises(ValueError, match="A5c.*exactly 2 teachers"):
+            validate_ablation_config(cfg)
+
+    def test_a5c_wrong_weight_mode_fails(self):
+        cfg = E2Config(ablation_id="A5c", disable_router=True,
+                       teacher_include=["t0_anchor_decoder",
+                                        "t1_diversity_hybrid"])
+        with pytest.raises(ValueError, match="A5c.*requires.*static-weight-mode.*prior"):
             validate_ablation_config(cfg)
 
     def test_a6_with_shuffle_passes(self):

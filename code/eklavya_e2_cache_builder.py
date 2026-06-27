@@ -44,6 +44,7 @@ from eklavya_e2_cache import (
     PositionRecord, E2KLRecord, E2AlignRecord,
     SelectionReason,
     write_position_manifest, read_position_manifest,
+    read_teacher_kl_records,
     save_e2_manifest,
 )
 
@@ -306,6 +307,66 @@ def load_teacher_for_spec(
     return model, tokenizer
 
 
+def annotate_disagreement(
+    positions: list[PositionRecord],
+    cache_dir: str,
+    teacher_names: list[str],
+    jsd_threshold: float = 0.20,
+) -> int:
+    """Post-annotation: set DISAGREEMENT bit on positions with high teacher JSD.
+
+    Reads KL records from all teachers, reconstructs sparse distributions,
+    and computes uniform-weighted JSD at each position. Positions where
+    JSD > threshold get the DISAGREEMENT bit set in reason_mask.
+
+    Returns number of positions annotated.
+    """
+    teacher_records: dict[str, dict[int, E2KLRecord]] = {}
+    for tname in teacher_names:
+        kl_path = os.path.join(cache_dir, "teachers", tname, "kl_records.bin")
+        if not os.path.exists(kl_path):
+            continue
+        recs, K = read_teacher_kl_records(kl_path)
+        teacher_records[tname] = {r.position_id: r for r in recs}
+
+    if len(teacher_records) < 2:
+        print(f"  Disagreement annotation: need >=2 teachers, got {len(teacher_records)}")
+        return 0
+
+    n_annotated = 0
+    for pos in positions:
+        dists = []
+        for tname, recs_by_pid in teacher_records.items():
+            rec = recs_by_pid.get(pos.position_id)
+            if rec is None:
+                continue
+            n_top = len(rec.top_bytes)
+            n_tail = max(1, 256 - n_top)
+            dist = np.full(256, float(rec.tail_prob) / n_tail,
+                           dtype=np.float64)
+            for b, p in zip(rec.top_bytes, rec.top_probs.astype(np.float64)):
+                dist[int(b)] = p
+            dist = np.maximum(dist, 1e-12)
+            dist /= dist.sum()
+            dists.append(dist)
+
+        if len(dists) < 2:
+            continue
+
+        mixture = np.mean(dists, axis=0)
+        jsd = 0.0
+        for d in dists:
+            mask = d > 0
+            jsd += np.sum(d[mask] * np.log(d[mask] / np.maximum(mixture[mask], 1e-15)))
+        jsd /= len(dists)
+
+        if jsd > jsd_threshold:
+            pos.reason_mask |= SelectionReason.DISAGREEMENT
+            n_annotated += 1
+
+    return n_annotated
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build Eklavya E2 multi-teacher cache")
     parser.add_argument("--student-checkpoint", required=True)
@@ -333,6 +394,10 @@ def main():
                         help="Only build position manifest, skip teacher records")
     parser.add_argument("--teachers-only", action="store_true",
                         help="Skip position manifest (read existing), build teacher records only")
+    parser.add_argument("--jsd-threshold", type=float, default=0.20,
+                        help="JSD threshold for DISAGREEMENT annotation (default: 0.20)")
+    parser.add_argument("--skip-disagreement", action="store_true",
+                        help="Skip post-teacher disagreement annotation pass")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -540,6 +605,21 @@ def main():
         del model, tokenizer, byte_table
         torch.cuda.empty_cache()
         gc.collect()
+
+    # Pass 3: Disagreement annotation
+    if not args.skip_disagreement and not args.positions_only:
+        print("\n=== Pass 3: Disagreement annotation ===")
+        n_dis = annotate_disagreement(
+            all_positions, args.output_dir,
+            [s.name for s in specs],
+            jsd_threshold=args.jsd_threshold,
+        )
+        if n_dis > 0:
+            write_position_manifest(manifest_path, all_positions)
+            print(f"  {n_dis}/{len(all_positions)} positions annotated as "
+                  f"HIGH_DISAGREEMENT (JSD>{args.jsd_threshold})")
+        else:
+            print("  No positions met disagreement threshold.")
 
     # Build provenance
     import subprocess

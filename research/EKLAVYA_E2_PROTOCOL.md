@@ -301,7 +301,10 @@ Full ablation plan with commands, metrics, and decision rules: [EKLAVYA_E2_ABLAT
 | A2 | E2 all admitted teachers | Full system performance |
 | A3 | E2 minus strongest non-anchor | Does best diversity teacher contribute? |
 | A4 | E2 minus semantic teacher(s) | Do embeddings help? |
-| A5 | E2 raw arithmetic mean (no router) | Does routing matter? |
+| A5 | E2 uniform arithmetic mean (no router) | Does routing beat uniform? |
+| A5a | E2 prior-weighted mean (no router) | Does routing beat tuned priors? |
+| A5b | E2 tuned static weights (no router) | Does routing beat best static? |
+| A5c | Best-2 teachers, no router | Does E2 beat X-Token-style 2-teacher? |
 | A6 | E2 shuffled teacher targets | Are real signals necessary? |
 | A7 | E2 with gradient budget disabled | Does gradient budgeting help? |
 | A8 | E2 with all teachers from step 0 | Does phased admission help? |
@@ -310,9 +313,14 @@ Full ablation plan with commands, metrics, and decision rules: [EKLAVYA_E2_ABLAT
 | A9c | E2 gold-free full router | Full gold-free router viable? |
 | BLD | Single-teacher byte KL, no E2 machinery | Does E2 beat raw byte KL? |
 
-Information value ranking: A2 vs A0 > A2 vs A1 > A2 vs BLD > A5 vs A2 > A9c vs A2 > A7 vs A2 > A8 vs A2 > A6 vs A2 > A3 vs A2 > A4 vs A2.
+Two-phase approach (Codex R18):
+- **Phase 1** (feasibility): A2 vs A0, A2 vs A1, A2 vs BLD. Stop if A2 fails.
+- **Phase 2** (publishability): A9c vs A5a/A5b/A5c, A2 vs A9c, A7, A8, A6.
 
-Only run full leave-one-out after A2 clearly beats A1.
+A2 is the oracle ceiling. A9c (gold-free router) is the publishable system.
+A5b (tuned static) is the fairest comparison. Only run A3-A4 after Phase 2.
+
+48-hour minimum: A2, A0, BLD, A1, A9c, A5b (all at 8K steps). A5c if time permits.
 
 ## 18. Retained-Gain and Ownership Tests
 
@@ -368,7 +376,7 @@ Drop a teacher when:
 - Cache-to-training cost exceeds contribution
 
 Drop router when:
-- A5 (raw arithmetic) matches or beats A2 (full router)
+- A5b (tuned static) matches or beats A9c (gold-free router) within 0.02 BPB
 - Router entropy is maximal (uniform routing = no signal)
 
 Drop semantic loss when:

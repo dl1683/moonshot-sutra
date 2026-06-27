@@ -64,8 +64,10 @@ def evaluate_bpb(
     first_byte_correct = 0
     first_byte_total = 0
 
-    gap_losses = {"high_nll": 0.0, "high_entropy": 0.0, "control": 0.0}
-    gap_counts = {"high_nll": 0, "high_entropy": 0, "control": 0}
+    gap_losses = {"high_nll": 0.0, "high_entropy": 0.0,
+                  "high_disagreement": 0.0, "control": 0.0}
+    gap_counts = {"high_nll": 0, "high_entropy": 0,
+                  "high_disagreement": 0, "control": 0}
 
     pos_by_loc = {}
     if cache_positions:
@@ -118,6 +120,9 @@ def evaluate_bpb(
                     if pos.reason_mask & SelectionReason.HIGH_ENTROPY:
                         gap_losses["high_entropy"] += pos_bpb
                         gap_counts["high_entropy"] += 1
+                    if pos.reason_mask & SelectionReason.DISAGREEMENT:
+                        gap_losses["high_disagreement"] += pos_bpb
+                        gap_counts["high_disagreement"] += 1
                     if pos.reason_mask == SelectionReason.CONTROL:
                         gap_losses["control"] += pos_bpb
                         gap_counts["control"] += 1
@@ -136,7 +141,7 @@ def evaluate_bpb(
         "n_eval_tokens": total_tokens,
     }
 
-    for key in ("high_nll", "high_entropy", "control"):
+    for key in ("high_nll", "high_entropy", "high_disagreement", "control"):
         if gap_counts[key] > 0:
             result[f"bpb_{key}"] = round(
                 gap_losses[key] / gap_counts[key], 4)
@@ -225,7 +230,8 @@ def main():
     print(f"\nReport saved: {cfg.output}")
     print(f"  BPB: {metrics['bpb']}")
     print(f"  First-byte accuracy: {metrics['first_byte_acc']}")
-    for key in ("bpb_high_nll", "bpb_high_entropy", "bpb_control"):
+    for key in ("bpb_high_nll", "bpb_high_entropy",
+                "bpb_high_disagreement", "bpb_control"):
         if key in metrics:
             print(f"  {key}: {metrics[key]}")
 
