@@ -89,6 +89,7 @@ class EklavyaConfig:
     eval_batches: int = 50
     resume_from: str | None = None
     consecutive_ce_only_threshold: int = 200
+    allow_legacy_cache: bool = False
 
 
 class AlignProjection(nn.Module):
@@ -435,6 +436,12 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
               f"train [{train_range[0]}, {train_range[1]}), "
               f"eval [{eval_range[0]}, {eval_range[1]})")
     else:
+        if not cfg.allow_legacy_cache:
+            raise ValueError(
+                "Cache manifest has no shard_range. This means training would "
+                "run on uncached shards with CE-only signal. Rebuild the cache "
+                "with the latest eklavya_cache.py, or pass --allow-legacy-cache "
+                "if you understand the risk.")
         n_eval = min(2, max(1, len(all_shards) // 10))
         train_range = (0, len(all_shards) - n_eval)
         eval_range = (len(all_shards) - n_eval, len(all_shards))
@@ -533,6 +540,8 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
 
             L_align = torch.tensor(0.0, device=device)
             L_kl = torch.tensor(0.0, device=device)
+            found_align_records = False
+            found_kl_records = False
 
             if phase in ("E1.0_warmup", "E1.1_landing", "E1.2_full"):
                 align_losses = []
@@ -540,6 +549,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                     key = (shard_ids[b].item(), seq_offsets[b].item())
                     records = trainer.align_by_seq.get(key, [])
                     if records:
+                        found_align_records = True
                         sampled = random.sample(records, min(32, len(records)))
                         al = trainer.compute_align_loss(
                             out["patch_states"][b:b+1], sampled)
@@ -553,6 +563,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                     key = (shard_ids[b].item(), seq_offsets[b].item())
                     records = trainer.kl_by_seq.get(key, [])
                     if records:
+                        found_kl_records = True
                         sampled = random.sample(records, min(16, len(records)))
                         kl = trainer.compute_kl_loss(logits[b:b+1], sampled)
                         kl_losses.append(kl)
@@ -584,7 +595,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             if p.requires_grad
         ]
 
-        has_teacher_signal = (L_align.item() > 0 or L_kl.item() > 0) and phase != "E1.0_warmup"
+        has_teacher_signal = (found_align_records or found_kl_records) and phase != "E1.0_warmup"
 
         expects_teacher = phase in ("E1.1_landing", "E1.2_full")
         if expects_teacher and not has_teacher_signal:
@@ -729,6 +740,8 @@ def main():
     parser.add_argument("--steps", type=int, default=12000)
     parser.add_argument("--resume-from", default=None,
                         help="Path to E1 checkpoint to resume from")
+    parser.add_argument("--allow-legacy-cache", action="store_true",
+                        help="Allow caches without shard_range (unsafe)")
     args = parser.parse_args()
 
     cfg = EklavyaConfig(
@@ -737,6 +750,7 @@ def main():
         cache_dir=args.cache_dir,
         full_e1_steps=args.steps - 2000,
         resume_from=args.resume_from,
+        allow_legacy_cache=args.allow_legacy_cache,
     )
 
     train_e1(cfg, args.student_checkpoint, args.cache_dir)

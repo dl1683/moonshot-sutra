@@ -119,6 +119,7 @@ def build_position_manifest(
     control_frac: float = 0.05,
     device: torch.device = torch.device("cuda"),
     pid_start: int = 0,
+    allow_nonfinite_drop: bool = False,
 ) -> list[PositionRecord]:
     """Run student forward on a shard to select gap positions."""
     student.eval()
@@ -185,12 +186,13 @@ def build_position_manifest(
     if n_nonfinite_skips > 0:
         total_positions = n_seqs * (seq_len // student.cfg.patch_size - 1)
         pct = 100.0 * n_nonfinite_skips / max(total_positions, 1)
+        if not allow_nonfinite_drop:
+            raise RuntimeError(
+                f"HARD_FAIL: shard {shard_id} has {n_nonfinite_skips}/{total_positions} "
+                f"non-finite positions ({pct:.2f}%). Student checkpoint likely corrupted. "
+                f"Pass --allow-nonfinite-drop for diagnostic runs.")
         print(f"WARNING: shard {shard_id}: {n_nonfinite_skips}/{total_positions} "
               f"positions ({pct:.2f}%) skipped due to non-finite NLL/entropy")
-        if pct > 5.0:
-            raise RuntimeError(
-                f"HARD_FAIL: shard {shard_id} has {pct:.1f}% non-finite positions — "
-                f"student checkpoint is likely corrupted")
 
     return records
 
@@ -430,6 +432,8 @@ def main():
                         help="JSD threshold for DISAGREEMENT annotation (default: 0.20)")
     parser.add_argument("--skip-disagreement", action="store_true",
                         help="Skip post-teacher disagreement annotation pass")
+    parser.add_argument("--allow-nonfinite-drop", action="store_true",
+                        help="Allow dropping non-finite positions instead of hard-failing (diagnostic only)")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -551,6 +555,7 @@ def main():
                 control_frac=args.control_frac,
                 device=device,
                 pid_start=next_pid,
+                allow_nonfinite_drop=args.allow_nonfinite_drop,
             )
             next_pid += len(positions)
             all_positions.extend(positions)
