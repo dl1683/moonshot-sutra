@@ -1357,6 +1357,14 @@ class TestAblationConfigValidation:
         with pytest.raises(ValueError, match="A5b.*requires.*static-weight-mode.*custom"):
             validate_ablation_config(cfg)
 
+    def test_a5b_unknown_teacher_name_fails(self):
+        cfg = E2Config(ablation_id="A5b", disable_router=True,
+                       static_weight_mode="custom",
+                       static_weights={"t0_anchor_decoder": 0.5,
+                                       "t99_bogus_teacher": 0.5})
+        with pytest.raises(ValueError, match="unknown teacher names"):
+            validate_ablation_config(cfg)
+
     # --- A5c: best-2 teacher static (prior-weighted) ---
     def test_a5c_best2_passes(self):
         cfg = E2Config(ablation_id="A5c", disable_router=True,
@@ -3612,6 +3620,77 @@ class TestStreamingWriters:
 
         recs = read_teacher_align_records(align_path)
         assert len(recs) == 0
+
+
+# ---------------------------------------------------------------------------
+# Disagreement annotation tests
+# ---------------------------------------------------------------------------
+
+class TestAnnotateDisagreement:
+
+    def _make_kl_records(self, tmp_path, teacher_name, records, K=16):
+        teacher_dir = tmp_path / "teachers" / teacher_name
+        teacher_dir.mkdir(parents=True, exist_ok=True)
+        kl_path = str(teacher_dir / "kl_records.bin")
+        write_teacher_kl_records(kl_path, records, K=K)
+        return kl_path
+
+    def _make_kl_rec(self, position_id, top_byte_val, prob, K=16):
+        top_bytes = np.arange(K, dtype=np.uint8)
+        top_probs = np.full(K, (1.0 - prob) / (K - 1), dtype=np.float16)
+        top_bytes[0] = top_byte_val
+        top_probs[0] = np.float16(prob)
+        tail = max(0.0, float(1.0 - top_probs.sum()))
+        return E2KLRecord(
+            position_id=position_id, patch_idx=0,
+            tail_prob=tail, entropy=2.0, logp_gold=-1.5,
+            top_bytes=top_bytes, top_probs=top_probs,
+        )
+
+    def test_high_jsd_annotated(self, tmp_path):
+        from eklavya_e2_cache_builder import annotate_disagreement
+        positions = [
+            PositionRecord(position_id=0, shard_id=0, seq_offset=0,
+                           patch_idx=0, gold_byte=0, student_nll=3.0,
+                           student_entropy=2.0, reason_mask=1),
+        ]
+        self._make_kl_records(tmp_path, "t0", [
+            self._make_kl_rec(0, top_byte_val=0, prob=0.90)])
+        self._make_kl_records(tmp_path, "t1", [
+            self._make_kl_rec(0, top_byte_val=100, prob=0.90)])
+        n = annotate_disagreement(
+            positions, str(tmp_path), ["t0", "t1"], jsd_threshold=0.05)
+        assert n == 1
+        assert positions[0].reason_mask & SelectionReason.DISAGREEMENT
+
+    def test_low_jsd_not_annotated(self, tmp_path):
+        from eklavya_e2_cache_builder import annotate_disagreement
+        positions = [
+            PositionRecord(position_id=0, shard_id=0, seq_offset=0,
+                           patch_idx=0, gold_byte=0, student_nll=3.0,
+                           student_entropy=2.0, reason_mask=1),
+        ]
+        self._make_kl_records(tmp_path, "t0", [
+            self._make_kl_rec(0, top_byte_val=5, prob=0.80)])
+        self._make_kl_records(tmp_path, "t1", [
+            self._make_kl_rec(0, top_byte_val=5, prob=0.80)])
+        n = annotate_disagreement(
+            positions, str(tmp_path), ["t0", "t1"], jsd_threshold=0.05)
+        assert n == 0
+        assert not (positions[0].reason_mask & SelectionReason.DISAGREEMENT)
+
+    def test_single_teacher_skips(self, tmp_path):
+        from eklavya_e2_cache_builder import annotate_disagreement
+        positions = [
+            PositionRecord(position_id=0, shard_id=0, seq_offset=0,
+                           patch_idx=0, gold_byte=0, student_nll=3.0,
+                           student_entropy=2.0, reason_mask=1),
+        ]
+        self._make_kl_records(tmp_path, "t0", [
+            self._make_kl_rec(0, top_byte_val=0, prob=0.90)])
+        n = annotate_disagreement(
+            positions, str(tmp_path), ["t0"], jsd_threshold=0.05)
+        assert n == 0
 
 
 # ---------------------------------------------------------------------------

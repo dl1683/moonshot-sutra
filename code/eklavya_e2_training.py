@@ -329,6 +329,14 @@ def validate_ablation_config(cfg: E2Config) -> None:
                 f"{cfg.ablation_id} ({rules['desc']}) requires "
                 f"--static-weights to be set"
             )
+        if required_swm == "custom" and cfg.static_weights:
+            known = {t.name for t in TEACHER_REGISTRY}
+            unknown = set(cfg.static_weights.keys()) - known
+            if unknown:
+                errors.append(
+                    f"{cfg.ablation_id}: unknown teacher names in "
+                    f"--static-weights: {unknown}"
+                )
 
     required_tc = rules.get("require_teacher_count")
     if required_tc is not None:
