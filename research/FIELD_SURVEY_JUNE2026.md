@@ -84,6 +84,19 @@ a niche problem. Now there are 8+ competing approaches.
 - **RELEVANCE TO E2:** MEDIUM. Our align loss (E1) operates in hidden-state
   space, similar to their dual-space concept.
 
+### DWA-KD — Dual-Space Weighting + Time-Warped Alignment (Feb 2026)
+- **arXiv:** 2602.21669
+- **Authors:** Vu, Chi, Van, Ngo, Dinh, Le
+- **Core idea:** Maps teacher representations into student space and vice
+  versa, performs dual-space KL. Key innovation: **entropy-based token
+  weighting** that up-weights tokens where student is uncertain and teacher
+  is confident. Sequence alignment via Soft-DTW.
+- **RELEVANCE TO E2:** HIGH. Their entropy-based weighting principle is
+  closely related to our gold-free router's student-uncertainty gating
+  (U_s * z(D_t) term in A9c). Different granularity (token vs byte position)
+  but same insight: uncertain student + confident teacher = high-value
+  teaching moment. We should cite for validation of entropy-weighted routing.
+
 ---
 
 ## 2. Byte-Level Language Models
@@ -161,6 +174,25 @@ a niche problem. Now there are 8+ competing approaches.
 - **RELEVANCE TO E2:** MEDIUM. Theoretical grounding for teacher aggregation.
   Our arithmetic mean purification is a special case of their framework.
 
+### Reliability-Gated Multi-Teacher KD (Apr 2026)
+- **arXiv:** 2604.03192
+- **Authors:** BRAC University
+- **Core idea:** EWAD (Entropy-Weighted Agreement-Aware Distillation) — a
+  token-level mechanism that routes supervision between teacher distillation
+  and gold supervision based on **inter-teacher agreement**. Also proposes
+  CPDP (Capacity-Proportional Divergence Preservation) — a geometric
+  constraint on the student's position relative to heterogeneous teachers.
+- **Domain:** Low-resource abstractive summarization (Bangla).
+- **Result:** Logit-level KD provides most reliable gains. More complex
+  distillation improves ROUGE for short outputs, degrades longer ones.
+- **RELEVANCE TO E2:** VERY HIGH. EWAD's agreement-aware routing is
+  conceptually identical to our A9 gold-free router's agreement penalty
+  term (-gamma * z(A_t)). Same signal (teacher agreement = reliability),
+  different implementation (they gate teacher vs gold; we weight teachers
+  against each other). Must cite and differentiate: our routing is across
+  5 heterogeneous-architecture teachers at byte-distribution level, theirs
+  is across homogeneous teachers at token level. Validates our design.
+
 ### CaMOPD — Counteraction-Aware Multi-Teacher OPD (May 2026)
 - **arXiv:** 2605.27115
 - **Core idea:** Decoupling alternating training and gap-based sample
@@ -182,15 +214,17 @@ a niche problem. Now there are 8+ competing approaches.
 
 ## 4. Gap Analysis — What E2 Does That Nobody Else Does
 
-| Capability | BLD | X-Token | Token→Byte | KPurify | MST-Distill | CaMOPD | **E2** |
-|---|---|---|---|---|---|---|---|
-| Byte-level interface | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Multi-teacher | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
-| Cross-architecture | ❌ | ❌ | ❌ | ❌ | ✅* | ❌ | ✅ |
-| Disagreement routing | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
-| Gradient conflict handling | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Phased teacher admission | ❌ | ❌ | Partial | ❌ | ❌ | ❌ | ✅ |
-| Small student (<200M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Capability | BLD | X-Token | Token→Byte | KPurify | MST-Distill | CaMOPD | DWA-KD | EWAD | **E2** |
+|---|---|---|---|---|---|---|---|---|---|
+| Byte-level interface | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Multi-teacher | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Cross-architecture | ❌ | ❌ | ❌ | ❌ | ✅* | ❌ | ❌ | ❌ | ✅ |
+| Disagreement routing | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Entropy-weighted selection | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Gradient conflict handling | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
+| Gold-free routing | N/A | N/A | N/A | ❌ | ❌ | N/A | N/A | Partial | ✅ |
+| Phased teacher admission | ❌ | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Small student (<200M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 *MST-Distill crosses modalities, not neural architectures.
 
@@ -216,6 +250,12 @@ No published work combines more than two of these capabilities.
 3. **More teachers can hurt** — Knowledge Purification confirms that naive
    multi-teacher hurts. Our phased admission is the right defense.
 4. **Patch-global architectures work** — BLT proves this at 8B scale.
+5. **Entropy-weighted routing** — DWA-KD (Feb 2026) and EWAD (Apr 2026)
+   independently confirm that weighting by student uncertainty / teacher
+   confidence is a principled approach. Our A9 gold-free router uses
+   the same core insight across heterogeneous architectures.
+6. **Agreement-based teacher reliability** — EWAD's inter-teacher agreement
+   gating directly validates our A9 agreement penalty term (-gamma * z(A_t)).
 
 ### What the Field Has NOT Solved
 1. Multi-teacher KD with heterogeneous architectures (transformer + SSM +
