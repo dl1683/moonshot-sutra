@@ -383,32 +383,55 @@ def save_cache(output_dir: str, align_records: list[AlignRecord],
     print(f"Saved cache: {len(align_records)} align, {len(kl_records)} kl records")
 
 
+def _kl_record_is_valid(rec: ByteKLRecord) -> bool:
+    """Check if a ByteKLRecord has well-formed probability values."""
+    if not np.all(np.isfinite(rec.top_probs)):
+        return False
+    if np.any(rec.top_probs < 0.0) or np.any(rec.top_probs > 1.0):
+        return False
+    tail = float(rec.tail_prob)
+    if not math.isfinite(tail) or tail < 0.0:
+        return False
+    total = float(rec.top_probs.astype(np.float64).sum()) + tail
+    if total < 0.9 or total > 1.1:
+        return False
+    return True
+
+
 def load_cache(cache_dir: str) -> dict:
     with open(os.path.join(cache_dir, "cache_manifest.json")) as f:
         manifest = json.load(f)
 
     align_path = os.path.join(cache_dir, "align_records.bin")
     align_records = []
+    file_size = os.path.getsize(align_path)
     with open(align_path, "rb") as f:
-        n_align = struct.unpack("<I", f.read(4))[0]
-        align_hdr = 4
-        align_rec_size = 20  # IqHHI
-        file_size = os.path.getsize(align_path)
-        if file_size < align_hdr + n_align * align_rec_size:
-            n_align = max(0, (file_size - align_hdr) // align_rec_size)
+        hdr_data = f.read(4)
+        if len(hdr_data) < 4:
+            n_align = 0
+        else:
+            n_align = struct.unpack("<I", hdr_data)[0]
+            align_hdr = 4
+            align_rec_size = 20  # IqHHI
+            if file_size < align_hdr + n_align * align_rec_size:
+                n_align = max(0, (file_size - align_hdr) // align_rec_size)
         for _ in range(n_align):
             sid, soff, bs, bl, tid = struct.unpack("<IqHHI", f.read(20))
             align_records.append(AlignRecord(sid, soff, bs, bl, tid))
 
     kl_path = os.path.join(cache_dir, "kl_records.bin")
     kl_records = []
+    file_size = os.path.getsize(kl_path)
     with open(kl_path, "rb") as f:
-        n, K = struct.unpack("<II", f.read(8))
-        kl_hdr = 8
-        kl_rec_size = 14 + K + K * 2 + 4  # IqH + top_bytes + top_probs + ee
-        file_size = os.path.getsize(kl_path)
-        if file_size < kl_hdr + n * kl_rec_size:
-            n = max(0, (file_size - kl_hdr) // kl_rec_size)
+        hdr_data = f.read(8)
+        if len(hdr_data) < 8:
+            n, K = 0, 16
+        else:
+            n, K = struct.unpack("<II", hdr_data)
+            kl_hdr = 8
+            kl_rec_size = 14 + K + K * 2 + 4  # IqH + top_bytes + top_probs + ee
+            if file_size < kl_hdr + n * kl_rec_size:
+                n = max(0, (file_size - kl_hdr) // kl_rec_size)
         for _ in range(n):
             sid, soff, pidx = struct.unpack("<IqH", f.read(14))
             top_b = np.frombuffer(f.read(K), dtype=np.uint8).copy()
@@ -419,8 +442,9 @@ def load_cache(cache_dir: str) -> dict:
                 tail = 0.0
             if not math.isfinite(ent):
                 ent = 0.0
-            kl_records.append(ByteKLRecord(sid, soff, pidx,
-                                           top_b, top_p, tail, ent))
+            rec = ByteKLRecord(sid, soff, pidx, top_b, top_p, tail, ent)
+            if _kl_record_is_valid(rec):
+                kl_records.append(rec)
 
     embedding_table = None
     if manifest.get("has_embeddings", False):

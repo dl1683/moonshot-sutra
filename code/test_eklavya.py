@@ -194,20 +194,7 @@ def test_save_load_cache_roundtrip():
         AlignRecord(shard_id=0, seq_offset=4096, byte_start=8, byte_len=3, token_id=200),
         AlignRecord(shard_id=1, seq_offset=0, byte_start=0, byte_len=7, token_id=50),
     ]
-    kl = [
-        ByteKLRecord(
-            shard_id=0, seq_offset=0, patch_idx=2,
-            top_bytes=np.arange(16, dtype=np.uint8),
-            top_probs=np.linspace(0.3, 0.01, 16).astype(np.float16),
-            tail_prob=0.05, entropy=3.2,
-        ),
-        ByteKLRecord(
-            shard_id=1, seq_offset=0, patch_idx=5,
-            top_bytes=np.arange(16, dtype=np.uint8) + 10,
-            top_probs=np.linspace(0.2, 0.02, 16).astype(np.float16),
-            tail_prob=0.12, entropy=4.1,
-        ),
-    ]
+    kl = [_make_valid_kl(0, 0, 2), _make_valid_kl(1, 0, 5)]
     emb = torch.randn(300, 64)
 
     with tempfile.TemporaryDirectory() as td:
@@ -647,11 +634,9 @@ def test_gradient_budget_preserves_accumulated_grads():
 
 def test_streaming_cache_writer():
     align1 = [AlignRecord(0, 0, 0, 4, 10), AlignRecord(0, 0, 4, 3, 20)]
-    kl1 = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
-                         np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+    kl1 = [_make_valid_kl(0, 0, 2)]
     align2 = [AlignRecord(1, 0, 0, 4, 30)]
-    kl2 = [ByteKLRecord(1, 0, 5, np.arange(16, dtype=np.uint8) + 10,
-                         np.linspace(0.2, 0.02, 16).astype(np.float16), 0.12, 4.1)]
+    kl2 = [_make_valid_kl(1, 0, 5)]
 
     emb = torch.randn(50, 32)
 
@@ -676,8 +661,7 @@ def test_streaming_cache_writer():
 
 def test_stale_embeddings_not_resurrected():
     align = [AlignRecord(0, 0, 0, 4, 10)]
-    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
-                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+    kl = [_make_valid_kl(0, 0, 2)]
     emb = torch.randn(50, 32)
 
     with tempfile.TemporaryDirectory() as td:
@@ -743,14 +727,7 @@ def test_record_indexing():
 
 def test_truncated_kl_cache_loads_gracefully():
     """Truncated KL cache file should load usable records, not crash."""
-    kl = [
-        ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
-                     np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2),
-        ByteKLRecord(0, 0, 5, np.arange(16, dtype=np.uint8) + 10,
-                     np.linspace(0.2, 0.02, 16).astype(np.float16), 0.12, 4.1),
-        ByteKLRecord(1, 0, 3, np.arange(16, dtype=np.uint8) + 20,
-                     np.linspace(0.25, 0.015, 16).astype(np.float16), 0.08, 3.8),
-    ]
+    kl = [_make_valid_kl(0, 0, 2), _make_valid_kl(0, 0, 5), _make_valid_kl(1, 0, 3)]
     align = [AlignRecord(0, 0, 0, 4, 10)]
 
     with tempfile.TemporaryDirectory() as td:
@@ -772,8 +749,7 @@ def test_truncated_align_cache_loads_gracefully():
         AlignRecord(0, 0, 4, 3, 20),
         AlignRecord(1, 0, 0, 7, 50),
     ]
-    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
-                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+    kl = [_make_valid_kl(0, 0, 2)]
 
     with tempfile.TemporaryDirectory() as td:
         save_cache(td, align, kl)
@@ -787,33 +763,27 @@ def test_truncated_align_cache_loads_gracefully():
     print("  test_truncated_align_cache_loads_gracefully PASSED")
 
 
-def test_nan_top_probs_sanitized_at_load():
-    """NaN in top_probs should be replaced with 0.0 when loading cache."""
-    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
-                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+def test_nan_top_probs_record_dropped_at_load():
+    """NaN in top_probs → record dropped (mass deviation after sanitization)."""
+    kl = [_make_valid_kl(0, 0, 2)]
     align = [AlignRecord(0, 0, 0, 4, 10)]
 
     with tempfile.TemporaryDirectory() as td:
         save_cache(td, align, kl)
         kl_path = os.path.join(td, "kl_records.bin")
         with open(kl_path, "r+b") as f:
-            # KL header: 8 bytes (II). Record: IqH=14 bytes, then K bytes top_bytes, then K*2 top_probs
-            # Inject NaN into first top_prob (offset = 8 + 14 + 16 = 38)
-            import struct as st
             nan_bytes = np.array([float('nan')], dtype=np.float16).tobytes()
-            f.seek(8 + 14 + 16)
+            f.seek(8 + 14 + 16)  # header + IqH + top_bytes
             f.write(nan_bytes)
         loaded = load_cache(td)
-        assert len(loaded["kl_records"]) == 1
-        assert np.all(np.isfinite(loaded["kl_records"][0].top_probs)), \
-            "NaN top_probs should be sanitized to 0.0"
-    print("  test_nan_top_probs_sanitized_at_load PASSED")
+        assert len(loaded["kl_records"]) == 0, \
+            "NaN-corrupted record should be dropped by validation"
+    print("  test_nan_top_probs_record_dropped_at_load PASSED")
 
 
 def test_nan_tail_sanitized_at_load():
-    """NaN in tail_prob should be replaced with 0.0 when loading cache."""
-    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
-                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+    """NaN in tail → sanitized to 0.0, record still valid (probs sum ~0.92)."""
+    kl = [_make_valid_kl(0, 0, 2)]
     align = [AlignRecord(0, 0, 0, 4, 10)]
 
     with tempfile.TemporaryDirectory() as td:
@@ -822,15 +792,73 @@ def test_nan_tail_sanitized_at_load():
         with open(kl_path, "r+b") as f:
             import struct as st
             nan_bytes = st.pack("<e", float('nan'))
-            # tail_prob is after header(8) + IqH(14) + top_bytes(16) + top_probs(32) = 70
-            f.seek(8 + 14 + 16 + 32)
+            f.seek(8 + 14 + 16 + 32)  # header + IqH + top_bytes + top_probs
             f.write(nan_bytes)
         loaded = load_cache(td)
-        assert len(loaded["kl_records"]) == 1
+        assert len(loaded["kl_records"]) == 1, \
+            "NaN tail with valid probs should still pass validation"
         import math as m
         assert m.isfinite(loaded["kl_records"][0].tail_prob), \
             "NaN tail_prob should be sanitized to 0.0"
     print("  test_nan_tail_sanitized_at_load PASSED")
+
+
+def _make_valid_kl(sid, soff, pidx, K=16):
+    raw = np.linspace(0.5, 0.01, K)
+    probs = (raw / raw.sum() * 0.92).astype(np.float16)
+    tail = max(0.0, 1.0 - float(probs.astype(np.float64).sum()))
+    return ByteKLRecord(sid, soff, pidx, np.arange(K, dtype=np.uint8),
+                        probs, tail, 3.0)
+
+
+def test_corrupt_kl_record_filtered_at_load():
+    """KL record with negative prob should be silently dropped at load time."""
+    kl = [_make_valid_kl(0, 0, 2), _make_valid_kl(0, 0, 5)]
+    align = [AlignRecord(0, 0, 0, 4, 10)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        kl_path = os.path.join(td, "kl_records.bin")
+        with open(kl_path, "r+b") as f:
+            import struct as st
+            # Inject negative probability into first record's first top_prob
+            neg_bytes = np.array([-0.5], dtype=np.float16).tobytes()
+            f.seek(8 + 14 + 16)  # header + IqH + top_bytes
+            f.write(neg_bytes)
+        loaded = load_cache(td)
+        assert len(loaded["kl_records"]) == 1, \
+            f"Corrupt record should be dropped, got {len(loaded['kl_records'])}"
+    print("  test_corrupt_kl_record_filtered_at_load PASSED")
+
+
+def test_header_truncated_kl_cache():
+    """KL cache file truncated below header size should load empty."""
+    align = [AlignRecord(0, 0, 0, 4, 10)]
+    kl = [_make_valid_kl(0, 0, 2)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        kl_path = os.path.join(td, "kl_records.bin")
+        with open(kl_path, "r+b") as f:
+            f.truncate(4)  # Less than 8-byte header
+        loaded = load_cache(td)
+        assert len(loaded["kl_records"]) == 0
+    print("  test_header_truncated_kl_cache PASSED")
+
+
+def test_header_truncated_align_cache():
+    """Align cache file truncated below header size should load empty."""
+    align = [AlignRecord(0, 0, 0, 4, 10)]
+    kl = [_make_valid_kl(0, 0, 2)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        align_path = os.path.join(td, "align_records.bin")
+        with open(align_path, "r+b") as f:
+            f.truncate(2)  # Less than 4-byte header
+        loaded = load_cache(td)
+        assert len(loaded["align_records"]) == 0
+    print("  test_header_truncated_align_cache PASSED")
 
 
 def test_select_kl_patches_nan_positions():
@@ -905,8 +933,11 @@ if __name__ == "__main__":
         test_record_indexing,
         test_truncated_kl_cache_loads_gracefully,
         test_truncated_align_cache_loads_gracefully,
-        test_nan_top_probs_sanitized_at_load,
+        test_nan_top_probs_record_dropped_at_load,
         test_nan_tail_sanitized_at_load,
+        test_corrupt_kl_record_filtered_at_load,
+        test_header_truncated_kl_cache,
+        test_header_truncated_align_cache,
         test_select_kl_patches_nan_positions,
         test_select_kl_patches_all_nan,
     ]
