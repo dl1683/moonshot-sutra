@@ -9,6 +9,7 @@ Components:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -340,12 +341,7 @@ def _compute_jsd(
     teacher_fulls = {}
 
     for name, dist in teacher_dists.items():
-        full = np.full(256, float(dist.tail_prob) / max(1, 256 - len(dist.top_bytes)),
-                       dtype=np.float64)
-        for b, p in zip(dist.top_bytes, dist.top_probs):
-            full[int(b)] = float(p)
-        full = np.maximum(full, 1e-12)
-        full /= full.sum()
+        full = _sparse_to_full(dist)
         teacher_fulls[name] = full
         mixture += weights.get(name, 0.0) * full
 
@@ -355,7 +351,8 @@ def _compute_jsd(
         weights.get(name, 0.0) * (-np.sum(f * np.log(f)))
         for name, f in teacher_fulls.items()
     )
-    return float(h_mix - h_avg)
+    jsd = float(h_mix - h_avg)
+    return jsd if math.isfinite(jsd) else 0.0
 
 
 def disagreement_jsd(
