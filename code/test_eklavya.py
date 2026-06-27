@@ -741,6 +741,98 @@ def test_record_indexing():
     print("  test_record_indexing PASSED")
 
 
+def test_truncated_kl_cache_loads_gracefully():
+    """Truncated KL cache file should load usable records, not crash."""
+    kl = [
+        ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
+                     np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2),
+        ByteKLRecord(0, 0, 5, np.arange(16, dtype=np.uint8) + 10,
+                     np.linspace(0.2, 0.02, 16).astype(np.float16), 0.12, 4.1),
+        ByteKLRecord(1, 0, 3, np.arange(16, dtype=np.uint8) + 20,
+                     np.linspace(0.25, 0.015, 16).astype(np.float16), 0.08, 3.8),
+    ]
+    align = [AlignRecord(0, 0, 0, 4, 10)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        kl_path = os.path.join(td, "kl_records.bin")
+        full_size = os.path.getsize(kl_path)
+        with open(kl_path, "r+b") as f:
+            f.truncate(full_size - 5)
+        loaded = load_cache(td)
+        assert len(loaded["kl_records"]) < 3, "Truncated cache should have fewer records"
+        assert len(loaded["kl_records"]) >= 2, "Should recover at least 2 full records"
+    print("  test_truncated_kl_cache_loads_gracefully PASSED")
+
+
+def test_truncated_align_cache_loads_gracefully():
+    """Truncated align cache file should load usable records, not crash."""
+    align = [
+        AlignRecord(0, 0, 0, 4, 10),
+        AlignRecord(0, 0, 4, 3, 20),
+        AlignRecord(1, 0, 0, 7, 50),
+    ]
+    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
+                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        align_path = os.path.join(td, "align_records.bin")
+        full_size = os.path.getsize(align_path)
+        with open(align_path, "r+b") as f:
+            f.truncate(full_size - 5)
+        loaded = load_cache(td)
+        assert len(loaded["align_records"]) < 3, "Truncated cache should have fewer records"
+        assert len(loaded["align_records"]) >= 2, "Should recover at least 2 full records"
+    print("  test_truncated_align_cache_loads_gracefully PASSED")
+
+
+def test_nan_top_probs_sanitized_at_load():
+    """NaN in top_probs should be replaced with 0.0 when loading cache."""
+    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
+                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+    align = [AlignRecord(0, 0, 0, 4, 10)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        kl_path = os.path.join(td, "kl_records.bin")
+        with open(kl_path, "r+b") as f:
+            # KL header: 8 bytes (II). Record: IqH=14 bytes, then K bytes top_bytes, then K*2 top_probs
+            # Inject NaN into first top_prob (offset = 8 + 14 + 16 = 38)
+            import struct as st
+            nan_bytes = np.array([float('nan')], dtype=np.float16).tobytes()
+            f.seek(8 + 14 + 16)
+            f.write(nan_bytes)
+        loaded = load_cache(td)
+        assert len(loaded["kl_records"]) == 1
+        assert np.all(np.isfinite(loaded["kl_records"][0].top_probs)), \
+            "NaN top_probs should be sanitized to 0.0"
+    print("  test_nan_top_probs_sanitized_at_load PASSED")
+
+
+def test_nan_tail_sanitized_at_load():
+    """NaN in tail_prob should be replaced with 0.0 when loading cache."""
+    kl = [ByteKLRecord(0, 0, 2, np.arange(16, dtype=np.uint8),
+                       np.linspace(0.3, 0.01, 16).astype(np.float16), 0.05, 3.2)]
+    align = [AlignRecord(0, 0, 0, 4, 10)]
+
+    with tempfile.TemporaryDirectory() as td:
+        save_cache(td, align, kl)
+        kl_path = os.path.join(td, "kl_records.bin")
+        with open(kl_path, "r+b") as f:
+            import struct as st
+            nan_bytes = st.pack("<e", float('nan'))
+            # tail_prob is after header(8) + IqH(14) + top_bytes(16) + top_probs(32) = 70
+            f.seek(8 + 14 + 16 + 32)
+            f.write(nan_bytes)
+        loaded = load_cache(td)
+        assert len(loaded["kl_records"]) == 1
+        import math as m
+        assert m.isfinite(loaded["kl_records"][0].tail_prob), \
+            "NaN tail_prob should be sanitized to 0.0"
+    print("  test_nan_tail_sanitized_at_load PASSED")
+
+
 def test_select_kl_patches_nan_positions():
     """NaN NLL positions must be selected, not silently dropped."""
     import math
@@ -811,6 +903,10 @@ if __name__ == "__main__":
         test_streaming_cache_writer,
         test_stale_embeddings_not_resurrected,
         test_record_indexing,
+        test_truncated_kl_cache_loads_gracefully,
+        test_truncated_align_cache_loads_gracefully,
+        test_nan_top_probs_sanitized_at_load,
+        test_nan_tail_sanitized_at_load,
         test_select_kl_patches_nan_positions,
         test_select_kl_patches_all_nan,
     ]

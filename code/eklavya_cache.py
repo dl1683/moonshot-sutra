@@ -312,10 +312,14 @@ class StreamingCacheWriter:
     def finalize(self, embedding_table: Optional[torch.Tensor] = None):
         self._align_f.seek(0)
         self._align_f.write(struct.pack("<I", self.n_align))
+        self._align_f.flush()
+        os.fsync(self._align_f.fileno())
         self._align_f.close()
 
         self._kl_f.seek(0)
         self._kl_f.write(struct.pack("<II", self.n_kl, self.kl_top_k))
+        self._kl_f.flush()
+        os.fsync(self._kl_f.fileno())
         self._kl_f.close()
 
         emb_path = os.path.join(self.output_dir, "teacher_embeddings.pt")
@@ -346,6 +350,8 @@ def save_cache(output_dir: str, align_records: list[AlignRecord],
         for r in align_records:
             f.write(struct.pack("<IqHHI", r.shard_id, r.seq_offset,
                                 r.byte_start, r.byte_len, r.token_id))
+        f.flush()
+        os.fsync(f.fileno())
 
     kl_path = os.path.join(output_dir, "kl_records.bin")
     K = kl_records[0].top_bytes.shape[0] if kl_records else 16
@@ -356,6 +362,8 @@ def save_cache(output_dir: str, align_records: list[AlignRecord],
             f.write(r.top_bytes.tobytes())
             f.write(r.top_probs.tobytes())
             f.write(struct.pack("<ee", r.tail_prob, r.entropy))
+        f.flush()
+        os.fsync(f.fileno())
 
     emb_path = os.path.join(output_dir, "teacher_embeddings.pt")
     if embedding_table is not None:
@@ -382,8 +390,13 @@ def load_cache(cache_dir: str) -> dict:
     align_path = os.path.join(cache_dir, "align_records.bin")
     align_records = []
     with open(align_path, "rb") as f:
-        n = struct.unpack("<I", f.read(4))[0]
-        for _ in range(n):
+        n_align = struct.unpack("<I", f.read(4))[0]
+        align_hdr = 4
+        align_rec_size = 20  # IqHHI
+        file_size = os.path.getsize(align_path)
+        if file_size < align_hdr + n_align * align_rec_size:
+            n_align = max(0, (file_size - align_hdr) // align_rec_size)
+        for _ in range(n_align):
             sid, soff, bs, bl, tid = struct.unpack("<IqHHI", f.read(20))
             align_records.append(AlignRecord(sid, soff, bs, bl, tid))
 
@@ -391,13 +404,23 @@ def load_cache(cache_dir: str) -> dict:
     kl_records = []
     with open(kl_path, "rb") as f:
         n, K = struct.unpack("<II", f.read(8))
+        kl_hdr = 8
+        kl_rec_size = 14 + K + K * 2 + 4  # IqH + top_bytes + top_probs + ee
+        file_size = os.path.getsize(kl_path)
+        if file_size < kl_hdr + n * kl_rec_size:
+            n = max(0, (file_size - kl_hdr) // kl_rec_size)
         for _ in range(n):
             sid, soff, pidx = struct.unpack("<IqH", f.read(14))
-            top_b = np.frombuffer(f.read(K), dtype=np.uint8)
-            top_p = np.frombuffer(f.read(K * 2), dtype=np.float16)
+            top_b = np.frombuffer(f.read(K), dtype=np.uint8).copy()
+            top_p = np.frombuffer(f.read(K * 2), dtype=np.float16).copy()
+            np.nan_to_num(top_p, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
             tail, ent = struct.unpack("<ee", f.read(4))
+            if not math.isfinite(tail):
+                tail = 0.0
+            if not math.isfinite(ent):
+                ent = 0.0
             kl_records.append(ByteKLRecord(sid, soff, pidx,
-                                           top_b.copy(), top_p.copy(), tail, ent))
+                                           top_b, top_p, tail, ent))
 
     embedding_table = None
     if manifest.get("has_embeddings", False):
