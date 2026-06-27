@@ -637,7 +637,7 @@ class E2Trainer:
 
                 s_probs_np = None
                 s_ent_float = None
-                if self.router_config.mode.startswith("gold_free"):
+                if self.router_config.mode == "gold_free_student_jsd":
                     s_p = F.softmax(student_logit.detach().float(), dim=-1)
                     s_probs_np = s_p.cpu().numpy().astype(np.float64)
                     s_ent_float = -float(

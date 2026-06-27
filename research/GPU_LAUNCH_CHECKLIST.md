@@ -182,7 +182,7 @@ C:/sutra_fast/eklavya_e2_cache/
 ### Prerequisites
 - [ ] E1 best checkpoint exists
 - [ ] E2 cache built and validated (Phase 5)
-- [ ] 322 tests passing (`pytest code/ -x`)
+- [ ] 326 tests passing (`pytest code/ -x`)
 
 ### VRAM Budget (Training)
 ```
@@ -293,7 +293,7 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (278 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (282 tests) |
 | S0 tests | `code/test_overfit.py` (16 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |

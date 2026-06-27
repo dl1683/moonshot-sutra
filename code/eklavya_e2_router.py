@@ -136,7 +136,7 @@ def build_multi_teacher_batch(
 class RouterConfig:
     mode: str = "oracle_gold"
     alpha: float = 1.0
-    beta: float = 0.7
+    beta: float = 0.5
     tau: float = 1.0
     agreement_gamma: float = 0.5
     student_delta: float = 0.25
@@ -248,6 +248,10 @@ def route_teachers(
             raise ValueError(
                 "gold_free_student_jsd mode requires student_probs"
             )
+        if student_entropy is None:
+            raise ValueError(
+                "gold_free_student_jsd mode requires student_entropy"
+            )
 
     fulls = {name: _sparse_to_full(teacher_dists[name]) for name in names}
     entropies = [-float(np.sum(fulls[n] * np.log(fulls[n]))) for n in names]
@@ -311,9 +315,9 @@ def route_teachers(
     w_dict = {name: float(weights[i]) for i, name in enumerate(names)}
 
     jsd = _compute_jsd(teacher_dists, w_dict)
-    rent = -np.sum(weights * np.log(weights + 1e-10))
+    rent = max(0.0, float(-np.sum(weights * np.log(weights + 1e-10))))
 
-    return RouteResult(weights=w_dict, jsd=jsd, route_entropy=float(rent))
+    return RouteResult(weights=w_dict, jsd=jsd, route_entropy=rent)
 
 
 def _compute_jsd(
@@ -348,6 +352,8 @@ def disagreement_jsd(
     weights: dict[str, float] | None = None,
 ) -> float:
     """Convenience: compute JSD with uniform weights if none given."""
+    if not teacher_dists:
+        return 0.0
     if weights is None:
         n = len(teacher_dists)
         weights = {name: 1.0 / n for name in teacher_dists}

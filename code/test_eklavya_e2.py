@@ -727,6 +727,30 @@ class TestGoldFreeRouter:
         for name in r1.weights:
             assert abs(r1.weights[name] - r2.weights[name]) < 1e-10
 
+    def test_gold_free_student_jsd_requires_student_entropy(self):
+        dists = {"t1": _make_sparse_dist(gold=65, confidence=0.7)}
+        s_probs = self._student_probs()
+        cfg = RouterConfig(mode="gold_free_student_jsd")
+        with pytest.raises(ValueError, match="requires student_entropy"):
+            route_teachers(dists, gold_byte=None, priors={"t1": 1.0},
+                           config=cfg, student_probs=s_probs, student_entropy=None)
+
+    def test_student_jsd_term_changes_ranking(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.6)
+        d2 = _make_sparse_dist(gold=200, confidence=0.6)
+        dists = {"t1": d1, "t2": d2}
+        priors = {"t1": 0.5, "t2": 0.5}
+        s_probs = self._student_probs(peak_byte=65, confidence=0.8)
+        s_ent = self._student_entropy(s_probs)
+        cfg_agree = RouterConfig(mode="gold_free_agreement", student_delta=0.0)
+        cfg_sjsd = RouterConfig(mode="gold_free_student_jsd", student_delta=1.0)
+        r_agree = route_teachers(dists, None, priors, cfg_agree,
+                                 student_probs=s_probs, student_entropy=s_ent)
+        r_sjsd = route_teachers(dists, None, priors, cfg_sjsd,
+                                student_probs=s_probs, student_entropy=s_ent)
+        assert r_agree.weights != r_sjsd.weights, \
+            "Student-JSD term with delta=1.0 should change weight distribution"
+
     def test_single_teacher_all_modes(self):
         dist = _make_sparse_dist(gold=65, confidence=0.7)
         s_probs = self._student_probs()
@@ -823,6 +847,11 @@ class TestDisagreementJSD:
         assert skewed_jsd < uniform_jsd, (
             "PL-weighted JSD with skewed priors should be lower than uniform JSD"
         )
+
+
+    def test_empty_teachers_returns_zero(self):
+        jsd = disagreement_jsd({})
+        assert jsd == 0.0
 
 
 class TestPurifyByteTarget:
@@ -3204,6 +3233,121 @@ class TestE2EndToEnd:
         )
 
         return ckpt_path, str(shard_dir), str(cache_dir), model_cfg
+
+    def _create_multi_teacher_fixtures(self, tmp_path, seq_len=64, n_pos=4, K=8):
+        """Fixtures with 2 KL teachers for multi-teacher routing tests."""
+        import torch
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=32, n_layers=2, n_heads=2, n_kv_heads=1,
+            byte_dim=32, ffn_mult=2.0, local_mixer_layers=1,
+            patch_size=4, max_seq_len=256,
+            decoder_dim=32, decoder_layers=1, decoder_heads=2,
+        )
+        student = SutraS0(model_cfg)
+        ckpt_path = str(tmp_path / "student.pt")
+        torch.save({
+            "step": 1000,
+            "model": student.state_dict(),
+            "model_cfg": model_cfg,
+        }, ckpt_path)
+
+        shard_dir = tmp_path / "shards"
+        shard_dir.mkdir()
+        rng = np.random.RandomState(42)
+        for i in range(3):
+            data = rng.randint(0, 256, seq_len, dtype=np.uint8)
+            (shard_dir / f"shard_{i:04d}.bin").write_bytes(data.tobytes())
+
+        specs = [
+            TeacherSpec(
+                teacher_id=0, name="test_anchor",
+                family=TeacherFamily.DECODER, role=TeacherRole.ANCHOR,
+                hidden_dim=32, vocab_size=64,
+                has_kl=True, has_align=True, has_semantic=False,
+                prior=0.6, vram_gb=0.1,
+            ),
+            TeacherSpec(
+                teacher_id=1, name="test_diversity",
+                family=TeacherFamily.HYBRID, role=TeacherRole.DIVERSITY,
+                hidden_dim=32, vocab_size=64,
+                has_kl=True, has_align=False, has_semantic=False,
+                prior=0.4, vram_gb=0.1,
+            ),
+        ]
+
+        cache_dir = tmp_path / "e2_cache"
+        cache_dir.mkdir()
+        (cache_dir / "teachers").mkdir()
+
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65 + i,
+                student_nll=4.0, student_entropy=2.0,
+                reason_mask=SelectionReason.HIGH_NLL,
+            )
+            for i in range(n_pos)
+        ]
+        write_position_manifest(str(cache_dir / "positions.bin"), positions)
+
+        for spec in specs:
+            tdir = cache_dir / "teachers" / spec.name
+            tdir.mkdir()
+            kl_recs = [
+                E2KLRecord(
+                    position_id=i, patch_idx=i + 1,
+                    tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                    top_bytes=np.arange(K, dtype=np.uint8),
+                    top_probs=np.full(K, 1.0 / K, dtype=np.float16),
+                )
+                for i in range(n_pos)
+            ]
+            write_teacher_kl_records(str(tdir / "kl_records.bin"), kl_recs, K=K)
+
+            if spec.has_align:
+                align_recs = [
+                    E2AlignRecord(
+                        position_id=i, byte_start=i * 4,
+                        byte_len=4, token_id=i, align_quality=1.0,
+                    )
+                    for i in range(n_pos)
+                ]
+                write_teacher_align_records(str(tdir / "align_records.bin"), align_recs)
+
+            emb = torch.randn(64, 32).half()
+            torch.save(emb, str(tdir / "teacher_embeddings.pt"))
+
+        save_e2_manifest(
+            str(cache_dir), specs, n_positions=n_pos, K=K,
+            shard_range=(0, 3),
+        )
+
+        return ckpt_path, str(shard_dir), str(cache_dir), model_cfg
+
+    def test_gold_free_router_trains_end_to_end(self, tmp_path):
+        """A9c gold-free router runs the full loop with 2 teachers."""
+        from eklavya_e2_training import train_e2
+
+        ckpt_path, shard_dir, cache_dir, _ = self._create_multi_teacher_fixtures(tmp_path)
+        cfg = self._make_cfg(
+            tmp_path, shard_dir, cache_dir,
+            port_warmup_steps=2, consensus_steps=2,
+            semantic_landing_steps=2, disagreement_steps=4,
+            eval_every=5, checkpoint_every=100,
+        )
+        cfg.router_mode = "gold_free_student_jsd"
+
+        train_e2(cfg, ckpt_path, cache_dir)
+
+        final_path = os.path.join(cfg.checkpoint_dir, "e2_final.pt")
+        assert os.path.exists(final_path), "Gold-free router must produce final checkpoint"
+
+        with open(cfg.log_file) as f:
+            entries = [json.loads(l) for l in f if l.strip()]
+        train_entries = [e for e in entries if "ce_loss" in e]
+        assert len(train_entries) >= 5
 
     def test_bld_mode_trains_with_anchor_kl(self, tmp_path):
         """BLD baseline: single-teacher byte KL, no E2 machinery."""
