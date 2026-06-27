@@ -139,6 +139,28 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
         for tname, tloss in sorted(teacher_losses.items()):
             print(f"    {tname}: {tloss:.4f}")
 
+    route = latest.get("route_stats", {})
+    if route:
+        print("\n  Router stats:")
+        if "mean_route_entropy" in route:
+            print(f"    Route entropy: {route['mean_route_entropy']:.4f}")
+        if "mean_jsd" in route:
+            print(f"    Mean JSD: {route['mean_jsd']:.4f}")
+        if "n_routed" in route:
+            print(f"    Positions routed: {route['n_routed']}")
+        if "avg_teacher_weights" in route:
+            wt = route["avg_teacher_weights"]
+            print(f"    Avg weights: {' '.join(f'{k}={v:.3f}' for k, v in sorted(wt.items()))}")
+
+    gb = latest.get("grad_budget", {})
+    if gb and gb.get("total_scale") is not None:
+        print(f"\n  Gradient budget:")
+        print(f"    CE grad norm: {gb.get('ce_grad_norm', 0):.4f}")
+        print(f"    Total scale: {gb.get('total_scale', 0):.4f}")
+        scales = gb.get("per_teacher_scales", {})
+        if scales:
+            print(f"    Per-teacher: {' '.join(f'{k}={v:.3f}' for k, v in sorted(scales.items()))}")
+
     phases_seen = set()
     phase_transitions = []
     for entry in train:
@@ -187,6 +209,63 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
                   f"|{bar:<40s}|")
 
 
+def _e2_anomalies(train: list[dict]) -> list[str]:
+    """E2-specific anomaly detection."""
+    anomalies = []
+
+    route_entropies = [
+        e["route_stats"]["mean_route_entropy"]
+        for e in train if e.get("route_stats", {}).get("mean_route_entropy") is not None
+    ]
+    if len(route_entropies) >= 10:
+        recent = route_entropies[-10:]
+        if max(recent) < 0.1:
+            anomalies.append(
+                f"Route entropy collapse: last 10 readings all < 0.1 "
+                f"(max {max(recent):.4f}) — router locked to one teacher")
+
+    grad_scales = [
+        e["grad_budget"]["total_scale"]
+        for e in train if e.get("grad_budget", {}).get("total_scale") is not None
+    ]
+    if len(grad_scales) >= 5:
+        recent = grad_scales[-5:]
+        if max(recent) < 0.01:
+            anomalies.append(
+                f"Gradient budget near zero: last 5 total_scale < 0.01 "
+                f"(max {max(recent):.6f}) — teacher signal suppressed")
+
+    zero_teacher_count = 0
+    total_with_teachers = 0
+    for e in train:
+        tl = e.get("teacher_losses_bits", e.get("teacher_losses", {}))
+        if isinstance(tl, dict):
+            total_with_teachers += 1
+            if all(v == 0 or v is None for v in tl.values()):
+                zero_teacher_count += 1
+    if total_with_teachers >= 10 and zero_teacher_count > total_with_teachers * 0.5:
+        anomalies.append(
+            f"Zero teacher signal in {zero_teacher_count}/{total_with_teachers} "
+            f"steps ({zero_teacher_count/total_with_teachers*100:.0f}%) — "
+            "cache coverage may be insufficient")
+
+    zero_route_count = sum(
+        1 for e in train
+        if e.get("route_stats", {}).get("n_routed", 0) == 0
+        and e.get("phase") in ("DISAGREEMENT", "E2.4")
+    )
+    disagreement_count = sum(
+        1 for e in train
+        if e.get("phase") in ("DISAGREEMENT", "E2.4")
+    )
+    if disagreement_count >= 5 and zero_route_count > disagreement_count * 0.3:
+        anomalies.append(
+            f"No routed positions in {zero_route_count}/{disagreement_count} "
+            f"disagreement steps — router may not be activating")
+
+    return anomalies
+
+
 def display(log_path: str):
     train, eval_ = load_entries(log_path)
 
@@ -227,6 +306,9 @@ def display(log_path: str):
         anomalies.append(
             f"High grad norm (>10) in {high_gnorm}/{len(gnorms)} steps "
             f"({high_gnorm/len(gnorms)*100:.0f}%)")
+
+    if mode == "e2":
+        anomalies.extend(_e2_anomalies(train))
 
     if anomalies:
         print("\n  Anomalies:")
