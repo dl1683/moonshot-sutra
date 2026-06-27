@@ -240,6 +240,37 @@ a niche problem. Now there are 8+ competing approaches.
   priors (replace hand-tuned prior weights with GRACE scores). But our
   routing is dynamic (per-position), while GRACE is static (per-teacher).
 
+### Axiomatic Framework for Adaptive Weighting (Jan 2026)
+- **arXiv:** 2601.17910
+- **Authors:** Flouro, Chadwick
+- **Core idea:** Operator-agnostic axiomatic framework for adaptive weighting
+  in multi-teacher KD across three scales: token, task, and context. Identifies
+  four structural conditions any valid weighting scheme must satisfy:
+  normalization, bounded influence, regularity, and ordinal safety monotonicity.
+- **Key result:** Proves existence and non-uniqueness of conforming operators.
+  Characterizes convergence and stability bounds for gradient-based optimization
+  under the axioms.
+- **RELEVANCE TO E2:** HIGH. Our gold-free router (A9c) is an adaptive weighting
+  operator. We should verify it satisfies these four axioms — especially bounded
+  influence (no single teacher dominates) and ordinal safety monotonicity (safer
+  teacher gets more weight). Our gradient budget already enforces bounded influence.
+  Normalization is satisfied by softmax. Regularity and safety monotonicity are
+  worth formal verification. Could strengthen our theoretical claims.
+
+### Entropy-Aware OPD (ICML 2026)
+- **arXiv:** 2603.07079
+- **Authors:** Jin, Min, Yang et al.
+- **Core idea:** Augments standard reverse KL distillation with forward KL on
+  tokens where the teacher distribution has high entropy. Addresses mode-seeking
+  brittleness of reverse KL under teacher uncertainty.
+- **Result:** +1.37 to +5.05 Pass@8 accuracy gains on math reasoning benchmarks
+  across small (0.6B) to medium (4B) models. Accepted at ICML 2026.
+- **RELEVANCE TO E2:** MEDIUM-HIGH. Validates teacher entropy as a routing signal
+  (same core insight as our A9c router's teacher entropy term). Their solution
+  (switch KL direction) is token-level and single-teacher; ours is multi-teacher
+  routing at byte level. But the shared insight — high teacher entropy requires
+  different treatment — is confirmed at a top venue. Cite for validation.
+
 ### PCGrad-Style Gradient Surgery for Multi-Teacher KD
 - **Background:** PCGrad (Yu et al., 2020) projects conflicting gradients
   to eliminate negative transfer. Applied to multi-teacher KD by projecting
@@ -252,18 +283,19 @@ a niche problem. Now there are 8+ competing approaches.
 
 ## 4. Gap Analysis — What E2 Does That Nobody Else Does
 
-| Capability | BLD | X-Token | Token→Byte | KPurify | MST-Distill | CaMOPD | DWA-KD | EWAD | MT-BKD | **E2** |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Byte-level interface | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Multi-teacher | ❌ | ✅† | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
-| Cross-architecture | ❌ | ✅† | ❌ | ❌ | ✅* | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Disagreement routing | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ✅ |
-| Entropy-weighted selection | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
-| Gradient conflict handling | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Gold-free routing | N/A | N/A | N/A | ❌ | ❌ | N/A | N/A | Partial | ❌ | ✅ |
-| Phased teacher admission | ❌ | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Uncertainty-aware aggregation | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Small student (<200M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Capability | BLD | X-Token | Token→Byte | KPurify | MST-Distill | CaMOPD | DWA-KD | EWAD | MT-BKD | EA-OPD | Axiom | **E2** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Byte-level interface | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Multi-teacher | ❌ | ✅† | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Cross-architecture | ❌ | ✅† | ❌ | ❌ | ✅* | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Disagreement routing | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Entropy-weighted selection | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| Gradient conflict handling | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Gold-free routing | N/A | N/A | N/A | ❌ | ❌ | N/A | N/A | Partial | ❌ | N/A | N/A | ✅ |
+| Phased teacher admission | ❌ | ❌ | Partial | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Uncertainty-aware aggregation | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | ✅ |
+| Formal weighting axioms | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | Partial |
+| Small student (<200M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 *MST-Distill crosses modalities, not neural architectures.
 †X-Token demonstrated 2-teacher multi-architecture (Phi-4-Mini + Llama-3B)
@@ -309,6 +341,13 @@ cross-architecture, but without routing or gradient management.
    the same core insight across heterogeneous architectures.
 6. **Agreement-based teacher reliability** — EWAD's inter-teacher agreement
    gating directly validates our A9 agreement penalty term (-gamma * z(A_t)).
+7. **Teacher entropy as routing signal** — Entropy-Aware OPD (ICML 2026)
+   confirms that high teacher entropy requires different treatment (they switch
+   KL direction). Validates our A9c router's teacher entropy term.
+8. **Formal axioms for adaptive weighting** — Axiomatic Framework (2601.17910)
+   provides structural conditions (normalization, bounded influence, regularity,
+   ordinal safety monotonicity) that our router should satisfy. Our gradient
+   budget enforces bounded influence; softmax gives normalization.
 
 ### What the Field Has NOT Solved
 1. Multi-teacher KD with >2 heterogeneous architectures (transformer + SSM +
