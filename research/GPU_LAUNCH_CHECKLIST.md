@@ -309,12 +309,22 @@ python eklavya_e2_training.py \
 
 ### Evaluation
 ```bash
+# Ablation comparison (all shards — fair since all ablations use same set)
 python eval_e2.py \
     --checkpoint C:/sutra_fast/checkpoints/e2_a2/e2_best.pt \
     --eval-shards data/shards_bytes_full \
     --ablation-id A2 \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output ablations/a2_full.json
+
+# For publishing (held-out only — use --shard-range to exclude training shards)
+python eval_e2.py \
+    --checkpoint C:/sutra_fast/checkpoints/e2_a2/e2_best.pt \
+    --eval-shards data/shards_bytes_full \
+    --ablation-id A2 \
+    --cache-dir C:/sutra_fast/eklavya_e2_cache \
+    --shard-range 48 50 \
+    --output ablations/a2_heldout.json
 ```
 
 ## Quick Reference: File Locations
