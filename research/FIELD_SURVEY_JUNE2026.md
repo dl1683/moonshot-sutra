@@ -168,6 +168,46 @@ a niche problem. Now there are 8+ competing approaches.
   untested at meaningful scale and no competitive benchmarks yet. Worth
   monitoring but not a direct competitor to our training approach.
 
+### ByteFlow — Adaptive Byte Compression (ICLR 2026)
+- **arXiv:** 2603.03583
+- **Authors:** Deng et al. (Rice University + Amazon Science)
+- **Core idea:** Removes tokenizers entirely. Uses coding-rate-based compression
+  to learn adaptive byte boundaries. Top-K selection preserves static computation
+  graph while yielding semantically meaningful chunks.
+- **Result:** Outperforms both BPE Transformers AND prior byte-level architectures.
+  Accepted at ICLR 2026.
+- **RELEVANCE TO E2:** MEDIUM. Alternative to our fixed-patch approach. Their
+  adaptive chunking is more elegant than fixed-size patches. Our Sutra-Dyad uses
+  fixed 6-byte patches for simplicity; ByteFlow shows learned boundaries can help.
+  Not a KD competitor — purely an architecture paper. Could inform Stage 3+ if
+  we move to adaptive patching.
+
+### MBLM — Multiscale Byte Language Models (Feb 2025)
+- **arXiv:** 2502.14553
+- **Authors:** Egli, Manica et al.
+- **Core idea:** Extends MegaByte hierarchy to unlimited stages. Refines byte
+  representations through a hierarchy of generic decoder models. Hybrid
+  Transformer+Mamba blocks for long sequences.
+- **Scale:** 5M byte context windows on single GPU in full precision.
+- **Result:** Hybrid architectures handle extremely long byte sequences during
+  training. First evaluation of BLMs on visual Q&A tasks — pure next-byte
+  prediction matches CNN-LSTM architectures.
+- **RELEVANCE TO E2:** LOW-MEDIUM. Focuses on extreme context length (millions
+  of bytes), which is not our concern at 153M params. Validates hybrid
+  Transformer+Mamba for byte-level models — we could explore this if Sutra
+  moves to a hybrid backbone.
+
+### AU-Net — Autoregressive U-Nets for Byte Modeling (Jun 2025)
+- **arXiv:** 2506.14761
+- **Authors:** Videau, Youbi Idrissi, Leite, Schoenauer, Teytaud, Lopez-Paz
+- **Core idea:** Learned multi-scale pooling (bytes → words → pairs of words →
+  4 words). Deeper stages predict further ahead. Multi-scale view without
+  fixed tokenization.
+- **Result:** Shallow hierarchies tie strong BPE baselines; deeper hierarchies
+  show promising trend but not yet clearly superior.
+- **RELEVANCE TO E2:** LOW. Academic exploration of learnable byte hierarchies.
+  Not competitive with BPE yet, and doesn't address KD or multi-teacher.
+
 ### Token→Byte Distillation (Feb 2026)
 - **arXiv:** 2602.01007
 - **Authors:** Bao, Leng, Wang, Peng, Lu
@@ -423,7 +463,9 @@ cross-architecture, but without routing or gradient management.
 3. **More teachers can hurt** — Knowledge Purification confirms that naive
    multi-teacher averaging hurts. Routing-based selection is the defense;
    our phased admission is an orthogonal mitigation (untested by this paper).
-4. **Patch-global architectures work** — BLT proves this at 8B scale.
+4. **Patch-global architectures work** — BLT proves this at 8B scale. ByteFlow
+   (ICLR 2026) shows adaptive byte chunking can outperform both BPE and prior
+   byte-level models — validates the byte-level paradigm broadly.
 5. **Entropy-weighted routing** — DWA-KD (Feb 2026) and EWAD (Apr 2026)
    independently confirm that weighting by student uncertainty / teacher
    confidence is a principled approach. Our A9 gold-free router uses
