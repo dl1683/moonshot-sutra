@@ -1100,7 +1100,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
 
     # Resume from checkpoint
     if cfg.resume_from:
-        resume_ckpt = torch.load(cfg.resume_from, map_location=device, weights_only=False)
+        resume_ckpt = torch.load(cfg.resume_from, map_location="cpu", weights_only=False)
         student.load_state_dict(resume_ckpt["model"])
         if "ports" in resume_ckpt:
             ports.load_state_dict(resume_ckpt["ports"])

@@ -427,7 +427,7 @@ def main():
     else:
         # Load student
         print(f"Loading student: {args.student_checkpoint}")
-        ckpt = torch.load(args.student_checkpoint, map_location=device, weights_only=False)
+        ckpt = torch.load(args.student_checkpoint, map_location="cpu", weights_only=False)
         model_cfg = ckpt["model_cfg"]
         student = SutraS0(model_cfg).to(device)
         student.load_state_dict(ckpt["model"])
