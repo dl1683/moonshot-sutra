@@ -376,10 +376,16 @@ def disagreement_jsd(
 # ---------------------------------------------------------------------------
 
 def _dist_is_valid(dist: SparseByteDist) -> bool:
-    """Check if a SparseByteDist has all finite fields."""
+    """Check if a SparseByteDist is a well-formed probability distribution."""
     if not np.all(np.isfinite(dist.top_probs)):
         return False
-    if not math.isfinite(float(dist.tail_prob)):
+    tail = float(dist.tail_prob)
+    if not math.isfinite(tail) or tail < 0.0:
+        return False
+    if np.any(dist.top_probs < 0.0) or np.any(dist.top_probs > 1.0):
+        return False
+    total = float(dist.top_probs.sum()) + tail
+    if total < 0.5 or total > 1.5:
         return False
     return True
 

@@ -844,6 +844,8 @@ class E2Trainer:
                         spec.name, student_span.unsqueeze(0))
                     teacher_emb = emb_table[arec.token_id].to(
                         device=self.device, dtype=z_s.dtype)
+                    if teacher_emb.norm().item() < 1e-8:
+                        continue
                     teacher_emb = F.normalize(
                         teacher_emb.unsqueeze(0), dim=-1)
                     sem_losses.append(
@@ -1315,6 +1317,11 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     logits, shard_ids, seq_starts)
 
         grad_report = None
+        if teacher_losses:
+            teacher_losses = {
+                k: v for k, v in teacher_losses.items()
+                if torch.isfinite(v)
+            }
         if bld_kl_loss is not None:
             total_loss = (ce_loss + cfg.bld_kl_weight * bld_kl_loss) / cfg.grad_accum
             if scaler is not None:

@@ -57,6 +57,8 @@ def make_position(pid: int = 0, shard: int = 1, seq: int = 1000,
 
 
 def make_kl(pid: int = 0, patch: int = 5, K: int = 16) -> E2KLRecord:
+    raw = np.linspace(0.5, 0.01, K)
+    probs = (raw / raw.sum() * 0.95).astype(np.float16)
     return E2KLRecord(
         position_id=pid,
         patch_idx=patch,
@@ -64,7 +66,7 @@ def make_kl(pid: int = 0, patch: int = 5, K: int = 16) -> E2KLRecord:
         entropy=2.3,
         logp_gold=-1.8,
         top_bytes=np.arange(K, dtype=np.uint8),
-        top_probs=np.linspace(0.5, 0.01, K).astype(np.float16),
+        top_probs=probs,
     )
 
 
@@ -1042,6 +1044,38 @@ class TestDistIsValid:
             top_bytes=np.array([65], dtype=np.uint8),
             top_probs=np.array([float('inf')], dtype=np.float32),
             tail_prob=0.5,
+        )
+        assert not _dist_is_valid(d)
+
+    def test_negative_top_probs(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([-0.5], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        assert not _dist_is_valid(d)
+
+    def test_prob_over_one(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([1.5], dtype=np.float32),
+            tail_prob=0.5,
+        )
+        assert not _dist_is_valid(d)
+
+    def test_negative_tail(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([0.5], dtype=np.float32),
+            tail_prob=-0.1,
+        )
+        assert not _dist_is_valid(d)
+
+    def test_bad_total_mass(self):
+        d = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([0.1], dtype=np.float32),
+            tail_prob=0.01,
         )
         assert not _dist_is_valid(d)
 
