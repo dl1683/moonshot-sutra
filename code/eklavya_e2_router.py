@@ -142,8 +142,10 @@ class RouterConfig:
     student_delta: float = 0.25
 
     def __post_init__(self):
-        if self.tau <= 0:
-            raise ValueError(f"tau must be positive, got {self.tau}")
+        import math
+        if not (isinstance(self.tau, (int, float)) and math.isfinite(self.tau)
+                and self.tau > 0):
+            raise ValueError(f"tau must be finite and positive, got {self.tau}")
 
 
 @dataclass

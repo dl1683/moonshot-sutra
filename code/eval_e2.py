@@ -204,6 +204,13 @@ def main():
         raise ValueError(f"No .bin shards found in {cfg.eval_shards}")
 
     shard_range = tuple(args.shard_range) if args.shard_range else None
+    if shard_range is not None:
+        s, e = shard_range
+        if s < 0 or e <= s or e > len(all_shards):
+            raise ValueError(
+                f"--shard-range {s} {e} is invalid for {len(all_shards)} shards. "
+                f"Need 0 <= start < end <= {len(all_shards)}."
+            )
     eval_dataset = EklavyaDataset(
         cfg.eval_shards, cfg.seq_len, model_cfg.patch_size,
         shard_range=shard_range)

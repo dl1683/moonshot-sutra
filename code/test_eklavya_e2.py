@@ -1797,13 +1797,31 @@ class TestAblationConfigValidation:
 
     def test_router_tau_zero_rejected(self):
         from eklavya_e2_router import RouterConfig
-        with pytest.raises(ValueError, match="tau must be positive"):
+        with pytest.raises(ValueError, match="tau must be finite and positive"):
             RouterConfig(tau=0.0)
 
     def test_router_tau_negative_rejected(self):
         from eklavya_e2_router import RouterConfig
-        with pytest.raises(ValueError, match="tau must be positive"):
+        with pytest.raises(ValueError, match="tau must be finite and positive"):
             RouterConfig(tau=-1.0)
+
+    def test_router_tau_nan_rejected(self):
+        from eklavya_e2_router import RouterConfig
+        with pytest.raises(ValueError, match="tau must be finite and positive"):
+            RouterConfig(tau=float("nan"))
+
+    def test_router_tau_inf_rejected(self):
+        from eklavya_e2_router import RouterConfig
+        with pytest.raises(ValueError, match="tau must be finite and positive"):
+            RouterConfig(tau=float("inf"))
+
+    def test_unknown_exclude_teacher_rejected(self):
+        cfg = E2Config(
+            ablation_id="A3",
+            teacher_exclude=["bogus_teacher"],
+        )
+        with pytest.raises(ValueError, match="Unknown teacher names.*exclude"):
+            validate_ablation_config(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -2898,6 +2916,44 @@ class TestEvalE2Scaffold:
         assert "student" in sig.parameters
         assert "eval_loader" in sig.parameters
         assert "cache_positions" in sig.parameters
+
+
+class TestEvalShardRangeValidation:
+    """Tests for --shard-range validation in eval_e2.main()."""
+
+    def _validate_shard_range(self, shard_range, n_shards):
+        """Mirror the validation logic from eval_e2.main()."""
+        if shard_range is not None:
+            s, e = shard_range
+            if s < 0 or e <= s or e > n_shards:
+                raise ValueError(
+                    f"--shard-range {s} {e} is invalid for {n_shards} shards. "
+                    f"Need 0 <= start < end <= {n_shards}."
+                )
+
+    def test_valid_shard_range_passes(self):
+        self._validate_shard_range((0, 5), 10)
+        self._validate_shard_range((3, 10), 10)
+        self._validate_shard_range((0, 1), 1)
+
+    def test_negative_start_rejected(self):
+        with pytest.raises(ValueError, match="invalid"):
+            self._validate_shard_range((-1, 5), 10)
+
+    def test_inverted_range_rejected(self):
+        with pytest.raises(ValueError, match="invalid"):
+            self._validate_shard_range((5, 3), 10)
+
+    def test_equal_start_end_rejected(self):
+        with pytest.raises(ValueError, match="invalid"):
+            self._validate_shard_range((5, 5), 10)
+
+    def test_end_exceeds_shard_count_rejected(self):
+        with pytest.raises(ValueError, match="invalid"):
+            self._validate_shard_range((0, 11), 10)
+
+    def test_none_range_passes(self):
+        self._validate_shard_range(None, 10)
 
 
 class TestE2ResumeAndEval:

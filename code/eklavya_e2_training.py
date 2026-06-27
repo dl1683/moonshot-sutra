@@ -382,6 +382,14 @@ def validate_ablation_config(cfg: E2Config) -> None:
                 f"--{flag.replace('_', '-')} but it is set"
             )
 
+    known = {t.name for t in TEACHER_REGISTRY}
+    if cfg.teacher_exclude:
+        unknown_exc = set(cfg.teacher_exclude) - known
+        if unknown_exc:
+            errors.append(
+                f"Unknown teacher names in --exclude-teachers: {unknown_exc}"
+            )
+
     if errors:
         msg = (f"Ablation config validation failed for {cfg.ablation_id}:\n"
                + "\n".join(f"  - {e}" for e in errors))
