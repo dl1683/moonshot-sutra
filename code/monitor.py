@@ -222,6 +222,19 @@ def _e2_anomalies(train: list[dict]) -> list[str]:
             f"Non-finite CE loss at step(s) {nan_steps[:5]} — "
             "model has diverged")
 
+    nan_teacher_steps = []
+    for e in train:
+        tl = e.get("teacher_losses_nats", e.get("teacher_losses", {}))
+        if isinstance(tl, dict):
+            for v in tl.values():
+                if isinstance(v, (int, float)) and not math.isfinite(v):
+                    nan_teacher_steps.append(e["step"])
+                    break
+    if nan_teacher_steps:
+        anomalies.append(
+            f"Non-finite teacher loss at step(s) {nan_teacher_steps[:5]} — "
+            "check NaN guards in router/purifier")
+
     route_entropies = [
         e["route_stats"]["mean_route_entropy"]
         for e in train if e.get("route_stats", {}).get("mean_route_entropy") is not None

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # ═══ monitor.format_time ════════════════════════════════════════════════
 
-from monitor import format_time, load_entries, detect_mode, display
+from monitor import format_time, load_entries, detect_mode, display, _e2_anomalies
 
 
 class TestFormatTime:
@@ -281,6 +281,48 @@ class TestDisplay:
             assert "0.45" in out
         finally:
             os.unlink(path)
+
+
+class TestE2Anomalies:
+    def test_clean_log_no_anomalies(self):
+        entries = [{"step": i, "ce_loss": 4.0 - i * 0.1} for i in range(20)]
+        assert _e2_anomalies(entries) == []
+
+    def test_nan_ce_loss_detected(self):
+        entries = [{"step": i, "ce_loss": 4.0} for i in range(5)]
+        entries.append({"step": 5, "ce_loss": float("nan")})
+        anomalies = _e2_anomalies(entries)
+        assert any("Non-finite CE loss" in a for a in anomalies)
+
+    def test_nan_teacher_loss_detected(self):
+        entries = [{"step": i, "ce_loss": 4.0,
+                    "teacher_losses_nats": {"kl_purified": 0.5}}
+                   for i in range(5)]
+        entries.append({"step": 5, "ce_loss": 4.0,
+                        "teacher_losses_nats": {"kl_purified": float("inf")}})
+        anomalies = _e2_anomalies(entries)
+        assert any("Non-finite teacher loss" in a for a in anomalies)
+
+    def test_route_entropy_collapse(self):
+        entries = [{"step": i, "ce_loss": 4.0,
+                    "route_stats": {"mean_route_entropy": 0.01}}
+                   for i in range(15)]
+        anomalies = _e2_anomalies(entries)
+        assert any("Route entropy collapse" in a for a in anomalies)
+
+    def test_grad_budget_suppressed(self):
+        entries = [{"step": i, "ce_loss": 4.0,
+                    "grad_budget": {"total_scale": 0.001}}
+                   for i in range(10)]
+        anomalies = _e2_anomalies(entries)
+        assert any("Gradient budget near zero" in a for a in anomalies)
+
+    def test_zero_teacher_signal(self):
+        entries = [{"step": i, "ce_loss": 4.0,
+                    "teacher_losses_bits": {"kl_purified": 0.0}}
+                   for i in range(15)]
+        anomalies = _e2_anomalies(entries)
+        assert any("Zero teacher signal" in a for a in anomalies)
 
 
 # ═══ s0_configs ═════════════════════════════════════════════════════════
