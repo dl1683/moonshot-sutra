@@ -1367,6 +1367,17 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         else:
             consecutive_ce_only = 0
 
+        if not math.isfinite(ce_loss.item()):
+            fail_entry = {"step": step, "phase": str(phase),
+                          "HARD_FAIL": "non-finite CE loss",
+                          "ce_loss": ce_loss.item()}
+            log_fh.write(json.dumps(fail_entry) + "\n")
+            log_fh.flush()
+            log_fh.close()
+            raise RuntimeError(
+                f"E2 HARD FAIL: non-finite CE loss at step {step} "
+                f"(phase={phase})")
+
         if (step + 1) % cfg.grad_accum == 0:
             all_params = list(student.parameters()) + list(ports.parameters())
             has_grad = any(p.grad is not None
@@ -1374,7 +1385,18 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             if has_grad:
                 if scaler is not None:
                     scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(all_params, cfg.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(
+                    all_params, cfg.max_grad_norm)
+                if not math.isfinite(grad_norm.item()):
+                    fail_entry = {"step": step, "phase": str(phase),
+                                  "HARD_FAIL": "non-finite grad_norm",
+                                  "grad_norm": grad_norm.item()}
+                    log_fh.write(json.dumps(fail_entry) + "\n")
+                    log_fh.flush()
+                    log_fh.close()
+                    raise RuntimeError(
+                        f"E2 HARD FAIL: non-finite grad_norm at step {step} "
+                        f"(phase={phase})")
                 if scaler is not None:
                     scaler.step(optimizer)
                     scaler.update()

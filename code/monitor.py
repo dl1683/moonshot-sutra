@@ -213,6 +213,13 @@ def _e2_anomalies(train: list[dict]) -> list[str]:
     """E2-specific anomaly detection."""
     anomalies = []
 
+    nan_steps = [e["step"] for e in train
+                 if not math.isfinite(e.get("ce_loss", 0))]
+    if nan_steps:
+        anomalies.append(
+            f"Non-finite CE loss at step(s) {nan_steps[:5]} — "
+            "model has diverged")
+
     route_entropies = [
         e["route_stats"]["mean_route_entropy"]
         for e in train if e.get("route_stats", {}).get("mean_route_entropy") is not None
@@ -238,8 +245,8 @@ def _e2_anomalies(train: list[dict]) -> list[str]:
     zero_teacher_count = 0
     total_with_teachers = 0
     for e in train:
-        tl = e.get("teacher_losses_bits", e.get("teacher_losses", {}))
-        if isinstance(tl, dict):
+        tl = e.get("teacher_losses_bits", e.get("teacher_losses"))
+        if isinstance(tl, dict) and len(tl) > 0:
             total_with_teachers += 1
             if all(v == 0 or v is None for v in tl.values()):
                 zero_teacher_count += 1
@@ -249,14 +256,15 @@ def _e2_anomalies(train: list[dict]) -> list[str]:
             f"steps ({zero_teacher_count/total_with_teachers*100:.0f}%) — "
             "cache coverage may be insufficient")
 
+    _DISAGREEMENT_PHASES = ("E2.4_disagreement", "DISAGREEMENT", "E2.4")
     zero_route_count = sum(
         1 for e in train
         if e.get("route_stats", {}).get("n_routed", 0) == 0
-        and e.get("phase") in ("DISAGREEMENT", "E2.4")
+        and e.get("phase") in _DISAGREEMENT_PHASES
     )
     disagreement_count = sum(
         1 for e in train
-        if e.get("phase") in ("DISAGREEMENT", "E2.4")
+        if e.get("phase") in _DISAGREEMENT_PHASES
     )
     if disagreement_count >= 5 and zero_route_count > disagreement_count * 0.3:
         anomalies.append(

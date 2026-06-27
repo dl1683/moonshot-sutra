@@ -961,8 +961,15 @@ class E2CacheView:
                         f"Teacher {spec.name} has {n_kl} KL records but "
                         f"{len(kl_pid_idx)} unique PIDs (duplicates)")
 
-                n_sample = min(100, n_kl)
-                for si in range(n_sample):
+                n_sample = min(200, n_kl)
+                if n_kl <= n_sample:
+                    sample_indices = range(n_kl)
+                else:
+                    stride = n_kl // n_sample
+                    sample_indices = list(range(0, n_kl, stride))[:n_sample]
+                    if n_kl - 1 not in sample_indices:
+                        sample_indices.append(n_kl - 1)
+                for si in sample_indices:
                     rec = kl_reader[si]
                     tp = rec.top_probs
                     if not (np.all(np.isfinite(tp)) and np.all(tp >= 0)):
@@ -975,6 +982,12 @@ class E2CacheView:
                         errors.append(
                             f"Teacher {spec.name} KL record {si}: "
                             f"invalid tail_prob={rec.tail_prob}")
+                        break
+                    prob_sum = float(tp.sum()) + rec.tail_prob
+                    if abs(prob_sum - 1.0) > 0.05:
+                        errors.append(
+                            f"Teacher {spec.name} KL record {si}: "
+                            f"prob mass {prob_sum:.4f} deviates from 1.0")
                         break
 
             if spec.has_semantic:

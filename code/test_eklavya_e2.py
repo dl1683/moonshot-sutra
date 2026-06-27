@@ -2694,7 +2694,7 @@ class TestE2TrainerSmoke:
                 kl_recs = [
                     E2KLRecord(
                         position_id=i, patch_idx=i + 1,
-                        tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                        tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                         top_bytes=np.arange(K, dtype=np.uint8),
                         top_probs=np.full(K, 1.0 / K, dtype=np.float16),
                     )
@@ -3160,7 +3160,7 @@ class TestE2EndToEnd:
         kl_recs = [
             E2KLRecord(
                 position_id=i, patch_idx=i + 1,
-                tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                 top_bytes=np.arange(K, dtype=np.uint8),
                 top_probs=np.full(K, 1.0 / K, dtype=np.float16),
             )
@@ -3477,7 +3477,7 @@ class TestE2EndToEnd:
         kl_recs = [
             E2KLRecord(
                 position_id=i, patch_idx=i + 1,
-                tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                 top_bytes=np.arange(K, dtype=np.uint8),
                 top_probs=np.full(K, 1.0 / K, dtype=np.float16),
             )
@@ -3568,7 +3568,7 @@ class TestE2EndToEnd:
             kl_recs = [
                 E2KLRecord(
                     position_id=i, patch_idx=i + 1,
-                    tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                    tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                     top_bytes=np.arange(K, dtype=np.uint8),
                     top_probs=np.full(K, 1.0 / K, dtype=np.float16),
                 )
@@ -3902,7 +3902,7 @@ class TestE2CacheView:
                 kl_recs = [
                     E2KLRecord(
                         position_id=i, patch_idx=i + 1,
-                        tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                        tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                         top_bytes=np.arange(K, dtype=np.uint8),
                         top_probs=np.full(K, 1.0 / K, dtype=np.float16),
                     )
@@ -4074,7 +4074,7 @@ class TestE2TrainerWithCacheView:
                 kl_recs = [
                     E2KLRecord(
                         position_id=i, patch_idx=i + 1,
-                        tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                        tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                         top_bytes=np.arange(K, dtype=np.uint8),
                         top_probs=np.full(K, 1.0 / K, dtype=np.float16),
                     )
@@ -4264,7 +4264,7 @@ class TestE2TrainerWithCacheView:
         kl_recs = [
             E2KLRecord(
                 position_id=0, patch_idx=2,
-                tail_prob=0.1, entropy=2.0, logp_gold=-3.0,
+                tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
                 top_bytes=np.arange(8, dtype=np.uint8),
                 top_probs=np.full(8, 1.0 / 8, dtype=np.float16),
             ),
@@ -4526,6 +4526,271 @@ class TestR19Findings:
             errors = view.validate()
             tail_errs = [e for e in errors if "tail_prob" in e]
             assert len(tail_errs) >= 1, f"Expected tail_prob error, got: {errors}"
+
+
+class TestMonitorAnomalyDetection:
+    """Tests for monitor._e2_anomalies() anomaly detection."""
+
+    def _make_entry(self, step=1, phase="PORT_WARMUP",
+                    route_entropy=None, total_scale=None,
+                    teacher_losses=None, n_routed=None):
+        entry = {"step": step, "phase": phase, "ce_loss": 1.0}
+        if route_entropy is not None:
+            entry["route_stats"] = {"mean_route_entropy": route_entropy}
+            if n_routed is not None:
+                entry["route_stats"]["n_routed"] = n_routed
+        if total_scale is not None:
+            entry["grad_budget"] = {"total_scale": total_scale}
+        if teacher_losses is not None:
+            entry["teacher_losses_bits"] = teacher_losses
+        return entry
+
+    def test_no_anomalies_healthy_log(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, route_entropy=1.5, total_scale=0.5,
+                             teacher_losses={"t0": 0.3, "t1": 0.2})
+            for i in range(20)
+        ]
+        assert _e2_anomalies(train) == []
+
+    def test_route_entropy_collapse_detected(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, route_entropy=0.05)
+            for i in range(15)
+        ]
+        anomalies = _e2_anomalies(train)
+        assert any("entropy collapse" in a for a in anomalies)
+
+    def test_route_entropy_collapse_not_triggered_when_recent_ok(self):
+        from monitor import _e2_anomalies
+        entries = [self._make_entry(step=i, route_entropy=0.05) for i in range(8)]
+        entries += [self._make_entry(step=i+8, route_entropy=1.5) for i in range(5)]
+        assert not any("entropy collapse" in a for a in _e2_anomalies(entries))
+
+    def test_route_entropy_collapse_needs_10_readings(self):
+        from monitor import _e2_anomalies
+        train = [self._make_entry(step=i, route_entropy=0.01) for i in range(9)]
+        assert not any("entropy collapse" in a for a in _e2_anomalies(train))
+
+    def test_gradient_budget_suppression_detected(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, total_scale=0.005)
+            for i in range(10)
+        ]
+        anomalies = _e2_anomalies(train)
+        assert any("budget near zero" in a.lower() or "budget" in a.lower() for a in anomalies)
+
+    def test_gradient_budget_ok_when_healthy(self):
+        from monitor import _e2_anomalies
+        train = [self._make_entry(step=i, total_scale=0.5) for i in range(10)]
+        assert not any("budget" in a.lower() for a in _e2_anomalies(train))
+
+    def test_gradient_budget_needs_5_readings(self):
+        from monitor import _e2_anomalies
+        train = [self._make_entry(step=i, total_scale=0.001) for i in range(4)]
+        assert not any("budget" in a.lower() for a in _e2_anomalies(train))
+
+    def test_zero_teacher_signal_detected(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, teacher_losses={"t0": 0, "t1": 0})
+            for i in range(15)
+        ]
+        anomalies = _e2_anomalies(train)
+        assert any("zero teacher signal" in a.lower() for a in anomalies)
+
+    def test_zero_teacher_signal_ok_when_most_nonzero(self):
+        from monitor import _e2_anomalies
+        entries = [
+            self._make_entry(step=i, teacher_losses={"t0": 0.3, "t1": 0.2})
+            for i in range(15)
+        ]
+        entries[0] = self._make_entry(step=0, teacher_losses={"t0": 0, "t1": 0})
+        assert not any("zero teacher" in a.lower() for a in _e2_anomalies(entries))
+
+    def test_zero_teacher_signal_needs_10_entries(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, teacher_losses={"t0": 0, "t1": 0})
+            for i in range(9)
+        ]
+        assert not any("zero teacher" in a.lower() for a in _e2_anomalies(train))
+
+    def test_zero_teacher_none_values_count_as_zero(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, teacher_losses={"t0": None, "t1": None})
+            for i in range(15)
+        ]
+        anomalies = _e2_anomalies(train)
+        assert any("zero teacher signal" in a.lower() for a in anomalies)
+
+    def test_no_routed_in_disagreement_detected(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, phase="E2.4_disagreement",
+                             route_entropy=1.0, n_routed=0)
+            for i in range(10)
+        ]
+        anomalies = _e2_anomalies(train)
+        assert any("no routed" in a.lower() for a in anomalies)
+
+    def test_no_routed_not_triggered_in_other_phases(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, phase="E2.2_consensus",
+                             route_entropy=1.0, n_routed=0)
+            for i in range(10)
+        ]
+        assert not any("no routed" in a.lower() for a in _e2_anomalies(train))
+
+    def test_no_routed_legacy_phase_names_supported(self):
+        from monitor import _e2_anomalies
+        for phase_name in ("DISAGREEMENT", "E2.4"):
+            train = [
+                self._make_entry(step=i, phase=phase_name,
+                                 route_entropy=1.0, n_routed=0)
+                for i in range(10)
+            ]
+            anomalies = _e2_anomalies(train)
+            assert any("no routed" in a.lower() for a in anomalies), \
+                f"Expected detection for legacy phase name {phase_name!r}"
+
+    def test_no_routed_ok_when_most_have_routes(self):
+        from monitor import _e2_anomalies
+        entries = [
+            self._make_entry(step=i, phase="E2.4_disagreement",
+                             route_entropy=1.0, n_routed=5)
+            for i in range(10)
+        ]
+        entries[0] = self._make_entry(step=0, phase="E2.4_disagreement",
+                                       route_entropy=1.0, n_routed=0)
+        assert not any("no routed" in a.lower() for a in _e2_anomalies(entries))
+
+    def test_no_routed_needs_5_disagreement_steps(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, phase="E2.4_disagreement",
+                             route_entropy=1.0, n_routed=0)
+            for i in range(4)
+        ]
+        assert not any("no routed" in a.lower() for a in _e2_anomalies(train))
+
+    def test_nan_ce_loss_detected(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(step=i, route_entropy=1.5, total_scale=0.5,
+                             teacher_losses={"t0": 0.3})
+            for i in range(10)
+        ]
+        train[5]["ce_loss"] = float("nan")
+        anomalies = _e2_anomalies(train)
+        assert any("non-finite" in a.lower() for a in anomalies)
+
+    def test_inf_ce_loss_detected(self):
+        from monitor import _e2_anomalies
+        train = [self._make_entry(step=i) for i in range(5)]
+        train[3]["ce_loss"] = float("inf")
+        anomalies = _e2_anomalies(train)
+        assert any("non-finite" in a.lower() for a in anomalies)
+
+    def test_multiple_anomalies_simultaneous(self):
+        from monitor import _e2_anomalies
+        train = [
+            self._make_entry(
+                step=i, phase="E2.4_disagreement",
+                route_entropy=0.01, total_scale=0.001,
+                teacher_losses={"t0": 0, "t1": 0}, n_routed=0
+            )
+            for i in range(15)
+        ]
+        anomalies = _e2_anomalies(train)
+        assert len(anomalies) == 4, f"Expected 4 anomalies, got {len(anomalies)}: {anomalies}"
+
+    def test_empty_train_log(self):
+        from monitor import _e2_anomalies
+        assert _e2_anomalies([]) == []
+
+    def test_entries_without_route_stats_ignored(self):
+        from monitor import _e2_anomalies
+        train = [{"step": i, "ce_loss": 1.0, "phase": "PORT_WARMUP"} for i in range(20)]
+        assert _e2_anomalies(train) == []
+
+
+class TestMonitorDetectMode:
+    """Tests for monitor.detect_mode()."""
+
+    def test_s0_mode(self):
+        from monitor import detect_mode
+        train = [{"step": 1, "bpb": 5.0, "grad_norm": 1.0}]
+        assert detect_mode(train) == "s0"
+
+    def test_e2_mode_by_phase(self):
+        from monitor import detect_mode
+        train = [{"step": 1, "phase": "PORT_WARMUP", "ce_loss": 1.0}]
+        assert detect_mode(train) == "e2"
+
+    def test_e2_mode_by_teacher_losses(self):
+        from monitor import detect_mode
+        train = [{"step": 1, "teacher_losses_bits": {"t0": 0.3}}]
+        assert detect_mode(train) == "e2"
+
+    def test_e2_mode_by_ce_loss(self):
+        from monitor import detect_mode
+        train = [{"step": 1, "ce_loss": 1.5}]
+        assert detect_mode(train) == "e2"
+
+    def test_empty_train(self):
+        from monitor import detect_mode
+        assert detect_mode([]) == "s0"
+
+
+class TestMonitorLoadEntries:
+    """Tests for monitor.load_entries()."""
+
+    def test_load_train_and_eval(self, tmp_path):
+        from monitor import load_entries
+        import json
+        log = tmp_path / "test.jsonl"
+        log.write_text(
+            json.dumps({"step": 1, "bpb": 5.0}) + "\n"
+            + json.dumps({"step": 2, "bpb": 4.5}) + "\n"
+            + json.dumps({"step": 2, "eval_bpb": 4.8}) + "\n"
+        )
+        train, eval_ = load_entries(str(log))
+        assert len(train) == 2
+        assert len(eval_) == 1
+
+    def test_load_hard_fail(self, tmp_path):
+        from monitor import load_entries
+        import json
+        log = tmp_path / "test.jsonl"
+        log.write_text(
+            json.dumps({"step": 1, "bpb": 5.0}) + "\n"
+            + json.dumps({"step": 2, "HARD_FAIL": "NaN loss", "bpb": float("nan")}) + "\n"
+        )
+        train, eval_ = load_entries(str(log))
+        assert len(train) == 2
+        assert any("HARD_FAIL" in e for e in train)
+
+    def test_load_nonexistent(self):
+        from monitor import load_entries
+        train, eval_ = load_entries("/nonexistent/path/log.jsonl")
+        assert train == []
+        assert eval_ == []
+
+    def test_load_empty_lines_skipped(self, tmp_path):
+        from monitor import load_entries
+        import json
+        log = tmp_path / "test.jsonl"
+        log.write_text(
+            "\n" + json.dumps({"step": 1, "bpb": 5.0}) + "\n\n\n"
+        )
+        train, eval_ = load_entries(str(log))
+        assert len(train) == 1
 
 
 if __name__ == "__main__":
