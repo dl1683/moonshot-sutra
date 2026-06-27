@@ -1229,6 +1229,44 @@ class TestMultiTeacherGradBudget:
         assert "t2" in report.per_teacher_norms
         assert report.total_scale > 0
 
+    def test_zero_ce_grad_caps_teacher_via_floor(self):
+        """When CE has requires_grad but zero gradient, teacher capped via floor."""
+        x = torch.randn(10, requires_grad=True)
+        ce_loss = 0.0 * x.sum()
+        assert ce_loss.requires_grad
+        t_loss = 100.0 * (x ** 2).sum()
+        report = apply_multi_teacher_gradient_budget(
+            [x], ce_loss, {"t1": t_loss},
+            per_teacher_cap=0.10)
+        assert report.ce_grad_norm == 0.0
+        if report.per_teacher_norms["t1"] > 0:
+            assert report.per_teacher_scales["t1"] < 1.0, \
+                "Teacher should be capped when CE norm is zero (via floor)"
+
+    def test_frozen_ce_leaves_teacher_uncapped(self):
+        """PORT_WARMUP: CE frozen (not requires_grad) -> teachers uncapped."""
+        model, x = self._make_toy_model()
+        out = model(x)
+        ce_loss = torch.tensor(0.0, requires_grad=False)
+        t_loss = F.mse_loss(out, torch.randn(4, 10))
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss, {"t1": t_loss},
+            per_teacher_cap=0.10)
+        assert report.ce_grad_norm == 0.0
+        assert report.per_teacher_scales["t1"] == 1.0, \
+            "Teacher should be uncapped when CE is frozen (PORT_WARMUP)"
+
+    def test_tiny_ce_grad_still_caps(self):
+        """Tiny CE grad should not cause discontinuous uncapping."""
+        x = torch.randn(10, requires_grad=True)
+        ce_loss = 1e-12 * x.sum()
+        t_loss = 100.0 * (x ** 2).sum()
+        report = apply_multi_teacher_gradient_budget(
+            [x], ce_loss, {"t1": t_loss},
+            per_teacher_cap=0.10)
+        if report.per_teacher_norms["t1"] > 0:
+            assert report.per_teacher_scales["t1"] < 1.0
+
 
 # ---------------------------------------------------------------------------
 # E2 Trainer tests

@@ -223,8 +223,10 @@ def apply_multi_teacher_gradient_budget(
 
         cap = per_teacher_cap.get(name, 0.10) if isinstance(per_teacher_cap, dict) else per_teacher_cap
         scale = 1.0
-        if ce_norm > 0 and t_norm > cap * ce_norm:
-            scale = cap * ce_norm / t_norm
+        if ce_loss.requires_grad:
+            effective_ce = max(ce_norm, 1e-6)
+            if t_norm > cap * effective_ce:
+                scale = cap * effective_ce / t_norm
         per_teacher_scales[name] = scale
 
         per_teacher_grads[name] = t_grads
@@ -245,8 +247,10 @@ def apply_multi_teacher_gradient_budget(
     ) ** 0.5
 
     total_scale = 1.0
-    if ce_norm > 0 and total_norm_before > total_teacher_cap * ce_norm:
-        total_scale = total_teacher_cap * ce_norm / total_norm_before
+    if ce_loss.requires_grad:
+        effective_ce_total = max(ce_norm, 1e-6)
+        if total_norm_before > total_teacher_cap * effective_ce_total:
+            total_scale = total_teacher_cap * effective_ce_total / total_norm_before
         for pid in total_teacher_grads:
             total_teacher_grads[pid].mul_(total_scale)
 

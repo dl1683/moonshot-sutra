@@ -136,6 +136,38 @@ a niche problem. Now there are 8+ competing approaches.
 - **RELEVANCE TO E2:** MEDIUM. Proves byte-level can match token-level at
   scale. Our model is much smaller (153M) and targets efficiency, not scale.
 
+### Bolmo — Byteifying LLMs (Allen AI, Dec 2025)
+- **arXiv:** 2512.15586
+- **Authors:** Minixhofer et al. (same author as tokenkit/cross-tokenizer KD)
+- **Core idea:** Two-stage conversion of existing subword models into byte-level.
+  Transplants the transformer "brain" (global layers) into a byte-level "body"
+  (local encoder/decoder). Avoids training from scratch.
+- **Scale:** 1B and 7B parameters. Open source (allenai/bolmo-core).
+- **Results:** +16.5% absolute over prior byte LLMs. Competitive with subword
+  models — Bolmo 1B: -3.2% MMLU vs source, but +5.1% Lambada, +3.3% CoQA,
+  +32.5% CUTE. Inference speed competitive with subword LMs at high
+  compression ratios.
+- **RELEVANCE TO E2:** HIGH. Bolmo validates the patch-global architecture at
+  scale (same structure as BLT and our Sutra-Dyad). Key difference: Bolmo
+  converts an EXISTING subword model — we train from scratch. Their approach
+  preserves world knowledge cheaply; ours aims to LEARN more efficiently via
+  multi-teacher KD. At 153M we're much smaller than their 1B. Their work shows
+  the byte-level paradigm is production-ready; our novelty is the learning
+  mechanism, not the architecture.
+
+### HoloByte — Continuous Hyperspherical Byte Distillation (Mar 2026)
+- **arXiv:** 2603.16917
+- **Core idea:** Projects byte chunks into continuous hyperspherical manifold via
+  invertible orthogonal rotation. Macro-transformer on compressed continuous
+  representations + micro-decoder for byte recovery.
+- **Result:** 1.484 nats/byte vs BPE's 1.954 nats/byte under identical compute.
+  Reduces attention from O(N²D) to O(N²/W² D + ND²).
+- **RELEVANCE TO E2:** LOW-MEDIUM. Very different approach (continuous manifold
+  vs discrete patch-global). Interesting theoretically — their lower entropy
+  bound suggests continuous representations may beat discrete patches. But
+  untested at meaningful scale and no competitive benchmarks yet. Worth
+  monitoring but not a direct competitor to our training approach.
+
 ### Token→Byte Distillation (Feb 2026)
 - **arXiv:** 2602.01007
 - **Authors:** Bao, Leng, Wang, Peng, Lu

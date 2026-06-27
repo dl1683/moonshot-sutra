@@ -788,8 +788,9 @@ class E2Trainer:
                     tail_mask[purified.top_bytes] = False
                     full_q[tail_mask] = purified.tail_prob / n_tail
                     target_H = -float(np.sum(full_q * np.log(full_q + 1e-10)))
-                    cal_losses.append(
-                        (student_H - target_H) ** 2)
+                    if math.isfinite(target_H) and torch.isfinite(student_H):
+                        cal_losses.append(
+                            (student_H - target_H) ** 2)
 
             if kl_losses:
                 teacher_losses["kl_purified"] = (
