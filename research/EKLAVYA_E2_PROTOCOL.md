@@ -51,7 +51,7 @@ Before E2 begins:
 3. Teacher feasibility profiling (E2.0) passes for each candidate — see [E2 Teacher Feasibility](EKLAVYA_E2_TEACHER_FEASIBILITY.md)
 4. Pilot cache (25-50 shards) is built and validated
 5. E1 test suite (28 tests) still passes
-6. E2 test suite (251 tests) passes
+6. E2 test suite (278 tests) passes
 
 ## 5. Teacher Roster and Roles
 
@@ -305,9 +305,12 @@ Full ablation plan with commands, metrics, and decision rules: [EKLAVYA_E2_ABLAT
 | A6 | E2 shuffled teacher targets | Are real signals necessary? |
 | A7 | E2 with gradient budget disabled | Does gradient budgeting help? |
 | A8 | E2 with all teachers from step 0 | Does phased admission help? |
+| A9a | E2 gold-free entropy router | Entropy-only routing viable? |
+| A9b | E2 gold-free agreement router | Agreement penalty helps? |
+| A9c | E2 gold-free full router | Full gold-free router viable? |
 | BLD | Single-teacher byte KL, no E2 machinery | Does E2 beat raw byte KL? |
 
-Information value ranking: A2 vs A0 > A2 vs A1 > A2 vs BLD > A5 vs A2 > A7 vs A2 > A8 vs A2 > A6 vs A2 > A3 vs A2 > A4 vs A2.
+Information value ranking: A2 vs A0 > A2 vs A1 > A2 vs BLD > A5 vs A2 > A9c vs A2 > A7 vs A2 > A8 vs A2 > A6 vs A2 > A3 vs A2 > A4 vs A2.
 
 Only run full leave-one-out after A2 clearly beats A1.
 
@@ -334,7 +337,7 @@ All E2 code in separate files, E1 remains frozen:
 | `code/eklavya_e2_cache.py` | Teacher registry, binary records, cache I/O | ✅ Built |
 | `code/eklavya_e2_router.py` | MultiTeacherBatch, PL router, purifier | ✅ Built |
 | `code/eklavya_e2_losses.py` | Projection ports, losses, gradient budget | ✅ Built |
-| `code/test_eklavya_e2.py` | 251 tests passing | ✅ Built |
+| `code/test_eklavya_e2.py` | 278 tests passing | ✅ Built |
 | `code/eklavya_e2_training.py` | E2 trainer with curriculum + real teacher losses | ✅ Built |
 | `code/eklavya_e2_cache_builder.py` | Two-pass cache builder (student gaps → teacher records) | ✅ Built |
 | `research/EKLAVYA_E2_PROTOCOL.md` | This document | ✅ Written |

@@ -553,8 +553,9 @@ import torch.nn.functional as F
 from eklavya_e2_router import (
     route_teachers, purify_byte_target, disagreement_jsd,
     build_multi_teacher_batch, route_batch, purify_batch,
-    RouteResult,
-    _zscore,
+    RouteResult, RouterConfig,
+    _zscore, _pairwise_agreement_scores, _teacher_student_jsd,
+    _sparse_to_full, _VALID_ROUTER_MODES,
 )
 from eklavya_e2_losses import (
     MultiTeacherProjectionPorts,
@@ -647,6 +648,153 @@ class TestRouteTeachers:
         result = route_teachers(dists, gold_byte=65,
                                 priors={"t1": 0.5, "t2": 0.5})
         assert result.route_entropy >= -1e-10
+
+
+class TestGoldFreeRouter:
+    """Tests for gold-free routing modes (A9a/A9b/A9c)."""
+
+    def _student_probs(self, peak_byte: int = 65, confidence: float = 0.5):
+        p = np.full(256, (1.0 - confidence) / 255, dtype=np.float64)
+        p[peak_byte] = confidence
+        p /= p.sum()
+        return p
+
+    def _student_entropy(self, probs):
+        return -float(np.sum(probs * np.log(np.maximum(probs, 1e-12))))
+
+    def test_gold_free_entropy_produces_valid_weights(self):
+        dists = {
+            "t1": _make_sparse_dist(gold=65, confidence=0.8),
+            "t2": _make_sparse_dist(gold=66, confidence=0.3),
+        }
+        cfg = RouterConfig(mode="gold_free_entropy")
+        result = route_teachers(dists, gold_byte=None, priors={"t1": 0.5, "t2": 0.5}, config=cfg)
+        assert abs(sum(result.weights.values()) - 1.0) < 1e-6
+        assert result.weights["t1"] > result.weights["t2"], \
+            "Lower-entropy teacher should get more weight"
+
+    def test_gold_free_agreement_penalizes_outlier(self):
+        d_agree1 = _make_sparse_dist(gold=65, confidence=0.7)
+        d_agree2 = _make_sparse_dist(gold=65, confidence=0.6)
+        d_outlier = _make_sparse_dist(gold=200, confidence=0.9)
+        dists = {"t1": d_agree1, "t2": d_agree2, "t3": d_outlier}
+        cfg = RouterConfig(mode="gold_free_agreement", agreement_gamma=1.0)
+        result = route_teachers(
+            dists, gold_byte=None,
+            priors={"t1": 1/3, "t2": 1/3, "t3": 1/3}, config=cfg)
+        assert result.weights["t3"] < result.weights["t1"], \
+            "Outlier teacher should get lower weight with agreement penalty"
+
+    def test_gold_free_student_jsd_requires_student_probs(self):
+        dists = {"t1": _make_sparse_dist(gold=65, confidence=0.7)}
+        cfg = RouterConfig(mode="gold_free_student_jsd")
+        with pytest.raises(ValueError, match="requires student_probs"):
+            route_teachers(dists, gold_byte=None, priors={"t1": 1.0}, config=cfg)
+
+    def test_gold_free_student_jsd_produces_valid_weights(self):
+        dists = {
+            "t1": _make_sparse_dist(gold=65, confidence=0.7),
+            "t2": _make_sparse_dist(gold=66, confidence=0.7),
+        }
+        s_probs = self._student_probs(peak_byte=65, confidence=0.5)
+        s_ent = self._student_entropy(s_probs)
+        cfg = RouterConfig(mode="gold_free_student_jsd")
+        result = route_teachers(
+            dists, gold_byte=None, priors={"t1": 0.5, "t2": 0.5},
+            config=cfg, student_probs=s_probs, student_entropy=s_ent)
+        assert abs(sum(result.weights.values()) - 1.0) < 1e-6
+
+    def test_oracle_gold_requires_gold_byte(self):
+        dists = {"t1": _make_sparse_dist(gold=65, confidence=0.7)}
+        cfg = RouterConfig(mode="oracle_gold")
+        with pytest.raises(ValueError, match="requires gold_byte"):
+            route_teachers(dists, gold_byte=None, priors={"t1": 1.0}, config=cfg)
+
+    def test_invalid_mode_raises(self):
+        dists = {"t1": _make_sparse_dist(gold=65, confidence=0.7)}
+        cfg = RouterConfig(mode="invalid_mode")
+        with pytest.raises(ValueError, match="Unknown router mode"):
+            route_teachers(dists, gold_byte=65, priors={"t1": 1.0}, config=cfg)
+
+    def test_gold_free_ignores_gold_byte(self):
+        dists = {
+            "t1": _make_sparse_dist(gold=65, confidence=0.8),
+            "t2": _make_sparse_dist(gold=66, confidence=0.8),
+        }
+        cfg = RouterConfig(mode="gold_free_entropy")
+        r1 = route_teachers(dists, gold_byte=None, priors={"t1": 0.5, "t2": 0.5}, config=cfg)
+        r2 = route_teachers(dists, gold_byte=None, priors={"t1": 0.5, "t2": 0.5}, config=cfg)
+        for name in r1.weights:
+            assert abs(r1.weights[name] - r2.weights[name]) < 1e-10
+
+    def test_single_teacher_all_modes(self):
+        dist = _make_sparse_dist(gold=65, confidence=0.7)
+        s_probs = self._student_probs()
+        s_ent = self._student_entropy(s_probs)
+        for mode in _VALID_ROUTER_MODES:
+            cfg = RouterConfig(mode=mode)
+            kwargs = {"student_probs": s_probs, "student_entropy": s_ent}
+            gold = 65 if mode == "oracle_gold" else None
+            result = route_teachers(
+                {"t1": dist}, gold_byte=gold, priors={"t1": 1.0},
+                config=cfg, **kwargs)
+            assert abs(result.weights["t1"] - 1.0) < 1e-6
+
+
+class TestPairwiseAgreementScores:
+    def test_identical_teachers_zero_agreement(self):
+        d = _make_sparse_dist(gold=65, confidence=0.7)
+        fulls = {"t1": _sparse_to_full(d), "t2": _sparse_to_full(d)}
+        scores = _pairwise_agreement_scores(["t1", "t2"], fulls)
+        assert all(abs(s) < 1e-6 for s in scores)
+
+    def test_divergent_teachers_positive_agreement(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.95)
+        d2 = _make_sparse_dist(gold=200, confidence=0.95)
+        fulls = {"t1": _sparse_to_full(d1), "t2": _sparse_to_full(d2)}
+        scores = _pairwise_agreement_scores(["t1", "t2"], fulls)
+        assert all(s > 0.01 for s in scores)
+
+    def test_single_teacher_returns_zero(self):
+        d = _make_sparse_dist(gold=65, confidence=0.7)
+        fulls = {"t1": _sparse_to_full(d)}
+        scores = _pairwise_agreement_scores(["t1"], fulls)
+        assert scores == [0.0]
+
+    def test_outlier_has_highest_score(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.7)
+        d2 = _make_sparse_dist(gold=65, confidence=0.6)
+        d_out = _make_sparse_dist(gold=200, confidence=0.95)
+        fulls = {
+            "t1": _sparse_to_full(d1),
+            "t2": _sparse_to_full(d2),
+            "t3": _sparse_to_full(d_out),
+        }
+        scores = _pairwise_agreement_scores(["t1", "t2", "t3"], fulls)
+        assert scores[2] > scores[0], "Outlier should have highest agreement score"
+        assert scores[2] > scores[1]
+
+
+class TestTeacherStudentJSD:
+    def test_identical_distributions_zero_jsd(self):
+        d = _make_sparse_dist(gold=65, confidence=0.7)
+        full = _sparse_to_full(d)
+        jsd = _teacher_student_jsd(full, full)
+        assert abs(jsd) < 1e-6
+
+    def test_different_distributions_positive_jsd(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.9)
+        student = np.full(256, 1/256, dtype=np.float64)
+        jsd = _teacher_student_jsd(_sparse_to_full(d1), student)
+        assert jsd > 0.01
+
+    def test_jsd_symmetric(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.8)
+        d2 = _make_sparse_dist(gold=66, confidence=0.6)
+        f1, f2 = _sparse_to_full(d1), _sparse_to_full(d2)
+        jsd1 = _teacher_student_jsd(f1, f2)
+        jsd2 = _teacher_student_jsd(f2, f1)
+        assert abs(jsd1 - jsd2) < 1e-6
 
 
 class TestDisagreementJSD:
@@ -1332,6 +1480,69 @@ class TestAblationConfigValidation:
         cfg = E2Config(ablation_id="BLD", bld_mode=True,
                        teacher_exclude=["t1_diversity_hybrid"])
         with pytest.raises(ValueError, match="BLD.*forbids.*teacher-exclude"):
+            validate_ablation_config(cfg)
+
+    # --- A9a: gold-free entropy ---
+    def test_a9a_with_correct_router_mode_passes(self):
+        cfg = E2Config(ablation_id="A9a", router_mode="gold_free_entropy")
+        validate_ablation_config(cfg)
+
+    def test_a9a_with_wrong_router_mode_fails(self):
+        cfg = E2Config(ablation_id="A9a", router_mode="oracle_gold")
+        with pytest.raises(ValueError, match="A9a.*requires.*router-mode.*gold_free_entropy"):
+            validate_ablation_config(cfg)
+
+    def test_a9a_with_ce_only_fails(self):
+        cfg = E2Config(ablation_id="A9a", router_mode="gold_free_entropy", ce_only=True)
+        with pytest.raises(ValueError, match="A9a.*forbids.*ce-only"):
+            validate_ablation_config(cfg)
+
+    def test_a9a_with_disable_router_fails(self):
+        cfg = E2Config(ablation_id="A9a", router_mode="gold_free_entropy", disable_router=True)
+        with pytest.raises(ValueError, match="A9a.*forbids.*disable-router"):
+            validate_ablation_config(cfg)
+
+    def test_a9a_with_bld_mode_fails(self):
+        cfg = E2Config(ablation_id="A9a", router_mode="gold_free_entropy", bld_mode=True)
+        with pytest.raises(ValueError, match="A9a.*forbids.*bld-mode"):
+            validate_ablation_config(cfg)
+
+    # --- A9b: gold-free agreement ---
+    def test_a9b_with_correct_router_mode_passes(self):
+        cfg = E2Config(ablation_id="A9b", router_mode="gold_free_agreement")
+        validate_ablation_config(cfg)
+
+    def test_a9b_with_wrong_router_mode_fails(self):
+        cfg = E2Config(ablation_id="A9b", router_mode="gold_free_entropy")
+        with pytest.raises(ValueError, match="A9b.*requires.*router-mode.*gold_free_agreement"):
+            validate_ablation_config(cfg)
+
+    def test_a9b_with_shuffle_fails(self):
+        cfg = E2Config(ablation_id="A9b", router_mode="gold_free_agreement",
+                       shuffle_teacher_targets=True)
+        with pytest.raises(ValueError, match="A9b.*forbids.*shuffle"):
+            validate_ablation_config(cfg)
+
+    # --- A9c: gold-free student JSD ---
+    def test_a9c_with_correct_router_mode_passes(self):
+        cfg = E2Config(ablation_id="A9c", router_mode="gold_free_student_jsd")
+        validate_ablation_config(cfg)
+
+    def test_a9c_with_wrong_router_mode_fails(self):
+        cfg = E2Config(ablation_id="A9c", router_mode="oracle_gold")
+        with pytest.raises(ValueError, match="A9c.*requires.*router-mode.*gold_free_student_jsd"):
+            validate_ablation_config(cfg)
+
+    def test_a9c_with_teacher_include_fails(self):
+        cfg = E2Config(ablation_id="A9c", router_mode="gold_free_student_jsd",
+                       teacher_include=["t0_anchor_decoder"])
+        with pytest.raises(ValueError, match="A9c.*forbids.*teacher-include"):
+            validate_ablation_config(cfg)
+
+    def test_a9c_with_teacher_exclude_fails(self):
+        cfg = E2Config(ablation_id="A9c", router_mode="gold_free_student_jsd",
+                       teacher_exclude=["t1_diversity_hybrid"])
+        with pytest.raises(ValueError, match="A9c.*forbids.*teacher-exclude"):
             validate_ablation_config(cfg)
 
     def test_unknown_ablation_warns(self, capsys):

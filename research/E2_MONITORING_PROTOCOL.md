@@ -107,6 +107,21 @@ Just CE loss + weighted KL from anchor teacher's byte distributions.
 - If BLD matches or beats A2: E2 machinery adds no value, fundamental problem
 - If A2 clearly beats BLD: the machinery (routing, multi-teacher) is justified
 
+### A9a/A9b/A9c (Gold-Free Router Variants)
+
+A9 tests whether routing can work without conditioning on the gold byte.
+Each variant adds more signal:
+- A9a: entropy only (`--router-mode gold_free_entropy`)
+- A9b: entropy + teacher agreement (`--router-mode gold_free_agreement`)
+- A9c: entropy + agreement + student-teacher JSD (`--router-mode gold_free_student_jsd`)
+
+**Watch for:**
+- A9c matching A2 within 0.01 BPB = oracle routing was unnecessary, promote A9c
+- A2 beating A9c by >0.02 BPB = oracle routing is material, cannot claim deployable
+- A9a-b-c monotonically improving = each signal adds value, confirms design
+- A9c ≈ A5 (no router) = gold-free signals too weak, routing concept unproven
+- Route entropy patterns across A9 variants: more signals should reduce entropy
+
 ## Ablation Priority (Limited GPU Time)
 
 If only 4 ablations can run, execute in this order:
@@ -120,4 +135,9 @@ If 7 ablations can run, add:
 6. **A8** (no phased admission) — novelty-critical
 7. **A6** (shuffled targets) — falsification
 
-Defer A3, A4, A5 until baseline numbers exist. Use route telemetry from A2 to decide next.
+If 10+ ablations can run, add:
+8. **A9c** (gold-free router) — publishability-critical
+9. **A5** (no router) — routing necessity
+10. **A3/A4** (teacher contribution)
+
+Defer A3, A4 until baseline numbers exist. Use route telemetry from A2 to decide next.

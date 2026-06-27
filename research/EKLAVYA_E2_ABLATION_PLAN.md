@@ -29,6 +29,9 @@ Each ablation is a separate training run producing its own checkpoint:
 | A6 | Shuffled teacher targets | E2 with position-shuffled teacher records | Are real signals necessary? |
 | A7 | No gradient budget | E2 with gradient budget disabled | Does gradient budgeting help? |
 | A8 | No phased admission | E2 with all teachers active from step 0 | Does phased admission help? |
+| A9a | Gold-free entropy router | E2 with router_mode=gold_free_entropy | Does entropy-only routing work? |
+| A9b | Gold-free agreement router | E2 with router_mode=gold_free_agreement | Does agreement penalty help? |
+| A9c | Gold-free student JSD router | E2 with router_mode=gold_free_student_jsd | Full gold-free router |
 | BLD | Single-teacher byte KL | Raw byte KL from anchor, no E2 machinery | BLD-style baseline comparison |
 
 ## Information Value Ranking (Updated June 2026)
@@ -49,7 +52,7 @@ Run ablations in this order (highest information first):
 8. **A3 vs A2**: Does the strongest non-anchor teacher contribute?
 9. **A4 vs A2**: Do semantic embeddings help?
 
-Only run A3-A9 if A2 clearly beats A1.
+Only run A3-A9c if A2 clearly beats A1.
 
 ## Metrics
 
@@ -120,6 +123,27 @@ python code/eklavya_e2_training.py \
   --output-dir checkpoints/e2_a8_no_phased \
   --ablation-id A8 --no-phased-admission
 
+# A9a: Gold-free entropy-only router
+python code/eklavya_e2_training.py \
+  --student-checkpoint checkpoints/e1/e1_best.pt \
+  --cache-dir eklavya_e2_cache \
+  --output-dir checkpoints/e2_a9a_gf_entropy \
+  --ablation-id A9a --router-mode gold_free_entropy
+
+# A9b: Gold-free entropy + agreement router
+python code/eklavya_e2_training.py \
+  --student-checkpoint checkpoints/e1/e1_best.pt \
+  --cache-dir eklavya_e2_cache \
+  --output-dir checkpoints/e2_a9b_gf_agreement \
+  --ablation-id A9b --router-mode gold_free_agreement
+
+# A9c: Gold-free full router (entropy + agreement + student JSD)
+python code/eklavya_e2_training.py \
+  --student-checkpoint checkpoints/e1/e1_best.pt \
+  --cache-dir eklavya_e2_cache \
+  --output-dir checkpoints/e2_a9c_gf_student_jsd \
+  --ablation-id A9c --router-mode gold_free_student_jsd
+
 # BLD: Single-teacher byte KL baseline (no E2 machinery)
 python code/eklavya_e2_training.py \
   --student-checkpoint checkpoints/e1/e1_best.pt \
@@ -178,6 +202,9 @@ Each evaluation produces a JSON file:
 | A6 BPB ≈ A2 BPB (within 0.02) | Signals are noise | Something is fundamentally wrong |
 | A3 BPB ≈ A2 BPB (within 0.02) | Best diversity teacher expendable | Drop it, reduce cache cost |
 | A4 BPB ≈ A2 BPB (within 0.02) | Semantic embeddings expendable | Drop embedding teacher |
+| A9c within 0.01 BPB of A2 and beats A5 by >0.02 | Gold-free router works | Promote A9c, demote A2 to oracle ceiling |
+| A2 beats A9c by >0.02 BPB | Oracle-aided routing material | Router was oracle-dependent, don't claim deployable |
+| A9c ≈ A5 within 0.02 BPB | Routing concept unproven | Use arithmetic/prior mixture |
 | A2 BPB < A0 by >0.02, A2 < A1 by >0.01 | Multi-teacher wins | Eklavya validated |
 
 ## Retained-Gain Per Teacher

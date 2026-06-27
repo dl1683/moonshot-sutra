@@ -182,7 +182,7 @@ C:/sutra_fast/eklavya_e2_cache/
 ### Prerequisites
 - [ ] E1 best checkpoint exists
 - [ ] E2 cache built and validated (Phase 5)
-- [ ] 295 tests passing (`pytest code/ -x`)
+- [ ] 322 tests passing (`pytest code/ -x`)
 
 ### VRAM Budget (Training)
 ```
@@ -242,6 +242,9 @@ Run AFTER main E2 to validate multi-teacher value.
 | A6 | `--shuffle-teacher-targets` | Are real signals necessary? (falsification) |
 | A7 | `--disable-gradient-budget` | Does gradient budgeting help? |
 | A8 | `--no-phased-admission` | Does phased admission help? |
+| A9a | `--router-mode gold_free_entropy` | Does entropy-only routing work? |
+| A9b | `--router-mode gold_free_agreement` | Does agreement penalty help? |
+| A9c | `--router-mode gold_free_student_jsd` | Full gold-free router |
 | BLD | `--bld-mode --steps 8000` | Does E2 machinery beat raw byte KL? |
 
 ### Priority Order
@@ -290,7 +293,7 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (251 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (278 tests) |
 | S0 tests | `code/test_overfit.py` (16 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |

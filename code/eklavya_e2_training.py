@@ -95,6 +95,9 @@ class E2Config:
     router_alpha: float = 1.0
     router_beta: float = 0.5
     router_tau: float = 1.0
+    router_mode: str = "oracle_gold"
+    router_agreement_gamma: float = 0.5
+    router_student_delta: float = 0.25
     purifier_mode: str = "arithmetic"
 
     # JSD thresholds for teacher admission
@@ -215,6 +218,27 @@ _ABLATION_RULES: dict[str, dict] = {
                       "disable_router", "shuffle_teacher_targets",
                       "disable_gradient_budget", "no_phased_admission"},
     },
+    "A9a": {
+        "desc": "Gold-free router (entropy only)",
+        "required": set(),
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "disable_router", "shuffle_teacher_targets", "bld_mode"},
+        "require_router_mode": "gold_free_entropy",
+    },
+    "A9b": {
+        "desc": "Gold-free router (entropy + agreement)",
+        "required": set(),
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "disable_router", "shuffle_teacher_targets", "bld_mode"},
+        "require_router_mode": "gold_free_agreement",
+    },
+    "A9c": {
+        "desc": "Gold-free router (entropy + agreement + student JSD)",
+        "required": set(),
+        "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
+                      "disable_router", "shuffle_teacher_targets", "bld_mode"},
+        "require_router_mode": "gold_free_student_jsd",
+    },
 }
 
 _FLAG_ACTIVE: dict[str, object] = {
@@ -255,6 +279,14 @@ def validate_ablation_config(cfg: E2Config) -> None:
             errors.append(
                 f"{cfg.ablation_id} requires --exclude-teachers to be exactly "
                 "t3_semantic_embedding (no other teachers excluded)"
+            )
+
+    required_mode = rules.get("require_router_mode")
+    if required_mode is not None:
+        if cfg.router_mode != required_mode:
+            errors.append(
+                f"{cfg.ablation_id} ({rules['desc']}) requires "
+                f"--router-mode {required_mode} but got {cfg.router_mode}"
             )
 
     for flag in rules.get("required", set()):
@@ -384,9 +416,12 @@ class E2Trainer:
         self._cache_view = cache if isinstance(cache, E2CacheView) else None
 
         self.router_config = RouterConfig(
+            mode=cfg.router_mode,
             alpha=cfg.router_alpha,
             beta=cfg.router_beta,
             tau=cfg.router_tau,
+            agreement_gamma=cfg.router_agreement_gamma,
+            student_delta=cfg.router_student_delta,
         )
         self._last_route_stats: dict = {}
 
@@ -589,11 +624,24 @@ class E2Trainer:
                 if not teacher_dists:
                     continue
 
+                logit_idx = pos.patch_idx - 1
+                if logit_idx < 0 or logit_idx >= Nm1:
+                    continue
+                student_logit = logits[b, logit_idx, 0]
+
                 priors = {s.name: s.prior
                           for s in active if s.name in teacher_dists}
                 ptotal = sum(priors.values())
                 if ptotal > 0:
                     priors = {k: v / ptotal for k, v in priors.items()}
+
+                s_probs_np = None
+                s_ent_float = None
+                if self.router_config.mode.startswith("gold_free"):
+                    s_p = F.softmax(student_logit.detach().float(), dim=-1)
+                    s_probs_np = s_p.cpu().numpy().astype(np.float64)
+                    s_ent_float = -float(
+                        np.sum(s_probs_np * np.log(np.maximum(s_probs_np, 1e-12))))
 
                 if cfg.disable_router:
                     uniform = {k: 1.0 / len(teacher_dists)
@@ -605,9 +653,12 @@ class E2Trainer:
                     purified = purify_byte_target(
                         teacher_dists, route_result, mode="arithmetic")
                 else:
+                    gold = pos.gold_byte if not self.router_config.mode.startswith("gold_free") else None
                     route_result = route_teachers(
-                        teacher_dists, pos.gold_byte, priors,
-                        self.router_config)
+                        teacher_dists, gold, priors,
+                        self.router_config,
+                        student_probs=s_probs_np,
+                        student_entropy=s_ent_float)
                     purified = purify_byte_target(
                         teacher_dists, route_result, mode=cfg.purifier_mode)
                 if purified is None:
@@ -622,11 +673,6 @@ class E2Trainer:
                 route_entropies.append(route_result.route_entropy)
                 for tname, tw in route_result.weights.items():
                     route_weight_sums[tname] = route_weight_sums.get(tname, 0) + tw
-
-                logit_idx = pos.patch_idx - 1
-                if logit_idx < 0 or logit_idx >= Nm1:
-                    continue
-                student_logit = logits[b, logit_idx, 0]
 
                 loss = e2_topk_tail_kl(student_logit, purified,
                                        cfg.kl_temperature)
@@ -1336,6 +1382,14 @@ if __name__ == "__main__":
                         help="Skip gradient budgeting (uncapped teacher grads, for A7)")
     parser.add_argument("--no-phased-admission", action="store_true",
                         help="All teachers active from first student-updating phase (for A8)")
+    parser.add_argument("--router-mode", default="oracle_gold",
+                        choices=["oracle_gold", "gold_free_entropy",
+                                 "gold_free_agreement", "gold_free_student_jsd"],
+                        help="Router scoring mode (default: oracle_gold)")
+    parser.add_argument("--router-agreement-gamma", type=float, default=0.5,
+                        help="Agreement penalty weight for gold-free routing")
+    parser.add_argument("--router-student-delta", type=float, default=0.25,
+                        help="Student-teacher JSD weight for gold-free routing")
     parser.add_argument("--bld-mode", action="store_true",
                         help="BLD baseline: single-teacher byte KL, no E2 machinery")
     parser.add_argument("--bld-kl-weight", type=float, default=0.10,
@@ -1357,6 +1411,9 @@ if __name__ == "__main__":
         no_phased_admission=args.no_phased_admission,
         bld_mode=args.bld_mode,
         bld_kl_weight=args.bld_kl_weight,
+        router_mode=args.router_mode,
+        router_agreement_gamma=args.router_agreement_gamma,
+        router_student_delta=args.router_student_delta,
     )
     if args.steps:
         cfg.disagreement_steps = max(0, args.steps - cfg.port_warmup_steps
