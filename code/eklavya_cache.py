@@ -309,7 +309,8 @@ class StreamingCacheWriter:
             self._kl_f.write(struct.pack("<ee", r.tail_prob, r.entropy))
         self.n_kl += len(kl_records)
 
-    def finalize(self, embedding_table: Optional[torch.Tensor] = None):
+    def finalize(self, embedding_table: Optional[torch.Tensor] = None,
+                 shard_range: Optional[tuple[int, int]] = None):
         self._align_f.seek(0)
         self._align_f.write(struct.pack("<I", self.n_align))
         self._align_f.flush()
@@ -334,6 +335,8 @@ class StreamingCacheWriter:
             "kl_top_k": self.kl_top_k,
             "has_embeddings": embedding_table is not None,
         }
+        if shard_range is not None:
+            manifest["shard_range"] = list(shard_range)
         with open(os.path.join(self.output_dir, "cache_manifest.json"), "w") as f:
             json.dump(manifest, f, indent=2)
 
@@ -341,7 +344,8 @@ class StreamingCacheWriter:
 
 
 def save_cache(output_dir: str, align_records: list[AlignRecord],
-               kl_records: list[ByteKLRecord], embedding_table: Optional[torch.Tensor] = None):
+               kl_records: list[ByteKLRecord], embedding_table: Optional[torch.Tensor] = None,
+               shard_range: Optional[tuple[int, int]] = None):
     os.makedirs(output_dir, exist_ok=True)
 
     align_path = os.path.join(output_dir, "align_records.bin")
@@ -377,6 +381,8 @@ def save_cache(output_dir: str, align_records: list[AlignRecord],
         "kl_top_k": K,
         "has_embeddings": embedding_table is not None,
     }
+    if shard_range is not None:
+        manifest["shard_range"] = list(shard_range)
     with open(os.path.join(output_dir, "cache_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
 
@@ -521,7 +527,7 @@ def main():
 
     elapsed = time.time() - t0
     print(f"\nDone in {elapsed:.0f}s")
-    writer.finalize(embedding_table)
+    writer.finalize(embedding_table, shard_range=(0, n_shards))
 
 
 if __name__ == "__main__":

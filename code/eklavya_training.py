@@ -86,6 +86,10 @@ class EklavyaConfig:
 
     data_dir: str = "data/shards_bytes_full"
 
+    eval_batches: int = 50
+    resume_from: str | None = None
+    consecutive_ce_only_threshold: int = 200
+
 
 class AlignProjection(nn.Module):
     def __init__(self, student_dim: int = 576, teacher_dim: int = 2048):
@@ -95,6 +99,37 @@ class AlignProjection(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.proj(self.norm(x))
+
+
+@torch.no_grad()
+def evaluate_e1(student: SutraS0, align_proj: AlignProjection, eval_loader,
+                device: torch.device, amp_dtype: torch.dtype,
+                use_cuda: bool, max_batches: int = 50) -> dict:
+    student.eval()
+    align_proj.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    P = student.cfg.patch_size
+    for i, batch in enumerate(eval_loader):
+        if i >= max_batches:
+            break
+        byte_ids = batch[0].to(device)
+        B, T = byte_ids.shape
+        N = T // P
+        with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_cuda):
+            out = student(byte_ids)
+            logits = out["logits"]
+            targets = byte_ids.reshape(B, N, P)[:, 1:]
+            loss = F.cross_entropy(logits.reshape(-1, 256), targets.reshape(-1))
+        predicted = B * (T - P)
+        total_loss += loss.item() * predicted
+        total_tokens += predicted
+    student.train()
+    align_proj.train()
+    if total_tokens == 0:
+        return {"eval_loss": float("inf"), "eval_bpb": float("inf")}
+    avg_loss = total_loss / total_tokens
+    return {"eval_loss": avg_loss, "eval_bpb": avg_loss / math.log(2)}
 
 
 def overlap_pool(patch_states: torch.Tensor, byte_start: int, byte_end: int,
@@ -371,20 +406,39 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
 
     align_proj = AlignProjection(model_cfg.d_model, teacher_dim).to(device)
 
+    manifest = cache["manifest"]
+    cache_shard_range = manifest.get("shard_range")
     all_shards = sorted(Path(cfg.data_dir).glob("*.bin"))
-    n_eval = min(2, max(1, len(all_shards) // 10))
-    train_range = (0, len(all_shards) - n_eval)
-    eval_range = (len(all_shards) - n_eval, len(all_shards))
+
+    if cache_shard_range is not None:
+        cache_start, cache_end = cache_shard_range
+        n_cached = cache_end - cache_start
+        if n_cached < 2:
+            raise ValueError(
+                f"Cache covers only {n_cached} shards ({cache_start}-{cache_end}). "
+                f"Need at least 2 (1 train + 1 eval).")
+        n_eval = min(2, max(1, n_cached // 10))
+        train_range = (cache_start, cache_end - n_eval)
+        eval_range = (cache_end - n_eval, cache_end)
+        print(f"  Cache shard range: [{cache_start}, {cache_end}), "
+              f"train [{train_range[0]}, {train_range[1]}), "
+              f"eval [{eval_range[0]}, {eval_range[1]})")
+    else:
+        n_eval = min(2, max(1, len(all_shards) // 10))
+        train_range = (0, len(all_shards) - n_eval)
+        eval_range = (len(all_shards) - n_eval, len(all_shards))
+        print("  WARNING: Cache has no shard_range — training on all shards. "
+              "Uncached shards will get CE-only signal.")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
                                    model_cfg.patch_size, shard_range=train_range)
-    eval_dataset = ByteShardDataset(cfg.data_dir, cfg.seq_len,
-                                    model_cfg.patch_size, shard_range=eval_range)
+    eval_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
+                                  model_cfg.patch_size, shard_range=eval_range)
 
     train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size,
                               shuffle=True, num_workers=2, pin_memory=True, drop_last=True)
-    _eval_loader = DataLoader(eval_dataset, batch_size=cfg.batch_size,
-                              shuffle=False, num_workers=1, pin_memory=True, drop_last=True)
+    eval_loader = DataLoader(eval_dataset, batch_size=cfg.batch_size,
+                             shuffle=False, num_workers=1, pin_memory=True, drop_last=True)
 
     trainer = EklavyaTrainer(cfg, student, align_proj, cache, device)
 
@@ -399,8 +453,29 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
     step = 0
     current_phase = None
     optimizer = None
-    _best_eval_bpb = float("inf")  # noqa: F841 — eval loop not yet wired
+    best_eval_bpb = float("inf")
+    consecutive_ce_only = 0
     log_fh = open(cfg.log_file, "a")
+
+    if cfg.resume_from and os.path.exists(cfg.resume_from):
+        resume_ckpt = torch.load(cfg.resume_from, map_location="cpu",
+                                 weights_only=False)
+        student.load_state_dict(resume_ckpt["model"])
+        align_proj.load_state_dict(resume_ckpt["align_proj"])
+        step = resume_ckpt["step"] + 1
+        if "best_eval_bpb" in resume_ckpt:
+            best_eval_bpb = resume_ckpt["best_eval_bpb"]
+        resumed_phase = resume_ckpt.get("phase")
+        if resumed_phase is not None:
+            current_phase = resumed_phase
+            trainer.configure_freeze(current_phase)
+            optimizer = trainer.build_optimizer()
+            if "optimizer" in resume_ckpt and resume_ckpt["optimizer"] is not None:
+                optimizer.load_state_dict(resume_ckpt["optimizer"])
+        if scaler is not None and "scaler" in resume_ckpt and resume_ckpt["scaler"] is not None:
+            scaler.load_state_dict(resume_ckpt["scaler"])
+        print(f"Resumed from step {step} phase {current_phase} "
+              f"(best eval BPB: {best_eval_bpb:.3f})")
 
     P = model_cfg.patch_size
     t0 = time.time()
@@ -491,6 +566,19 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         ]
 
         has_teacher_signal = (L_align.item() > 0 or L_kl.item() > 0) and phase != "E1.0_warmup"
+
+        expects_teacher = phase in ("E1.1_landing", "E1.2_full")
+        if expects_teacher and not has_teacher_signal:
+            consecutive_ce_only += 1
+            if consecutive_ce_only >= cfg.consecutive_ce_only_threshold:
+                log_fh.close()
+                raise RuntimeError(
+                    f"E1 received NO teacher signal for {consecutive_ce_only} "
+                    f"consecutive steps (phase={phase}, step={step}). "
+                    f"Likely cache/shard mismatch — aborting.")
+        else:
+            consecutive_ce_only = 0
+
         if has_teacher_signal and cfg.teacher_grad_budget > 0:
             apply_gradient_budget(
                 trainable_params, L_ce / cfg.grad_accum,
@@ -541,6 +629,35 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 print(f"  step {step:5d} | phase={phase} | bpb={bpb:.3f} | "
                       f"align={L_align.item():.4f} | kl={L_kl.item():.4f}")
 
+        if step > 0 and step % cfg.eval_every == 0:
+            eval_metrics = evaluate_e1(student, align_proj, eval_loader,
+                                       device, amp_dtype, use_cuda,
+                                       max_batches=cfg.eval_batches)
+            eval_entry = {"step": step, "phase": phase, **eval_metrics,
+                          "elapsed": time.time() - t0}
+            log_fh.write(json.dumps(eval_entry) + "\n")
+            log_fh.flush()
+
+            if eval_metrics["eval_bpb"] < best_eval_bpb:
+                best_eval_bpb = eval_metrics["eval_bpb"]
+                best_path = os.path.join(cfg.checkpoint_dir, "e1_best.pt")
+                torch.save({
+                    "step": step,
+                    "phase": phase,
+                    "model": student.state_dict(),
+                    "model_cfg": model_cfg,
+                    "align_proj": align_proj.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scaler": scaler.state_dict() if scaler is not None else None,
+                    "best_eval_bpb": best_eval_bpb,
+                    "config": cfg,
+                }, best_path)
+                print(f"  eval bpb={eval_metrics['eval_bpb']:.3f} "
+                      f"[NEW BEST] — saved {best_path}")
+            else:
+                print(f"  eval bpb={eval_metrics['eval_bpb']:.3f} "
+                      f"(best={best_eval_bpb:.3f})")
+
         if (step > 0 and cfg.cache_refresh_every > 0
                 and step % cfg.cache_refresh_every == 0
                 and phase == "E1.2_full"):
@@ -557,6 +674,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 "align_proj": align_proj.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scaler": scaler.state_dict() if scaler is not None else None,
+                "best_eval_bpb": best_eval_bpb,
                 "config": cfg,
             }, ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")
@@ -571,9 +689,13 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         "model": student.state_dict(),
         "model_cfg": model_cfg,
         "align_proj": align_proj.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scaler": scaler.state_dict() if scaler is not None else None,
+        "best_eval_bpb": best_eval_bpb,
         "config": cfg,
     }, final_path)
     print(f"\nE1 training complete. Final checkpoint: {final_path}")
+    print(f"Best eval BPB: {best_eval_bpb:.3f}")
 
 
 def main():
@@ -583,6 +705,8 @@ def main():
     parser.add_argument("--output-dir", default="checkpoints/e1")
     parser.add_argument("--data-dir", default="data/shards_bytes_full")
     parser.add_argument("--steps", type=int, default=12000)
+    parser.add_argument("--resume-from", default=None,
+                        help="Path to E1 checkpoint to resume from")
     args = parser.parse_args()
 
     cfg = EklavyaConfig(
@@ -590,6 +714,7 @@ def main():
         data_dir=args.data_dir,
         cache_dir=args.cache_dir,
         full_e1_steps=args.steps - 2000,
+        resume_from=args.resume_from,
     )
 
     train_e1(cfg, args.student_checkpoint, args.cache_dir)
