@@ -1738,11 +1738,10 @@ class TestAblationConfigValidation:
         with pytest.raises(ValueError, match="A9c.*forbids.*teacher-exclude"):
             validate_ablation_config(cfg)
 
-    def test_unknown_ablation_warns(self, capsys):
+    def test_unknown_ablation_errors(self):
         cfg = E2Config(ablation_id="X99")
-        validate_ablation_config(cfg)
-        out = capsys.readouterr().out
-        assert "WARNING" in out and "X99" in out
+        with pytest.raises(ValueError, match="Unknown ablation_id.*X99"):
+            validate_ablation_config(cfg)
 
     def test_multiple_violations_all_reported(self):
         cfg = E2Config(ablation_id="A5",
@@ -1754,6 +1753,57 @@ class TestAblationConfigValidation:
         assert "disable-router" in msg  # required but missing
         assert "shuffle" in msg  # forbidden but set
         assert "teacher-include" in msg  # forbidden but set
+
+    def test_a5c_unknown_teacher_names_rejected(self):
+        cfg = E2Config(
+            ablation_id="A5c",
+            disable_router=True,
+            static_weight_mode="custom",
+            teacher_include=["t0_anchor_decoder", "bogus_teacher"],
+            static_weights={"t0_anchor_decoder": 0.6, "bogus_teacher": 0.4},
+        )
+        with pytest.raises(ValueError, match="unknown teacher names"):
+            validate_ablation_config(cfg)
+
+    def test_static_weights_negative_rejected(self):
+        cfg = E2Config(
+            ablation_id="A5b",
+            disable_router=True,
+            static_weight_mode="custom",
+            static_weights={"t0_anchor_decoder": -0.5, "t2_control_decoder": 1.5},
+        )
+        with pytest.raises(ValueError, match="non-negative"):
+            validate_ablation_config(cfg)
+
+    def test_static_weights_zero_sum_rejected(self):
+        cfg = E2Config(
+            ablation_id="A5b",
+            disable_router=True,
+            static_weight_mode="custom",
+            static_weights={"t0_anchor_decoder": 0.0, "t2_control_decoder": 0.0},
+        )
+        with pytest.raises(ValueError, match="positive sum"):
+            validate_ablation_config(cfg)
+
+    def test_static_weights_nan_rejected(self):
+        cfg = E2Config(
+            ablation_id="A5b",
+            disable_router=True,
+            static_weight_mode="custom",
+            static_weights={"t0_anchor_decoder": float("nan")},
+        )
+        with pytest.raises(ValueError, match="finite"):
+            validate_ablation_config(cfg)
+
+    def test_router_tau_zero_rejected(self):
+        from eklavya_e2_router import RouterConfig
+        with pytest.raises(ValueError, match="tau must be positive"):
+            RouterConfig(tau=0.0)
+
+    def test_router_tau_negative_rejected(self):
+        from eklavya_e2_router import RouterConfig
+        with pytest.raises(ValueError, match="tau must be positive"):
+            RouterConfig(tau=-1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -3275,7 +3325,7 @@ class TestE2EndToEnd:
 
         ckpt_path, shard_dir, cache_dir, _ = self._create_fixtures(tmp_path)
         cfg = self._make_cfg(tmp_path, shard_dir, cache_dir, eval_every=100)
-        cfg.ablation_id = "TEST_ABL"
+        cfg.ablation_id = "A2"
 
         train_e2(cfg, ckpt_path, cache_dir)
 
@@ -3283,7 +3333,7 @@ class TestE2EndToEnd:
             entries = [json.loads(l) for l in f if l.strip()]
         train_entries = [e for e in entries if "ablation_id" in e]
         assert len(train_entries) > 0, "Log entries must include ablation_id"
-        assert all(e["ablation_id"] == "TEST_ABL" for e in train_entries)
+        assert all(e["ablation_id"] == "A2" for e in train_entries)
 
     def test_ce_only_mode_trains_without_teachers(self, tmp_path):
         """A0 CE-only runs the full loop with no teacher losses and no phase transitions."""

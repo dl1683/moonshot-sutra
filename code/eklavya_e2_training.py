@@ -287,9 +287,10 @@ def validate_ablation_config(cfg: E2Config) -> None:
     """
     rules = _ABLATION_RULES.get(cfg.ablation_id)
     if rules is None:
-        print(f"WARNING: unknown ablation_id '{cfg.ablation_id}' — "
-              "no config validation applied")
-        return
+        raise ValueError(
+            f"Unknown ablation_id '{cfg.ablation_id}'. "
+            f"Valid IDs: {sorted(_ABLATION_RULES.keys())}"
+        )
 
     errors: list[str] = []
 
@@ -337,6 +338,18 @@ def validate_ablation_config(cfg: E2Config) -> None:
                     f"{cfg.ablation_id}: unknown teacher names in "
                     f"--static-weights: {unknown}"
                 )
+            vals = list(cfg.static_weights.values())
+            if not all(isinstance(v, (int, float)) and math.isfinite(v)
+                       and v >= 0 for v in vals):
+                errors.append(
+                    f"{cfg.ablation_id}: static weights must be finite "
+                    f"and non-negative, got {cfg.static_weights}"
+                )
+            elif sum(vals) <= 0:
+                errors.append(
+                    f"{cfg.ablation_id}: static weights must have "
+                    f"positive sum, got sum={sum(vals)}"
+                )
 
     required_tc = rules.get("require_teacher_count")
     if required_tc is not None:
@@ -346,6 +359,14 @@ def validate_ablation_config(cfg: E2Config) -> None:
                 f"{cfg.ablation_id} ({rules['desc']}) requires exactly "
                 f"{required_tc} teachers but got {actual}"
             )
+        if cfg.teacher_include:
+            known = {t.name for t in TEACHER_REGISTRY}
+            unknown = set(cfg.teacher_include) - known
+            if unknown:
+                errors.append(
+                    f"{cfg.ablation_id}: unknown teacher names in "
+                    f"--teachers: {unknown}"
+                )
 
     for flag in rules.get("required", set()):
         if not _FLAG_ACTIVE[flag](cfg):
@@ -930,7 +951,7 @@ class E2Trainer:
 
         w = {
             "align": self.cfg.lambda_align_max * sigmoid_ramp(
-                local_step, self.cfg.align_warmup_steps),
+                step, self.cfg.align_warmup_steps),
             "kl": 0.0,
             "semantic": 0.0,
             "calibration": 0.0,
@@ -1111,6 +1132,15 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
           f"{cache_view.manifest['teacher_count']} teachers (mmap-backed)")
 
     specs = cache_view.manifest["teacher_specs"]
+
+    cache_prov = cache_view.manifest.get("provenance", {})
+    cache_seq_len = cache_prov.get("seq_len")
+    if cache_seq_len is not None and cache_seq_len != cfg.seq_len:
+        raise ValueError(
+            f"Cache was built with seq_len={cache_seq_len} but training "
+            f"config uses seq_len={cfg.seq_len}. Position lookups will fail."
+        )
+
     ports = MultiTeacherProjectionPorts(model_cfg.d_model, specs).to(device)
 
     if "align_proj" in ckpt:
@@ -1199,6 +1229,8 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
 
     t0 = time.time()
     data_iter = iter(train_loader)
+    consecutive_ce_only = 0
+    CE_ONLY_FAIL_THRESHOLD = 200
 
     if cfg.ce_only and current_phase is None:
         current_phase = "CE_ONLY"
@@ -1300,6 +1332,19 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     scaler.scale(scaled_ce).backward()
                 else:
                     scaled_ce.backward()
+
+        expects_teachers = (not cfg.ce_only and not cfg.bld_mode
+                            and phase != E2Phase.PORT_WARMUP)
+        if expects_teachers and not teacher_losses:
+            consecutive_ce_only += 1
+            if consecutive_ce_only >= CE_ONLY_FAIL_THRESHOLD:
+                raise RuntimeError(
+                    f"E2 received NO teacher signal for {consecutive_ce_only} "
+                    f"consecutive steps (phase={phase}, step={step}). "
+                    f"Likely cache/seq_len mismatch — aborting."
+                )
+        else:
+            consecutive_ce_only = 0
 
         if (step + 1) % cfg.grad_accum == 0:
             all_params = list(student.parameters()) + list(ports.parameters())

@@ -51,7 +51,7 @@ Before E2 begins:
 3. Teacher feasibility profiling (E2.0) passes for each candidate — see [E2 Teacher Feasibility](EKLAVYA_E2_TEACHER_FEASIBILITY.md)
 4. Pilot cache (25-50 shards) is built and validated
 5. E1 test suite (28 tests) still passes
-6. E2 test suite (307 tests) passes
+6. E2 test suite (319 tests) passes
 
 ## 5. Teacher Roster and Roles
 
@@ -345,7 +345,7 @@ All E2 code in separate files, E1 remains frozen:
 | `code/eklavya_e2_cache.py` | Teacher registry, binary records, cache I/O | ✅ Built |
 | `code/eklavya_e2_router.py` | MultiTeacherBatch, PL router, purifier | ✅ Built |
 | `code/eklavya_e2_losses.py` | Projection ports, losses, gradient budget | ✅ Built |
-| `code/test_eklavya_e2.py` | 307 tests passing | ✅ Built |
+| `code/test_eklavya_e2.py` | 319 tests passing | ✅ Built |
 | `code/eklavya_e2_training.py` | E2 trainer with curriculum + real teacher losses | ✅ Built |
 | `code/eklavya_e2_cache_builder.py` | Two-pass cache builder (student gaps → teacher records) | ✅ Built |
 | `research/EKLAVYA_E2_PROTOCOL.md` | This document | ✅ Written |

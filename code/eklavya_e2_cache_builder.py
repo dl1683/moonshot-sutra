@@ -221,6 +221,7 @@ def build_teacher_records(
             span_valid = validate_token_byte_alignment(
                 bytes(seq_bytes), token_spans, input_ids, tokenizer, byte_table)
 
+            best_align: dict[int, tuple[float, E2AlignRecord]] = {}
             for tok_idx, (bs, be) in enumerate(token_spans):
                 if be <= bs or be > seq_len:
                     continue
@@ -230,13 +231,18 @@ def build_teacher_records(
                     p_start = pos.patch_idx * patch_size
                     p_end = p_start + patch_size
                     if bs < p_end and be > p_start:
-                        align_records.append(E2AlignRecord(
+                        overlap = min(be, p_end) - max(bs, p_start)
+                        rec = E2AlignRecord(
                             position_id=pos.position_id,
                             byte_start=bs,
                             byte_len=be - bs,
                             token_id=input_ids[tok_idx],
                             align_quality=1.0,
-                        ))
+                        )
+                        prev = best_align.get(pos.position_id)
+                        if prev is None or overlap > prev[0]:
+                            best_align[pos.position_id] = (overlap, rec)
+            align_records.extend(rec for _, rec in best_align.values())
 
         if spec.has_kl:
             for pos in pos_list:

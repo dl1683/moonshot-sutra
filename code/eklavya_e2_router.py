@@ -141,6 +141,10 @@ class RouterConfig:
     agreement_gamma: float = 0.5
     student_delta: float = 0.25
 
+    def __post_init__(self):
+        if self.tau <= 0:
+            raise ValueError(f"tau must be positive, got {self.tau}")
+
 
 @dataclass
 class RouteResult:
