@@ -155,14 +155,6 @@ class GradientBudgetReport:
     total_scale: float
 
 
-def _grad_norm(params) -> float:
-    total = 0.0
-    for p in params:
-        if p.grad is not None:
-            total += p.grad.detach().float().norm().item() ** 2
-    return total ** 0.5
-
-
 def _collect_grads(params) -> dict:
     return {id(p): p.grad.detach().clone() for p in params if p.grad is not None}
 
@@ -170,18 +162,6 @@ def _collect_grads(params) -> dict:
 def _clear_grads(params):
     for p in params:
         p.grad = None
-
-
-def _add_grads(params, grad_dict: dict, scale: float = 1.0):
-    for p in params:
-        g = grad_dict.get(id(p))
-        if g is None:
-            continue
-        scaled = g * scale if scale != 1.0 else g
-        if p.grad is not None:
-            p.grad.add_(scaled)
-        else:
-            p.grad = scaled.clone()
 
 
 def apply_multi_teacher_gradient_budget(
