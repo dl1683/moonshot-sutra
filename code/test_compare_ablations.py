@@ -11,8 +11,9 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from compare_ablations import (
     ce_to_bpb, load_log, load_eval_results, analyze_run, export_csv,
-    RunSummary, evaluate_decision_rules, DECISION_RULES, GOLDFREE_RULES,
-    GAP_CLASS_RULES, ACCURACY_RULES,
+    RunSummary, evaluate_decision_rules, evaluate_phase1_gate,
+    DECISION_RULES, GOLDFREE_RULES, GAP_CLASS_RULES, ACCURACY_RULES,
+    PHASE1_GATE_RULES,
 )
 
 
@@ -867,3 +868,110 @@ class TestAccuracyRules:
         evaluate_decision_rules(summaries)
         out = capsys.readouterr().out
         assert "first_byte_acc" not in out
+
+
+# ═══ Phase 1 gate ═════════════════════════════════════════════════════
+
+class TestPhase1Gate:
+    def _make_summary(self, aid, eval_bpb, hard_fail=False):
+        s = RunSummary(ablation_id=aid, log_path="x.jsonl",
+                       had_hard_fail=hard_fail)
+        s.eval_result = {"metrics": {"bpb": eval_bpb}}
+        return s
+
+    def test_phase1_gate_rules_table(self):
+        assert len(PHASE1_GATE_RULES) == 3
+        for rule in PHASE1_GATE_RULES:
+            better, worse, margin, desc = rule
+            assert better == "A2"
+            assert worse in ("A0", "A1", "BLD")
+            assert margin > 0
+
+    def test_gate_passes_when_a2_beats_all(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.1),
+            self._make_summary("A1", 4.05),
+            self._make_summary("BLD", 4.1),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is True
+        out = capsys.readouterr().out
+        assert "GATE PASS" in out
+        assert "3/3" in out
+
+    def test_gate_fails_when_a2_loses_to_a0(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.5),
+            self._make_summary("A0", 4.0),
+            self._make_summary("A1", 4.6),
+            self._make_summary("BLD", 4.6),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is False
+        out = capsys.readouterr().out
+        assert "GATE FAIL" in out
+        assert "REGRESS" in out
+
+    def test_gate_fails_when_margin_insufficient(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.01),
+            self._make_summary("A1", 4.05),
+            self._make_summary("BLD", 4.01),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is False
+        out = capsys.readouterr().out
+        assert "GATE FAIL" in out
+
+    def test_gate_blocked_without_a2(self, capsys):
+        summaries = [
+            self._make_summary("A0", 4.0),
+            self._make_summary("A1", 4.1),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is False
+        out = capsys.readouterr().out
+        assert "GATE BLOCKED" in out
+
+    def test_gate_blocked_without_any_baseline(self, capsys):
+        summaries = [self._make_summary("A2", 4.0)]
+        result = evaluate_phase1_gate(summaries)
+        assert result is False
+        out = capsys.readouterr().out
+        assert "GATE BLOCKED" in out
+
+    def test_gate_passes_with_partial_baselines(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.1),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is True
+        out = capsys.readouterr().out
+        assert "GATE PASS" in out
+        assert "1/1" in out
+
+    def test_gate_fails_when_a2_hard_failed(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0, hard_fail=True),
+            self._make_summary("A0", 4.5),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is False
+        out = capsys.readouterr().out
+        assert "GATE FAIL" in out
+
+    def test_gate_excludes_hard_failed_baseline(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.5, hard_fail=True),
+            self._make_summary("A1", 4.05),
+        ]
+        result = evaluate_phase1_gate(summaries)
+        assert result is True
+        out = capsys.readouterr().out
+        assert "Excluding" in out
+        assert "A0" in out
+        assert "1/1" in out

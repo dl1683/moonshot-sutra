@@ -157,6 +157,9 @@ class E2Config:
     # had teacher signal (projection ports would be untrained)
     warmup_min_coverage: float = 0.10
 
+    # Strict provenance: hard-fail if cache checkpoint doesn't match student
+    strict_provenance: bool = False
+
     # GCG (gradient coherence) logging interval — compute every N grad-budget
     # steps to avoid cloning full gradient vectors every microstep
     gcg_log_interval: int = 10
@@ -1205,9 +1208,14 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         ckpt_step = ckpt.get("step")
         if ckpt_step is not None and cache_ckpt_base:
             if str(ckpt_step) not in cache_ckpt_base:
-                print(f"  WARNING: Cache was built from '{cache_ckpt_base}' "
-                      f"but student checkpoint is at step {ckpt_step}. "
-                      f"Gap positions may be stale — consider rebuilding.")
+                msg = (f"Cache was built from '{cache_ckpt_base}' "
+                       f"but student checkpoint is at step {ckpt_step}. "
+                       f"Gap positions may be stale — consider rebuilding.")
+                if cfg.strict_provenance:
+                    raise ValueError(
+                        f"STRICT PROVENANCE: {msg} "
+                        f"(use --no-strict-provenance to downgrade to warning)")
+                print(f"  WARNING: {msg}")
 
     ports = MultiTeacherProjectionPorts(model_cfg.d_model, specs).to(device)
 
@@ -1739,6 +1747,8 @@ def _build_parser():
     parser.add_argument("--shuffle-seed", type=int, default=1234)
     parser.add_argument("--log-file", type=str, default=None,
                         help="JSONL log file path. Default: logs/e2_{ablation_id}.jsonl")
+    parser.add_argument("--strict-provenance", action="store_true",
+                        help="Hard-fail if cache checkpoint doesn't match student")
     return parser
 
 
@@ -1767,6 +1777,7 @@ if __name__ == "__main__":
         router_mode=args.router_mode,
         router_agreement_gamma=args.router_agreement_gamma,
         router_student_delta=args.router_student_delta,
+        strict_provenance=args.strict_provenance,
     )
     if args.steps:
         remaining = args.steps

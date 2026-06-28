@@ -573,6 +573,87 @@ def evaluate_decision_rules(summaries: list[RunSummary]):
               "for both sides of each comparison).")
 
 
+PHASE1_GATE_RULES = [
+    ("A2", "A0", 0.02, "Multi-teacher beats CE-only"),
+    ("A2", "A1", 0.01, "Multi-teacher beats single-teacher"),
+    ("A2", "BLD", 0.02, "Multi-teacher beats raw byte KL"),
+]
+
+
+def evaluate_phase1_gate(summaries: list[RunSummary]) -> bool:
+    hard_failed = {s.ablation_id for s in summaries if s.had_hard_fail}
+    has_eval = {s.ablation_id: s for s in summaries
+                if s.eval_result and s.ablation_id not in hard_failed}
+
+    print(f"\n{'=' * 72}")
+    print("  PHASE 1 GATE — proceed to Phase 2?")
+    print(f"{'=' * 72}")
+
+    if hard_failed:
+        print(f"\n  NOTE: Excluding {sorted(hard_failed)} (had HARD_FAIL)")
+
+    if "A2" in hard_failed:
+        print("\n  GATE FAIL: A2 had a HARD_FAIL — oracle run is invalid")
+        return False
+
+    if "A2" not in has_eval:
+        print("\n  GATE BLOCKED: A2 eval results required (oracle upper bound)")
+        return False
+
+    a2_bpb = has_eval["A2"].eval_result.get("metrics", {}).get("bpb")
+    if a2_bpb is None:
+        print("\n  GATE BLOCKED: A2 has no BPB metric in eval results")
+        return False
+
+    evaluated = 0
+    passed = 0
+    for better_id, worse_id, margin, description in PHASE1_GATE_RULES:
+        if worse_id not in has_eval:
+            print(f"\n  [SKIP] {better_id} vs {worse_id}: {worse_id} not available")
+            continue
+
+        worse_bpb = has_eval[worse_id].eval_result.get("metrics", {}).get("bpb")
+        if worse_bpb is None:
+            print(f"\n  [SKIP] {better_id} vs {worse_id}: no BPB in {worse_id} eval")
+            continue
+
+        evaluated += 1
+        delta = worse_bpb - a2_bpb
+
+        if delta < 0:
+            print(f"\n  [REGRESS] {better_id} vs {worse_id}: "
+                  f"delta={delta:+.4f} BPB (threshold: {margin})")
+            print(f"    -> {description}: FAILED — {better_id} is WORSE")
+        elif delta < margin:
+            print(f"\n  [FAIL] {better_id} vs {worse_id}: "
+                  f"delta={delta:+.4f} BPB (threshold: {margin})")
+            print(f"    -> {description}: FAILED — below margin")
+        else:
+            passed += 1
+            print(f"\n  [PASS] {better_id} vs {worse_id}: "
+                  f"delta={delta:+.4f} BPB (threshold: {margin})")
+            print(f"    -> {description}: PASSED")
+
+    if evaluated == 0:
+        print("\n  GATE BLOCKED: No Phase 1 baselines available "
+              "(need at least one of A0, A1, BLD)")
+        return False
+
+    gate_pass = (passed == evaluated)
+    print(f"\n  {'=' * 50}")
+    if gate_pass:
+        print(f"  GATE PASS: {passed}/{evaluated} rules passed — "
+              f"proceed to Phase 2")
+    else:
+        print(f"  GATE FAIL: {passed}/{evaluated} rules passed — "
+              f"do NOT proceed to Phase 2")
+        print(f"  A2 is oracle-aided upper bound; if it can't beat baselines,")
+        print(f"  the gold-free router (A9c) certainly can't.")
+    print(f"  {'=' * 50}")
+
+    return gate_pass
+
+
 def export_csv(summaries: list[RunSummary], path: str):
     with open(path, "w") as f:
         cols = ["ablation_id", "total_steps", "initial_ce_bpb", "final_ce_bpb",
@@ -631,6 +712,9 @@ def main():
         "--csv", default="",
         help="Export comparison to CSV file")
     parser.add_argument(
+        "--phase1-gate", action="store_true",
+        help="Evaluate Phase 1 gate (exit 0 = pass, exit 1 = fail)")
+    parser.add_argument(
         "--all", action="store_true",
         help="Show all analysis sections")
     args = parser.parse_args()
@@ -669,6 +753,10 @@ def main():
         print_gradient_budget_analysis(summaries)
     if args.decisions or args.all:
         evaluate_decision_rules(summaries)
+    if args.phase1_gate:
+        gate_ok = evaluate_phase1_gate(summaries)
+        if not gate_ok:
+            sys.exit(1)
     if args.csv:
         export_csv(summaries, args.csv)
 
