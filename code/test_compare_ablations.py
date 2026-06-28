@@ -642,8 +642,9 @@ class TestExportCSVEdgeCases:
                 lines = f.readlines()
             header = lines[0].strip().split(",")
             vals = lines[1].strip().split(",")
-            bpb_idx = header.index("eval_bpb")
-            assert vals[bpb_idx] == ""
+            assert "ablation_id" in header
+            assert vals[header.index("ablation_id")] == "A0"
+            assert "eval_bpb" not in header
         finally:
             os.unlink(out.name)
 

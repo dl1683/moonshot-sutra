@@ -21,6 +21,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -33,6 +34,23 @@ from eklavya_e2_cache import (
     PositionRecord, SelectionReason,
     read_position_manifest,
 )
+
+BYTE_CATEGORIES = {
+    "digit": set(range(48, 58)),
+    "lowercase": set(range(97, 123)),
+    "uppercase": set(range(65, 91)),
+    "whitespace": {9, 10, 13, 32},
+    "punctuation": (set(range(33, 48)) | set(range(58, 65))
+                    | set(range(91, 97)) | set(range(123, 127))),
+    "utf8_cont": set(range(128, 192)),
+    "utf8_lead": set(range(192, 256)),
+    "control": set(range(0, 9)) | {11, 12} | set(range(14, 32)) | {127},
+}
+
+_BYTE_TO_CAT = {}
+for _cat, _bytes in BYTE_CATEGORIES.items():
+    for _b in _bytes:
+        _BYTE_TO_CAT[_b] = _cat
 
 
 @dataclass
@@ -68,6 +86,13 @@ def evaluate_bpb(
                   "high_disagreement": 0.0, "control": 0.0}
     gap_counts = {"high_nll": 0, "high_entropy": 0,
                   "high_disagreement": 0, "control": 0}
+    gap_fb_correct = {"high_nll": 0, "high_entropy": 0,
+                      "high_disagreement": 0, "control": 0}
+    gap_fb_total = {"high_nll": 0, "high_entropy": 0,
+                    "high_disagreement": 0, "control": 0}
+
+    byte_cat_losses = {cat: 0.0 for cat in BYTE_CATEGORIES}
+    byte_cat_counts = {cat: 0 for cat in BYTE_CATEGORIES}
 
     pos_by_loc = {}
     if cache_positions:
@@ -88,17 +113,28 @@ def evaluate_bpb(
             out = student(byte_ids, return_aux=False)
             logits = out["logits"]
             targets = byte_ids.reshape(B, N, P)[:, 1:]
-            loss = F.cross_entropy(logits.reshape(-1, 256),
-                                   targets.reshape(-1))
+            per_pos_ce = F.cross_entropy(
+                logits.reshape(-1, 256), targets.reshape(-1),
+                reduction="none")
 
         predicted = B * (T - P)
-        total_loss += loss.item() * predicted
+        total_loss += per_pos_ce.sum().item()
         total_tokens += predicted
 
         preds = logits[:, :, 0, :].argmax(dim=-1)
         first_tgt = targets[:, :, 0]
         first_byte_correct += (preds == first_tgt).sum().item()
         first_byte_total += first_tgt.numel()
+
+        fb_ce = per_pos_ce.reshape(B, -1, P)[:, :, 0]
+        fb_tgt_np = first_tgt.cpu().numpy()
+        fb_bpb = (fb_ce / math.log(2)).cpu().numpy()
+        for cat, byte_set in BYTE_CATEGORIES.items():
+            mask = np.isin(fb_tgt_np, list(byte_set))
+            n = int(mask.sum())
+            if n > 0:
+                byte_cat_losses[cat] += float(fb_bpb[mask].sum())
+                byte_cat_counts[cat] += n
 
         if cache_positions:
             for b in range(B):
@@ -114,18 +150,29 @@ def evaluate_bpb(
                         patch_target.unsqueeze(0)).item()
                     pos_bpb = pos_loss / math.log(2)
 
+                    pos_pred = patch_logits.argmax().item()
+                    pos_correct = int(pos_pred == patch_target.item())
+
                     if pos.reason_mask & SelectionReason.HIGH_NLL:
                         gap_losses["high_nll"] += pos_bpb
                         gap_counts["high_nll"] += 1
+                        gap_fb_correct["high_nll"] += pos_correct
+                        gap_fb_total["high_nll"] += 1
                     if pos.reason_mask & SelectionReason.HIGH_ENTROPY:
                         gap_losses["high_entropy"] += pos_bpb
                         gap_counts["high_entropy"] += 1
+                        gap_fb_correct["high_entropy"] += pos_correct
+                        gap_fb_total["high_entropy"] += 1
                     if pos.reason_mask & SelectionReason.DISAGREEMENT:
                         gap_losses["high_disagreement"] += pos_bpb
                         gap_counts["high_disagreement"] += 1
+                        gap_fb_correct["high_disagreement"] += pos_correct
+                        gap_fb_total["high_disagreement"] += 1
                     if pos.reason_mask == SelectionReason.CONTROL:
                         gap_losses["control"] += pos_bpb
                         gap_counts["control"] += 1
+                        gap_fb_correct["control"] += pos_correct
+                        gap_fb_total["control"] += 1
 
     student.train()
     if total_tokens == 0:
@@ -145,6 +192,15 @@ def evaluate_bpb(
         if gap_counts[key] > 0:
             result[f"bpb_{key}"] = round(
                 gap_losses[key] / gap_counts[key], 4)
+        if gap_fb_total[key] > 0:
+            result[f"first_byte_acc_{key}"] = round(
+                gap_fb_correct[key] / gap_fb_total[key], 4)
+
+    for cat in BYTE_CATEGORIES:
+        if byte_cat_counts[cat] > 0:
+            result[f"fb_bpb_byte_{cat}"] = round(
+                byte_cat_losses[cat] / byte_cat_counts[cat], 4)
+            result[f"n_fb_byte_{cat}"] = byte_cat_counts[cat]
 
     return result
 
@@ -246,10 +302,18 @@ def main():
     print(f"\nReport saved: {cfg.output}")
     print(f"  BPB: {metrics['bpb']}")
     print(f"  First-byte accuracy: {metrics['first_byte_acc']}")
-    for key in ("bpb_high_nll", "bpb_high_entropy",
-                "bpb_high_disagreement", "bpb_control"):
-        if key in metrics:
-            print(f"  {key}: {metrics[key]}")
+    for key in ("high_nll", "high_entropy", "high_disagreement", "control"):
+        parts = []
+        if f"bpb_{key}" in metrics:
+            parts.append(f"bpb={metrics[f'bpb_{key}']}")
+        if f"first_byte_acc_{key}" in metrics:
+            parts.append(f"fb_acc={metrics[f'first_byte_acc_{key}']}")
+        if parts:
+            print(f"  {key}: {', '.join(parts)}")
+    for cat in BYTE_CATEGORIES:
+        if f"fb_bpb_byte_{cat}" in metrics:
+            print(f"  fb_byte_{cat}: bpb={metrics[f'fb_bpb_byte_{cat}']} "
+                  f"(n={metrics[f'n_fb_byte_{cat}']})")
 
 
 if __name__ == "__main__":

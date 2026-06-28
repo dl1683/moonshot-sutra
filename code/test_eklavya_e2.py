@@ -6478,5 +6478,104 @@ class TestProvenanceManifestStep:
         assert unverifiable
 
 
+class TestContinuationScorer:
+    """Smoke tests for continuation_scorer.score_continuations."""
+
+    def test_score_returns_valid_metrics(self, tmp_path):
+        from continuation_scorer import score_continuations
+        from s0_architecture import S0Config, SutraS0
+        from eklavya_training import EklavyaDataset
+
+        model_cfg = S0Config(
+            d_model=32, n_layers=2, n_heads=2, n_kv_heads=1,
+            byte_dim=32, ffn_mult=2.0, local_mixer_layers=1,
+            patch_size=4, max_seq_len=256,
+            decoder_dim=32, decoder_layers=1, decoder_heads=2,
+        )
+        student = SutraS0(model_cfg)
+
+        shard_dir = tmp_path / "shards"
+        shard_dir.mkdir()
+        rng = np.random.RandomState(42)
+        for i in range(3):
+            data = rng.randint(0, 256, 4096, dtype=np.uint8)
+            (shard_dir / f"shard_{i:04d}.bin").write_bytes(data.tobytes())
+
+        dataset = EklavyaDataset(str(shard_dir), 64, 4)
+        loader = torch.utils.data.DataLoader(
+            dataset, batch_size=2, shuffle=False, drop_last=True)
+
+        metrics = score_continuations(
+            student, loader, torch.device("cpu"),
+            split_frac=0.75, max_batches=10, seed=42)
+
+        assert 0.0 <= metrics["continuation_accuracy"] <= 1.0
+        assert metrics["n_pairs"] > 0
+        assert metrics["mean_correct_bpb"] > 0
+        assert metrics["mean_wrong_bpb"] > 0
+        assert metrics["split_fraction"] == 0.75
+        assert not math.isinf(metrics["bpb_gap"])
+
+    def test_different_splits_produce_results(self, tmp_path):
+        from continuation_scorer import score_continuations
+        from s0_architecture import S0Config, SutraS0
+        from eklavya_training import EklavyaDataset
+
+        model_cfg = S0Config(
+            d_model=32, n_layers=2, n_heads=2, n_kv_heads=1,
+            byte_dim=32, ffn_mult=2.0, local_mixer_layers=1,
+            patch_size=4, max_seq_len=256,
+            decoder_dim=32, decoder_layers=1, decoder_heads=2,
+        )
+        student = SutraS0(model_cfg)
+
+        shard_dir = tmp_path / "shards"
+        shard_dir.mkdir()
+        rng = np.random.RandomState(42)
+        for i in range(3):
+            data = rng.randint(0, 256, 4096, dtype=np.uint8)
+            (shard_dir / f"shard_{i:04d}.bin").write_bytes(data.tobytes())
+
+        dataset = EklavyaDataset(str(shard_dir), 64, 4)
+        loader = torch.utils.data.DataLoader(
+            dataset, batch_size=2, shuffle=False, drop_last=True)
+
+        for frac in [0.5, 0.75, 0.9]:
+            metrics = score_continuations(
+                student, loader, torch.device("cpu"),
+                split_frac=frac, max_batches=5, seed=42)
+            assert metrics["n_pairs"] > 0, f"No pairs at split_frac={frac}"
+            assert metrics["split_fraction"] == frac
+
+
+class TestByteCategoryCoverage:
+    """Verify BYTE_CATEGORIES covers all 256 bytes without overlap."""
+
+    def test_all_256_bytes_covered(self):
+        from eval_e2 import BYTE_CATEGORIES
+        covered = set()
+        for cat, byte_set in BYTE_CATEGORIES.items():
+            covered.update(byte_set)
+        assert covered == set(range(256)), (
+            f"Missing bytes: {set(range(256)) - covered}")
+
+    def test_no_overlap_between_categories(self):
+        from eval_e2 import BYTE_CATEGORIES
+        cats = list(BYTE_CATEGORIES.keys())
+        for i, c1 in enumerate(cats):
+            for c2 in cats[i + 1:]:
+                overlap = BYTE_CATEGORIES[c1] & BYTE_CATEGORIES[c2]
+                assert not overlap, (
+                    f"{c1} and {c2} overlap: {overlap}")
+
+    def test_lookup_table_matches(self):
+        from eval_e2 import BYTE_CATEGORIES, _BYTE_TO_CAT
+        for b in range(256):
+            assert b in _BYTE_TO_CAT, f"byte {b} missing from lookup"
+        for cat, byte_set in BYTE_CATEGORIES.items():
+            for b in byte_set:
+                assert _BYTE_TO_CAT[b] == cat
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

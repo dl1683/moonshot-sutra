@@ -278,7 +278,7 @@ python compare_ablations.py \
 | 5 | A9c | `--router-mode gold_free_student_jsd` | Full gold-free router |
 | 6 | A5b | `--disable-router --static-weight-mode custom --static-weights "..."` | Does routing beat tuned static? |
 | 7 | A5a | `--disable-router --static-weight-mode prior` | Does routing beat prior-weighted? |
-| 8 | A5c | `--disable-router --static-weight-mode prior --teachers t0 t1` | Does 5-teacher routed beat 2-teacher? |
+| 8 | A5c | `--disable-router --static-weight-mode prior --teachers t0_anchor_decoder t1_diversity_hybrid` | Does 5-teacher routed beat 2-teacher? |
 | 9 | A7 | `--disable-gradient-budget` | Does gradient budgeting help? |
 | 10 | A8 | `--no-phased-admission` | Does phased admission help? |
 | 11 | A6 | `--shuffle-teacher-targets` | Sanity/falsification |

@@ -380,13 +380,33 @@ def print_eval_results(summaries: list[RunSummary]):
     def get_m(s, key):
         return s.eval_result.get("metrics", {}).get(key)
 
-    row("Eval BPB", [get_m(s, "bpb") for s in has_eval])
-    row("First-byte accuracy", [get_m(s, "first_byte_acc") for s in has_eval])
-    row("BPB (high NLL)", [get_m(s, "bpb_high_nll") for s in has_eval])
-    row("BPB (high entropy)", [get_m(s, "bpb_high_entropy") for s in has_eval])
-    row("BPB (high disagreement)", [get_m(s, "bpb_high_disagreement") for s in has_eval])
-    row("BPB (control)", [get_m(s, "bpb_control") for s in has_eval])
-    row("Eval tokens",
+    PRIMARY_KEYS = ["bpb", "first_byte_acc",
+                    "bpb_high_nll", "bpb_high_entropy",
+                    "bpb_high_disagreement", "bpb_control",
+                    "first_byte_acc_high_nll", "first_byte_acc_high_entropy",
+                    "first_byte_acc_high_disagreement", "first_byte_acc_control"]
+    COUNT_KEYS = {"n_eval_tokens", "n_fb_byte_digit", "n_fb_byte_lowercase",
+                  "n_fb_byte_uppercase", "n_fb_byte_whitespace",
+                  "n_fb_byte_punctuation", "n_fb_byte_utf8_cont",
+                  "n_fb_byte_utf8_lead", "n_fb_byte_control"}
+
+    for key in PRIMARY_KEYS:
+        vals = [get_m(s, key) for s in has_eval]
+        if any(v is not None for v in vals):
+            row(key, vals)
+
+    all_keys = set()
+    for s in has_eval:
+        all_keys.update(s.eval_result.get("metrics", {}).keys())
+    extra_keys = sorted(all_keys - set(PRIMARY_KEYS) - COUNT_KEYS)
+    if extra_keys:
+        print(f"\n  Extended metrics:")
+        for key in extra_keys:
+            vals = [get_m(s, key) for s in has_eval]
+            if any(v is not None for v in vals):
+                row(key, vals)
+
+    row("n_eval_tokens",
         [get_m(s, "n_eval_tokens") for s in has_eval], "d")
     row("Checkpoint step",
         [s.eval_result.get("step") for s in has_eval], "d")
@@ -663,17 +683,25 @@ def evaluate_phase1_gate(summaries: list[RunSummary]) -> bool:
 
 
 def export_csv(summaries: list[RunSummary], path: str):
+    base_cols = ["ablation_id", "total_steps", "initial_ce_bpb", "final_ce_bpb",
+                 "ce_bpb_delta", "best_eval_bpb", "final_eval_bpb",
+                 "elapsed_hours", "mean_jsd", "mean_route_entropy"]
+
+    all_metric_keys: list[str] = []
+    seen = set()
+    for s in summaries:
+        for k in s.eval_result.get("metrics", {}):
+            if k not in seen:
+                all_metric_keys.append(k)
+                seen.add(k)
+
+    cols = base_cols + [f"eval_{k}" for k in all_metric_keys]
+
     with open(path, "w") as f:
-        cols = ["ablation_id", "total_steps", "initial_ce_bpb", "final_ce_bpb",
-                "ce_bpb_delta", "best_eval_bpb", "final_eval_bpb",
-                "eval_bpb", "first_byte_acc", "eval_bpb_high_nll",
-                "eval_bpb_high_entropy", "eval_bpb_high_disagreement",
-                "eval_bpb_control",
-                "elapsed_hours", "mean_jsd", "mean_route_entropy"]
         f.write(",".join(cols) + "\n")
         for s in summaries:
             m = s.eval_result.get("metrics", {})
-            vals = [
+            base_vals = [
                 s.ablation_id,
                 str(s.total_steps),
                 f"{s.initial_ce_bpb:.4f}",
@@ -681,17 +709,20 @@ def export_csv(summaries: list[RunSummary], path: str):
                 f"{s.final_ce_bpb - s.initial_ce_bpb:.4f}",
                 f"{s.best_eval_bpb:.4f}" if s.best_eval_bpb < float("inf") else "",
                 f"{s.final_eval_bpb:.4f}",
-                f"{m['bpb']:.4f}" if "bpb" in m else "",
-                f"{m['first_byte_acc']:.4f}" if "first_byte_acc" in m else "",
-                f"{m['bpb_high_nll']:.4f}" if "bpb_high_nll" in m else "",
-                f"{m['bpb_high_entropy']:.4f}" if "bpb_high_entropy" in m else "",
-                f"{m['bpb_high_disagreement']:.4f}" if "bpb_high_disagreement" in m else "",
-                f"{m['bpb_control']:.4f}" if "bpb_control" in m else "",
                 f"{s.elapsed_seconds / 3600:.2f}" if s.elapsed_seconds else "",
                 f"{s.route_stats.get('mean_jsd', '')}" if s.route_stats else "",
                 f"{s.route_stats.get('mean_entropy', '')}" if s.route_stats else "",
             ]
-            f.write(",".join(vals) + "\n")
+            metric_vals = []
+            for k in all_metric_keys:
+                v = m.get(k)
+                if v is None:
+                    metric_vals.append("")
+                elif isinstance(v, int):
+                    metric_vals.append(str(v))
+                else:
+                    metric_vals.append(f"{v:.4f}")
+            f.write(",".join(base_vals + metric_vals) + "\n")
     print(f"\n  CSV exported: {path}")
 
 

@@ -133,7 +133,7 @@ def check_trajectory(train: list[dict], eval_: list[dict]) -> list[str]:
         first_drop = bpbs[0] - bpbs[mid]
         second_drop = bpbs[mid] - bpbs[-1]
         if first_drop > 0 and second_drop > 0:
-            notes.append(f"Trajectory shape: steep→smooth (first half -{first_drop:.2f}, second half -{second_drop:.2f})")
+            notes.append(f"Trajectory shape: steep->smooth (first half -{first_drop:.2f}, second half -{second_drop:.2f})")
         elif first_drop <= 0:
             notes.append("WARNING: BPB not decreasing in first half")
         elif second_drop < 0:
@@ -164,10 +164,10 @@ def main():
     print(f"Loaded {len(train)} train entries, {len(eval_)} eval entries\n")
 
     if train:
-        print(f"Step range: {train[0]['step']} → {train[-1]['step']}")
-        print(f"Train BPB: {train[0]['bpb']:.3f} → {train[-1]['bpb']:.3f}")
+        print(f"Step range: {train[0]['step']} -> {train[-1]['step']}")
+        print(f"Train BPB: {train[0]['bpb']:.3f} -> {train[-1]['bpb']:.3f}")
     if eval_:
-        print(f"Eval BPB:  {eval_[0]['eval_bpb']:.3f} → {eval_[-1]['eval_bpb']:.3f}")
+        print(f"Eval BPB:  {eval_[0]['eval_bpb']:.3f} -> {eval_[-1]['eval_bpb']:.3f}")
         if "eval_pos_acc" in eval_[-1]:
             pos = eval_[-1]["eval_pos_acc"]
             print(f"Final per-position accuracy: {' '.join(f'p{i}={a:.4f}' for i, a in enumerate(pos))}")

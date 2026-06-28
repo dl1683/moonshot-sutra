@@ -148,7 +148,7 @@ A5 variants provide fair static baselines (no routing). Critical for X-Token com
 
 - A5a: prior-weighted (`--static-weight-mode prior`)
 - A5b: hand-tuned weights (`--static-weight-mode custom --static-weights "..."`)
-- A5c: best-2 teachers, prior-weighted (`--teachers t0 t1 --static-weight-mode prior`)
+- A5c: best-2 teachers, prior-weighted (`--teachers t0_anchor_decoder t1_diversity_hybrid --static-weight-mode prior`)
 
 **Watch for:**
 - A9c must beat A5b by >0.02 BPB globally and >0.03 on high-disagreement bucket
