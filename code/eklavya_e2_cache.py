@@ -1093,6 +1093,21 @@ class E2CacheView:
                         f"Teacher {spec.name} embedding dim {emb.shape[1]} "
                         f"!= spec hidden_dim {spec.hidden_dim}")
 
+        shard_range = manifest.get("shard_range")
+        if shard_range is not None:
+            sr_start, sr_end = shard_range
+            if sr_end > sr_start:
+                out_of_range = 0
+                for i in range(len(self._positions)):
+                    sid = self._positions[i].shard_id
+                    if sid < sr_start or sid >= sr_end:
+                        out_of_range += 1
+                if out_of_range > 0:
+                    errors.append(
+                        f"{out_of_range}/{len(self._positions)} positions "
+                        f"have shard_id outside manifest range "
+                        f"[{sr_start}, {sr_end})")
+
         if data_dir is not None:
             import glob as _glob
             shard_files = set()
@@ -1103,7 +1118,8 @@ class E2CacheView:
                 except ValueError:
                     pass
 
-            shard_range = manifest.get("shard_range", [0, 0])
+            if shard_range is None:
+                shard_range = [0, 0]
             for sid in range(shard_range[0], shard_range[1]):
                 if sid not in shard_files:
                     errors.append(

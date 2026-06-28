@@ -153,6 +153,10 @@ class E2Config:
     bld_mode: bool = False
     bld_kl_weight: float = 0.10
 
+    # PORT_WARMUP minimum coverage — fail if <threshold of warmup steps
+    # had teacher signal (projection ports would be untrained)
+    warmup_min_coverage: float = 0.10
+
 
 # ---------------------------------------------------------------------------
 # Ablation config validation
@@ -1343,9 +1347,12 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     print(f"  Warmup signal coverage: "
                           f"{warmup_signal_steps}/{warmup_total_steps} "
                           f"({ratio:.0%})")
-                    if ratio < 0.1:
-                        print(f"  WARNING: <10% of warmup steps had teacher "
-                              f"signal — projection ports may be untrained")
+                    if ratio < cfg.warmup_min_coverage:
+                        raise RuntimeError(
+                            f"E2 HARD FAIL: only {ratio:.0%} of warmup steps "
+                            f"had teacher signal (threshold: "
+                            f"{cfg.warmup_min_coverage:.0%}). Projection "
+                            f"ports are untrained — cache/data mismatch.")
         else:
             phase = current_phase
 
@@ -1620,6 +1627,8 @@ def _parse_static_weights(s: Optional[str]) -> Optional[dict[str, float]]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Eklavya E2 multi-teacher KD")
     parser.add_argument("--student-checkpoint", required=True)
+    parser.add_argument("--data-dir", default="data/shards_bytes_full",
+                        help="Path to byte shard directory")
     parser.add_argument("--cache-dir", default="eklavya_e2_cache")
     parser.add_argument("--output-dir", default="checkpoints/e2")
     parser.add_argument("--steps", type=int, default=None)
@@ -1664,6 +1673,7 @@ if __name__ == "__main__":
 
     cfg = E2Config(
         checkpoint_dir=args.output_dir, cache_dir=args.cache_dir,
+        data_dir=args.data_dir,
         resume_from=args.resume,
         ablation_id=args.ablation_id,
         teacher_include=args.teachers,
