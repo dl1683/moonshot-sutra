@@ -1380,19 +1380,31 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 total_loss.backward()
         elif teacher_losses and not cfg.disable_gradient_budget:
             active_specs = trainer.get_active_teachers(phase)
-            per_caps = {}
-            for lname in teacher_losses:
-                for spec in active_specs:
-                    if spec.name in lname:
-                        per_caps[lname] = spec.per_teacher_grad_cap
+            spec_by_name = {s.name: s for s in active_specs}
+            teacher_agg: dict[str, list[torch.Tensor]] = {}
+            for lname, lval in teacher_losses.items():
+                matched = None
+                for sname in spec_by_name:
+                    if sname in lname:
+                        matched = sname
                         break
-                else:
-                    per_caps[lname] = cfg.per_teacher_grad_cap
+                key = matched or lname
+                teacher_agg.setdefault(key, []).append(lval)
+            per_teacher_losses = {
+                tname: torch.stack(vals).sum() / cfg.grad_accum
+                for tname, vals in teacher_agg.items()
+            }
+            per_caps = {
+                tname: spec_by_name[tname].per_teacher_grad_cap
+                if tname in spec_by_name
+                else cfg.per_teacher_grad_cap
+                for tname in per_teacher_losses
+            }
 
             grad_report = apply_multi_teacher_gradient_budget(
                 list(student.parameters()) + list(ports.parameters()),
                 ce_loss / cfg.grad_accum,
-                {k: v / cfg.grad_accum for k, v in teacher_losses.items()},
+                per_teacher_losses,
                 per_teacher_cap=per_caps,
                 total_teacher_cap=cfg.total_teacher_grad_cap,
                 scaler=scaler,

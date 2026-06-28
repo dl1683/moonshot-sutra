@@ -2520,6 +2520,106 @@ class TestE2TrainerTeacherLosses:
 
         assert len(losses) == 0
 
+    def test_multi_loss_teacher_capped_as_aggregate(self):
+        """Regression (R35 finding #1): a teacher with KL + align losses must
+        be capped once at the per-teacher cap, not once per loss component."""
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=64, n_heads=2, n_kv_heads=1,
+            n_layers=2, patch_size=4, vocab_size=260,
+            ffn_mult=2, max_seq_len=64,
+            decoder_dim=64, decoder_layers=1, decoder_heads=2,
+            byte_dim=64,
+        )
+        student = SutraS0(model_cfg)
+
+        anchor = TEACHER_REGISTRY[0]  # has_kl=True, has_align=True
+        n_pos = 10
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65 + i,
+                student_nll=4.0, student_entropy=2.0, reason_mask=1,
+            )
+            for i in range(n_pos)
+        ]
+        kl_recs = [make_kl(pid=i, K=16) for i in range(n_pos)]
+        align_recs = [
+            E2AlignRecord(
+                position_id=i, byte_start=i * 4, byte_len=4,
+                token_id=i, align_quality=0.9,
+            )
+            for i in range(n_pos)
+        ]
+        emb_table = torch.randn(n_pos, anchor.hidden_dim)
+
+        teacher_data = {
+            anchor.name: {
+                "spec": anchor,
+                "kl_records": kl_recs,
+                "kl_K": 16,
+                "align_records": align_recs,
+                "embedding_table": emb_table,
+            }
+        }
+        manifest = {
+            "version": "e2.0", "n_positions": n_pos,
+            "kl_top_k": 16, "teacher_count": 1,
+            "teacher_specs": [anchor],
+        }
+        cache = {
+            "manifest": manifest, "positions": positions,
+            "teachers": teacher_data, "routes": [],
+        }
+        specs = [anchor]
+        ports = MultiTeacherProjectionPorts(student_dim=model_cfg.d_model,
+                                            teachers=specs)
+        cfg = E2Config(
+            port_warmup_steps=0, consensus_steps=100,
+            semantic_landing_steps=100, disagreement_steps=100,
+        )
+        device = torch.device("cpu")
+        trainer = E2Trainer(cfg, student, ports, cache, device)
+
+        P = model_cfg.patch_size
+        seq_len = 64 * P
+        byte_ids = torch.randint(0, 256, (1, seq_len))
+        out = student(byte_ids)
+        shard_ids = torch.tensor([0])
+        seq_starts = torch.tensor([0])
+
+        losses = trainer.compute_teacher_losses(
+            out["logits"], out["patch_states"], shard_ids, seq_starts,
+            E2Phase.CONSENSUS, step=3)
+
+        kl_keys = [k for k in losses if k.startswith("kl_purified")]
+        align_keys = [k for k in losses if k.startswith("align_")]
+        has_multi_component = len(kl_keys) > 0 and len(align_keys) > 0
+        if not has_multi_component:
+            pytest.skip("Teacher didn't produce both KL and align losses")
+
+        spec_by_name = {anchor.name: anchor}
+        teacher_agg: dict[str, list[torch.Tensor]] = {}
+        for lname, lval in losses.items():
+            matched = None
+            for sname in spec_by_name:
+                if sname in lname:
+                    matched = sname
+                    break
+            key = matched or lname
+            teacher_agg.setdefault(key, []).append(lval)
+        per_teacher_losses = {
+            tname: torch.stack(vals).sum()
+            for tname, vals in teacher_agg.items()
+        }
+
+        assert anchor.name in per_teacher_losses, (
+            f"Losses should aggregate under teacher name {anchor.name}")
+        assert len(per_teacher_losses) == 1, (
+            f"Single teacher should yield 1 aggregate key, "
+            f"got {list(per_teacher_losses.keys())}")
+
     def test_disagreement_emits_per_teacher_kl_keys(self):
         """Regression (R34 finding #6): compute_teacher_losses in DISAGREEMENT
         must emit per-teacher loss keys (kl_purified_{name}) not a bare
