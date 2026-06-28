@@ -24,6 +24,7 @@ import os
 import random
 import re
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,22 @@ from eklavya_e2_losses import (
     e2_topk_tail_kl, semantic_cosine_loss,
     apply_multi_teacher_gradient_budget,
 )
+
+
+def atomic_save(obj, path):
+    """Save a checkpoint atomically via temp-file + os.replace."""
+    d = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+    os.close(fd)
+    try:
+        torch.save(obj, tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -1406,7 +1423,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         }
         if device.type == "cuda":
             baseline_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
-        torch.save(baseline_dict, best_path)
+        atomic_save(baseline_dict, best_path)
         print(f"  Saved baseline as initial best: {best_path}")
 
     while step < total:
@@ -1708,7 +1725,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 }
                 if device.type == "cuda":
                     best_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
-                torch.save(best_dict, best_path)
+                atomic_save(best_dict, best_path)
                 print(f"  New best eval BPB {best_eval_bpb:.3f} — saved {best_path}")
 
         accum_aligned = (step + 1) % cfg.grad_accum == 0
@@ -1733,7 +1750,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             }
             if device.type == "cuda":
                 save_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
-            torch.save(save_dict, ckpt_path)
+            atomic_save(save_dict, ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")
 
         step += 1
@@ -1742,7 +1759,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
     print(f"\nE2 training complete at step {step}. Best eval BPB: {best_eval_bpb:.3f}")
 
     final_path = os.path.join(cfg.checkpoint_dir, "e2_final.pt")
-    torch.save({
+    atomic_save({
         "step": step,
         "phase": current_phase,
         "model": student.state_dict(),
@@ -1775,6 +1792,14 @@ def _build_parser():
     parser.add_argument("--cache-dir", default="eklavya_e2_cache")
     parser.add_argument("--output-dir", default="checkpoints/e2")
     parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--port-warmup-steps", type=int, default=None,
+                        help="Override port warmup phase length")
+    parser.add_argument("--consensus-steps", type=int, default=None,
+                        help="Override consensus phase length")
+    parser.add_argument("--semantic-landing-steps", type=int, default=None,
+                        help="Override semantic landing phase length")
+    parser.add_argument("--disagreement-steps", type=int, default=None,
+                        help="Override disagreement phase length")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to E2 checkpoint to resume from")
     parser.add_argument("--ablation-id", default="A2",
@@ -1846,6 +1871,14 @@ if __name__ == "__main__":
         router_student_delta=args.router_student_delta,
         strict_provenance=args.strict_provenance,
     )
+    if args.port_warmup_steps is not None:
+        cfg.port_warmup_steps = args.port_warmup_steps
+    if args.consensus_steps is not None:
+        cfg.consensus_steps = args.consensus_steps
+    if args.semantic_landing_steps is not None:
+        cfg.semantic_landing_steps = args.semantic_landing_steps
+    if args.disagreement_steps is not None:
+        cfg.disagreement_steps = args.disagreement_steps
     if args.steps:
         remaining = args.steps
         cfg.port_warmup_steps = min(cfg.port_warmup_steps, remaining)

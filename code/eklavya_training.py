@@ -20,6 +20,7 @@ import math
 import os
 import random
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,22 @@ class AlignProjection(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.proj(self.norm(x))
+
+
+def atomic_save(obj, path):
+    """Save a checkpoint atomically via temp-file + os.replace."""
+    d = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+    os.close(fd)
+    try:
+        torch.save(obj, tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 @torch.no_grad()
@@ -729,7 +746,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             if eval_metrics["eval_bpb"] < best_eval_bpb:
                 best_eval_bpb = eval_metrics["eval_bpb"]
                 best_path = os.path.join(cfg.checkpoint_dir, "e1_best.pt")
-                torch.save({
+                atomic_save({
                     "step": step,
                     "phase": phase,
                     "model": student.state_dict(),
@@ -759,7 +776,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         if (accum_aligned and step >= cfg.checkpoint_every
                 and step % cfg.checkpoint_every < cfg.grad_accum):
             ckpt_path = os.path.join(cfg.checkpoint_dir, f"e1_step{step}.pt")
-            torch.save({
+            atomic_save({
                 "step": step,
                 "phase": phase,
                 "model": student.state_dict(),
@@ -779,7 +796,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
 
     log_fh.close()
     final_path = os.path.join(cfg.checkpoint_dir, "e1_final.pt")
-    torch.save({
+    atomic_save({
         "step": step,
         "phase": phase,
         "model": student.state_dict(),

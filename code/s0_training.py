@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,22 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 from s0_architecture import S0Config, SutraS0
+
+
+def atomic_save(obj, path):
+    """Save a checkpoint atomically via temp-file + os.replace."""
+    d = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+    os.close(fd)
+    try:
+        torch.save(obj, tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 @dataclass
@@ -443,7 +460,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
                     "model_cfg": model_cfg,
                     "eval_bpb": best_eval_bpb,
                 }
-                torch.save(best_ckpt, best_path)
+                atomic_save(best_ckpt, best_path)
                 print(f"  New best eval BPB {best_eval_bpb:.3f} — saved {best_path}")
 
         # Checkpoint
@@ -463,7 +480,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
             }
             if device.type == "cuda":
                 ckpt_data["cuda_rng_state"] = torch.cuda.get_rng_state()
-            torch.save(ckpt_data, ckpt_path)
+            atomic_save(ckpt_data, ckpt_path)
             print(f"Saved checkpoint: {ckpt_path}")
 
     log_f.close()
@@ -486,6 +503,10 @@ if __name__ == "__main__":
     parser.add_argument("--eval-every", type=int, default=None)
     parser.add_argument("--warmup-steps", type=int, default=None)
     parser.add_argument("--config", choices=["p4", "p8", "d640", "d768"], default="p4")
+    parser.add_argument("--grad-accum-steps", type=int, default=None)
+    parser.add_argument("--eval-hold-shards", type=int, default=None)
+    parser.add_argument("--eval-batches", type=int, default=None)
+    parser.add_argument("--checkpoint-every", type=int, default=None)
     args = parser.parse_args()
 
     from s0_configs import ALL_CONFIGS
@@ -512,5 +533,13 @@ if __name__ == "__main__":
         train_cfg.eval_every = args.eval_every
     if args.warmup_steps:
         train_cfg.warmup_steps = args.warmup_steps
+    if args.grad_accum_steps:
+        train_cfg.grad_accum_steps = args.grad_accum_steps
+    if args.eval_hold_shards:
+        train_cfg.eval_hold_shards = args.eval_hold_shards
+    if args.eval_batches:
+        train_cfg.eval_batches = args.eval_batches
+    if args.checkpoint_every:
+        train_cfg.checkpoint_every = args.checkpoint_every
 
     train(model_cfg, train_cfg)
