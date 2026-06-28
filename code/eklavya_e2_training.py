@@ -1207,14 +1207,21 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         cache_ckpt_base = os.path.basename(cache_ckpt_path)
         ckpt_step = ckpt.get("step")
         if ckpt_step is not None and cache_ckpt_base:
-            if str(ckpt_step) not in cache_ckpt_base:
+            import re
+            step_pattern = re.compile(r'(?:^|[_\-])step(\d+)(?:[_\-.]|$)')
+            m = step_pattern.search(cache_ckpt_base)
+            cache_step = int(m.group(1)) if m else None
+            mismatch = (cache_step is not None and cache_step != ckpt_step)
+            unverifiable = (cache_step is None
+                            and str(ckpt_step) not in cache_ckpt_base)
+            if mismatch or unverifiable:
                 msg = (f"Cache was built from '{cache_ckpt_base}' "
                        f"but student checkpoint is at step {ckpt_step}. "
                        f"Gap positions may be stale — consider rebuilding.")
                 if cfg.strict_provenance:
                     raise ValueError(
                         f"STRICT PROVENANCE: {msg} "
-                        f"(use --no-strict-provenance to downgrade to warning)")
+                        f"(omit --strict-provenance to downgrade to warning)")
                 print(f"  WARNING: {msg}")
 
     ports = MultiTeacherProjectionPorts(model_cfg.d_model, specs).to(device)

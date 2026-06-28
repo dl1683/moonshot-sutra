@@ -41,11 +41,17 @@ def export_train_csv(log_path: str, output_path: str):
             row = {
                 "step": step,
                 "phase": phase,
+                "ablation_id": entry.get("ablation_id", ""),
                 "ce_bpb": round(ce_bpb, 6),
                 "lr": entry.get("lr", ""),
                 "grad_norm": round(entry["grad_norm"], 6) if "grad_norm" in entry else "",
                 "elapsed_s": round(entry["elapsed"], 2) if "elapsed" in entry else "",
             }
+
+            if "bld_kl_bits" in entry:
+                row["bld_kl_bits"] = round(entry["bld_kl_bits"], 6)
+            if "gpu_mem_gb" in entry:
+                row["gpu_mem_gb"] = entry["gpu_mem_gb"]
 
             tl = entry.get("teacher_losses_bits", entry.get("teacher_losses", {}))
             for tname, tloss in sorted(tl.items()):
@@ -61,8 +67,23 @@ def export_train_csv(log_path: str, output_path: str):
 
             gb = entry.get("grad_budget", {})
             if gb:
-                row["gb_ce_norm"] = round(gb.get("ce_grad_norm", 0), 6)
-                row["gb_total_scale"] = round(gb.get("total_scale", 0), 6)
+                if gb.get("enabled") is False:
+                    row["gb_enabled"] = 0
+                else:
+                    if "ce_grad_norm" in gb:
+                        row["gb_ce_norm"] = round(gb["ce_grad_norm"], 6)
+                    if "total_scale" in gb:
+                        row["gb_total_scale"] = round(gb["total_scale"], 6)
+                    if "total_teacher_before" in gb:
+                        row["gb_teacher_before"] = round(gb["total_teacher_before"], 6)
+                    if "total_teacher_after" in gb:
+                        row["gb_teacher_after"] = round(gb["total_teacher_after"], 6)
+                    if "pairwise_coherence" in gb:
+                        row["gb_pairwise_coherence"] = round(gb["pairwise_coherence"], 4)
+                    for tname, cos in sorted(gb.get("ce_teacher_cosines", {}).items()):
+                        row[f"gb_cos_{tname}"] = round(cos, 4)
+                    for tname, sc in sorted(gb.get("per_teacher_scales", {}).items()):
+                        row[f"gb_scale_{tname}"] = round(sc, 4)
 
             rows.append(row)
 

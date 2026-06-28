@@ -315,7 +315,7 @@ def _phase_boundary_checks(train: list[dict],
 
     _PORT = ("E2.1_port_warmup", "PORT_WARMUP", "E2.1")
     _CONS = ("E2.2_consensus", "CONSENSUS", "E2.2")
-    _SEM = ("E2.3_semantic_landing", "SEMANTIC_LANDING", "E2.3")
+    _SEM = ("E2.3_semantic", "E2.3_semantic_landing", "SEMANTIC_LANDING", "E2.3")
     _DIS = ("E2.4_disagreement", "DISAGREEMENT", "E2.4")
 
     def _get_phase(names):

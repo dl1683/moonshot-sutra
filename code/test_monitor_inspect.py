@@ -409,6 +409,14 @@ class TestPhaseBoundaryChecks:
         anomalies = _phase_boundary_checks(train)
         assert not any("SEMANTIC_LANDING" in a for a in anomalies)
 
+    def test_semantic_real_training_phase_name(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.3_semantic",
+                  "teacher_losses_bits": {"kl_purified_anchor": 3.0}}
+                 for i in range(10)]
+        anomalies = _phase_boundary_checks(train)
+        assert any("SEMANTIC_LANDING" in a and "semantic" in a.lower()
+                    for a in anomalies)
+
     def test_disagreement_entropy_too_high(self):
         train = [{"step": i, "ce_loss": 4.0, "phase": "E2.4_disagreement",
                   "route_stats": {"mean_route_entropy": 1.5}}

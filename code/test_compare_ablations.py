@@ -495,7 +495,7 @@ class TestGoldFreeRules:
         out = capsys.readouterr().out
         assert "Oracle routing is material" in out
 
-    def test_goldfree_unproven_matches_static(self, capsys):
+    def test_goldfree_harmful_worse_than_static(self, capsys):
         summaries = [
             self._make_summary("A9c", 4.1),
             self._make_summary("A2", 3.95),
@@ -503,7 +503,7 @@ class TestGoldFreeRules:
         ]
         evaluate_decision_rules(summaries)
         out = capsys.readouterr().out
-        assert "unproven" in out.lower()
+        assert "harmful" in out.lower()
 
     def test_goldfree_missing_ablation_skips(self, capsys):
         summaries = [self._make_summary("A9c", 4.0)]

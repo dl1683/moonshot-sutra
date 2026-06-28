@@ -443,7 +443,7 @@ GOLDFREE_RULES = [
     ("A2", "A9c", 0.02, None, None,
      "Oracle routing is material -- router depends on gold signal, not deployable as-is"),
     ("A5b", "A9c", 0.02, None, None,
-     "Gold-free routing concept unproven (A9c ~ best static baseline)"),
+     "Gold-free routing harmful (A9c worse than best static by >0.02)"),
 ]
 
 GAP_CLASS_RULES = [

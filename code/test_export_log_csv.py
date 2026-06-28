@@ -216,6 +216,110 @@ class TestExportTrainCSV:
             os.unlink(log)
             os.unlink(out)
 
+    def test_ablation_id_column(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 6.5, "phase": "e2", "ablation_id": "A2"},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert "ablation_id" in fields
+            assert rows[0]["ablation_id"] == "A2"
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
+    def test_bld_kl_bits_column(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 6.5, "phase": "e2",
+             "bld_kl_bits": 3.25, "bld_kl_loss": 2.252},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert "bld_kl_bits" in fields
+            assert float(rows[0]["bld_kl_bits"]) == pytest.approx(3.25)
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
+    def test_gpu_mem_gb_column(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 6.5, "phase": "e2", "gpu_mem_gb": 5.5},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert "gpu_mem_gb" in fields
+            assert float(rows[0]["gpu_mem_gb"]) == pytest.approx(5.5)
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
+    def test_gcg_telemetry_columns(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 6.5, "phase": "e2",
+             "grad_budget": {
+                 "ce_grad_norm": 1.2, "total_scale": 0.8,
+                 "total_teacher_before": 2.5, "total_teacher_after": 2.0,
+                 "pairwise_coherence": 0.15,
+                 "ce_teacher_cosines": {"t0": 0.3, "t1": -0.1},
+                 "per_teacher_scales": {"t0": 0.9, "t1": 0.7},
+             }},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert "gb_teacher_before" in fields
+            assert "gb_teacher_after" in fields
+            assert "gb_pairwise_coherence" in fields
+            assert "gb_cos_t0" in fields
+            assert "gb_cos_t1" in fields
+            assert "gb_scale_t0" in fields
+            assert "gb_scale_t1" in fields
+            assert float(rows[0]["gb_teacher_before"]) == pytest.approx(2.5)
+            assert float(rows[0]["gb_pairwise_coherence"]) == pytest.approx(0.15)
+            assert float(rows[0]["gb_cos_t0"]) == pytest.approx(0.3)
+            assert float(rows[0]["gb_scale_t1"]) == pytest.approx(0.7)
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
+    def test_no_bld_fields_when_absent(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 6.5, "phase": "e2"},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert "bld_kl_bits" not in fields
+            assert "gpu_mem_gb" not in fields
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
+    def test_disabled_grad_budget_no_fake_zeros(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 6.5, "phase": "e2",
+             "grad_budget": {"enabled": False}},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert "gb_enabled" in fields
+            assert rows[0]["gb_enabled"] == "0"
+            assert "gb_ce_norm" not in fields
+            assert "gb_total_scale" not in fields
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
 
 # ═══ export_eval_csv ═════════════════════════════════════════════════════
 
