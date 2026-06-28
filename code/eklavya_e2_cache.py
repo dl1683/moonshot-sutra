@@ -266,25 +266,27 @@ class E2KLRecord:
         top_bytes = np.frombuffer(buf[offset:offset + K], dtype=np.uint8).copy()
         offset += K
         top_probs = np.frombuffer(buf[offset:offset + K * 2], dtype=np.float16).copy()
-        np.nan_to_num(top_probs, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-        tail = hdr_vals[2]
-        if not math.isfinite(tail):
-            tail = 0.0
-        entropy = hdr_vals[3]
-        if not math.isfinite(entropy):
-            entropy = 0.0
-        logp_gold = hdr_vals[4]
-        if not math.isfinite(logp_gold):
-            logp_gold = -20.0
         return cls(
             position_id=hdr_vals[0],
             patch_idx=hdr_vals[1],
-            tail_prob=tail,
-            entropy=entropy,
-            logp_gold=logp_gold,
+            tail_prob=hdr_vals[2],
+            entropy=hdr_vals[3],
+            logp_gold=hdr_vals[4],
             top_bytes=top_bytes,
             top_probs=top_probs,
         )
+
+    def is_valid(self) -> bool:
+        if not np.all(np.isfinite(self.top_probs)):
+            return False
+        if np.any(self.top_probs < 0.0) or np.any(self.top_probs > 1.0):
+            return False
+        if not math.isfinite(self.tail_prob) or self.tail_prob < 0.0:
+            return False
+        total = float(self.top_probs.astype(np.float64).sum()) + self.tail_prob
+        if total < 0.9 or total > 1.1:
+            return False
+        return True
 
     @classmethod
     def record_size(cls, K: int = 16) -> int:
@@ -416,7 +418,9 @@ def read_teacher_kl_records(path: str) -> tuple[list[E2KLRecord], int]:
                 raise ValueError(
                     f"Short read at KL record {i}/{n} in {path}: "
                     f"got {len(buf)}, expected {rec_size}")
-            records.append(E2KLRecord.unpack(buf, K))
+            rec = E2KLRecord.unpack(buf, K)
+            if rec.is_valid():
+                records.append(rec)
     return records, K
 
 

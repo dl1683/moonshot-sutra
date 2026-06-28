@@ -208,7 +208,8 @@ def build_cache_for_shard(
         seq_bytes = shard_data[offset:offset + seq_len]
         byte_ids = torch.tensor(seq_bytes, dtype=torch.long, device=device).unsqueeze(0)
 
-        text = bytes(seq_bytes).decode("utf-8", errors="replace")
+        seq_clean = bytes(b if b != 0xFF else 0x0A for b in seq_bytes)
+        text = seq_clean.decode("utf-8", errors="replace")
         teacher_inputs = tokenizer(
             text, return_tensors="pt", truncation=True,
             max_length=min(tokenizer.model_max_length or 2048, 8192),
@@ -245,7 +246,8 @@ def build_cache_for_shard(
         for patch_idx in selected_patches:
             t = patch_idx * patch_size
             prefix_bytes = seq_bytes[:t]
-            prefix_text = bytes(prefix_bytes).decode("utf-8", errors="replace")
+            prefix_clean = bytes(b if b != 0xFF else 0x0A for b in prefix_bytes)
+            prefix_text = prefix_clean.decode("utf-8", errors="replace")
 
             prefix_ids = tokenizer(
                 prefix_text, return_tensors="pt", truncation=True,
@@ -450,12 +452,7 @@ def load_cache(cache_dir: str) -> dict:
             sid, soff, pidx = struct.unpack("<IqH", f.read(14))
             top_b = np.frombuffer(f.read(K), dtype=np.uint8).copy()
             top_p = np.frombuffer(f.read(K * 2), dtype=np.float16).copy()
-            np.nan_to_num(top_p, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
             tail, ent = struct.unpack("<ee", f.read(4))
-            if not math.isfinite(tail):
-                tail = 0.0
-            if not math.isfinite(ent):
-                ent = 0.0
             rec = ByteKLRecord(sid, soff, pidx, top_b, top_p, tail, ent)
             if _kl_record_is_valid(rec):
                 kl_records.append(rec)

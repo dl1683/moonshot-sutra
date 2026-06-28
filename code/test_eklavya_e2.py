@@ -358,11 +358,13 @@ class TestTeacherKLIO:
             records[0].top_bytes, loaded[0].top_bytes)
 
     def test_write_read_roundtrip_k32(self, tmp_path):
+        raw32 = np.linspace(0.3, 0.001, 32)
+        norm32 = (raw32 / raw32.sum() * 0.95).astype(np.float16)
         records = [E2KLRecord(
             position_id=i, patch_idx=3,
-            tail_prob=0.01, entropy=2.0, logp_gold=-1.5,
+            tail_prob=0.05, entropy=2.0, logp_gold=-1.5,
             top_bytes=np.arange(32, dtype=np.uint8),
-            top_probs=np.linspace(0.3, 0.001, 32).astype(np.float16),
+            top_probs=norm32.copy(),
         ) for i in range(10)]
         path = str(tmp_path / "kl32.bin")
         write_teacher_kl_records(path, records, K=32)
@@ -3530,9 +3532,9 @@ class TestTruncatedCache:
 
 
 class TestUnpackNaNGuard:
-    """NaN values in binary cache should be sanitized at unpack time."""
+    """NaN values in binary cache detected by is_valid(), not sanitized."""
 
-    def test_nan_top_probs_sanitized(self):
+    def test_nan_top_probs_rejected(self):
         rec = make_kl(pid=0, K=16)
         buf = rec.pack(16)
         buf_arr = bytearray(buf)
@@ -3540,34 +3542,34 @@ class TestUnpackNaNGuard:
         nan_bytes = np.array([float('nan')], dtype=np.float16).tobytes()
         buf_arr[offset:offset + 2] = nan_bytes
         unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
-        assert np.all(np.isfinite(unpacked.top_probs))
+        assert not unpacked.is_valid()
 
-    def test_nan_tail_sanitized(self):
+    def test_nan_tail_rejected(self):
         rec = make_kl(pid=0, K=16)
         buf = rec.pack(16)
         buf_arr = bytearray(buf)
         nan_val = struct.pack("<e", float('nan'))
         buf_arr[6:8] = nan_val
         unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
-        assert math.isfinite(unpacked.tail_prob)
+        assert not unpacked.is_valid()
 
-    def test_nan_entropy_sanitized(self):
+    def test_nan_entropy_passes_validation(self):
         rec = make_kl(pid=0, K=16)
         buf = rec.pack(16)
         buf_arr = bytearray(buf)
         nan_val = struct.pack("<e", float('nan'))
-        buf_arr[8:10] = nan_val  # entropy is at bytes 8:10
+        buf_arr[8:10] = nan_val
         unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
-        assert math.isfinite(unpacked.entropy)
+        assert unpacked.is_valid(), "NaN entropy doesn't corrupt distribution"
 
-    def test_nan_logp_gold_sanitized(self):
+    def test_nan_logp_gold_passes_validation(self):
         rec = make_kl(pid=0, K=16)
         buf = rec.pack(16)
         buf_arr = bytearray(buf)
         nan_val = struct.pack("<e", float('nan'))
-        buf_arr[10:12] = nan_val  # logp_gold is at bytes 10:12
+        buf_arr[10:12] = nan_val
         unpacked = E2KLRecord.unpack(bytes(buf_arr), 16)
-        assert math.isfinite(unpacked.logp_gold)
+        assert unpacked.is_valid(), "NaN logp_gold doesn't corrupt distribution"
 
     def test_short_buffer_raises(self):
         with pytest.raises(ValueError, match="Buffer too short"):
@@ -4187,12 +4189,14 @@ class TestStreamingWriters:
     def test_streaming_kl_matches_batch_write(self, tmp_path):
         from eklavya_e2_cache_builder import _StreamingKLWriter
         K = 8
+        raw = np.linspace(0.5, 0.01, K)
+        norm_probs = (raw / raw.sum() * 0.95).astype(np.float16)
         records = [
             E2KLRecord(
                 position_id=i, patch_idx=i + 1, tail_prob=0.05,
                 entropy=2.0, logp_gold=-1.5,
                 top_bytes=np.arange(K, dtype=np.uint8),
-                top_probs=np.linspace(0.5, 0.01, K).astype(np.float16),
+                top_probs=norm_probs.copy(),
             )
             for i in range(5)
         ]

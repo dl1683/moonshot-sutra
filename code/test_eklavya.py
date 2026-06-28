@@ -222,6 +222,25 @@ def test_validate_byte_alignment_multibyte_utf8():
     print("  test_validate_byte_alignment_multibyte_utf8 PASSED")
 
 
+def test_separator_byte_cleaning_preserves_positions():
+    """0xFF doc separators replaced with 0x0A before teacher decode."""
+    raw = b"Hello\xffWorld"
+    cleaned = bytes(b if b != 0xFF else 0x0A for b in raw)
+    assert len(cleaned) == len(raw), "Cleaning must preserve byte count"
+    assert cleaned == b"Hello\nWorld"
+    text = cleaned.decode("utf-8")
+    assert "�" not in text, "No replacement chars after cleaning"
+    assert text == "Hello\nWorld"
+
+    raw_multi = b"\xff\xff\xc3\xa9\xff"
+    cleaned_multi = bytes(b if b != 0xFF else 0x0A for b in raw_multi)
+    assert len(cleaned_multi) == len(raw_multi)
+    text_multi = cleaned_multi.decode("utf-8")
+    assert "�" not in text_multi
+    assert text_multi == "\n\né\n"
+    print("  test_separator_byte_cleaning_preserves_positions PASSED")
+
+
 def test_build_token_byte_table():
     class SmallTokenizer:
         vocab_size = 5
@@ -933,8 +952,8 @@ def test_nan_top_probs_record_dropped_at_load():
     print("  test_nan_top_probs_record_dropped_at_load PASSED")
 
 
-def test_nan_tail_sanitized_at_load():
-    """NaN in tail → sanitized to 0.0, record still valid (probs sum ~0.92)."""
+def test_nan_tail_rejected_at_load():
+    """NaN in tail → record rejected (no pre-validation sanitization)."""
     kl = [_make_valid_kl(0, 0, 2)]
     align = [AlignRecord(0, 0, 0, 4, 10)]
 
@@ -947,12 +966,9 @@ def test_nan_tail_sanitized_at_load():
             f.seek(8 + 14 + 16 + 32)  # header + IqH + top_bytes + top_probs
             f.write(nan_bytes)
         loaded = load_cache(td)
-        assert len(loaded["kl_records"]) == 1, \
-            "NaN tail with valid probs should still pass validation"
-        import math as m
-        assert m.isfinite(loaded["kl_records"][0].tail_prob), \
-            "NaN tail_prob should be sanitized to 0.0"
-    print("  test_nan_tail_sanitized_at_load PASSED")
+        assert len(loaded["kl_records"]) == 0, \
+            "NaN tail should cause record rejection"
+    print("  test_nan_tail_rejected_at_load PASSED")
 
 
 def _make_valid_kl(sid, soff, pidx, K=16):
@@ -1168,7 +1184,7 @@ if __name__ == "__main__":
         test_truncated_kl_cache_loads_gracefully,
         test_truncated_align_cache_loads_gracefully,
         test_nan_top_probs_record_dropped_at_load,
-        test_nan_tail_sanitized_at_load,
+        test_nan_tail_rejected_at_load,
         test_corrupt_kl_record_filtered_at_load,
         test_header_truncated_kl_cache,
         test_header_truncated_align_cache,

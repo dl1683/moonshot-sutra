@@ -533,6 +533,7 @@ class SutraS0(nn.Module):
         B, T = byte_ids.shape
         P = self.cfg.patch_size
         assert T % P == 0, f"sequence length {T} not divisible by patch_size {P}"
+        assert T > P, f"need at least 2 patches (T > {P}), got T={T}"
 
         # I0: Encode bytes into patch states
         patch_states, byte_states, entropy_scores, residual_flags = self.encoder(

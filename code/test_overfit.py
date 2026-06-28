@@ -169,6 +169,19 @@ def test_compute_loss_shape():
     assert losses["bpb"] > 0
 
 
+def test_single_patch_input_rejected():
+    """Model must reject T == patch_size (would produce 0 logits)."""
+    cfg = S0Config(byte_dim=16, d_model=32, n_layers=2, n_heads=2,
+                   n_kv_heads=1, ffn_mult=1.0, local_mixer_layers=1,
+                   patch_size=4, max_seq_len=16, decoder_dim=16,
+                   decoder_layers=1, decoder_heads=2, verifier_dim=16)
+    model = SutraS0(cfg)
+    model.eval()
+    x = torch.randint(0, 256, (1, 4))
+    with pytest.raises(AssertionError, match="need at least 2 patches"):
+        model(x)
+
+
 def test_lr_schedule():
     """Verify cosine LR schedule has correct shape."""
     from s0_training import get_lr, TrainConfig

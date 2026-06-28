@@ -454,7 +454,12 @@ class _MmapPidLookup:
 
     def get(self, pid: int, default=None):
         idx = self._pid_to_idx.get(pid)
-        return self._reader[idx] if idx is not None else default
+        if idx is None:
+            return default
+        rec = self._reader[idx]
+        if hasattr(rec, "is_valid") and not rec.is_valid():
+            return default
+        return rec
 
     def __contains__(self, pid: int) -> bool:
         return pid in self._pid_to_idx

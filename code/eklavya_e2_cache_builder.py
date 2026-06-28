@@ -232,7 +232,8 @@ def build_teacher_records(
 
     for seq_offset, pos_list in pos_by_seq.items():
         seq_bytes = shard_data[seq_offset:seq_offset + seq_len]
-        text = bytes(seq_bytes).decode("utf-8", errors="replace")
+        seq_clean = bytes(b if b != 0xFF else 0x0A for b in seq_bytes)
+        text = seq_clean.decode("utf-8", errors="replace")
 
         teacher_inputs = tokenizer(
             text, return_tensors="pt", truncation=True,
@@ -273,7 +274,8 @@ def build_teacher_records(
             for pos in pos_list:
                 t = pos.patch_idx * patch_size
                 prefix_bytes = seq_bytes[:t]
-                prefix_text = bytes(prefix_bytes).decode("utf-8", errors="replace")
+                prefix_clean = bytes(b if b != 0xFF else 0x0A for b in prefix_bytes)
+                prefix_text = prefix_clean.decode("utf-8", errors="replace")
 
                 max_len = min(getattr(tokenizer, 'model_max_length', 2048) or 2048, 8192)
                 prefix_ids = tokenizer(
