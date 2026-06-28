@@ -135,7 +135,7 @@ def check_e2_cache(cache_dir: str, data_dir: str):
         sys.path.insert(0, os.path.dirname(__file__))
         from eklavya_e2_cache import E2CacheView
         with E2CacheView(cache_dir) as view:
-            errors = view.validate(data_dir=data_dir)
+            errors = view.validate(data_dir=data_dir, deep=True)
             n_pos = view.n_positions
             n_teachers = len(view._teacher_names)
         if errors:
