@@ -92,7 +92,8 @@ class TestEstimateE2Overhead:
     def test_total_is_sum_of_parts(self):
         e2 = estimate_e2_overhead()
         parts = (e2["port_mem_mb"] + e2["port_grad_mb"] +
-                 e2["port_optimizer_mb"] + e2["router_mem_mb"])
+                 e2["port_optimizer_mb"] + e2["router_mem_mb"] +
+                 e2["emb_tables_mb"])
         assert e2["total_overhead_mb"] == pytest.approx(parts, rel=1e-4)
 
     def test_gb_consistent_with_mb(self):

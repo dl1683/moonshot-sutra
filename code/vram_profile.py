@@ -104,7 +104,13 @@ def estimate_e2_overhead(student_dim: int = 576) -> dict:
 
     router_mem = 1 * 1024 * 1024  # ~1 MB for router buffers
 
-    total = port_mem_bf16 + port_grad_bf16 + port_optimizer + router_mem
+    emb_mem = 0
+    for spec in TEACHER_REGISTRY:
+        if spec.has_align or spec.has_semantic:
+            emb_mem += spec.hidden_dim * 32000 * 2
+
+    total = (port_mem_bf16 + port_grad_bf16 + port_optimizer
+             + router_mem + emb_mem)
 
     return {
         "port_params": port_params,
@@ -113,6 +119,7 @@ def estimate_e2_overhead(student_dim: int = 576) -> dict:
         "port_grad_mb": port_grad_bf16 / 1e6,
         "port_optimizer_mb": port_optimizer / 1e6,
         "router_mem_mb": router_mem / 1e6,
+        "emb_tables_mb": emb_mem / 1e6,
         "total_overhead_mb": total / 1e6,
         "total_overhead_gb": total / 1e9,
     }
