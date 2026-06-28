@@ -169,6 +169,9 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
         if coherence is not None:
             print(f"    Pairwise coherence: {coherence:+.4f}")
 
+    if latest.get("gpu_mem_gb") is not None:
+        print(f"\n  GPU memory (peak): {latest['gpu_mem_gb']:.2f} GB")
+
     phases_seen = set()
     phase_transitions = []
     for entry in train:

@@ -1216,6 +1216,9 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         e1_proj.load_state_dict(ckpt["align_proj"])
         ports.warm_start_from_e1(e1_proj)
         print("Warm-started anchor port from E1 AlignProjection")
+    elif not cfg.ce_only and not cfg.resume_from:
+        print("  WARNING: No align_proj in checkpoint — anchor port is random. "
+              "E2 protocol expects warm-start from E1.")
 
     trainer = E2Trainer(cfg, student, ports, cache_view, device)
 
@@ -1369,6 +1372,12 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 active = trainer.get_active_teachers(phase)
                 print(f"\n[Step {step}] Phase {phase}")
                 print(f"  Active teachers: {[t.name for t in active]}")
+                if device.type == "cuda":
+                    alloc_gb = torch.cuda.max_memory_allocated() / (1024 ** 3)
+                    reserved_gb = torch.cuda.max_memory_reserved() / (1024 ** 3)
+                    print(f"  GPU memory: {alloc_gb:.2f} GB allocated, "
+                          f"{reserved_gb:.2f} GB reserved (peak)")
+                    torch.cuda.reset_peak_memory_stats()
                 if (current_phase == E2Phase.CONSENSUS
                         and warmup_total_steps > 0):
                     ratio = warmup_signal_steps / warmup_total_steps
@@ -1583,6 +1592,9 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             if bld_kl_loss is not None:
                 entry["bld_kl_loss"] = bld_kl_loss.item()
                 entry["bld_kl_bits"] = bld_kl_loss.item() / _ln2
+            if device.type == "cuda" and step % (cfg.log_every * 10) == 0:
+                entry["gpu_mem_gb"] = round(
+                    torch.cuda.max_memory_allocated() / (1024 ** 3), 2)
             log_fh.write(json.dumps(entry) + "\n")
             log_fh.flush()
 
