@@ -303,7 +303,10 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
     if train_cfg.resume_from:
         ckpt = torch.load(train_cfg.resume_from, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
+        if "optimizer" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        else:
+            print("WARNING: No optimizer state in checkpoint — warm-starting model only")
         if "scaler" in ckpt:
             scaler.load_state_dict(ckpt["scaler"])
         if "rng_state" in ckpt:
