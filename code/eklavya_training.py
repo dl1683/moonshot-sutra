@@ -614,7 +614,11 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             if p.requires_grad
         ]
 
-        has_teacher_signal = (found_align_records or found_kl_records) and phase != "E1.0_warmup"
+        has_teacher_signal = (
+            (found_align_records or found_kl_records)
+            and phase != "E1.0_warmup"
+            and L_teacher.requires_grad
+        )
 
         expects_teacher = phase in ("E1.1_landing", "E1.2_full")
         if expects_teacher and not has_teacher_signal:

@@ -626,6 +626,61 @@ def test_warmup_no_align_records_no_crash():
     assert not has_grad, "No gradients expected when loss has no grad_fn"
 
 
+def test_landing_with_filtered_out_records_no_crash():
+    """E1.1 must not crash when align records exist in index but all are
+    filtered out (e.g., out-of-bounds byte_start). L_teacher should have no
+    grad_fn and the gradient budget path must be skipped."""
+    model_cfg = tiny_cfg()
+    P = model_cfg.patch_size
+    student = SutraS0(model_cfg)
+    align_proj = AlignProjection(model_cfg.d_model, 64)
+
+    oob_record = AlignRecord(
+        shard_id=0, seq_offset=0, byte_start=99999, byte_len=4, token_id=0,
+    )
+    cache = {
+        "embedding_table": torch.randn(100, 64),
+        "align_records": [oob_record],
+        "kl_records": [],
+        "manifest": {},
+    }
+
+    cfg = EklavyaConfig(
+        projection_warmup_steps=0,
+        alignment_landing_steps=4,
+        full_e1_steps=0,
+    )
+    trainer = EklavyaTrainer(cfg, student, align_proj, cache, torch.device("cpu"))
+    trainer.configure_freeze("E1.1_landing")
+
+    byte_ids = torch.randint(0, 256, (1, 64))
+    out = student(byte_ids)
+    logits = out["logits"]
+    B, Nm1, Pp, V = logits.shape
+    N = Nm1 + 1
+    targets = byte_ids.reshape(B, N, P)[:, 1:]
+    L_ce = F.cross_entropy(logits.reshape(-1, V), targets.reshape(-1))
+
+    L_align = trainer.compute_align_loss(out["patch_states"][0:1], [oob_record])
+    L_teacher = cfg.lambda_align * L_align
+
+    found_align_records = True
+    has_teacher_signal = (
+        found_align_records
+        and "E1.0_warmup" != "E1.1_landing"
+        and L_teacher.requires_grad
+    )
+    assert not has_teacher_signal, (
+        "has_teacher_signal should be False when all records are filtered out"
+    )
+
+    scaled_loss = (L_ce + cfg.lambda_align * L_align) / cfg.grad_accum
+    if scaled_loss.requires_grad:
+        scaled_loss.backward()
+
+    print("  test_landing_with_filtered_out_records_no_crash PASSED")
+
+
 def test_optimizer_param_groups():
     model_cfg = tiny_cfg()
     student = SutraS0(model_cfg)

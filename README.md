@@ -43,7 +43,7 @@ knowledge can be absorbed without vocabulary alignment hacks.
 |-----------|--------|----------|
 | Teacher signal cache builder | Built & tested | `code/eklavya_cache.py` |
 | KD training loop (3-phase) | Built & tested | `code/eklavya_training.py` |
-| Unit tests (44 tests) | All passing | `code/test_eklavya.py` |
+| Unit tests (45 tests) | All passing | `code/test_eklavya.py` |
 
 **E2 (Multi-Teacher KD)** — fully wired with mmap-backed cache, integration tests, and GPU launch checklist. Ready for GPU.
 
@@ -137,7 +137,7 @@ cd code
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py test_monitor_inspect.py -v
 ```
 
-All 683 tests run on CPU without any data, models, or GPU. They validate
+All 684 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality),
 the full E1/E2 infrastructure (binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, training
