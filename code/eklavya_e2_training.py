@@ -764,9 +764,11 @@ class E2Trainer:
                         static_w = {k: priors.get(k, 1.0 / n_t) / ptotal
                                     for k in teacher_dists}
                     elif cfg.static_weight_mode == "custom" and cfg.static_weights:
-                        wtotal = sum(cfg.static_weights.get(k, 1.0 / n_t)
+                        wtotal = sum(cfg.static_weights.get(k, 0.0)
                                      for k in teacher_dists)
-                        static_w = {k: cfg.static_weights.get(k, 1.0 / n_t) / wtotal
+                        if wtotal < 1e-12:
+                            wtotal = 1.0
+                        static_w = {k: cfg.static_weights.get(k, 0.0) / wtotal
                                     for k in teacher_dists}
                     else:
                         static_w = {k: 1.0 / n_t for k in teacher_dists}

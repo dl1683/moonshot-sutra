@@ -5975,6 +5975,15 @@ class TestR36CacheAndConfig:
             capture_output=True, text=True, cwd=os.path.dirname(__file__))
         assert "--data-dir" in result.stdout
 
+    def test_custom_static_weights_unlisted_teacher_gets_zero(self):
+        from eklavya_e2_training import E2Config
+        cfg = E2Config(
+            disable_router=True,
+            static_weight_mode="custom",
+            static_weights={"t_a": 0.6, "t_b": 0.4},
+        )
+        assert cfg.static_weights.get("t_c", 0.0) == 0.0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
