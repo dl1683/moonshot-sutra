@@ -4037,6 +4037,7 @@ class TestE2EndToEnd:
             eval_batches=1,
             data_dir=shard_dir,
             cache_dir=cache_dir,
+            warmup_min_coverage=0.0,
         )
         defaults.update(overrides)
         return E2Config(**defaults)
@@ -5777,6 +5778,202 @@ class TestTeachersOnlyShardRangeValidation:
             em_start, em_end = existing["shard_range"]
             assert shard_start == em_start
             assert shard_end == em_end
+
+
+# ---------------------------------------------------------------------------
+# Router edge-case coverage (R36 gaps)
+# ---------------------------------------------------------------------------
+
+class TestRouterEdgeCases:
+    def test_route_batch_empty_batch(self):
+        batch = build_multi_teacher_batch([], {}, [])
+        routes = route_batch(batch)
+        assert routes == []
+
+    def test_route_batch_gold_free_entropy_mode(self):
+        positions = [make_position(pid=i) for i in range(2)]
+        kl_specs = [s for s in TEACHER_REGISTRY if s.has_kl]
+        teacher_kl = {s.name: [make_kl(pid=i) for i in range(2)] for s in kl_specs}
+        batch = build_multi_teacher_batch(positions, teacher_kl, kl_specs)
+        cfg = RouterConfig(mode="gold_free_entropy")
+        routes = route_batch(batch, config=cfg)
+        assert len(routes) == 2
+        for r in routes:
+            assert abs(sum(r.weights.values()) - 1.0) < 1e-5
+
+    def test_route_batch_gold_free_agreement_mode(self):
+        positions = [make_position(pid=i) for i in range(2)]
+        kl_specs = [s for s in TEACHER_REGISTRY if s.has_kl]
+        teacher_kl = {s.name: [make_kl(pid=i) for i in range(2)] for s in kl_specs}
+        batch = build_multi_teacher_batch(positions, teacher_kl, kl_specs)
+        cfg = RouterConfig(mode="gold_free_agreement")
+        routes = route_batch(batch, config=cfg)
+        assert len(routes) == 2
+        for r in routes:
+            assert abs(sum(r.weights.values()) - 1.0) < 1e-5
+
+    def test_route_teachers_zero_student_entropy(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.8)
+        d2 = _make_sparse_dist(gold=65, confidence=0.3)
+        dists = {"t_a": d1, "t_b": d2}
+        priors = {"t_a": 0.6, "t_b": 0.4}
+        cfg = RouterConfig(mode="gold_free_student_jsd")
+        student_probs = np.full(256, 1.0 / 256, dtype=np.float64)
+        result = route_teachers(dists, None, priors, cfg,
+                                student_probs=student_probs,
+                                student_entropy=0.0)
+        assert abs(sum(result.weights.values()) - 1.0) < 1e-5
+        assert all(np.isfinite(v) for v in result.weights.values())
+
+    def test_route_teachers_very_small_tau(self):
+        d1 = _make_sparse_dist(gold=65, confidence=0.9)
+        d2 = _make_sparse_dist(gold=65, confidence=0.1)
+        dists = {"t_a": d1, "t_b": d2}
+        priors = {"t_a": 0.5, "t_b": 0.5}
+        cfg = RouterConfig(tau=1e-6)
+        result = route_teachers(dists, gold_byte=65, priors=priors, config=cfg)
+        assert abs(sum(result.weights.values()) - 1.0) < 1e-5
+        assert all(np.isfinite(v) for v in result.weights.values())
+        assert max(result.weights.values()) > 0.99
+
+    def test_route_teachers_single_teacher_uses_prior(self):
+        d = _make_sparse_dist(gold=65, confidence=0.5)
+        dists = {"solo": d}
+        priors = {"solo": 1.0}
+        result = route_teachers(dists, gold_byte=65, priors=priors)
+        assert abs(result.weights["solo"] - 1.0) < 1e-5
+        assert result.jsd < 1e-5
+
+    def test_route_teachers_unknown_mode_rejected(self):
+        d = _make_sparse_dist(gold=65)
+        cfg = RouterConfig()
+        object.__setattr__(cfg, "mode", "bogus_mode")
+        with pytest.raises(ValueError, match="Unknown router mode"):
+            route_teachers({"t": d}, 65, {"t": 1.0}, cfg)
+
+    def test_purify_batch_partial_invalid_positions(self):
+        positions = [make_position(pid=0), make_position(pid=1)]
+        kl_specs = [s for s in TEACHER_REGISTRY if s.has_kl]
+        teacher_kl = {s.name: [make_kl(pid=0)] for s in kl_specs}
+        batch = build_multi_teacher_batch(positions, teacher_kl, kl_specs)
+        routes = route_batch(batch)
+        targets = purify_batch(batch, routes, mode="arithmetic")
+        assert len(targets) == 2
+        assert targets[0] is not None
+
+    def test_disagreement_jsd_identical_teachers_near_zero(self):
+        d = _make_sparse_dist(gold=65, confidence=0.5)
+        jsd = disagreement_jsd({"a": d, "b": d})
+        assert jsd < 1e-6
+
+    def test_disagreement_jsd_empty_returns_zero(self):
+        assert disagreement_jsd({}) == 0.0
+
+    def test_pairwise_agreement_single_teacher(self):
+        d = _make_sparse_dist(gold=65)
+        full = _sparse_to_full(d)
+        scores = _pairwise_agreement_scores(["a"], {"a": full})
+        assert scores == [0.0]
+
+    def test_teacher_student_jsd_identical_near_zero(self):
+        d = _make_sparse_dist(gold=65, confidence=0.5)
+        full = _sparse_to_full(d)
+        jsd = _teacher_student_jsd(full, full)
+        assert jsd < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# R36 findings: cache validation + CLI + warmup hard-fail
+# ---------------------------------------------------------------------------
+
+class TestR36CacheAndConfig:
+    def _make_cache_with_range(self, tmp_path, shard_range, position_shard_ids):
+        """Create a cache where positions have specific shard_ids."""
+        from eklavya_e2_cache import save_e2_manifest
+        cache_dir = tmp_path / "r36_cache"
+        cache_dir.mkdir()
+        (cache_dir / "teachers").mkdir()
+
+        specs = [
+            TeacherSpec(
+                teacher_id=0, name="t_anchor",
+                family=TeacherFamily.DECODER, role=TeacherRole.ANCHOR,
+                hidden_dim=32, vocab_size=64,
+                has_kl=True, has_align=False, has_semantic=False,
+                prior=1.0, vram_gb=0.1,
+            ),
+        ]
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=sid, seq_offset=0,
+                patch_idx=1, gold_byte=65,
+                student_nll=4.0, student_entropy=2.0,
+                reason_mask=SelectionReason.HIGH_NLL,
+            )
+            for i, sid in enumerate(position_shard_ids)
+        ]
+        write_position_manifest(str(cache_dir / "positions.bin"), positions)
+
+        tdir = cache_dir / "teachers" / "t_anchor"
+        tdir.mkdir()
+        K = 8
+        kl_recs = [
+            E2KLRecord(
+                position_id=i, patch_idx=1,
+                tail_prob=0.0, entropy=2.0, logp_gold=-3.0,
+                top_bytes=np.arange(K, dtype=np.uint8),
+                top_probs=np.full(K, 1.0 / K, dtype=np.float16),
+            )
+            for i in range(len(positions))
+        ]
+        write_teacher_kl_records(str(tdir / "kl_records.bin"), kl_recs, K=K)
+
+        save_e2_manifest(
+            str(cache_dir), specs,
+            n_positions=len(positions), K=K,
+            shard_range=shard_range)
+        return str(cache_dir)
+
+    def test_validate_rejects_positions_outside_shard_range(self, tmp_path):
+        cache_dir = self._make_cache_with_range(
+            tmp_path, shard_range=(5, 10),
+            position_shard_ids=[5, 6, 20])
+        with E2CacheView(cache_dir) as view:
+            errors = view.validate()
+            assert any("outside manifest range" in e for e in errors)
+
+    def test_validate_passes_positions_within_shard_range(self, tmp_path):
+        cache_dir = self._make_cache_with_range(
+            tmp_path, shard_range=(0, 5),
+            position_shard_ids=[0, 1, 2, 3, 4])
+        with E2CacheView(cache_dir) as view:
+            errors = view.validate()
+            assert not any("outside manifest range" in e for e in errors)
+
+    def test_validate_skips_check_with_empty_shard_range(self, tmp_path):
+        cache_dir = self._make_cache_with_range(
+            tmp_path, shard_range=(0, 0),
+            position_shard_ids=[0, 1, 99])
+        with E2CacheView(cache_dir) as view:
+            errors = view.validate()
+            assert not any("outside manifest range" in e for e in errors)
+
+    def test_e2_config_data_dir_default(self):
+        from eklavya_e2_training import E2Config
+        cfg = E2Config()
+        assert cfg.data_dir == "data/shards_bytes_full"
+
+    def test_e2_config_warmup_min_coverage_default(self):
+        from eklavya_e2_training import E2Config
+        cfg = E2Config()
+        assert cfg.warmup_min_coverage == 0.10
+
+    def test_cli_exposes_data_dir(self):
+        import subprocess, sys
+        result = subprocess.run(
+            [sys.executable, "eklavya_e2_training.py", "--help"],
+            capture_output=True, text=True, cwd=os.path.dirname(__file__))
+        assert "--data-dir" in result.stdout
 
 
 if __name__ == "__main__":
