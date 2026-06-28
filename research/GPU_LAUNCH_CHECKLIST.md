@@ -371,5 +371,5 @@ python eval_e2.py \
 2. **Telemetry units**: JSONL logs emit `teacher_losses_bits` (for comparison with BPB) and `teacher_losses_nats` (raw gradient-scale values)
 3. **Mmap cache**: E2 trainer uses `E2CacheView` (memory-mapped). Record data stays on disk; only accessed records unpack at runtime. **Index RAM**: pilot (50K positions, 5 teachers) ~28 MB; production (10M positions, 5 teachers) ~5.7 GB. Check with `estimate_index_memory()` before building full-scale cache
 4. **GradScaler safety**: PORT_WARMUP phase may produce zero backward passes on some batches; the trainer handles this gracefully
-5. **Checkpoint resume**: CPU, CUDA, Python, and NumPy RNG states are all restored on resume for full reproducibility
+5. **Checkpoint resume**: E1/E2 step/best checkpoints save all RNG states (torch, CUDA, Python, NumPy) for full reproducibility. S0 saves torch/CUDA only (sufficient — S0 loop doesn't use Python/NumPy random). Final checkpoints (`e2_final.pt`, `s0_best.pt`) are export-only (model + config, no optimizer/RNG state)
 6. **NaN hard-fail**: E2 training aborts immediately with `RuntimeError` if CE loss or grad_norm becomes non-finite. A `HARD_FAIL` entry is written to the JSONL log before aborting. The monitor also flags non-finite CE loss values during live monitoring
