@@ -2383,6 +2383,130 @@ class TestE2TrainerTeacherLosses:
 
         assert len(losses) == 0
 
+    def test_consensus_gates_on_raw_jsd_not_routed(self):
+        """Regression: consensus phase must filter on raw (uniform-weight) JSD,
+        not router-weighted JSD. A sharp router assigning 99% to one teacher
+        masks disagreement in routed JSD but raw JSD remains high."""
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=64, n_heads=2, n_kv_heads=1,
+            n_layers=2, patch_size=4, vocab_size=260,
+            ffn_mult=2, max_seq_len=64,
+            decoder_dim=64, decoder_layers=1, decoder_heads=2,
+            byte_dim=64,
+        )
+        student = SutraS0(model_cfg)
+
+        n_pos = 10
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65,
+                student_nll=4.0, student_entropy=2.0, reason_mask=1,
+            )
+            for i in range(n_pos)
+        ]
+
+        t0 = TEACHER_REGISTRY[0]  # ANCHOR — active in CONSENSUS
+        t2 = TEACHER_REGISTRY[2]  # CONTROL — active in CONSENSUS
+
+        kl_K = 16
+        kl_recs_t0 = []
+        kl_recs_t2 = []
+        for i in range(n_pos):
+            probs_t0 = np.zeros(kl_K, dtype=np.float32)
+            probs_t0[0] = 0.95
+            probs_t0[1:] = 0.05 / (kl_K - 1)
+            bytes_t0 = np.array([65] + list(range(66, 65 + kl_K)), dtype=np.uint8)[:kl_K]
+            kl_recs_t0.append(E2KLRecord(
+                position_id=i, patch_idx=i + 1,
+                top_bytes=bytes_t0, top_probs=probs_t0,
+                tail_prob=0.0, entropy=2.0, logp_gold=-1.5,
+            ))
+
+            probs_t2 = np.zeros(kl_K, dtype=np.float32)
+            probs_t2[0] = 0.95
+            probs_t2[1:] = 0.05 / (kl_K - 1)
+            bytes_t2 = np.array([200] + list(range(201, 200 + kl_K)), dtype=np.uint8)[:kl_K]
+            kl_recs_t2.append(E2KLRecord(
+                position_id=i, patch_idx=i + 1,
+                top_bytes=bytes_t2, top_probs=probs_t2,
+                tail_prob=0.0, entropy=2.0, logp_gold=-1.5,
+            ))
+
+        teacher_data = {
+            t0.name: {
+                "spec": t0,
+                "kl_records": kl_recs_t0,
+                "kl_K": kl_K,
+                "align_records": [],
+                "embedding_table": torch.empty(0),
+            },
+            t2.name: {
+                "spec": t2,
+                "kl_records": kl_recs_t2,
+                "kl_K": kl_K,
+                "align_records": [],
+                "embedding_table": torch.empty(0),
+            },
+        }
+
+        manifest = {
+            "version": "e2.0",
+            "n_positions": n_pos,
+            "kl_top_k": kl_K,
+            "teacher_count": 2,
+            "teacher_specs": [t0, t2],
+        }
+        cache = {
+            "manifest": manifest,
+            "positions": positions,
+            "teachers": teacher_data,
+            "routes": [],
+        }
+        specs = [t0, t2]
+        ports = MultiTeacherProjectionPorts(student_dim=model_cfg.d_model,
+                                            teachers=specs)
+        cfg = E2Config(
+            port_warmup_steps=0, consensus_steps=100,
+            semantic_landing_steps=100, disagreement_steps=100,
+            jsd_low=0.05,
+        )
+        device = torch.device("cpu")
+        trainer = E2Trainer(cfg, student, ports, cache, device)
+
+        raw_jsd = disagreement_jsd({
+            t0.name: SparseByteDist(
+                top_bytes=kl_recs_t0[0].top_bytes,
+                top_probs=kl_recs_t0[0].top_probs,
+                tail_prob=0.0),
+            t2.name: SparseByteDist(
+                top_bytes=kl_recs_t2[0].top_bytes,
+                top_probs=kl_recs_t2[0].top_probs,
+                tail_prob=0.0),
+        })
+        assert raw_jsd > cfg.jsd_low, (
+            f"Test setup error: raw JSD {raw_jsd:.4f} should exceed "
+            f"jsd_low {cfg.jsd_low} for this test to be meaningful")
+
+        P = model_cfg.patch_size
+        seq_len = 64 * P
+        byte_ids = torch.randint(0, 256, (1, seq_len))
+        out = student(byte_ids)
+        shard_ids = torch.tensor([0])
+        seq_starts = torch.tensor([0])
+
+        losses = trainer.compute_teacher_losses(
+            out["logits"], out["patch_states"], shard_ids, seq_starts,
+            E2Phase.CONSENSUS, step=3)
+
+        assert len(losses) == 0, (
+            f"Consensus phase should produce NO losses when teachers disagree "
+            f"(raw JSD={raw_jsd:.4f} > jsd_low={cfg.jsd_low}), "
+            f"but got {len(losses)} losses. This indicates phase gating "
+            f"is using routed JSD instead of raw JSD.")
+
 
 # ---------------------------------------------------------------------------
 # RouteRecord dtype validation tests (review R3, finding 1)
