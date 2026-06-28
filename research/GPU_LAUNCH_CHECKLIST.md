@@ -227,7 +227,7 @@ python eklavya_e2_training.py \
 ### Monitoring
 ```bash
 # Each ablation logs to its own file (auto-derived from --ablation-id)
-python monitor.py --log logs/e2_A2.jsonl --watch
+python monitor.py --log logs/e2_a2.jsonl --watch
 ```
 - BPB should NOT regress during E2.1 (student frozen)
 - `teacher_losses_bits` in JSONL log — all values in bits for comparison with BPB
@@ -263,7 +263,7 @@ Phase 1 (feasibility) must pass before Phase 2 (publishability) runs.
 **Gate check before Phase 2:**
 ```bash
 python compare_ablations.py \
-    --logs A2=logs/e2_A2.jsonl A0=logs/e2_A0.jsonl A1=logs/e2_A1.jsonl BLD=logs/e2_BLD.jsonl \
+    --logs A2=logs/e2_a2.jsonl A0=logs/e2_a0.jsonl A1=logs/e2_a1.jsonl BLD=logs/e2_bld.jsonl \
     --eval-results ablations/a2.json ablations/a0.json ablations/a1.json ablations/bld.json \
     --phase1-gate
 # Exit code 0 = pass (proceed to Phase 2), 1 = fail (stop)
@@ -407,5 +407,5 @@ python eval_e2.py \
 4. **GradScaler safety**: PORT_WARMUP phase may produce zero backward passes on some batches; the trainer handles this gracefully
 5. **Checkpoint resume**: E1/E2 step/best checkpoints save all RNG states (torch, CUDA, Python, NumPy) and best_eval_bpb. S0 also saves best_eval_bpb. DataLoader iterator position is NOT saved — resume starts a fresh shuffled loader (acceptable for continuation, not bit-exact replay). Final checkpoints (`e2_final.pt`, `s0_best.pt`) are export-only (model + config, no optimizer/RNG state). **Accumulation alignment**: E1/E2 checkpoints are only saved at gradient accumulation boundaries (after optimizer step + zero_grad). With `grad_accum=2` and `checkpoint_every=1000`, the step checkpoint may land at step 1001 instead of 1000 — this ensures resume never loses pending accumulated gradients
 6. **NaN hard-fail**: E2 training aborts immediately with `RuntimeError` if CE loss or grad_norm becomes non-finite. A `HARD_FAIL` entry is written to the JSONL log before aborting. The monitor also flags non-finite CE loss values during live monitoring
-7. **Per-ablation logs**: Each E2 ablation writes to its own log file (`logs/e2_{ablation_id}.jsonl`), auto-derived from `--ablation-id`. Override with `--log-file` if needed. Monitor with: `python monitor.py --log logs/e2_A2.jsonl --watch`
+7. **Per-ablation logs**: Each E2 ablation writes to its own log file (`logs/e2_{ablation_id}.jsonl`), auto-derived from `--ablation-id`. Override with `--log-file` if needed. Monitor with: `python monitor.py --log logs/e2_a2.jsonl --watch`
 8. **GPU memory telemetry**: Peak GPU memory (GB) is logged at phase transitions and in periodic log entries (`gpu_mem_gb` field). The monitor displays the latest reading. Use to validate VRAM budget assumptions early

@@ -72,7 +72,9 @@ If A2 fails any of these, stop. A2 is an oracle-aided upper bound.
 11. **A3 vs A2**: Does the strongest non-anchor teacher contribute?
 12. **A4 vs A2**: Do semantic embeddings help?
 
-Only run Phase 2 if Phase 1 passes. A9a/A9b are diagnostics for A9c failure.
+Only run Phase 2 if Phase 1 passes. Use `compare_ablations.py --phase1-gate`
+to automate this check (exit 0 = proceed, exit 1 = stop).
+A9a/A9b are diagnostics for A9c failure.
 
 ### Decisive Proof Thresholds
 
@@ -90,8 +92,8 @@ Each ablation measures on the same held-out eval shards:
 | BPB (bytes per byte) | Raw prediction quality | >0.02 BPB gap |
 | First-byte accuracy | Top-1 byte prediction | >1pp gap |
 | Per-gap-class BPB | Performance on high-NLL / high-entropy / control | >0.03 BPB gap |
-| Generation quality | 50 prompted samples, human-rated coherence | Qualitative |
-| Uncommon-token BPB | Performance on rare/numeric/Unicode bytes | >0.03 BPB gap |
+| Generation quality | 50 prompted samples, human-rated coherence | Qualitative (post-GPU) |
+| Uncommon-token BPB | Performance on rare/numeric/Unicode bytes | >0.03 BPB gap (post-GPU) |
 | Route entropy | Teacher selection diversity (E2 runs only) | Diagnostic |
 | Uniform-JSD | Teacher disagreement independent of routing | Diagnostic |
 | Retained gain per teacher | Per-teacher contribution to final BPB | >0.005 BPB |

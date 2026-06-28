@@ -184,7 +184,9 @@ Defer A3, A4 until Phase 2 baseline numbers exist.
 
 ## Automated Anomaly Detection (`monitor.py`)
 
-The monitor automatically detects 5 anomaly types during live training:
+The monitor automatically detects 11 anomaly types during live training — 5 general and 6 phase-specific:
+
+### General Anomalies
 
 | Anomaly | Trigger | Meaning |
 |---------|---------|---------|
@@ -194,4 +196,15 @@ The monitor automatically detects 5 anomaly types during live training:
 | Zero teacher signal | >50% of steps with all-zero teacher losses | Cache coverage insufficient for this data distribution |
 | No routed positions | >30% of disagreement steps with n_routed=0 | Router not activating — check JSD thresholds |
 
-Use `python monitor.py --log logs/e2_train.jsonl --watch` for live dashboard with anomaly alerts.
+### Phase-Specific Anomalies
+
+| Phase | Anomaly | Trigger | Meaning |
+|-------|---------|---------|---------|
+| PORT_WARMUP | BPB regression | Eval BPB worsens >0.02 from baseline | Student should be frozen — check freeze config |
+| CONSENSUS | Low routing | n_routed <4 in last 5 readings | Router underactivated — check JSD thresholds |
+| CONSENSUS | Anchor dominance | Non-anchor weights <0.05 in last 5 readings | Control teacher not contributing |
+| SEMANTIC_LANDING | Missing semantic | Semantic loss absent in >20% of steps | Semantic teacher not reaching student |
+| DISAGREEMENT | Near-uniform | Route entropy >1.30 for 50+ readings | Router not learning — near-uniform weights |
+| DISAGREEMENT | Entropy collapse | Route entropy <0.20 for 50+ readings | One teacher dominates — diversity lost |
+
+Use `python monitor.py --log logs/e2_a2.jsonl --watch` for live dashboard with anomaly alerts.

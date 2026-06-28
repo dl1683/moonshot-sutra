@@ -284,6 +284,22 @@ class TestDisplay:
             os.unlink(path)
 
 
+    def test_phase_boundary_anomaly_shows_in_display(self, capsys):
+        entries = [
+            {"step": i, "ce_loss": 4.0, "phase": "E2.4_disagreement",
+             "route_stats": {"mean_route_entropy": 1.5}}
+            for i in range(60)
+        ]
+        path = _write_log(entries)
+        try:
+            display(path)
+            out = capsys.readouterr().out
+            assert "DISAGREEMENT" in out
+            assert "near-uniform" in out
+        finally:
+            os.unlink(path)
+
+
 class TestE2Anomalies:
     def test_clean_log_no_anomalies(self):
         entries = [{"step": i, "ce_loss": 4.0 - i * 0.1} for i in range(20)]
