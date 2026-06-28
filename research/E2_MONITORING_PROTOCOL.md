@@ -25,7 +25,7 @@ Active teachers: anchor + control.
 - `route_stats.n_routed < 4` (out of 16 sampled KL positions) for multiple consecutive log windows
 - `mean_jsd` consistently near the 0.05 cutoff after filtering
 - Control's average route weight stays <0.05 (anchor >0.95)
-- Weighted `kl_purified` loss jumps >3x at phase entry
+- Sum of `kl_purified_*` losses jumps >3x at phase entry
 - Eval BPB regresses >0.05 from E1/port-warmup baseline across two evals
 
 ### End SEMANTIC_LANDING (step 5750)

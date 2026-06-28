@@ -209,6 +209,7 @@ Total:                           ~11-15 GB (fits within 24 GB)
 ```bash
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2 \
     --ablation-id A2
@@ -232,6 +233,7 @@ python eklavya_e2_training.py \
 ```bash
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2 \
     --ablation-id A2 \
@@ -272,24 +274,28 @@ Phase 1 (feasibility) must pass before Phase 2 (publishability) runs.
 # Phase 1: A2, A0, BLD, A1
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a2 \
     --ablation-id A2 --steps 8000
 
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a0 \
     --ablation-id A0 --ce-only --steps 8000
 
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_bld \
     --ablation-id BLD --bld-mode --steps 8000
 
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a1 \
     --ablation-id A1 --teachers t0_anchor_decoder --steps 8000
@@ -297,12 +303,14 @@ python eklavya_e2_training.py \
 # Phase 2 (only if Phase 1 passes): A9c, A5b
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a9c \
     --ablation-id A9c --router-mode gold_free_student_jsd --steps 8000
 
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a5b \
     --ablation-id A5b --disable-router --static-weight-mode custom \
@@ -312,6 +320,7 @@ python eklavya_e2_training.py \
 # A5c if time permits
 python eklavya_e2_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --data-dir ../data/shards_bytes_full \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a5c \
     --ablation-id A5c --disable-router --static-weight-mode prior \
@@ -348,15 +357,15 @@ python eval_e2.py \
 | Burn-in verdict | `code/burnin_verdict.py` |
 | E1 cache builder | `code/eklavya_cache.py` |
 | E1 training loop | `code/eklavya_training.py` |
-| E1 unit tests | `code/test_eklavya.py` (45 tests) |
+| E1 unit tests | `code/test_eklavya.py` (46 tests) |
 | E2 cache builder | `code/eklavya_e2_cache_builder.py` |
 | E2 training loop | `code/eklavya_e2_training.py` |
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (404 tests) |
-| S0 tests | `code/test_overfit.py` (16 tests) |
-| Burnin verdict tests | `code/test_burnin_verdict.py` (45 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (432 tests) |
+| S0 tests | `code/test_overfit.py` (17 tests) |
+| Burnin verdict tests | `code/test_burnin_verdict.py` (44 tests) |
 | Export CSV tests | `code/test_export_log_csv.py` (16 tests) |
 | Utility tests | `code/test_utilities.py` (35 tests) |
 | Ablation comparison tests | `code/test_compare_ablations.py` (47 tests) |
