@@ -1635,6 +1635,42 @@ class TestMultiTeacherGradBudget:
         assert "t_extra" in report.ce_teacher_cosines
         assert abs(report.ce_teacher_cosines["t_extra"]) < 1e-6
 
+    def test_pairwise_coherence_mismatched_supports(self):
+        """Two teachers with disjoint param supports → pairwise coherence = 0."""
+        shared = torch.nn.Linear(4, 8)
+        x = torch.randn(2, 4)
+        h = shared(x)
+        ce_loss = (h ** 2).sum()
+        extra_a = torch.nn.Linear(4, 4)
+        extra_b = torch.nn.Linear(4, 4)
+        t1_loss = (extra_a(x) ** 2).sum()
+        t2_loss = (extra_b(x) ** 2).sum()
+        all_params = (list(shared.parameters())
+                      + list(extra_a.parameters())
+                      + list(extra_b.parameters()))
+        report = apply_multi_teacher_gradient_budget(
+            all_params, ce_loss, {"t1": t1_loss, "t2": t2_loss})
+        assert report.pairwise_coherence is not None
+        assert abs(report.pairwise_coherence) < 1e-6
+
+    def test_pairwise_coherence_partial_overlap(self):
+        """Two teachers sharing some params → pairwise coherence is finite."""
+        shared = torch.nn.Linear(4, 8)
+        head_a = torch.nn.Linear(8, 4)
+        head_b = torch.nn.Linear(8, 4)
+        x = torch.randn(2, 4)
+        h = shared(x)
+        ce_loss = (h ** 2).sum()
+        t1_loss = (head_a(h) ** 2).sum()
+        t2_loss = (head_b(h) ** 2).sum()
+        all_params = (list(shared.parameters())
+                      + list(head_a.parameters())
+                      + list(head_b.parameters()))
+        report = apply_multi_teacher_gradient_budget(
+            all_params, ce_loss, {"t1": t1_loss, "t2": t2_loss})
+        assert report.pairwise_coherence is not None
+        assert -1.0 <= report.pairwise_coherence <= 1.0
+
 
 # ---------------------------------------------------------------------------
 # E2 Trainer tests

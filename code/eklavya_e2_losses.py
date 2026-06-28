@@ -242,7 +242,12 @@ def apply_multi_teacher_gradient_budget(
     per_teacher_norms = {}
     per_teacher_scales = {}
     total_teacher_grads = {}
-    per_teacher_grads_raw = {} if compute_coherence else None
+    ce_teacher_cosines = None
+    pairwise_coherence = None
+    coherence_active = compute_coherence and bool(ce_grads) and bool(teacher_names)
+    teacher_raw_sum = {} if (coherence_active and len(teacher_names) >= 2) else None
+    if coherence_active:
+        ce_teacher_cosines = {}
 
     for i, name in enumerate(teacher_names):
         loss = teacher_losses[name]
@@ -258,8 +263,20 @@ def apply_multi_teacher_gradient_budget(
             for p in params if p.grad is not None
         ) ** 0.5
         per_teacher_norms[name] = t_norm
-        if compute_coherence:
-            per_teacher_grads_raw[name] = _collect_grads(params)
+        if coherence_active:
+            live = {id(p): p.grad for p in params if p.grad is not None}
+            ce_teacher_cosines[name] = _streaming_cosine(
+                ce_grads, live, params)
+            del live
+
+        if teacher_raw_sum is not None:
+            for p in params:
+                if p.grad is not None:
+                    pid = id(p)
+                    if pid in teacher_raw_sum:
+                        teacher_raw_sum[pid].add_(p.grad.detach().float())
+                    else:
+                        teacher_raw_sum[pid] = p.grad.detach().float().clone()
 
         cap = per_teacher_cap.get(name, 0.10) if isinstance(per_teacher_cap, dict) else per_teacher_cap
         scale = 1.0
@@ -310,28 +327,21 @@ def apply_multi_teacher_gradient_budget(
             else:
                 p.grad = g.clone()
 
-    ce_teacher_cosines = None
-    pairwise_coherence = None
-    if compute_coherence and per_teacher_grads_raw and ce_grads:
-        if len(teacher_names) >= 1:
-            ce_teacher_cosines = {}
-            for name in teacher_names:
-                ce_teacher_cosines[name] = _streaming_cosine(
-                    ce_grads, per_teacher_grads_raw[name], params)
-
-        if len(teacher_names) >= 2:
-            pair_count = 0
-            cos_sum = 0.0
-            for ii in range(len(teacher_names)):
-                for jj in range(ii + 1, len(teacher_names)):
-                    cos_sum += _streaming_cosine(
-                        per_teacher_grads_raw[teacher_names[ii]],
-                        per_teacher_grads_raw[teacher_names[jj]],
-                        params)
-                    pair_count += 1
-            pairwise_coherence = cos_sum / pair_count if pair_count > 0 else 0.0
-
-    del per_teacher_grads_raw
+    if teacher_raw_sum is not None and len(teacher_names) >= 2:
+        sum_norm_sq = sum(
+            g.norm().item() ** 2 for g in teacher_raw_sum.values())
+        individual_norm_sq_sum = sum(
+            per_teacher_norms[n] ** 2 for n in teacher_names)
+        total_pairwise_dot = (sum_norm_sq - individual_norm_sq_sum) / 2.0
+        norms = [per_teacher_norms[n] for n in teacher_names]
+        sum_norms = sum(norms)
+        sum_norms_sq = sum(n * n for n in norms)
+        total_norm_product = (sum_norms * sum_norms - sum_norms_sq) / 2.0
+        if total_norm_product > 1e-24:
+            pairwise_coherence = total_pairwise_dot / total_norm_product
+        else:
+            pairwise_coherence = 0.0
+    del teacher_raw_sum
 
     return GradientBudgetReport(
         ce_grad_norm=ce_norm,
