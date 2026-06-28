@@ -287,5 +287,86 @@ class TestEklavyaDataset:
             assert 2 <= shard_idx < 4
 
 
+class TestS0Resume:
+    """Verify S0 checkpoint resume produces correct step sequence."""
+
+    def _make_shards(self, tmp_path, n_shards=4, shard_bytes=1024):
+        shard_dir = tmp_path / "shards"
+        shard_dir.mkdir()
+        rng = np.random.RandomState(42)
+        for i in range(n_shards):
+            data = rng.randint(0, 256, size=shard_bytes, dtype=np.uint8)
+            (shard_dir / f"shard_{i:04d}.bin").write_bytes(data.tobytes())
+        return str(shard_dir)
+
+    def test_resume_step_continuity(self, tmp_path):
+        """Resume from checkpoint must not skip a step.
+
+        S0 saves step post-increment, so resume must use ckpt['step']
+        directly (not +1). This test catches the off-by-one regression.
+        """
+        import json
+        from s0_training import train, TrainConfig
+
+        shard_dir = self._make_shards(tmp_path)
+        ckpt_dir = str(tmp_path / "ckpts")
+        log_file = str(tmp_path / "logs" / "train.jsonl")
+
+        model_cfg = S0Config(
+            byte_dim=16, d_model=32, n_layers=2, n_heads=2, n_kv_heads=1,
+            ffn_mult=1.0, local_mixer_layers=1, patch_size=4,
+            max_seq_len=64, decoder_dim=16, decoder_layers=1,
+            decoder_heads=2, verifier_dim=16,
+        )
+        cfg = TrainConfig(
+            data_dir=shard_dir, checkpoint_dir=ckpt_dir, log_file=log_file,
+            seq_len_bytes=64, batch_size=2, grad_accum_steps=1,
+            total_steps=10, checkpoint_every=5, log_every=1,
+            eval_every=100, warmup_steps=2, eval_hold_shards=1,
+            compile_model=False, checkpoint_layers=2,
+        )
+
+        train(model_cfg, cfg)
+
+        step5_path = os.path.join(ckpt_dir, "s0_step5.pt")
+        assert os.path.exists(step5_path), "Step 5 checkpoint missing"
+
+        ckpt5 = torch.load(step5_path, map_location="cpu", weights_only=False)
+        assert ckpt5["step"] == 5
+
+        with open(log_file) as f:
+            full_steps = sorted(set(
+                json.loads(l)["step"] for l in f if l.strip()
+                and "step" in json.loads(l) and "HARD_FAIL" not in json.loads(l)
+            ))
+        assert full_steps == list(range(1, 11)), (
+            f"Full run should log steps 1-10, got {full_steps}")
+
+        resume_ckpt_dir = str(tmp_path / "resume_ckpts")
+        resume_log = str(tmp_path / "logs" / "resume.jsonl")
+        resume_cfg = TrainConfig(
+            data_dir=shard_dir, checkpoint_dir=resume_ckpt_dir,
+            log_file=resume_log,
+            seq_len_bytes=64, batch_size=2, grad_accum_steps=1,
+            total_steps=10, checkpoint_every=5, log_every=1,
+            eval_every=100, warmup_steps=2, eval_hold_shards=1,
+            compile_model=False, checkpoint_layers=2,
+            resume_from=step5_path,
+        )
+
+        train(model_cfg, resume_cfg)
+
+        with open(resume_log) as f:
+            resumed_steps = sorted(set(
+                json.loads(l)["step"] for l in f if l.strip()
+                and "step" in json.loads(l) and "HARD_FAIL" not in json.loads(l)
+            ))
+        assert resumed_steps[0] == 6, (
+            f"Resume from step 5 checkpoint should start logging at step 6, "
+            f"got {resumed_steps[0]} (off-by-one regression?)")
+        assert resumed_steps == list(range(6, 11)), (
+            f"Resume should log steps 6-10, got {resumed_steps}")
+
+
 if __name__ == "__main__":
     test_overfit()
