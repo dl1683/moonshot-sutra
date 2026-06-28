@@ -199,9 +199,10 @@ C:/sutra_fast/eklavya_e2_cache/
 S0 student (train mode, bf16):   ~3.2 GB
 Activations (batch=4, accum=2):  ~4-6 GB
 MultiTeacherProjectionPorts:     ~0.1 GB
-Embedding tables (all teachers): ~2.5 GB
+Embedding tables (active phase): ~0.5-2.5 GB (staged per phase)
+Gradient budget snapshots:       ~1-3 GB (CE grads + teacher grads cloned)
 Cache mmap (disk-backed):        ~0 GB RAM
-Total:                           ~10-12 GB (fits within 24 GB)
+Total:                           ~11-15 GB (fits within 24 GB)
 ```
 
 ### Launch — Main E2 (Ablation A2)
