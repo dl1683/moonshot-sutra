@@ -952,6 +952,8 @@ class TestPhase1Gate:
         out = capsys.readouterr().out
         assert "GATE PASS" in out
         assert "1/1" in out
+        assert "WARNING" in out
+        assert "partial baselines" in out.lower()
 
     def test_gate_fails_when_a2_hard_failed(self, capsys):
         summaries = [

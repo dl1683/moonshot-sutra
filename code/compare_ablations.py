@@ -639,11 +639,19 @@ def evaluate_phase1_gate(summaries: list[RunSummary]) -> bool:
               "(need at least one of A0, A1, BLD)")
         return False
 
+    skipped = len(PHASE1_GATE_RULES) - evaluated
     gate_pass = (passed == evaluated)
     print(f"\n  {'=' * 50}")
     if gate_pass:
         print(f"  GATE PASS: {passed}/{evaluated} rules passed — "
               f"proceed to Phase 2")
+        if skipped > 0:
+            missing = [w for _, w, _, _ in PHASE1_GATE_RULES
+                       if w not in has_eval]
+            print(f"  WARNING: {skipped} baseline(s) not evaluated: "
+                  f"{sorted(missing)}")
+            print(f"  Gate passed with partial baselines — re-run when "
+                  f"all baselines are available.")
     else:
         print(f"  GATE FAIL: {passed}/{evaluated} rules passed — "
               f"do NOT proceed to Phase 2")

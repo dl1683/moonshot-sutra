@@ -1356,6 +1356,14 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         print(f"\n[Step {step}] BLD mode — all student params trainable, "
               f"single-teacher byte KL (weight={cfg.bld_kl_weight})")
 
+    if not cfg.resume_from and step == 0:
+        baseline = evaluate_e2(student, eval_loader, device, cfg)
+        baseline_entry = {"step": 0, "phase": "BASELINE", **baseline}
+        log_fh.write(json.dumps(baseline_entry) + "\n")
+        log_fh.flush()
+        best_eval_bpb = baseline["eval_bpb"]
+        print(f"  BASELINE eval BPB: {best_eval_bpb:.3f}")
+
     while step < total:
         if not cfg.ce_only and not cfg.bld_mode:
             phase = get_e2_phase(step, cfg)
