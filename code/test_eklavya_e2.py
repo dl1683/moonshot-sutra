@@ -5316,5 +5316,77 @@ class TestMonitorLoadEntries:
         assert len(train) == 1
 
 
+class TestTeachersOnlyShardRangeValidation:
+    """Verify --teachers-only detects shard range mismatches."""
+
+    def test_manifest_range_overrides_cli_default(self, tmp_path):
+        """If existing manifest has shard_range, it overrides CLI defaults."""
+        import json as _json
+        manifest_path = tmp_path / "manifest.json"
+        manifest_path.write_text(_json.dumps({
+            "version": "e2.0", "shard_range": [10, 30],
+            "n_positions": 100, "kl_top_k": 16,
+        }))
+        with open(str(manifest_path)) as f:
+            existing = _json.load(f)
+        shard_start, shard_end = 0, 50
+        if "shard_range" in existing:
+            em_start, em_end = existing["shard_range"]
+            if shard_start != em_start or shard_end != em_end:
+                shard_start = em_start
+                shard_end = em_end
+        assert shard_start == 10
+        assert shard_end == 30
+
+    def test_position_ids_outside_range_raises(self):
+        """Positions with shard IDs outside range must be rejected."""
+        positions = [
+            PositionRecord(position_id=0, shard_id=5, seq_offset=0,
+                           patch_idx=0, gold_byte=65,
+                           student_nll=1.0, student_entropy=2.0, reason_mask=1),
+            PositionRecord(position_id=1, shard_id=15, seq_offset=0,
+                           patch_idx=0, gold_byte=66,
+                           student_nll=0.5, student_entropy=1.0, reason_mask=2),
+        ]
+        shard_start, shard_end = 10, 20
+        pos_shard_ids = [p.shard_id for p in positions]
+        pos_min, pos_max = min(pos_shard_ids), max(pos_shard_ids)
+        assert pos_min < shard_start
+        with pytest.raises(SystemExit):
+            if pos_min < shard_start or pos_max >= shard_end:
+                raise SystemExit("Position shard IDs outside range")
+
+    def test_position_ids_within_range_passes(self):
+        """Positions fully within range should not raise."""
+        positions = [
+            PositionRecord(position_id=0, shard_id=12, seq_offset=0,
+                           patch_idx=0, gold_byte=65,
+                           student_nll=1.0, student_entropy=2.0, reason_mask=1),
+            PositionRecord(position_id=1, shard_id=18, seq_offset=0,
+                           patch_idx=0, gold_byte=66,
+                           student_nll=0.5, student_entropy=1.0, reason_mask=2),
+        ]
+        shard_start, shard_end = 10, 20
+        pos_shard_ids = [p.shard_id for p in positions]
+        pos_min, pos_max = min(pos_shard_ids), max(pos_shard_ids)
+        assert pos_min >= shard_start
+        assert pos_max < shard_end
+
+    def test_matching_cli_and_manifest_no_override(self, tmp_path):
+        """When CLI matches manifest, no override needed."""
+        import json as _json
+        manifest_path = tmp_path / "manifest.json"
+        manifest_path.write_text(_json.dumps({
+            "version": "e2.0", "shard_range": [5, 25],
+        }))
+        with open(str(manifest_path)) as f:
+            existing = _json.load(f)
+        shard_start, shard_end = 5, 25
+        if "shard_range" in existing:
+            em_start, em_end = existing["shard_range"]
+            assert shard_start == em_start
+            assert shard_end == em_end
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

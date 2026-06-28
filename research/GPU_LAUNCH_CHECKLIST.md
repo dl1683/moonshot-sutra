@@ -345,14 +345,14 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (400 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (404 tests) |
 | S0 tests | `code/test_overfit.py` (16 tests) |
 | Burnin verdict tests | `code/test_burnin_verdict.py` (44 tests) |
 | Export CSV tests | `code/test_export_log_csv.py` (16 tests) |
-| Utility tests | `code/test_utilities.py` (21 tests) |
+| Utility tests | `code/test_utilities.py` (35 tests) |
 | Ablation comparison tests | `code/test_compare_ablations.py` (47 tests) |
 | VRAM profile tests | `code/test_vram_profile.py` (18 tests) |
-| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (53 tests) |
+| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (59 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
 | E2 monitoring | `research/E2_MONITORING_PROTOCOL.md` |

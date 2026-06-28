@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import json
 import math
 import os
 import re
@@ -519,8 +520,28 @@ def main():
 
     if args.teachers_only:
         print("\n=== Skipping Pass 1 (--teachers-only), reading existing manifest ===")
+        existing_manifest_path = os.path.join(args.output_dir, "manifest.json")
+        if os.path.exists(existing_manifest_path):
+            with open(existing_manifest_path) as f:
+                existing_manifest = json.load(f)
+            if "shard_range" in existing_manifest:
+                em_start, em_end = existing_manifest["shard_range"]
+                if shard_start != em_start or shard_end != em_end:
+                    print(f"  WARNING: CLI shard range [{shard_start}, {shard_end}) "
+                          f"differs from pass-1 manifest [{em_start}, {em_end})")
+                    print(f"  Using pass-1 manifest range [{em_start}, {em_end})")
+                    shard_start = em_start
+                    shard_end = em_end
         all_positions = read_position_manifest(manifest_path)
         print(f"  Loaded {len(all_positions)} positions from existing manifest")
+        if all_positions:
+            pos_shard_ids = [p.shard_id for p in all_positions]
+            pos_min, pos_max = min(pos_shard_ids), max(pos_shard_ids)
+            if pos_min < shard_start or pos_max >= shard_end:
+                raise SystemExit(
+                    f"ERROR: Position shard IDs [{pos_min}, {pos_max}] fall outside "
+                    f"shard range [{shard_start}, {shard_end}). "
+                    f"Re-run pass 1 or fix --shard-start/--shard-end.")
         P = 4
         ckpt = torch.load(args.student_checkpoint, map_location="cpu", weights_only=False)
         P = ckpt["model_cfg"].patch_size

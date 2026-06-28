@@ -617,6 +617,18 @@ class E2Trainer:
                     r.position_id: r for r in align_records
                 }
 
+    def stage_embeddings(self, phase: str):
+        """Move active teachers' embedding tables to GPU, inactive to CPU."""
+        active_names = {s.name for s in self.get_active_teachers(phase)}
+        for tname, td in self.teacher_data.items():
+            emb = td.get("embedding_table")
+            if emb is None:
+                continue
+            if tname in active_names and emb.device != self.device:
+                td["embedding_table"] = emb.to(self.device)
+            elif tname not in active_names and emb.device != torch.device("cpu"):
+                td["embedding_table"] = emb.cpu()
+
     def compute_teacher_losses(
         self, logits: torch.Tensor, patch_states: torch.Tensor,
         shard_ids: torch.Tensor, seq_starts: torch.Tensor,
@@ -675,8 +687,7 @@ class E2Trainer:
                     z_s = self.ports.get_align_projection(
                         spec.name, student_span.unsqueeze(0))
                     z_s = F.layer_norm(z_s.squeeze(0), (z_s.shape[-1],))
-                    teacher_emb = emb_table[arec.token_id].to(
-                        device=self.device, dtype=z_s.dtype)
+                    teacher_emb = emb_table[arec.token_id].to(dtype=z_s.dtype)
                     z_t = F.layer_norm(teacher_emb, (teacher_emb.shape[-1],))
                     losses_list.append(F.mse_loss(z_s, z_t))
 
@@ -848,8 +859,7 @@ class E2Trainer:
                         continue
                     z_s = self.ports.get_semantic_projection(
                         spec.name, student_span.unsqueeze(0))
-                    teacher_emb = emb_table[arec.token_id].to(
-                        device=self.device, dtype=z_s.dtype)
+                    teacher_emb = emb_table[arec.token_id].to(dtype=z_s.dtype)
                     if teacher_emb.norm().item() < 1e-8:
                         continue
                     teacher_emb = F.normalize(
@@ -1230,6 +1240,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         if resumed_phase is not None:
             current_phase = resumed_phase
             trainer.configure_freeze(current_phase)
+            trainer.stage_embeddings(current_phase)
             optimizer = trainer.build_optimizer()
             if "optimizer" in resume_ckpt and resume_ckpt["optimizer"] is not None:
                 optimizer.load_state_dict(resume_ckpt["optimizer"])
@@ -1290,6 +1301,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     optimizer.zero_grad(set_to_none=True)
                 current_phase = phase
                 trainer.configure_freeze(phase)
+                trainer.stage_embeddings(phase)
                 optimizer = trainer.build_optimizer()
                 active = trainer.get_active_teachers(phase)
                 print(f"\n[Step {step}] Phase {phase}")
@@ -1612,7 +1624,12 @@ if __name__ == "__main__":
         router_student_delta=args.router_student_delta,
     )
     if args.steps:
-        cfg.disagreement_steps = max(0, args.steps - cfg.port_warmup_steps
-                                     - cfg.consensus_steps
-                                     - cfg.semantic_landing_steps)
+        remaining = args.steps
+        cfg.port_warmup_steps = min(cfg.port_warmup_steps, remaining)
+        remaining -= cfg.port_warmup_steps
+        cfg.consensus_steps = min(cfg.consensus_steps, remaining)
+        remaining -= cfg.consensus_steps
+        cfg.semantic_landing_steps = min(cfg.semantic_landing_steps, remaining)
+        remaining -= cfg.semantic_landing_steps
+        cfg.disagreement_steps = remaining
     train_e2(cfg, args.student_checkpoint, args.cache_dir)
