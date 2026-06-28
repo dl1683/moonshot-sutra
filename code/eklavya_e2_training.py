@@ -1117,7 +1117,6 @@ class E2Trainer:
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-@torch.no_grad()
 def evaluate_e2(student: SutraS0, eval_loader: DataLoader,
                 device: torch.device, cfg: E2Config) -> dict:
     """Evaluate student CE on held-out shards."""

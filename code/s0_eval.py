@@ -184,6 +184,7 @@ def generation_smoke_test(model: SutraS0, device: torch.device):
     print(f"Raw bytes: {generated[0].tolist()}")
 
 
+@torch.no_grad()
 def eval_checkpoint(ckpt_path: str, data_dir: str = "data/shards_bytes_full",
                     n_eval_batches: int = 100, gen_prompts: int = 3):
     """Full evaluation on a trained checkpoint."""

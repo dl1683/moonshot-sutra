@@ -77,7 +77,8 @@ def check_model(config_name: str):
         total_m = counts['total'] / 1e6
 
         batch = torch.randint(0, 256, (1, cfg.patch_size * 4))
-        out = model(batch)
+        with torch.no_grad():
+            out = model(batch)
         assert "logits" in out
 
         return True, f"{total_m:.1f}M params, forward pass OK"
