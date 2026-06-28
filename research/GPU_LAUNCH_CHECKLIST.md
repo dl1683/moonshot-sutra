@@ -200,7 +200,7 @@ S0 student (train mode, bf16):   ~3.2 GB
 Activations (batch=4, accum=2):  ~4-6 GB
 MultiTeacherProjectionPorts:     ~0.1 GB
 Embedding tables (active phase): ~0.5-2.5 GB (staged per phase)
-Gradient budget snapshots:       ~1-3 GB (CE grads + teacher grads cloned)
+Gradient budget snapshots:       ~0.7-1.5 GB (saved + CE + accumulated teacher grads)
 Cache mmap (disk-backed):        ~0 GB RAM
 Total:                           ~11-15 GB (fits within 24 GB)
 ```
@@ -381,5 +381,5 @@ python eval_e2.py \
 2. **Telemetry units**: JSONL logs emit `teacher_losses_bits` (for comparison with BPB) and `teacher_losses_nats` (raw gradient-scale values)
 3. **Mmap cache**: E2 trainer uses `E2CacheView` (memory-mapped). Record data stays on disk; only accessed records unpack at runtime. **Index RAM**: pilot (50K positions, 5 teachers) ~28 MB; production (10M positions, 5 teachers) ~5.7 GB. Check with `estimate_index_memory()` before building full-scale cache
 4. **GradScaler safety**: PORT_WARMUP phase may produce zero backward passes on some batches; the trainer handles this gracefully
-5. **Checkpoint resume**: E1/E2 step/best checkpoints save all RNG states (torch, CUDA, Python, NumPy) and best_eval_bpb. S0 also saves best_eval_bpb. DataLoader iterator position is NOT saved — resume starts a fresh shuffled loader (acceptable for continuation, not bit-exact replay). Final checkpoints (`e2_final.pt`, `s0_best.pt`) are export-only (model + config, no optimizer/RNG state)
+5. **Checkpoint resume**: E1/E2 step/best checkpoints save all RNG states (torch, CUDA, Python, NumPy) and best_eval_bpb. S0 also saves best_eval_bpb. DataLoader iterator position is NOT saved — resume starts a fresh shuffled loader (acceptable for continuation, not bit-exact replay). Final checkpoints (`e2_final.pt`, `s0_best.pt`) are export-only (model + config, no optimizer/RNG state). **Accumulation alignment**: E1/E2 checkpoints are only saved at gradient accumulation boundaries (after optimizer step + zero_grad). With `grad_accum=2` and `checkpoint_every=1000`, the step checkpoint may land at step 1001 instead of 1000 — this ensures resume never loses pending accumulated gradients
 6. **NaN hard-fail**: E2 training aborts immediately with `RuntimeError` if CE loss or grad_norm becomes non-finite. A `HARD_FAIL` entry is written to the JSONL log before aborting. The monitor also flags non-finite CE loss values during live monitoring
