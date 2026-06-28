@@ -378,7 +378,7 @@ python eval_e2.py \
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (452 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (465 tests) |
 | S0 tests | `code/test_overfit.py` (17 tests) |
 | Burnin verdict tests | `code/test_burnin_verdict.py` (44 tests) |
 | Export CSV tests | `code/test_export_log_csv.py` (22 tests) |

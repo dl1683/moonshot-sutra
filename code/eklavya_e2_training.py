@@ -22,6 +22,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -1116,6 +1117,7 @@ class E2Trainer:
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
+@torch.no_grad()
 def evaluate_e2(student: SutraS0, eval_loader: DataLoader,
                 device: torch.device, cfg: E2Config) -> dict:
     """Evaluate student CE on held-out shards."""
@@ -1203,19 +1205,23 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         )
 
     cache_ckpt_path = cache_prov.get("student_checkpoint")
+    cache_manifest_step = cache_prov.get("student_checkpoint_step")
     if cache_ckpt_path is not None:
         cache_ckpt_base = os.path.basename(cache_ckpt_path)
         ckpt_step = ckpt.get("step")
         if ckpt_step is not None and cache_ckpt_base:
-            import re
-            step_pattern = re.compile(r'(?:^|[_\-])step(\d+)(?:[_\-.]|$)')
-            m = step_pattern.search(cache_ckpt_base)
-            cache_step = int(m.group(1)) if m else None
+            if cache_manifest_step is not None:
+                cache_step = cache_manifest_step
+            else:
+                step_pattern = re.compile(r'(?:^|[_\-])step(\d+)(?:[_\-.]|$)')
+                m = step_pattern.search(cache_ckpt_base)
+                cache_step = int(m.group(1)) if m else None
             mismatch = (cache_step is not None and cache_step != ckpt_step)
             unverifiable = (cache_step is None
                             and str(ckpt_step) not in cache_ckpt_base)
             if mismatch or unverifiable:
                 msg = (f"Cache was built from '{cache_ckpt_base}' "
+                       f"(step {cache_step}) "
                        f"but student checkpoint is at step {ckpt_step}. "
                        f"Gap positions may be stale — consider rebuilding.")
                 if cfg.strict_provenance:
@@ -1363,6 +1369,17 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         log_fh.flush()
         best_eval_bpb = baseline["eval_bpb"]
         print(f"  BASELINE eval BPB: {best_eval_bpb:.3f}")
+        best_path = os.path.join(cfg.checkpoint_dir, "e2_best.pt")
+        torch.save({
+            "step": 0,
+            "phase": "BASELINE",
+            "model": student.state_dict(),
+            "model_cfg": model_cfg,
+            "ports": ports.state_dict(),
+            "config": cfg.__dict__,
+            "best_eval_bpb": best_eval_bpb,
+        }, best_path)
+        print(f"  Saved baseline as initial best: {best_path}")
 
     while step < total:
         if not cfg.ce_only and not cfg.bld_mode:

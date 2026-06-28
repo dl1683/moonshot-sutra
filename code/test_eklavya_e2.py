@@ -6230,5 +6230,90 @@ class TestChecklistCLIParsing:
         assert args.disable_gradient_budget is True
 
 
+class TestProvenanceRegex:
+    """Tests for the step-extraction regex used in strict provenance checks."""
+
+    def _extract_step(self, filename):
+        import re
+        step_pattern = re.compile(r'(?:^|[_\-])step(\d+)(?:[_\-.]|$)')
+        m = step_pattern.search(filename)
+        return int(m.group(1)) if m else None
+
+    def test_standard_e2_checkpoint(self):
+        assert self._extract_step("e2_step500.pt") == 500
+
+    def test_step_at_start(self):
+        assert self._extract_step("step0.pt") == 0
+
+    def test_step_with_suffix(self):
+        assert self._extract_step("e2_step100_final.pt") == 100
+
+    def test_dash_separated(self):
+        assert self._extract_step("checkpoint-step500.pt") == 500
+
+    def test_large_step_number(self):
+        assert self._extract_step("e2_step10000.pt") == 10000
+
+    def test_no_step_in_name(self):
+        assert self._extract_step("e1_best.pt") is None
+
+    def test_no_step_in_model_name(self):
+        assert self._extract_step("model.pt") is None
+
+    def test_no_false_substring_match(self):
+        """step500 should not match inside step1500."""
+        assert self._extract_step("e2_step1500.pt") == 1500
+
+    def test_step_at_end_no_extension(self):
+        assert self._extract_step("ckpt-step42") == 42
+
+    def test_step_zero(self):
+        assert self._extract_step("step0") == 0
+
+
+class TestProvenanceManifestStep:
+    """Tests for manifest-based provenance step matching."""
+
+    def test_manifest_step_takes_priority(self):
+        """When manifest has student_checkpoint_step, regex is not used."""
+        import re
+        cache_manifest_step = 500
+        cache_ckpt_base = "e1_best.pt"
+        ckpt_step = 500
+        if cache_manifest_step is not None:
+            cache_step = cache_manifest_step
+        else:
+            step_pattern = re.compile(r'(?:^|[_\-])step(\d+)(?:[_\-.]|$)')
+            m = step_pattern.search(cache_ckpt_base)
+            cache_step = int(m.group(1)) if m else None
+        assert cache_step == 500
+        assert cache_step == ckpt_step
+
+    def test_manifest_step_detects_mismatch(self):
+        cache_manifest_step = 300
+        ckpt_step = 500
+        cache_step = cache_manifest_step
+        mismatch = (cache_step is not None and cache_step != ckpt_step)
+        assert mismatch is True
+
+    def test_e1_best_without_manifest_step_is_unverifiable(self):
+        """e1_best.pt has no step in filename and no manifest step → unverifiable."""
+        import re
+        cache_manifest_step = None
+        cache_ckpt_base = "e1_best.pt"
+        ckpt_step = 500
+        if cache_manifest_step is not None:
+            cache_step = cache_manifest_step
+        else:
+            step_pattern = re.compile(r'(?:^|[_\-])step(\d+)(?:[_\-.]|$)')
+            m = step_pattern.search(cache_ckpt_base)
+            cache_step = int(m.group(1)) if m else None
+        mismatch = (cache_step is not None and cache_step != ckpt_step)
+        unverifiable = (cache_step is None
+                        and str(ckpt_step) not in cache_ckpt_base)
+        assert not mismatch
+        assert unverifiable
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

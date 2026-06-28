@@ -557,12 +557,14 @@ def main():
         P = 4
         ckpt = torch.load(args.student_checkpoint, map_location="cpu", weights_only=False)
         P = ckpt["model_cfg"].patch_size
+        student_ckpt_step = ckpt.get("step")
         del ckpt
     else:
         # Load student
         print(f"Loading student: {args.student_checkpoint}")
         ckpt = torch.load(args.student_checkpoint, map_location="cpu", weights_only=False)
         model_cfg = ckpt["model_cfg"]
+        student_ckpt_step = ckpt.get("step")
         student = SutraS0(model_cfg).to(device)
         student.load_state_dict(ckpt["model"])
         student.eval()
@@ -717,6 +719,7 @@ def main():
         "entropy_threshold": args.entropy_threshold,
         "control_frac": args.control_frac,
         "student_checkpoint": args.student_checkpoint,
+        "student_checkpoint_step": student_ckpt_step,
         "data_dir": args.data_dir,
         "seq_len": args.seq_len,
         "git_commit": git_hash,
