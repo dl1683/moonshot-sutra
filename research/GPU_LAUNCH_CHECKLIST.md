@@ -381,11 +381,11 @@ python eval_e2.py \
 | E2 unit tests | `code/test_eklavya_e2.py` (452 tests) |
 | S0 tests | `code/test_overfit.py` (17 tests) |
 | Burnin verdict tests | `code/test_burnin_verdict.py` (44 tests) |
-| Export CSV tests | `code/test_export_log_csv.py` (16 tests) |
+| Export CSV tests | `code/test_export_log_csv.py` (22 tests) |
 | Utility tests | `code/test_utilities.py` (35 tests) |
 | Ablation comparison tests | `code/test_compare_ablations.py` (72 tests) |
 | VRAM profile tests | `code/test_vram_profile.py` (18 tests) |
-| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (71 tests) |
+| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (73 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
 | E2 monitoring | `research/E2_MONITORING_PROTOCOL.md` |
@@ -409,3 +409,5 @@ python eval_e2.py \
 6. **NaN hard-fail**: E2 training aborts immediately with `RuntimeError` if CE loss or grad_norm becomes non-finite. A `HARD_FAIL` entry is written to the JSONL log before aborting. The monitor also flags non-finite CE loss values during live monitoring
 7. **Per-ablation logs**: Each E2 ablation writes to its own log file (`logs/e2_{ablation_id}.jsonl`), auto-derived from `--ablation-id`. Override with `--log-file` if needed. Monitor with: `python monitor.py --log logs/e2_a2.jsonl --watch`
 8. **GPU memory telemetry**: Peak GPU memory (GB) is logged at phase transitions and in periodic log entries (`gpu_mem_gb` field). The monitor displays the latest reading. Use to validate VRAM budget assumptions early
+9. **Baseline eval at step 0**: On fresh starts (no `--resume`), an eval is emitted before training begins (phase=BASELINE). This provides a reference point for PORT_WARMUP regression detection in the monitor. Resume runs skip this — the baseline is already in the log
+10. **Phase 1 gate partial baselines**: If `--phase1-gate` passes with fewer than 3 baselines (A0, A1, BLD), a WARNING lists which are missing. Re-run the gate when all baselines are available to confirm
