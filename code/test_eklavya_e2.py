@@ -2385,6 +2385,117 @@ class TestE2TrainerTeacherLosses:
 
         assert len(losses) == 0
 
+    def test_disagreement_emits_per_teacher_kl_keys(self):
+        """Regression (R34 finding #6): compute_teacher_losses in DISAGREEMENT
+        must emit per-teacher loss keys (kl_purified_{name}) not a bare
+        kl_purified key, so the gradient budgeter can apply per-teacher caps."""
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=64, n_heads=2, n_kv_heads=1,
+            n_layers=2, patch_size=4, vocab_size=260,
+            ffn_mult=2, max_seq_len=64,
+            decoder_dim=64, decoder_layers=1, decoder_heads=2,
+            byte_dim=64,
+        )
+        student = SutraS0(model_cfg)
+
+        t0 = TEACHER_REGISTRY[0]  # t0_anchor_decoder
+        t4 = TEACHER_REGISTRY[4]  # t4_diversity_ssm
+
+        n_pos = 10
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65,
+                student_nll=4.0, student_entropy=2.0, reason_mask=1,
+            )
+            for i in range(n_pos)
+        ]
+
+        kl_K = 16
+        kl_recs_t0 = []
+        kl_recs_t4 = []
+        for i in range(n_pos):
+            probs = np.zeros(kl_K, dtype=np.float32)
+            probs[0] = 0.90
+            probs[1:] = 0.10 / (kl_K - 1)
+            top_bytes = np.array(
+                [65] + list(range(66, 65 + kl_K)), dtype=np.uint8)[:kl_K]
+            kl_recs_t0.append(E2KLRecord(
+                position_id=i, patch_idx=i + 1,
+                top_bytes=top_bytes, top_probs=probs,
+                tail_prob=0.0, entropy=2.0, logp_gold=-1.5,
+            ))
+            kl_recs_t4.append(E2KLRecord(
+                position_id=i, patch_idx=i + 1,
+                top_bytes=top_bytes, top_probs=probs,
+                tail_prob=0.0, entropy=2.0, logp_gold=-1.5,
+            ))
+
+        teacher_data = {
+            t0.name: {
+                "spec": t0,
+                "kl_records": kl_recs_t0,
+                "kl_K": kl_K,
+                "align_records": [],
+                "embedding_table": torch.empty(0),
+            },
+            t4.name: {
+                "spec": t4,
+                "kl_records": kl_recs_t4,
+                "kl_K": kl_K,
+                "align_records": [],
+                "embedding_table": torch.empty(0),
+            },
+        }
+
+        manifest = {
+            "version": "e2.0",
+            "n_positions": n_pos,
+            "kl_top_k": kl_K,
+            "teacher_count": 2,
+            "teacher_specs": [t0, t4],
+        }
+        cache = {
+            "manifest": manifest,
+            "positions": positions,
+            "teachers": teacher_data,
+            "routes": [],
+        }
+        specs = [t0, t4]
+        ports = MultiTeacherProjectionPorts(student_dim=model_cfg.d_model,
+                                            teachers=specs)
+        cfg = E2Config(
+            port_warmup_steps=0, consensus_steps=0,
+            semantic_landing_steps=0, disagreement_steps=100,
+        )
+        device = torch.device("cpu")
+        trainer = E2Trainer(cfg, student, ports, cache, device)
+
+        P = model_cfg.patch_size
+        seq_len = 64 * P
+        byte_ids = torch.randint(0, 256, (1, seq_len))
+        out = student(byte_ids)
+        shard_ids = torch.tensor([0])
+        seq_starts = torch.tensor([0])
+
+        losses = trainer.compute_teacher_losses(
+            out["logits"], out["patch_states"], shard_ids, seq_starts,
+            E2Phase.DISAGREEMENT, step=5)
+
+        kl_keys = [k for k in losses if k.startswith("kl_purified")]
+        assert "kl_purified" not in losses, (
+            "Bare 'kl_purified' key must not exist — losses must be "
+            "per-teacher (kl_purified_{name})")
+        assert any(k == f"kl_purified_{t0.name}" for k in kl_keys), (
+            f"Missing kl_purified_{t0.name} in {list(losses.keys())}")
+        assert any(k == f"kl_purified_{t4.name}" for k in kl_keys), (
+            f"Missing kl_purified_{t4.name} in {list(losses.keys())}")
+        for k in kl_keys:
+            assert torch.isfinite(losses[k]), f"{k} is not finite"
+            assert losses[k].requires_grad, f"{k} has no grad"
+
     def test_consensus_gates_on_raw_jsd_not_routed(self):
         """Regression: consensus phase must filter on raw (uniform-weight) JSD,
         not router-weighted JSD. A sharp router assigning 99% to one teacher

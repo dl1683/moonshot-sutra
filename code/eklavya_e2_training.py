@@ -703,7 +703,9 @@ class E2Trainer:
         # --- KL + calibration losses (purified from all teachers) ---
         if weights["kl"] > 0:
             kl_losses = []
+            kl_losses_by_teacher: dict[str, list[torch.Tensor]] = {}
             cal_losses = []
+            cal_losses_by_teacher: dict[str, list[torch.Tensor]] = {}
             route_jsds = []
             route_entropies = []
             route_weight_sums: dict[str, float] = {}
@@ -799,6 +801,10 @@ class E2Trainer:
                                        cfg.kl_temperature)
                 if torch.isfinite(loss):
                     kl_losses.append(loss)
+                    for tname, tw in route_result.weights.items():
+                        if tw > 0:
+                            kl_losses_by_teacher.setdefault(tname, []).append(
+                                loss * float(tw))
 
                 if compute_cal:
                     student_p = F.softmax(student_logit, dim=-1)
@@ -811,16 +817,24 @@ class E2Trainer:
                     full_q[tail_mask] = purified.tail_prob / n_tail
                     target_H = -float(np.sum(full_q * np.log(full_q + 1e-10)))
                     if math.isfinite(target_H) and torch.isfinite(student_H):
-                        cal_losses.append(
-                            (student_H - target_H) ** 2)
+                        cal_loss = (student_H - target_H) ** 2
+                        cal_losses.append(cal_loss)
+                        for tname, tw in route_result.weights.items():
+                            if tw > 0:
+                                cal_losses_by_teacher.setdefault(
+                                    tname, []).append(cal_loss * float(tw))
 
             if kl_losses:
-                teacher_losses["kl_purified"] = (
-                    weights["kl"] * torch.stack(kl_losses).mean())
+                n_kl = len(kl_losses)
+                for tname, parts in kl_losses_by_teacher.items():
+                    teacher_losses[f"kl_purified_{tname}"] = (
+                        weights["kl"] * torch.stack(parts).sum() / n_kl)
 
             if cal_losses:
-                teacher_losses["calibration"] = (
-                    weights["calibration"] * torch.stack(cal_losses).mean())
+                n_cal = len(cal_losses)
+                for tname, parts in cal_losses_by_teacher.items():
+                    teacher_losses[f"calibration_{tname}"] = (
+                        weights["calibration"] * torch.stack(parts).sum() / n_cal)
 
             if route_jsds:
                 n_routes = len(route_jsds)
