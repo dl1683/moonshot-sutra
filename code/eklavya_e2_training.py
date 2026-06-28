@@ -883,6 +883,8 @@ class E2Trainer:
                     arec = align_idx.get(pos.position_id)
                     if arec is None:
                         continue
+                    if arec.byte_start + arec.byte_len > patch_states.shape[1] * P:
+                        continue
                     if arec.token_id >= emb_table.shape[0]:
                         continue
                     student_span = overlap_pool(
