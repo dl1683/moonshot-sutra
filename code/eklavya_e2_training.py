@@ -1255,12 +1255,18 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
     print(f"  Cache covers shards [{cache_start}, {cache_end}), "
           f"train [{train_range[0]}, {train_range[1]}), "
           f"eval [{train_range[1]}, {cache_end})")
-    print(f"  Cached positions: {train_pos_count} train, {eval_pos_count} eval")
+    train_shards = train_range[1] - train_range[0]
+    pos_per_shard = train_pos_count / max(train_shards, 1)
+    print(f"  Cached positions: {train_pos_count} train "
+          f"({pos_per_shard:.1f}/shard), {eval_pos_count} eval")
     if train_pos_count == 0:
         raise RuntimeError(
             f"E2 HARD FAIL: zero cached positions in train shard range "
             f"[{train_range[0]}, {train_range[1]}). Cache is empty for "
             f"training data — rebuild cache or check shard_range.")
+    if train_pos_count < 100:
+        print(f"  WARNING: only {train_pos_count} cached train positions — "
+              f"expect sparse teacher signal")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
                                    model_cfg.patch_size, shard_range=train_range)

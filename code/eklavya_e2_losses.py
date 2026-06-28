@@ -166,23 +166,36 @@ def _clear_grads(params):
         p.grad = None
 
 
-def _flat_grad_vec(grad_dict: dict, params: list) -> torch.Tensor:
-    parts = []
+def _streaming_cosine(
+    grad_a: dict, grad_b: dict, params: list,
+) -> float:
+    """Cosine similarity between two grad dicts, streaming over params.
+
+    Avoids allocating full flattened vectors. Missing params contribute
+    zero to dot product and norms.
+    """
+    dot = 0.0
+    norm_a_sq = 0.0
+    norm_b_sq = 0.0
     for p in params:
         pid = id(p)
-        if pid in grad_dict:
-            parts.append(grad_dict[pid].float().reshape(-1))
-        else:
-            parts.append(torch.zeros(p.numel()))
-    return torch.cat(parts) if parts else torch.zeros(1)
-
-
-def _cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
-    na = a.norm()
-    nb = b.norm()
+        ga = grad_a.get(pid)
+        gb = grad_b.get(pid)
+        if ga is not None:
+            ga_flat = ga.float().reshape(-1)
+            norm_a_sq += float((ga_flat * ga_flat).sum())
+            if gb is not None:
+                gb_flat = gb.float().reshape(-1)
+                dot += float((ga_flat * gb_flat).sum())
+                norm_b_sq += float((gb_flat * gb_flat).sum())
+        elif gb is not None:
+            gb_flat = gb.float().reshape(-1)
+            norm_b_sq += float((gb_flat * gb_flat).sum())
+    na = norm_a_sq ** 0.5
+    nb = norm_b_sq ** 0.5
     if na < 1e-12 or nb < 1e-12:
         return 0.0
-    return float((a * b).sum() / (na * nb))
+    return dot / (na * nb)
 
 
 def apply_multi_teacher_gradient_budget(
@@ -301,24 +314,20 @@ def apply_multi_teacher_gradient_budget(
     pairwise_coherence = None
     if compute_coherence and per_teacher_grads_raw and ce_grads:
         if len(teacher_names) >= 1:
-            ce_vec = _flat_grad_vec(ce_grads, params)
             ce_teacher_cosines = {}
             for name in teacher_names:
-                t_vec = _flat_grad_vec(per_teacher_grads_raw[name], params)
-                ce_teacher_cosines[name] = _cosine_sim(ce_vec, t_vec)
+                ce_teacher_cosines[name] = _streaming_cosine(
+                    ce_grads, per_teacher_grads_raw[name], params)
 
         if len(teacher_names) >= 2:
-            teacher_vecs = {
-                name: _flat_grad_vec(per_teacher_grads_raw[name], params)
-                for name in teacher_names
-            }
             pair_count = 0
             cos_sum = 0.0
             for ii in range(len(teacher_names)):
                 for jj in range(ii + 1, len(teacher_names)):
-                    cos_sum += _cosine_sim(
-                        teacher_vecs[teacher_names[ii]],
-                        teacher_vecs[teacher_names[jj]])
+                    cos_sum += _streaming_cosine(
+                        per_teacher_grads_raw[teacher_names[ii]],
+                        per_teacher_grads_raw[teacher_names[jj]],
+                        params)
                     pair_count += 1
             pairwise_coherence = cos_sum / pair_count if pair_count > 0 else 0.0
 

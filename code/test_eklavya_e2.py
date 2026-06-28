@@ -1619,6 +1619,22 @@ class TestMultiTeacherGradBudget:
         assert report.pairwise_coherence is not None
         assert report.pairwise_coherence > 0.99
 
+    def test_coherence_mismatched_grad_supports(self):
+        """CE and teacher losses touching different parameter subsets must not crash."""
+        backbone = torch.nn.Linear(4, 8)
+        head = torch.nn.Linear(8, 4)
+        x = torch.randn(2, 4)
+        h = backbone(x)
+        ce_loss = (head(h) ** 2).sum()
+        extra = torch.nn.Linear(4, 4)
+        t_loss = (extra(x) ** 2).sum()
+        all_params = list(backbone.parameters()) + list(head.parameters()) + list(extra.parameters())
+        report = apply_multi_teacher_gradient_budget(
+            all_params, ce_loss, {"t_extra": t_loss})
+        assert report.ce_teacher_cosines is not None
+        assert "t_extra" in report.ce_teacher_cosines
+        assert abs(report.ce_teacher_cosines["t_extra"]) < 1e-6
+
 
 # ---------------------------------------------------------------------------
 # E2 Trainer tests
