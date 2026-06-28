@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from compare_ablations import (
     ce_to_bpb, load_log, load_eval_results, analyze_run, export_csv,
     RunSummary, evaluate_decision_rules, DECISION_RULES, GOLDFREE_RULES,
+    GAP_CLASS_RULES,
 )
 
 
@@ -391,14 +392,14 @@ class TestDecisionRules:
         assert "FAIL" in out
         assert "abandon" in out.lower()
 
-    def test_no_eval_results_returns_silently(self, capsys):
+    def test_no_eval_results_prints_insufficient(self, capsys):
         summaries = [
             RunSummary(ablation_id="A2", log_path="x.jsonl"),
             RunSummary(ablation_id="A0", log_path="y.jsonl"),
         ]
         evaluate_decision_rules(summaries)
         out = capsys.readouterr().out
-        assert out.strip() == ""
+        assert "Not enough valid eval results" in out
 
     def test_partial_coverage_skips_missing(self, capsys):
         summaries = [
@@ -696,3 +697,129 @@ class TestGCGCoherenceExtraction:
             assert "mean_ce_teacher_cosines" not in gb
         finally:
             os.unlink(path)
+
+
+# ═══ Gap-class decision rules ═════════════════════════════════════════
+
+class TestGapClassRules:
+    def _make_summary(self, aid, eval_bpb, **gap_metrics):
+        s = RunSummary(ablation_id=aid, log_path="x.jsonl")
+        metrics = {"bpb": eval_bpb}
+        metrics.update(gap_metrics)
+        s.eval_result = {"metrics": metrics}
+        return s
+
+    def test_gap_class_rules_table_not_empty(self):
+        assert len(GAP_CLASS_RULES) > 0
+        for rule in GAP_CLASS_RULES:
+            assert len(rule) == 6
+            better, worse, metric, margin, fail_msg, pass_msg = rule
+            assert isinstance(metric, str)
+            assert margin > 0
+
+    def test_gap_class_pass_high_disagreement(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0, bpb_high_disagreement=5.0),
+            self._make_summary("A5b", 4.05, bpb_high_disagreement=5.1),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "Router adds value where teachers disagree" in out
+
+    def test_gap_class_fail_insufficient_margin(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0, bpb_high_disagreement=5.0),
+            self._make_summary("A5b", 4.05, bpb_high_disagreement=5.01),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "doesn't add value on high-disagreement" in out
+
+    def test_gap_class_regression_detected(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0, bpb_high_disagreement=5.5),
+            self._make_summary("A5b", 4.05, bpb_high_disagreement=5.0),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "REGRESS" in out
+        assert "WORSE" in out
+
+    def test_gap_class_skipped_when_metric_absent(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0),
+            self._make_summary("A5b", 4.05),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "bpb_high_disagreement" not in out
+
+
+# ═══ HARD_FAIL exclusion ══════════════════════════════════════════════
+
+class TestHardFailExclusion:
+    def _make_summary(self, aid, eval_bpb, hard_fail=False):
+        s = RunSummary(ablation_id=aid, log_path="x.jsonl",
+                       had_hard_fail=hard_fail)
+        s.eval_result = {"metrics": {"bpb": eval_bpb}}
+        return s
+
+    def test_hard_failed_run_excluded_from_decisions(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.5, hard_fail=True),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "Excluding" in out
+        assert "A0" in out
+        assert "E2 beats" not in out
+
+    def test_both_healthy_still_compared(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.1),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "Excluding" not in out
+        assert "A2 vs A0" in out
+
+
+# ═══ Regression detection ═════════════════════════════════════════════
+
+class TestRegressionDetection:
+    def _make_summary(self, aid, eval_bpb):
+        s = RunSummary(ablation_id=aid, log_path="x.jsonl")
+        s.eval_result = {"metrics": {"bpb": eval_bpb}}
+        return s
+
+    def test_regression_when_better_is_worse(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.5),
+            self._make_summary("A0", 4.0),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "REGRESS" in out
+        assert "WORSE" in out
+
+    def test_no_regression_when_marginal(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.01),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "REGRESS" not in out
+        assert "FAIL" in out
+
+    def test_pass_when_exceeds_margin(self, capsys):
+        summaries = [
+            self._make_summary("A2", 4.0),
+            self._make_summary("A0", 4.1),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "PASS" in out
+        assert "REGRESS" not in out

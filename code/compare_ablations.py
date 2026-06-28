@@ -440,48 +440,66 @@ GOLDFREE_RULES = [
      "Gold-free routing concept unproven (A9c ~ best static baseline)"),
 ]
 
+GAP_CLASS_RULES = [
+    ("A9c", "A5b", "bpb_high_disagreement", 0.03,
+     "Router doesn't add value on high-disagreement positions",
+     "Router adds value where teachers disagree most"),
+    ("A9c", "A5b", "bpb_high_nll", 0.03,
+     "Router doesn't add value on high-NLL positions",
+     "Router adds value on hard positions"),
+]
+
 
 def evaluate_decision_rules(summaries: list[RunSummary]):
-    has_eval = {s.ablation_id: s for s in summaries if s.eval_result}
-    if len(has_eval) < 2:
-        return
+    hard_failed = {s.ablation_id for s in summaries if s.had_hard_fail}
+    has_eval = {s.ablation_id: s for s in summaries
+                if s.eval_result and s.ablation_id not in hard_failed}
 
     print(f"\n{'=' * 72}")
     print("  DECISION RULE EVALUATION")
     print(f"{'=' * 72}")
 
-    def get_bpb(aid):
+    if hard_failed:
+        print(f"\n  NOTE: Excluding {sorted(hard_failed)} (had HARD_FAIL)")
+
+    if len(has_eval) < 2:
+        print("\n  Not enough valid eval results for comparison.")
+        return
+
+    def get_metric(aid, key="bpb"):
         s = has_eval.get(aid)
         if s is None:
             return None
-        return s.eval_result.get("metrics", {}).get("bpb")
+        return s.eval_result.get("metrics", {}).get(key)
 
     evaluated = 0
     for better_id, worse_id, margin, fail_msg, pass_msg in DECISION_RULES:
-        better_bpb = get_bpb(better_id)
-        worse_bpb = get_bpb(worse_id)
+        better_bpb = get_metric(better_id)
+        worse_bpb = get_metric(worse_id)
         if better_bpb is None or worse_bpb is None:
             continue
         evaluated += 1
         delta = worse_bpb - better_bpb
-        if delta < margin:
-            verdict = "FAIL"
+        if delta < 0:
+            symbol = "[REGRESS]"
+            msg = fail_msg + f" ({better_id} is WORSE than {worse_id})"
+        elif delta < margin:
+            symbol = "[FAIL]"
             msg = fail_msg
         else:
-            verdict = "PASS"
+            symbol = "[PASS]"
             msg = pass_msg
-        symbol = "[FAIL]" if verdict == "FAIL" else "[PASS]"
         print(f"\n  {symbol} {better_id} vs {worse_id}: "
               f"delta={delta:+.4f} BPB (threshold: {margin})")
-        print(f"    -> {verdict}: {msg}")
+        print(f"    -> {msg}")
 
     for a9c_id, ref_id, margin1, third_id, margin2, msg in GOLDFREE_RULES:
-        a9c_bpb = get_bpb(a9c_id)
-        ref_bpb = get_bpb(ref_id)
+        a9c_bpb = get_metric(a9c_id)
+        ref_bpb = get_metric(ref_id)
         if a9c_bpb is None or ref_bpb is None:
             continue
         if third_id is not None:
-            third_bpb = get_bpb(third_id)
+            third_bpb = get_metric(third_id)
             if third_bpb is None:
                 continue
             delta1 = abs(ref_bpb - a9c_bpb)
@@ -497,6 +515,26 @@ def evaluate_decision_rules(summaries: list[RunSummary]):
                 evaluated += 1
                 print(f"\n  [WARN] {a9c_id} vs {ref_id}: delta={delta:+.4f} (threshold: {margin1})")
                 print(f"    -> {msg}")
+
+    for better_id, worse_id, metric, margin, fail_msg, pass_msg in GAP_CLASS_RULES:
+        better_val = get_metric(better_id, metric)
+        worse_val = get_metric(worse_id, metric)
+        if better_val is None or worse_val is None:
+            continue
+        evaluated += 1
+        delta = worse_val - better_val
+        if delta < 0:
+            symbol = "[REGRESS]"
+            msg = fail_msg + f" ({better_id} is WORSE on {metric})"
+        elif delta < margin:
+            symbol = "[FAIL]"
+            msg = fail_msg
+        else:
+            symbol = "[PASS]"
+            msg = pass_msg
+        print(f"\n  {symbol} {better_id} vs {worse_id} [{metric}]: "
+              f"delta={delta:+.4f} BPB (threshold: {margin})")
+        print(f"    -> {msg}")
 
     if evaluated == 0:
         print("\n  No decision rules could be evaluated (need eval results "
