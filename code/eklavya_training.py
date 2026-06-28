@@ -546,7 +546,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             batch = next(data_iter)
 
         byte_ids, shard_ids, seq_offsets = batch
-        byte_ids = byte_ids.to(device)
+        byte_ids = byte_ids.to(device, non_blocking=True)
 
         with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_cuda):
             out = student(byte_ids, return_aux=False)
@@ -636,10 +636,11 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             )
         else:
             scaled_loss = loss / cfg.grad_accum
-            if scaler is not None:
-                scaler.scale(scaled_loss).backward()
-            else:
-                scaled_loss.backward()
+            if scaled_loss.requires_grad:
+                if scaler is not None:
+                    scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
 
         if (step + 1) % cfg.grad_accum == 0:
             if scaler is not None:
@@ -714,7 +715,9 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             if os.path.exists(os.path.join(cfg.cache_dir, "cache_manifest.json")):
                 trainer.refresh_cache(cfg.cache_dir)
 
-        if step > 0 and step % cfg.checkpoint_every == 0:
+        accum_aligned = (step + 1) % cfg.grad_accum == 0
+        if (accum_aligned and step >= cfg.checkpoint_every
+                and step % cfg.checkpoint_every < cfg.grad_accum):
             ckpt_path = os.path.join(cfg.checkpoint_dir, f"e1_step{step}.pt")
             torch.save({
                 "step": step,

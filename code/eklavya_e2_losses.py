@@ -204,9 +204,9 @@ def apply_multi_teacher_gradient_budget(
         ce_norm = 0.0
 
     teacher_names = sorted(teacher_losses.keys())
-    per_teacher_grads = {}
     per_teacher_norms = {}
     per_teacher_scales = {}
+    total_teacher_grads = {}
 
     for i, name in enumerate(teacher_names):
         loss = teacher_losses[name]
@@ -217,8 +217,10 @@ def apply_multi_teacher_gradient_budget(
         else:
             loss.backward(retain_graph=not is_last or retain_graph)
 
-        t_grads = _collect_grads(params)
-        t_norm = sum(g.float().norm().item() ** 2 for g in t_grads.values()) ** 0.5
+        t_norm = sum(
+            p.grad.float().norm().item() ** 2
+            for p in params if p.grad is not None
+        ) ** 0.5
         per_teacher_norms[name] = t_norm
 
         cap = per_teacher_cap.get(name, 0.10) if isinstance(per_teacher_cap, dict) else per_teacher_cap
@@ -229,18 +231,16 @@ def apply_multi_teacher_gradient_budget(
                 scale = cap * effective_ce / t_norm
         per_teacher_scales[name] = scale
 
-        per_teacher_grads[name] = t_grads
-        _clear_grads(params)
-
-    total_teacher_grads = {}
-    for name in teacher_names:
-        scale = per_teacher_scales[name]
-        for pid, g in per_teacher_grads[name].items():
-            scaled = g * scale if scale != 1.0 else g
+        for p in params:
+            if p.grad is None:
+                continue
+            pid = id(p)
+            scaled = p.grad.detach() * scale if scale != 1.0 else p.grad.detach().clone()
             if pid in total_teacher_grads:
-                total_teacher_grads[pid] = total_teacher_grads[pid] + scaled
+                total_teacher_grads[pid].add_(scaled)
             else:
-                total_teacher_grads[pid] = scaled.clone()
+                total_teacher_grads[pid] = scaled
+        _clear_grads(params)
 
     total_norm_before = sum(
         g.float().norm().item() ** 2 for g in total_teacher_grads.values()

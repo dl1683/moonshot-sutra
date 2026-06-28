@@ -1506,7 +1506,9 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 torch.save(best_dict, best_path)
                 print(f"  New best eval BPB {best_eval_bpb:.3f} — saved {best_path}")
 
-        if step > 0 and step % cfg.checkpoint_every == 0:
+        accum_aligned = (step + 1) % cfg.grad_accum == 0
+        if (accum_aligned and step >= cfg.checkpoint_every
+                and step % cfg.checkpoint_every < cfg.grad_accum):
             ckpt_path = os.path.join(cfg.checkpoint_dir, f"e2_step{step}.pt")
             save_dict = {
                 "step": step,

@@ -3826,13 +3826,15 @@ class TestE2EndToEnd:
 
         train_e2(cfg, ckpt_path, cache_dir)
 
-        step4_path = os.path.join(cfg.checkpoint_dir, "e2_step4.pt")
-        step8_path = os.path.join(cfg.checkpoint_dir, "e2_step8.pt")
-        assert os.path.exists(step4_path), "Step 4 checkpoint must exist with grad_accum=2"
-        assert os.path.exists(step8_path), "Step 8 checkpoint must exist with grad_accum=2"
+        step5_path = os.path.join(cfg.checkpoint_dir, "e2_step5.pt")
+        step9_path = os.path.join(cfg.checkpoint_dir, "e2_step9.pt")
+        assert os.path.exists(step5_path), (
+            "Step 5 checkpoint must exist (accum-aligned nearest to checkpoint_every=4)")
+        assert os.path.exists(step9_path), (
+            "Step 9 checkpoint must exist (accum-aligned nearest to checkpoint_every=4)")
 
-        ckpt = torch.load(step4_path, map_location="cpu", weights_only=False)
-        assert ckpt["step"] == 4
+        ckpt = torch.load(step5_path, map_location="cpu", weights_only=False)
+        assert ckpt["step"] == 5
         assert "config" in ckpt
 
     def test_best_checkpoint_includes_config(self, tmp_path):
