@@ -29,7 +29,7 @@ python s0_training.py \
 
 ### Verdict
 ```bash
-python burnin_verdict.py --log logs/s0_train.jsonl
+python burnin_verdict.py --log logs/s0_burnin.jsonl
 ```
 
 ## Phase 2: Full S0 Training (50K steps, ~12-18 hours)
@@ -155,7 +155,7 @@ python eklavya_e2_cache_builder.py \
     --output-dir C:/sutra_fast/eklavya_e2_cache \
     --max-shards 50 \
     --teachers-only \
-    --teacher-config config/teacher_config.json
+    --teacher-config ../config/teacher_config.json
 ```
 
 ### Expected Output

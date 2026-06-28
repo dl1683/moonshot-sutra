@@ -323,7 +323,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
             sampler_gen_state = ckpt["sampler_gen_state"]
             batches_consumed_in_epoch = ckpt.get(
                 "batches_consumed_in_epoch", 0)
-        start_step = ckpt["step"] + 1
+        start_step = ckpt["step"]
         if "best_eval_bpb" in ckpt:
             best_eval_bpb = ckpt["best_eval_bpb"]
         if best_eval_bpb < float("inf"):
