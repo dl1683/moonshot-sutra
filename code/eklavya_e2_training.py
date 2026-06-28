@@ -1248,9 +1248,19 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         )
     n_eval = min(2, max(1, n_cached // 10))
     train_range = (cache_start, cache_end - n_eval)
+    train_pos_count = cache_view.count_positions_in_shard_range(
+        train_range[0], train_range[1])
+    eval_pos_count = cache_view.count_positions_in_shard_range(
+        train_range[1], cache_end)
     print(f"  Cache covers shards [{cache_start}, {cache_end}), "
           f"train [{train_range[0]}, {train_range[1]}), "
           f"eval [{train_range[1]}, {cache_end})")
+    print(f"  Cached positions: {train_pos_count} train, {eval_pos_count} eval")
+    if train_pos_count == 0:
+        raise RuntimeError(
+            f"E2 HARD FAIL: zero cached positions in train shard range "
+            f"[{train_range[0]}, {train_range[1]}). Cache is empty for "
+            f"training data — rebuild cache or check shard_range.")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
                                    model_cfg.patch_size, shard_range=train_range)
@@ -1640,7 +1650,7 @@ def _parse_static_weights(s: Optional[str]) -> Optional[dict[str, float]]:
     return result
 
 
-if __name__ == "__main__":
+def _build_parser():
     parser = argparse.ArgumentParser(description="Eklavya E2 multi-teacher KD")
     parser.add_argument("--student-checkpoint", required=True)
     parser.add_argument("--data-dir", default="data/shards_bytes_full",
@@ -1685,6 +1695,11 @@ if __name__ == "__main__":
     parser.add_argument("--bld-kl-weight", type=float, default=0.10,
                         help="KL loss weight for BLD mode (default: 0.10)")
     parser.add_argument("--shuffle-seed", type=int, default=1234)
+    return parser
+
+
+if __name__ == "__main__":
+    parser = _build_parser()
     args = parser.parse_args()
 
     cfg = E2Config(

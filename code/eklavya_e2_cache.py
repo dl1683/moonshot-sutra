@@ -945,6 +945,16 @@ class E2CacheView:
             "n_teachers": len(self._teacher_names),
         }
 
+    def count_positions_in_shard_range(
+            self, shard_start: int, shard_end: int) -> int:
+        """Count cached positions whose shard_id is in [start, end)."""
+        count = 0
+        for i in range(len(self._positions)):
+            sid = self._positions[i].shard_id
+            if shard_start <= sid < shard_end:
+                count += 1
+        return count
+
     def validate(self, data_dir: str | None = None,
                  min_coverage: float = 0.5,
                  deep: bool = False) -> list[str]:

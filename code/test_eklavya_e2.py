@@ -6083,6 +6083,100 @@ class TestR36CacheAndConfig:
         src = inspect.getsource(check_e2_cache)
         assert "deep=True" in src
 
+    def test_train_split_coverage_count(self, tmp_path):
+        """count_positions_in_shard_range returns correct counts."""
+        cache_dir = self._make_cache_with_range(
+            tmp_path, shard_range=(0, 5),
+            position_shard_ids=[0, 0, 1, 2, 3, 4])
+        with E2CacheView(cache_dir) as view:
+            total = view.count_positions_in_shard_range(0, 5)
+            assert total == 6
+            train = view.count_positions_in_shard_range(0, 3)
+            assert train == 4
+            eval_ = view.count_positions_in_shard_range(3, 5)
+            assert eval_ == 2
+            empty = view.count_positions_in_shard_range(10, 20)
+            assert empty == 0
+
+
+class TestChecklistCLIParsing:
+    """R36b finding #5: verify checklist launch commands parse without error."""
+
+    def test_a2_full_system(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--data-dir", "data/shards_bytes_full",
+            "--cache-dir", "cache",
+            "--output-dir", "out",
+            "--ablation-id", "A2",
+        ])
+        assert args.ablation_id == "A2"
+
+    def test_a0_ce_only(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--ablation-id", "A0", "--ce-only",
+        ])
+        assert args.ce_only is True
+
+    def test_bld_mode(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--ablation-id", "BLD", "--bld-mode",
+        ])
+        assert args.bld_mode is True
+
+    def test_a9c_gold_free_router(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--ablation-id", "A9c",
+            "--router-mode", "gold_free_student_jsd",
+        ])
+        assert args.router_mode == "gold_free_student_jsd"
+
+    def test_a5b_custom_static(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--ablation-id", "A5b",
+            "--disable-router",
+            "--static-weight-mode", "custom",
+            "--static-weights",
+            "t0_anchor_decoder:0.45,t1_diversity_hybrid:0.25,"
+            "t2_control_decoder:0.15,t4_diversity_ssm:0.15",
+        ])
+        assert args.static_weight_mode == "custom"
+        assert args.disable_router is True
+
+    def test_a1_single_teacher(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--ablation-id", "A1",
+            "--teachers", "t0_anchor_decoder",
+        ])
+        assert args.teachers == ["t0_anchor_decoder"]
+
+    def test_a7_no_grad_budget(self):
+        from eklavya_e2_training import _build_parser
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--student-checkpoint", "dummy.pt",
+            "--ablation-id", "A7",
+            "--disable-gradient-budget",
+        ])
+        assert args.disable_gradient_budget is True
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
