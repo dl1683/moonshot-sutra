@@ -1189,6 +1189,16 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             f"config uses seq_len={cfg.seq_len}. Position lookups will fail."
         )
 
+    cache_ckpt_path = cache_prov.get("student_checkpoint")
+    if cache_ckpt_path is not None:
+        cache_ckpt_base = os.path.basename(cache_ckpt_path)
+        ckpt_step = ckpt.get("step")
+        if ckpt_step is not None and cache_ckpt_base:
+            if str(ckpt_step) not in cache_ckpt_base:
+                print(f"  WARNING: Cache was built from '{cache_ckpt_base}' "
+                      f"but student checkpoint is at step {ckpt_step}. "
+                      f"Gap positions may be stale — consider rebuilding.")
+
     ports = MultiTeacherProjectionPorts(model_cfg.d_model, specs).to(device)
 
     if "align_proj" in ckpt:
