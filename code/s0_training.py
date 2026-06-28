@@ -443,8 +443,12 @@ if __name__ == "__main__":
     parser.add_argument("--burnin", action="store_true",
                         help="Short 500-step burn-in with frequent checkpoints")
     parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--checkpoint-dir", type=str, default=None,
+                        help="Override checkpoint directory (use non-OneDrive path)")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--eval-every", type=int, default=None)
+    parser.add_argument("--warmup-steps", type=int, default=None)
     parser.add_argument("--config", choices=["p4", "p8", "d640", "d768"], default="p4")
     args = parser.parse_args()
 
@@ -454,7 +458,7 @@ if __name__ == "__main__":
 
     if args.burnin:
         train_cfg.total_steps = 500
-        train_cfg.warmup_steps = 100  # R11: reach target LR by step 100
+        train_cfg.warmup_steps = 100
         train_cfg.checkpoint_every = 100
         train_cfg.eval_every = 50
         train_cfg.log_every = 5
@@ -462,9 +466,15 @@ if __name__ == "__main__":
         train_cfg.log_file = "logs/s0_burnin.jsonl"
     if args.data_dir:
         train_cfg.data_dir = args.data_dir
+    if args.checkpoint_dir:
+        train_cfg.checkpoint_dir = args.checkpoint_dir
     if args.resume:
         train_cfg.resume_from = args.resume
     if args.steps:
         train_cfg.total_steps = args.steps
+    if args.eval_every:
+        train_cfg.eval_every = args.eval_every
+    if args.warmup_steps:
+        train_cfg.warmup_steps = args.warmup_steps
 
     train(model_cfg, train_cfg)

@@ -768,9 +768,10 @@ class E2Trainer:
                 if purified is None:
                     continue
 
-                if phase == E2Phase.CONSENSUS and route_result.jsd > cfg.jsd_low:
+                raw_jsd = disagreement_jsd(teacher_dists)
+                if phase == E2Phase.CONSENSUS and raw_jsd > cfg.jsd_low:
                     continue
-                if phase == E2Phase.SEMANTIC and route_result.jsd > cfg.jsd_high:
+                if phase == E2Phase.SEMANTIC and raw_jsd > cfg.jsd_high:
                     continue
 
                 route_jsds.append(route_result.jsd)

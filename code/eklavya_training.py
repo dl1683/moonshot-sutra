@@ -287,6 +287,8 @@ class EklavyaTrainer:
                 continue
             z_s = F.layer_norm(self.align_proj(student_span), (self.align_proj.proj.out_features,))
 
+            if r.token_id < 0 or r.token_id >= len(self.embedding_table):
+                continue
             teacher_emb = self.embedding_table[r.token_id].to(device=self.device, dtype=z_s.dtype)
             z_t = F.layer_norm(teacher_emb, (teacher_emb.shape[-1],))
 

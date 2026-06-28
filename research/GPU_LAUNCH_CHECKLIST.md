@@ -17,11 +17,9 @@ for phase-specific intervention rules, gradient budget red flags, and GPU failur
 ```bash
 cd code/
 python s0_training.py \
+    --burnin \
     --data-dir ../data/shards_bytes_full \
-    --checkpoint-dir C:/sutra_fast/checkpoints/s0 \
-    --total-steps 500 \
-    --warmup-steps 100 \
-    --eval-every 50
+    --checkpoint-dir C:/sutra_fast/checkpoints/s0
 ```
 
 ### Success Criteria
@@ -45,10 +43,10 @@ python burnin_verdict.py --log logs/s0_train.jsonl
 python s0_training.py \
     --data-dir ../data/shards_bytes_full \
     --checkpoint-dir C:/sutra_fast/checkpoints/s0 \
-    --total-steps 50000 \
+    --steps 50000 \
     --warmup-steps 1000 \
     --eval-every 500 \
-    --resume-from C:/sutra_fast/checkpoints/s0/s0_step500.pt
+    --resume C:/sutra_fast/checkpoints/s0/s0_step500.pt
 ```
 
 ### Milestones
