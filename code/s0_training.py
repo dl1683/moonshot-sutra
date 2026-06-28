@@ -283,9 +283,14 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
                                      model_cfg.patch_size, shard_range=train_range)
     eval_dataset = ByteShardDataset(train_cfg.data_dir, train_cfg.seq_len_bytes,
                                     model_cfg.patch_size, shard_range=eval_range)
+    sampler_gen = torch.Generator()
+    sampler_gen.manual_seed(42)
+    sampler_gen_state = sampler_gen.get_state()
+    batches_consumed_in_epoch = 0
     train_loader = DataLoader(
         train_dataset, batch_size=train_cfg.batch_size,
         shuffle=True, num_workers=2, pin_memory=True, drop_last=True,
+        generator=sampler_gen,
     )
     eval_loader = DataLoader(
         eval_dataset, batch_size=train_cfg.batch_size,
@@ -313,6 +318,11 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
             torch.set_rng_state(ckpt["rng_state"])
             if device.type == "cuda" and "cuda_rng_state" in ckpt:
                 torch.cuda.set_rng_state(ckpt["cuda_rng_state"])
+        if "sampler_gen_state" in ckpt:
+            sampler_gen.set_state(ckpt["sampler_gen_state"])
+            sampler_gen_state = ckpt["sampler_gen_state"]
+            batches_consumed_in_epoch = ckpt.get(
+                "batches_consumed_in_epoch", 0)
         start_step = ckpt["step"] + 1
         if "best_eval_bpb" in ckpt:
             best_eval_bpb = ckpt["best_eval_bpb"]
@@ -324,6 +334,14 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
     # Training loop
     model.train()
     data_iter = iter(train_loader)
+    if train_cfg.resume_from and batches_consumed_in_epoch > 0:
+        print(f"  Fast-forwarding {batches_consumed_in_epoch} batches "
+              f"for exact resume...")
+        for _ff in range(batches_consumed_in_epoch):
+            try:
+                next(data_iter)
+            except StopIteration:
+                break
     step = start_step
     accum_loss = 0.0
     accum_steps = 0
@@ -341,9 +359,12 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
         for micro_step in range(train_cfg.grad_accum_steps):
             try:
                 batch = next(data_iter)
+                batches_consumed_in_epoch += 1
             except StopIteration:
+                sampler_gen_state = sampler_gen.get_state()
                 data_iter = iter(train_loader)
                 batch = next(data_iter)
+                batches_consumed_in_epoch = 1
 
             byte_ids = batch.to(device, non_blocking=True)
 
@@ -437,6 +458,8 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
                 "train_cfg": train_cfg,
                 "best_eval_bpb": best_eval_bpb,
                 "rng_state": torch.get_rng_state(),
+                "sampler_gen_state": sampler_gen_state,
+                "batches_consumed_in_epoch": batches_consumed_in_epoch,
             }
             if device.type == "cuda":
                 ckpt_data["cuda_rng_state"] = torch.cuda.get_rng_state()

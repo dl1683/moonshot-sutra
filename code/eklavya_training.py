@@ -456,8 +456,13 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
     eval_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
                                   model_cfg.patch_size, shard_range=eval_range)
 
+    sampler_gen = torch.Generator()
+    sampler_gen.manual_seed(42)
+    sampler_gen_state = sampler_gen.get_state()
+    batches_consumed_in_epoch = 0
     train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size,
-                              shuffle=True, num_workers=2, pin_memory=True, drop_last=True)
+                              shuffle=True, num_workers=2, pin_memory=True,
+                              drop_last=True, generator=sampler_gen)
     eval_loader = DataLoader(eval_dataset, batch_size=cfg.batch_size,
                              shuffle=False, num_workers=1, pin_memory=True, drop_last=True)
 
@@ -503,12 +508,25 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             random.setstate(resume_ckpt["py_rng_state"])
         if "np_rng_state" in resume_ckpt:
             np.random.set_state(resume_ckpt["np_rng_state"])
+        if "sampler_gen_state" in resume_ckpt:
+            sampler_gen.set_state(resume_ckpt["sampler_gen_state"])
+            sampler_gen_state = resume_ckpt["sampler_gen_state"]
+            batches_consumed_in_epoch = resume_ckpt.get(
+                "batches_consumed_in_epoch", 0)
         print(f"Resumed from step {step} phase {current_phase} "
               f"(best eval BPB: {best_eval_bpb:.3f})")
 
     P = model_cfg.patch_size
     t0 = time.time()
     data_iter = iter(train_loader)
+    if cfg.resume_from and batches_consumed_in_epoch > 0:
+        print(f"  Fast-forwarding {batches_consumed_in_epoch} batches "
+              f"for exact resume...")
+        for _ff in range(batches_consumed_in_epoch):
+            try:
+                next(data_iter)
+            except StopIteration:
+                break
     warmup_signal_steps = 0
     warmup_total_steps = 0
 
@@ -551,9 +569,12 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
 
         try:
             batch = next(data_iter)
+            batches_consumed_in_epoch += 1
         except StopIteration:
+            sampler_gen_state = sampler_gen.get_state()
             data_iter = iter(train_loader)
             batch = next(data_iter)
+            batches_consumed_in_epoch = 1
 
         byte_ids, shard_ids, seq_offsets = batch
         byte_ids = byte_ids.to(device, non_blocking=True)
@@ -718,6 +739,8 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                     "scaler": scaler.state_dict() if scaler is not None else None,
                     "best_eval_bpb": best_eval_bpb,
                     "config": cfg,
+                    "sampler_gen_state": sampler_gen_state,
+                    "batches_consumed_in_epoch": batches_consumed_in_epoch,
                     **_rng_state(device),
                 }, best_path)
                 print(f"  eval bpb={eval_metrics['eval_bpb']:.3f} "
@@ -746,6 +769,8 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 "scaler": scaler.state_dict() if scaler is not None else None,
                 "best_eval_bpb": best_eval_bpb,
                 "config": cfg,
+                "sampler_gen_state": sampler_gen_state,
+                "batches_consumed_in_epoch": batches_consumed_in_epoch,
                 **_rng_state(device),
             }, ckpt_path)
             print(f"  Saved checkpoint: {ckpt_path}")
@@ -764,6 +789,8 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         "scaler": scaler.state_dict() if scaler is not None else None,
         "best_eval_bpb": best_eval_bpb,
         "config": cfg,
+        "sampler_gen_state": sampler_gen_state,
+        "batches_consumed_in_epoch": batches_consumed_in_epoch,
         **_rng_state(device),
     }, final_path)
     print(f"\nE1 training complete. Final checkpoint: {final_path}")
