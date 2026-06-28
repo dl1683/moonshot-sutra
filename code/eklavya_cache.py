@@ -95,7 +95,9 @@ def first_byte_marginal(logits: torch.Tensor, tokenizer, top_vocab: int = 4096,
 
     coverage = q.sum().item()
     if coverage > 0:
-        q = q / coverage
+        uncovered = max(0.0, 1.0 - coverage)
+        q = q + uncovered / 256.0
+        q = q / q.sum()
 
     top_probs, top_bytes = torch.topk(q, min(K, 256))
     tail = 1.0 - top_probs.sum().item()
