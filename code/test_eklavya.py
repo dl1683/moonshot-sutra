@@ -35,6 +35,7 @@ from eklavya_cache import (
 from eklavya_training import (
     AlignProjection, overlap_pool, topk_tail_kl,
     EklavyaConfig, EklavyaTrainer, apply_gradient_budget,
+    evaluate_e1, _rng_state, EklavyaDataset,
 )
 
 
@@ -899,6 +900,88 @@ def test_select_kl_patches_all_nan():
     print("  test_select_kl_patches_all_nan PASSED")
 
 
+def test_evaluate_e1_empty_loader():
+    """evaluate_e1 returns inf when eval_loader is empty."""
+    import random
+    torch.manual_seed(42)
+    model_cfg = tiny_cfg()
+    student = SutraS0(model_cfg)
+    align_proj = AlignProjection(model_cfg.d_model, 64)
+
+    empty_loader = []
+    result = evaluate_e1(student, align_proj, empty_loader,
+                         torch.device("cpu"), torch.bfloat16, False, max_batches=10)
+    assert result["eval_bpb"] == float("inf")
+    print("  test_evaluate_e1_empty_loader PASSED")
+
+
+def test_rng_state_roundtrip():
+    """RNG state save/restore produces identical sequences."""
+    import random
+    torch.manual_seed(99)
+    random.seed(99)
+    np.random.seed(99)
+
+    state = _rng_state(torch.device("cpu"))
+
+    r1_torch = torch.randn(5).tolist()
+    r1_py = random.random()
+    r1_np = np.random.rand(3).tolist()
+
+    torch.set_rng_state(state["rng_state"])
+    random.setstate(state["py_rng_state"])
+    np.random.set_state(state["np_rng_state"])
+
+    r2_torch = torch.randn(5).tolist()
+    r2_py = random.random()
+    r2_np = np.random.rand(3).tolist()
+
+    assert r1_torch == r2_torch, "Torch RNG not restored"
+    assert r1_py == r2_py, "Python RNG not restored"
+    assert r1_np == r2_np, "NumPy RNG not restored"
+    print("  test_rng_state_roundtrip PASSED")
+
+
+def test_align_loss_oob_token_id():
+    """Out-of-range token_id records are skipped, not crash."""
+    torch.manual_seed(0)
+    model_cfg = tiny_cfg()
+    student = SutraS0(model_cfg)
+    align_proj = AlignProjection(model_cfg.d_model, 64)
+
+    embedding_table = torch.randn(10, 64)
+    cache = {
+        "embedding_table": embedding_table,
+        "align_records": [],
+        "kl_records": [],
+        "manifest": {},
+    }
+    cfg = EklavyaConfig()
+    trainer = EklavyaTrainer(cfg, student, align_proj, cache, torch.device("cpu"))
+
+    byte_ids = torch.randint(0, 256, (1, 64))
+    out = student(byte_ids)
+
+    oob_records = [
+        AlignRecord(shard_id=0, seq_offset=0, byte_start=0, byte_len=4, token_id=999),
+        AlignRecord(shard_id=0, seq_offset=0, byte_start=0, byte_len=4, token_id=-1),
+        AlignRecord(shard_id=0, seq_offset=0, byte_start=0, byte_len=4, token_id=5),
+    ]
+    loss = trainer.compute_align_loss(out["patch_states"], oob_records)
+    assert loss.item() > 0, "Valid record should contribute to loss"
+    print("  test_align_loss_oob_token_id PASSED")
+
+
+def test_legacy_cache_hard_fail():
+    """Config without allow_legacy_cache rejects manifests missing shard_range."""
+    cfg = EklavyaConfig(allow_legacy_cache=False)
+    assert not cfg.allow_legacy_cache
+
+    cfg_allow = EklavyaConfig(allow_legacy_cache=True)
+    assert cfg_allow.allow_legacy_cache
+    print("  test_legacy_cache_hard_fail PASSED")
+
+
 if __name__ == "__main__":
     print("\n=== Eklavya E1 Test Suite ===\n")
 
@@ -940,6 +1023,10 @@ if __name__ == "__main__":
         test_header_truncated_align_cache,
         test_select_kl_patches_nan_positions,
         test_select_kl_patches_all_nan,
+        test_evaluate_e1_empty_loader,
+        test_rng_state_roundtrip,
+        test_align_loss_oob_token_id,
+        test_legacy_cache_hard_fail,
     ]
 
     passed = 0

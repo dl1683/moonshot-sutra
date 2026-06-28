@@ -338,7 +338,7 @@ python eval_e2.py \
 | Burn-in verdict | `code/burnin_verdict.py` |
 | E1 cache builder | `code/eklavya_cache.py` |
 | E1 training loop | `code/eklavya_training.py` |
-| E1 unit tests | `code/test_eklavya.py` (37 tests) |
+| E1 unit tests | `code/test_eklavya.py` (41 tests) |
 | E2 cache builder | `code/eklavya_e2_cache_builder.py` |
 | E2 training loop | `code/eklavya_e2_training.py` |
 | E2 router/purifier | `code/eklavya_e2_router.py` |
