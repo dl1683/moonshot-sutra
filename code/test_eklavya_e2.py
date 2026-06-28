@@ -3964,8 +3964,8 @@ class TestE2EndToEnd:
             port_warmup_steps=2, consensus_steps=2,
             semantic_landing_steps=2, disagreement_steps=4,
             eval_every=5, checkpoint_every=100,
+            ablation_id="A9c", router_mode="gold_free_student_jsd",
         )
-        cfg.router_mode = "gold_free_student_jsd"
 
         train_e2(cfg, ckpt_path, cache_dir)
 

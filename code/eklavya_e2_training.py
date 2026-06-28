@@ -172,10 +172,11 @@ _ABLATION_RULES: dict[str, dict] = {
         "require_anchor_only": True,
     },
     "A2": {
-        "desc": "Full E2 system",
+        "desc": "Full E2 system (oracle upper bound)",
         "required": set(),
         "forbidden": {"ce_only", "teacher_include", "teacher_exclude",
                       "disable_router", "shuffle_teacher_targets"},
+        "require_router_mode": "oracle_gold",
     },
     "A3": {
         "desc": "Leave-one-out (best non-anchor)",
