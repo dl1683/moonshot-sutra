@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # ═══ monitor.format_time ════════════════════════════════════════════════
 
-from monitor import format_time, load_entries, detect_mode, display, _e2_anomalies
+from monitor import (format_time, load_entries, detect_mode, display,
+                     _e2_anomalies, _phase_boundary_checks)
 
 
 class TestFormatTime:
@@ -323,6 +324,101 @@ class TestE2Anomalies:
                    for i in range(15)]
         anomalies = _e2_anomalies(entries)
         assert any("Zero teacher signal" in a for a in anomalies)
+
+
+# ═══ Phase boundary checks ═════════════════════════════════════════════
+
+class TestPhaseBoundaryChecks:
+    def test_clean_phases_no_anomalies(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.1_port_warmup"}
+                 for i in range(10)]
+        assert _phase_boundary_checks(train) == []
+
+    def test_port_warmup_bpb_regression(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.1_port_warmup"}
+                 for i in range(10)]
+        eval_ = [
+            {"step": 0, "eval_bpb": 5.0},
+            {"step": 9, "eval_bpb": 5.1},
+        ]
+        anomalies = _phase_boundary_checks(train, eval_)
+        assert any("PORT_WARMUP" in a and "regressed" in a for a in anomalies)
+
+    def test_port_warmup_no_regression_when_small(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.1_port_warmup"}
+                 for i in range(10)]
+        eval_ = [
+            {"step": 0, "eval_bpb": 5.0},
+            {"step": 9, "eval_bpb": 5.01},
+        ]
+        anomalies = _phase_boundary_checks(train, eval_)
+        assert not any("PORT_WARMUP" in a for a in anomalies)
+
+    def test_consensus_low_n_routed(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.2_consensus",
+                  "route_stats": {"n_routed": 2, "mean_route_entropy": 0.5}}
+                 for i in range(10)]
+        anomalies = _phase_boundary_checks(train)
+        assert any("CONSENSUS" in a and "n_routed" in a for a in anomalies)
+
+    def test_consensus_healthy_n_routed(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.2_consensus",
+                  "route_stats": {"n_routed": 8, "mean_route_entropy": 0.5}}
+                 for i in range(10)]
+        anomalies = _phase_boundary_checks(train)
+        assert not any("n_routed" in a for a in anomalies)
+
+    def test_consensus_anchor_dominance(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.2_consensus",
+                  "route_stats": {"avg_teacher_weights": {
+                      "t0_anchor_decoder": 0.98, "t2_control_decoder": 0.02}}}
+                 for i in range(10)]
+        anomalies = _phase_boundary_checks(train)
+        assert any("CONSENSUS" in a and "control" in a.lower() for a in anomalies)
+
+    def test_semantic_loss_absent(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.3_semantic_landing",
+                  "teacher_losses_bits": {"kl_purified_anchor": 3.0}}
+                 for i in range(10)]
+        anomalies = _phase_boundary_checks(train)
+        assert any("SEMANTIC_LANDING" in a and "semantic" in a.lower()
+                    for a in anomalies)
+
+    def test_semantic_loss_present(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.3_semantic_landing",
+                  "teacher_losses_bits": {
+                      "kl_purified_anchor": 3.0,
+                      "align_t3_semantic_embedding": 0.5}}
+                 for i in range(10)]
+        anomalies = _phase_boundary_checks(train)
+        assert not any("SEMANTIC_LANDING" in a for a in anomalies)
+
+    def test_disagreement_entropy_too_high(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.4_disagreement",
+                  "route_stats": {"mean_route_entropy": 1.5}}
+                 for i in range(60)]
+        anomalies = _phase_boundary_checks(train)
+        assert any("DISAGREEMENT" in a and "1.30" in a for a in anomalies)
+
+    def test_disagreement_entropy_collapse(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.4_disagreement",
+                  "route_stats": {"mean_route_entropy": 0.05}}
+                 for i in range(60)]
+        anomalies = _phase_boundary_checks(train)
+        assert any("DISAGREEMENT" in a and "collapse" in a for a in anomalies)
+
+    def test_disagreement_healthy_entropy(self):
+        train = [{"step": i, "ce_loss": 4.0, "phase": "E2.4_disagreement",
+                  "route_stats": {"mean_route_entropy": 0.8}}
+                 for i in range(60)]
+        anomalies = _phase_boundary_checks(train)
+        assert not any("DISAGREEMENT" in a for a in anomalies)
+
+    def test_insufficient_data_skips_checks(self):
+        train = [{"step": 0, "ce_loss": 4.0, "phase": "E2.4_disagreement",
+                  "route_stats": {"mean_route_entropy": 1.5}}]
+        anomalies = _phase_boundary_checks(train)
+        assert anomalies == []
 
 
 # ═══ s0_configs ═════════════════════════════════════════════════════════

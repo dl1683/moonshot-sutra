@@ -220,7 +220,8 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
                   f"|{bar:<40s}|")
 
 
-def _e2_anomalies(train: list[dict]) -> list[str]:
+def _e2_anomalies(train: list[dict],
+                  eval_: list[dict] | None = None) -> list[str]:
     """E2-specific anomaly detection."""
     anomalies = []
 
@@ -295,6 +296,115 @@ def _e2_anomalies(train: list[dict]) -> list[str]:
             f"No routed positions in {zero_route_count}/{disagreement_count} "
             f"disagreement steps — router may not be activating")
 
+    anomalies.extend(_phase_boundary_checks(train, eval_))
+
+    return anomalies
+
+
+def _phase_boundary_checks(train: list[dict],
+                           eval_: list[dict] | None = None) -> list[str]:
+    """Phase-specific intervention checks from E2 Monitoring Protocol."""
+    anomalies = []
+    if eval_ is None:
+        eval_ = []
+
+    phase_entries: dict[str, list[dict]] = {}
+    for e in train:
+        p = e.get("phase", "")
+        phase_entries.setdefault(p, []).append(e)
+
+    _PORT = ("E2.1_port_warmup", "PORT_WARMUP", "E2.1")
+    _CONS = ("E2.2_consensus", "CONSENSUS", "E2.2")
+    _SEM = ("E2.3_semantic_landing", "SEMANTIC_LANDING", "E2.3")
+    _DIS = ("E2.4_disagreement", "DISAGREEMENT", "E2.4")
+
+    def _get_phase(names):
+        for n in names:
+            if n in phase_entries and phase_entries[n]:
+                return phase_entries[n]
+        return []
+
+    port_entries = _get_phase(_PORT)
+    cons_entries = _get_phase(_CONS)
+    sem_entries = _get_phase(_SEM)
+    dis_entries = _get_phase(_DIS)
+
+    if port_entries and eval_:
+        port_end = port_entries[-1]["step"]
+        port_evals = [e for e in eval_ if e["step"] <= port_end]
+        pre_evals = [e for e in eval_ if e["step"] <= port_entries[0]["step"]]
+        if port_evals and pre_evals:
+            baseline_bpb = pre_evals[0].get("eval_bpb", 0)
+            port_end_bpb = port_evals[-1].get("eval_bpb", 0)
+            if baseline_bpb > 0 and port_end_bpb - baseline_bpb > 0.02:
+                anomalies.append(
+                    f"PORT_WARMUP: eval BPB regressed {port_end_bpb - baseline_bpb:+.3f} "
+                    f"(>{0.02}) — student should be frozen, check freeze config")
+
+    if cons_entries:
+        n_routed_vals = [
+            e["route_stats"]["n_routed"]
+            for e in cons_entries
+            if e.get("route_stats", {}).get("n_routed") is not None
+        ]
+        if len(n_routed_vals) >= 5:
+            recent = n_routed_vals[-5:]
+            if max(recent) < 4:
+                anomalies.append(
+                    f"CONSENSUS: n_routed consistently <4 "
+                    f"(max recent: {max(recent)}) — router underactivated")
+
+        weights = []
+        for e in cons_entries:
+            rs = e.get("route_stats", {})
+            atw = rs.get("avg_teacher_weights", {})
+            if atw:
+                weights.append(atw)
+        if len(weights) >= 5:
+            recent = weights[-5:]
+            non_anchor = []
+            for w in recent:
+                total = sum(v for k, v in w.items()
+                            if "anchor" not in k.lower())
+                non_anchor.append(total)
+            if non_anchor and max(non_anchor) < 0.05:
+                anomalies.append(
+                    "CONSENSUS: control teacher weight <0.05 in recent steps "
+                    "— anchor dominates, control not contributing")
+
+    if sem_entries:
+        sem_loss_present = 0
+        for e in sem_entries:
+            tl = e.get("teacher_losses_bits", e.get("teacher_losses", {}))
+            if isinstance(tl, dict):
+                has_sem = any("semantic" in k.lower() for k in tl)
+                if has_sem:
+                    sem_loss_present += 1
+        if len(sem_entries) >= 5 and sem_loss_present < len(sem_entries) * 0.8:
+            anomalies.append(
+                f"SEMANTIC_LANDING: semantic loss absent in "
+                f"{len(sem_entries) - sem_loss_present}/{len(sem_entries)} "
+                f"steps (>20%) — semantic teacher not reaching student")
+
+    if len(dis_entries) >= 50:
+        dis_entropies = [
+            e["route_stats"]["mean_route_entropy"]
+            for e in dis_entries
+            if e.get("route_stats", {}).get("mean_route_entropy") is not None
+        ]
+        if len(dis_entropies) >= 50:
+            recent = dis_entropies[-50:]
+            if min(recent) > 1.30:
+                anomalies.append(
+                    f"DISAGREEMENT: route entropy >1.30 for 50+ readings "
+                    f"(min: {min(recent):.3f}) — near-uniform routing, "
+                    f"router not learning")
+            elif max(recent) < 0.20:
+                anomalies.append(
+                    f"DISAGREEMENT: route entropy <0.20 for 50+ readings "
+                    f"(max: {max(recent):.3f}) — routing collapse, "
+                    f"one teacher dominates")
+
     return anomalies
 
 
@@ -340,7 +450,7 @@ def display(log_path: str):
             f"({high_gnorm/len(gnorms)*100:.0f}%)")
 
     if mode == "e2":
-        anomalies.extend(_e2_anomalies(train))
+        anomalies.extend(_e2_anomalies(train, eval_))
 
     if anomalies:
         print("\n  Anomalies:")

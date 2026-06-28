@@ -385,7 +385,7 @@ python eval_e2.py \
 | Utility tests | `code/test_utilities.py` (35 tests) |
 | Ablation comparison tests | `code/test_compare_ablations.py` (72 tests) |
 | VRAM profile tests | `code/test_vram_profile.py` (18 tests) |
-| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (59 tests) |
+| Monitor/inspect/config tests | `code/test_monitor_inspect.py` (71 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
 | E2 monitoring | `research/E2_MONITORING_PROTOCOL.md` |
