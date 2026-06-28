@@ -3460,8 +3460,13 @@ class TestBuildTeacherRecords:
             for i in range(n)
         ]
 
-    def _make_shard(self, tmp_path, seq_len=64):
+    def _make_shard(self, tmp_path, seq_len=64, positions=None, patch_size=4):
         data = np.random.randint(32, 122, size=seq_len, dtype=np.uint8)
+        if positions is not None:
+            for pos in positions:
+                offset = pos.seq_offset + pos.patch_idx * patch_size
+                if offset < seq_len:
+                    data[offset] = pos.gold_byte
         p = tmp_path / "shard_000.bin"
         data.tofile(str(p))
         return p
@@ -3471,8 +3476,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=True, has_align=True)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         kl, align = build_teacher_records(
             model, tok, spec, positions, shard,
             seq_len=64, patch_size=4, kl_top_k=8,
@@ -3486,8 +3491,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=True, has_align=False)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0, n=2)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         kl, align = build_teacher_records(
             model, tok, spec, positions, shard,
             seq_len=64, patch_size=4, kl_top_k=8,
@@ -3507,8 +3512,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=False, has_align=True)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0, n=2)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         kl, align = build_teacher_records(
             model, tok, spec, positions, shard,
             seq_len=64, patch_size=4, kl_top_k=8,
@@ -3527,8 +3532,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=False, has_align=False, has_semantic=False)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         kl, align = build_teacher_records(
             model, tok, spec, positions, shard,
             seq_len=64, patch_size=4, kl_top_k=8,
@@ -3556,8 +3561,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=True, has_align=False)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0, n=3)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         kl, _ = build_teacher_records(
             model, tok, spec, positions, shard,
             seq_len=64, patch_size=4, kl_top_k=8,
@@ -3572,8 +3577,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=True, has_align=False)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0, n=1)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         byte_table = {i: bytes([65 + (i % 26)]) for i in range(32)}
         kl, _ = build_teacher_records(
             model, tok, spec, positions, shard,
@@ -3587,8 +3592,8 @@ class TestBuildTeacherRecords:
         spec = self._make_spec(has_kl=True, has_align=False)
         model = _MockTeacherModel(vocab_size=32)
         tok = _MockTokenizer()
-        shard = self._make_shard(tmp_path, seq_len=64)
         positions = self._make_positions(seq_offset=0, n=1)
+        shard = self._make_shard(tmp_path, seq_len=64, positions=positions)
         for K in [4, 16]:
             kl, _ = build_teacher_records(
                 model, tok, spec, positions, shard,
@@ -3598,6 +3603,20 @@ class TestBuildTeacherRecords:
             for rec in kl:
                 assert len(rec.top_bytes) == K
                 assert len(rec.top_probs) == K
+
+    def test_gold_byte_mismatch_raises(self, tmp_path):
+        from eklavya_e2_cache_builder import build_teacher_records
+        spec = self._make_spec(has_kl=True, has_align=False)
+        model = _MockTeacherModel(vocab_size=32)
+        tok = _MockTokenizer()
+        positions = self._make_positions(seq_offset=0, n=1)
+        shard = self._make_shard(tmp_path, seq_len=64)
+        with pytest.raises(RuntimeError, match="gold_byte mismatch"):
+            build_teacher_records(
+                model, tok, spec, positions, shard,
+                seq_len=64, patch_size=4, kl_top_k=8,
+                device=torch.device("cpu"),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -4818,7 +4837,7 @@ class TestStreamingWriters:
         writer = _StreamingKLWriter(stream_path, K=K)
         writer.extend(records[:3])
         writer.extend(records[3:])
-        n = writer.close()
+        n = writer.finalize()
 
         assert n == 5
         batch_data = open(batch_path, "rb").read()
@@ -4848,7 +4867,7 @@ class TestStreamingWriters:
         writer = _StreamingAlignWriter(stream_path)
         writer.extend(records[:2])
         writer.extend(records[2:])
-        n = writer.close()
+        n = writer.finalize()
 
         assert n == 4
         batch_data = open(batch_path, "rb").read()
@@ -4866,11 +4885,11 @@ class TestStreamingWriters:
         align_path = str(tmp_path / "empty_align.bin")
 
         kl_writer = _StreamingKLWriter(kl_path, K=16)
-        n_kl = kl_writer.close()
+        n_kl = kl_writer.finalize()
         assert n_kl == 0
 
         align_writer = _StreamingAlignWriter(align_path)
-        n_align = align_writer.close()
+        n_align = align_writer.finalize()
         assert n_align == 0
 
         recs, K = read_teacher_kl_records(kl_path)

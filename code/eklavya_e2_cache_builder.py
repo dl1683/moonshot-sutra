@@ -51,14 +51,16 @@ from eklavya_e2_cache import (
 
 
 class _StreamingKLWriter:
-    """Streams KL records to disk shard by shard, fixes header count on close."""
+    """Streams KL records to a .tmp file, atomically renames on finalize."""
 
     def __init__(self, path: str, K: int = 16):
         self._path = path
+        self._tmp_path = path + ".tmp"
         self._K = K
         self._count = 0
-        self._fh = open(path, "wb")
+        self._fh = open(self._tmp_path, "wb")
         self._fh.write(struct.pack("<II", 0, K))
+        self._finalized = False
 
     def extend(self, records: list[E2KLRecord]):
         for r in records:
@@ -73,21 +75,34 @@ class _StreamingKLWriter:
         self._fh.close()
         return self._count
 
+    def finalize(self) -> int:
+        n = self.close()
+        os.replace(self._tmp_path, self._path)
+        self._finalized = True
+        return n
+
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
-        self.close()
+        if not self._finalized:
+            self.close()
+            try:
+                os.remove(self._tmp_path)
+            except OSError:
+                pass
 
 
 class _StreamingAlignWriter:
-    """Streams align records to disk shard by shard, fixes header count on close."""
+    """Streams align records to a .tmp file, atomically renames on finalize."""
 
     def __init__(self, path: str):
         self._path = path
+        self._tmp_path = path + ".tmp"
         self._count = 0
-        self._fh = open(path, "wb")
+        self._fh = open(self._tmp_path, "wb")
         self._fh.write(struct.pack("<I", 0))
+        self._finalized = False
 
     def extend(self, records: list[E2AlignRecord]):
         for r in records:
@@ -102,11 +117,22 @@ class _StreamingAlignWriter:
         self._fh.close()
         return self._count
 
+    def finalize(self) -> int:
+        n = self.close()
+        os.replace(self._tmp_path, self._path)
+        self._finalized = True
+        return n
+
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
-        self.close()
+        if not self._finalized:
+            self.close()
+            try:
+                os.remove(self._tmp_path)
+            except OSError:
+                pass
 
 
 @torch.no_grad()
@@ -210,6 +236,7 @@ def build_teacher_records(
     kl_top_k: int = 16,
     device: torch.device = torch.device("cuda"),
     byte_table: dict = None,
+    max_context_len: int = 8192,
 ) -> tuple[list[E2KLRecord], list[E2AlignRecord]]:
     """Build per-teacher KL and align records at selected positions."""
     teacher_model.eval()
@@ -220,6 +247,20 @@ def build_teacher_records(
 
     shard_data = np.fromfile(shard_path, dtype=np.uint8)
 
+    for pos in positions:
+        byte_offset = pos.seq_offset + pos.patch_idx * patch_size
+        if byte_offset >= len(shard_data):
+            raise RuntimeError(
+                f"HARD_FAIL: position {pos.position_id} byte_offset "
+                f"{byte_offset} >= shard length {len(shard_data)}. "
+                f"Pass-1/pass-2 data mismatch?")
+        actual = shard_data[byte_offset]
+        if actual != pos.gold_byte:
+            raise RuntimeError(
+                f"HARD_FAIL: position {pos.position_id} gold_byte mismatch: "
+                f"manifest says {pos.gold_byte}, shard has {actual} "
+                f"at offset {byte_offset}. Pass-1/pass-2 data mismatch?")
+
     pos_by_seq = {}
     for pos in positions:
         key = pos.seq_offset
@@ -228,6 +269,9 @@ def build_teacher_records(
     kl_records = []
     align_records = []
     coverage_accum = []
+    n_kl_attempted = 0
+    n_kl_skip_empty_prefix = 0
+    n_kl_skip_nonfinite = 0
     needs_align = spec.has_align or spec.has_semantic
 
     for seq_offset, pos_list in pos_by_seq.items():
@@ -237,7 +281,7 @@ def build_teacher_records(
 
         teacher_inputs = tokenizer(
             text, return_tensors="pt", truncation=True,
-            max_length=min(getattr(tokenizer, 'model_max_length', 2048) or 2048, 8192),
+            max_length=max_context_len,
         ).to(device)
 
         input_ids = teacher_inputs.input_ids[0].tolist()
@@ -272,21 +316,22 @@ def build_teacher_records(
 
         if spec.has_kl:
             for pos in pos_list:
+                n_kl_attempted += 1
                 t = pos.patch_idx * patch_size
                 prefix_bytes = seq_bytes[:t]
                 prefix_clean = bytes(b if b != 0xFF else 0x0A for b in prefix_bytes)
                 prefix_text = prefix_clean.decode("utf-8", errors="replace")
 
-                max_len = min(getattr(tokenizer, 'model_max_length', 2048) or 2048, 8192)
                 prefix_ids = tokenizer(
                     prefix_text, return_tensors="pt",
                     truncation=False,
                 ).input_ids.to(device)
 
                 if prefix_ids.shape[1] == 0:
+                    n_kl_skip_empty_prefix += 1
                     continue
-                if prefix_ids.shape[1] > max_len:
-                    prefix_ids = prefix_ids[:, -max_len:]
+                if prefix_ids.shape[1] > max_context_len:
+                    prefix_ids = prefix_ids[:, -max_context_len:]
 
                 t_logits = teacher_model(prefix_ids).logits[0, -1]
                 top_b, top_p, tail, coverage = first_byte_marginal(
@@ -304,6 +349,7 @@ def build_teacher_records(
                 if not (math.isfinite(ent) and math.isfinite(logp_gold)
                         and math.isfinite(tail)
                         and np.all(np.isfinite(top_p))):
+                    n_kl_skip_nonfinite += 1
                     continue
 
                 kl_records.append(E2KLRecord(
@@ -323,6 +369,18 @@ def build_teacher_records(
               f"avg={avg_cov:.3f} min={min_cov:.3f} ({len(coverage_accum)} positions)")
         if avg_cov < 0.90:
             print(f"  WARNING: low coverage ({avg_cov:.3f}) — top_vocab may be too small")
+
+    if n_kl_attempted > 0 and spec.has_kl:
+        n_kl_produced = len(kl_records)
+        kl_coverage = n_kl_produced / n_kl_attempted
+        print(f"  {spec.name}: KL records {n_kl_produced}/{n_kl_attempted} "
+              f"({kl_coverage:.1%}), skips: empty_prefix={n_kl_skip_empty_prefix}, "
+              f"nonfinite={n_kl_skip_nonfinite}")
+        if n_kl_skip_nonfinite > 0 and kl_coverage < 0.90:
+            raise RuntimeError(
+                f"HARD_FAIL: {spec.name} KL coverage {kl_coverage:.1%} "
+                f"< 90% ({n_kl_skip_nonfinite} non-finite skips). "
+                f"Teacher likely producing NaN/Inf logits on GPU.")
 
     return kl_records, align_records
 
@@ -449,6 +507,10 @@ def main():
                         help="Allow dropping non-finite positions instead of hard-failing (diagnostic only)")
     args = parser.parse_args()
 
+    if not (1 <= args.kl_top_k <= 256):
+        raise SystemExit(
+            f"ERROR: --kl-top-k must be in [1, 256], got {args.kl_top_k}")
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -546,6 +608,10 @@ def main():
                     shard_end = em_end
         all_positions = read_position_manifest(manifest_path)
         print(f"  Loaded {len(all_positions)} positions from existing manifest")
+        if len(all_positions) == 0:
+            raise SystemExit(
+                "HARD_FAIL: position manifest contains zero positions. "
+                "Re-run pass 1 with different thresholds.")
         if all_positions:
             pos_shard_ids = [p.shard_id for p in all_positions]
             pos_min, pos_max = min(pos_shard_ids), max(pos_shard_ids)
@@ -598,11 +664,15 @@ def main():
         write_position_manifest(manifest_path, all_positions)
         elapsed = time.time() - t0
         print(f"  {len(all_positions)} positions selected in {elapsed:.0f}s")
+        if len(all_positions) == 0:
+            raise SystemExit(
+                "HARD_FAIL: zero positions selected. Check NLL/entropy "
+                "thresholds, shard contents, and student checkpoint quality.")
 
         # Free student VRAM
         del student
-        torch.cuda.empty_cache()
         gc.collect()
+        torch.cuda.empty_cache()
 
     if args.positions_only:
         preliminary = {
@@ -636,6 +706,13 @@ def main():
         model, tokenizer = load_teacher_for_spec(spec, device)
         byte_table = build_token_byte_table(tokenizer) if (spec.has_kl or spec.has_align or spec.has_semantic) else None
 
+        tok_limit = getattr(tokenizer, 'model_max_length', 2048) or 2048
+        model_limit = getattr(getattr(model, 'config', None),
+                              'max_position_embeddings', 8192) or 8192
+        max_ctx = min(tok_limit, model_limit, 8192)
+        print(f"  Context limit: {max_ctx} "
+              f"(tokenizer={tok_limit}, model={model_limit}, cap=8192)")
+
         emb_table = model.get_input_embeddings().weight.detach().cpu()
         print(f"  Embedding table: {emb_table.shape}")
 
@@ -658,20 +735,25 @@ def main():
                     kl_top_k=args.kl_top_k,
                     device=device,
                     byte_table=byte_table,
+                    max_context_len=max_ctx,
                 )
                 kl_writer.extend(kl_recs)
                 align_writer.extend(align_recs)
-        finally:
-            n_kl = kl_writer.close()
-            n_align = align_writer.close()
+
+            n_kl = kl_writer.finalize()
+            n_align = align_writer.finalize()
+        except BaseException:
+            kl_writer.__exit__(None, None, None)
+            align_writer.__exit__(None, None, None)
+            raise
 
         if n_kl > 0:
-            print(f"  Wrote {n_kl} KL records (streamed)")
+            print(f"  Wrote {n_kl} KL records (atomic)")
         else:
             os.remove(kl_path)
 
         if n_align > 0:
-            print(f"  Wrote {n_align} align records (streamed)")
+            print(f"  Wrote {n_align} align records (atomic)")
         else:
             os.remove(align_path)
 
@@ -684,9 +766,9 @@ def main():
         print(f"  Teacher {spec.name} done in {elapsed:.0f}s")
 
         # Free teacher VRAM before loading next
-        del model, tokenizer, byte_table
-        torch.cuda.empty_cache()
+        del model, tokenizer, byte_table, emb_table
         gc.collect()
+        torch.cuda.empty_cache()
 
     # Pass 3: Disagreement annotation
     if not args.skip_disagreement and not args.positions_only:
