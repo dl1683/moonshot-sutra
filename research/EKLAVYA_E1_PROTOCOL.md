@@ -183,7 +183,7 @@ Produced through 3-round adversarial deliberation (R1-R3, June 2026). Covers:
 purifier, per-teacher gradient budget, 7-ablation suite, retained-gain tests.
 
 Implementation: `code/eklavya_e2_cache.py`, `code/eklavya_e2_router.py`,
-`code/eklavya_e2_losses.py`, `code/eklavya_e2_training.py` (449 E2 tests passing).
+`code/eklavya_e2_losses.py`, `code/eklavya_e2_training.py` (452 E2 tests passing).
 
 E2 only proceeds after E1 shows decisive gains (>2pp improvement over CE-only).
 
@@ -196,7 +196,7 @@ E2 only proceeds after E1 shows decisive gains (>2pp improvement over CE-only).
 - `code/eklavya_e2_router.py` — E2 router + purifier
 - `code/eklavya_e2_losses.py` — E2 losses + gradient budget
 - `code/eklavya_e2_training.py` — E2 trainer with curriculum
-- `code/test_eklavya_e2.py` — E2 unit tests (400 passing)
+- `code/test_eklavya_e2.py` — E2 unit tests (452 passing)
 - `research/EKLAVYA_E1_PROTOCOL.md` — this document
 - `research/EKLAVYA_E2_PROTOCOL.md` — E2 canonical protocol
 
