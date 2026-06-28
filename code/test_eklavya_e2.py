@@ -4876,6 +4876,45 @@ class TestE2CacheView:
             errors = view.validate()
             assert any("embedding dim" in e for e in errors)
 
+    def test_validate_deep_catches_all_invalid(self, tmp_path):
+        """Deep validation checks ALL records, not just 200 samples."""
+        cache_dir, specs, _ = self._make_cache_dir(tmp_path, n_positions=5)
+        kl_path = os.path.join(cache_dir, "teachers", "t_anchor",
+                               "kl_records.bin")
+        K = 8
+        recs = []
+        for i in range(5):
+            if i == 3:
+                recs.append(E2KLRecord(
+                    position_id=i, patch_idx=i + 1,
+                    tail_prob=float('nan'), entropy=2.0, logp_gold=-1.0,
+                    top_bytes=np.arange(K, dtype=np.uint8),
+                    top_probs=np.full(K, 1.0 / K, dtype=np.float16),
+                ))
+            else:
+                recs.append(E2KLRecord(
+                    position_id=i, patch_idx=i + 1,
+                    tail_prob=0.05, entropy=2.0, logp_gold=-1.0,
+                    top_bytes=np.arange(K, dtype=np.uint8),
+                    top_probs=np.full(K, 1.0 / K, dtype=np.float16),
+                ))
+        write_teacher_kl_records(kl_path, recs, K=K)
+
+        with E2CacheView(cache_dir) as view:
+            shallow_errors = view.validate()
+            deep_errors = view.validate(deep=True)
+
+        deep_invalid = [e for e in deep_errors if "invalid" in e.lower()]
+        assert len(deep_invalid) > 0, (
+            "Deep validation should report invalid records")
+
+    def test_validate_deep_clean_cache_passes(self, tmp_path):
+        """Deep validation on a clean cache should report no errors."""
+        cache_dir, _, _ = self._make_cache_dir(tmp_path)
+        with E2CacheView(cache_dir) as view:
+            errors = view.validate(deep=True)
+            assert errors == []
+
 
 # ---------------------------------------------------------------------------
 # E2Trainer with E2CacheView integration test

@@ -1161,7 +1161,7 @@ def train_e2(cfg: E2Config, student_ckpt_path: str, cache_dir: str):
 
     cache_view = E2CacheView(cache_dir)
     try:
-        cache_errors = cache_view.validate(data_dir=cfg.data_dir)
+        cache_errors = cache_view.validate(data_dir=cfg.data_dir, deep=True)
         if cache_errors:
             for e in cache_errors:
                 print(f"  CACHE ERROR: {e}")

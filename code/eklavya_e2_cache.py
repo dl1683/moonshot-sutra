@@ -946,7 +946,8 @@ class E2CacheView:
         }
 
     def validate(self, data_dir: str | None = None,
-                 min_coverage: float = 0.5) -> list[str]:
+                 min_coverage: float = 0.5,
+                 deep: bool = False) -> list[str]:
         """Check cache integrity. Returns list of error strings (empty = OK).
 
         Checks:
@@ -958,6 +959,8 @@ class E2CacheView:
           - Embedding table shapes match TeacherSpec
           - Embedding table rank is 2D
           - Shard coverage (if data_dir given)
+
+        When deep=True, validates ALL KL records instead of sampling 200.
         """
         errors: list[str] = []
         manifest = self.manifest
@@ -1007,34 +1010,51 @@ class E2CacheView:
                         f"Teacher {spec.name} has {n_kl} KL records but "
                         f"{len(kl_pid_idx)} unique PIDs (duplicates)")
 
-                n_sample = min(200, n_kl)
-                if n_kl <= n_sample:
+                if deep:
                     sample_indices = range(n_kl)
                 else:
-                    stride = n_kl // n_sample
-                    sample_indices = list(range(0, n_kl, stride))[:n_sample]
-                    if n_kl - 1 not in sample_indices:
-                        sample_indices.append(n_kl - 1)
+                    n_sample = min(200, n_kl)
+                    if n_kl <= n_sample:
+                        sample_indices = range(n_kl)
+                    else:
+                        stride = n_kl // n_sample
+                        sample_indices = list(range(0, n_kl, stride))[:n_sample]
+                        if n_kl - 1 not in sample_indices:
+                            sample_indices.append(n_kl - 1)
+                invalid_count = 0
                 for si in sample_indices:
                     rec = kl_reader[si]
                     tp = rec.top_probs
                     if not (np.all(np.isfinite(tp)) and np.all(tp >= 0)):
+                        if deep:
+                            invalid_count += 1
+                            continue
                         errors.append(
                             f"Teacher {spec.name} KL record {si}: "
                             "non-finite or negative top_probs")
                         break
                     if not (np.isfinite(rec.tail_prob)
                             and rec.tail_prob >= 0):
+                        if deep:
+                            invalid_count += 1
+                            continue
                         errors.append(
                             f"Teacher {spec.name} KL record {si}: "
                             f"invalid tail_prob={rec.tail_prob}")
                         break
                     prob_sum = float(tp.sum()) + rec.tail_prob
                     if abs(prob_sum - 1.0) > 0.05:
+                        if deep:
+                            invalid_count += 1
+                            continue
                         errors.append(
                             f"Teacher {spec.name} KL record {si}: "
                             f"prob mass {prob_sum:.4f} deviates from 1.0")
                         break
+                if deep and invalid_count > 0:
+                    errors.append(
+                        f"Teacher {spec.name}: {invalid_count}/{n_kl} "
+                        f"KL records invalid ({invalid_count/n_kl:.1%})")
 
             if spec.has_semantic:
                 align_rdr = self._align_readers.get(spec.name)
