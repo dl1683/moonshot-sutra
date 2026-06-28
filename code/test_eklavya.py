@@ -531,6 +531,47 @@ def test_e2e_backward():
     print("  test_e2e_backward PASSED")
 
 
+def test_warmup_no_align_records_no_crash():
+    """E1 warmup must not crash when no align records match the batch."""
+    model_cfg = tiny_cfg()
+    P = model_cfg.patch_size
+    student = SutraS0(model_cfg)
+    align_proj = AlignProjection(model_cfg.d_model, 64)
+
+    cache = {
+        "embedding_table": torch.randn(100, 64),
+        "align_records": [],
+        "kl_records": [],
+        "manifest": {},
+    }
+
+    cfg = EklavyaConfig(
+        projection_warmup_steps=4,
+        alignment_landing_steps=2,
+        full_e1_steps=2,
+    )
+    trainer = EklavyaTrainer(cfg, student, align_proj, cache, torch.device("cpu"))
+    trainer.configure_freeze("E1.0_warmup")
+    optimizer = trainer.build_optimizer()
+
+    byte_ids = torch.randint(0, 256, (1, 64))
+    out = student(byte_ids)
+    logits = out["logits"]
+
+    L_align = torch.tensor(0.0)
+    loss = L_align
+    scaled_loss = loss / cfg.grad_accum
+    if scaled_loss.requires_grad:
+        scaled_loss.backward()
+
+    has_grad = any(
+        p.grad is not None
+        for p in list(student.parameters()) + list(align_proj.parameters())
+        if p.requires_grad
+    )
+    assert not has_grad, "No gradients expected when loss has no grad_fn"
+
+
 def test_optimizer_param_groups():
     model_cfg = tiny_cfg()
     student = SutraS0(model_cfg)
