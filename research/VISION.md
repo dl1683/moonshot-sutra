@@ -65,7 +65,7 @@ The outcomes are load-bearing. The mechanisms that achieve them are replaceable.
 - **E1** (single-teacher KD): designed and tested, pending S0 checkpoint.
 - **E2** (multi-teacher KD): fully wired with mmap-backed cache, integration
   tests, and GPU launch checklist. Ready for GPU.
-- **792 unit tests passing** (17 S0 + 46 E1 + 465 E2 + 264 tooling), all CPU-only.
+- **794 unit tests passing** (17 S0 + 46 E1 + 467 E2 + 264 tooling), all CPU-only.
 
 ## Build Order
 
