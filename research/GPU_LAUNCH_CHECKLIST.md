@@ -140,13 +140,14 @@ python eklavya_e2_cache_builder.py \
     --max-shards 50 \
     --positions-only
 
-# Pass 2: fill teacher records (one teacher at a time)
+# Pass 2: fill teacher records (requires teacher config with HF names)
 python eklavya_e2_cache_builder.py \
     --student-checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
     --data-dir ../data/shards_bytes_full \
     --output-dir C:/sutra_fast/eklavya_e2_cache \
     --max-shards 50 \
-    --teachers-only
+    --teachers-only \
+    --teacher-config config/teacher_config.json
 ```
 
 ### Expected Output
@@ -175,7 +176,7 @@ C:/sutra_fast/eklavya_e2_cache/
 - [ ] Each teacher subdir has non-empty records
 - [ ] `python -c "from eklavya_e2_cache import E2CacheView; v=E2CacheView('C:/sutra_fast/eklavya_e2_cache'); print(v.manifest); v.close()"`
 - [ ] Zero non-finite-skip warnings in cache build output (NaN positions = corrupted checkpoint)
-- [ ] Inspect S0 and E1 checkpoints: `python code/inspect_checkpoint.py C:/sutra_fast/checkpoints/s0_best.pt`
+- [ ] Inspect S0 and E1 checkpoints: `python inspect_checkpoint.py C:/sutra_fast/checkpoints/s0/s0_best.pt`
 - [ ] Run opsec scan incl. history: `python code/check_opsec.py --history` (clean before any push)
 
 ## Phase 6: E2 Training (~12-24 hours)

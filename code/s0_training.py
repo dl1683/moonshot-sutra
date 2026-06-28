@@ -108,6 +108,7 @@ class ByteShardDataset(Dataset):
                 f"total {sum(s.stat().st_size for s in self.shards)} bytes, "
                 f"seq_len={seq_len}")
         self._mmap_cache: dict[int, memoryview] = {}
+        self._file_handles: dict[int, object] = {}
 
     def __len__(self):
         return self.total_seqs
@@ -117,6 +118,7 @@ class ByteShardDataset(Dataset):
             import mmap
             f = open(self.shards[shard_idx], "rb")
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            self._file_handles[shard_idx] = f
             self._mmap_cache[shard_idx] = mm
         return self._mmap_cache[shard_idx]
 
@@ -200,7 +202,7 @@ def evaluate(model: SutraS0, eval_loader: DataLoader, device: torch.device, cfg:
         B, T = byte_ids.shape
         N = T // P
         with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
-            out = model(byte_ids)
+            out = model(byte_ids, return_aux=False)
             losses = compute_loss(out, byte_ids, P)
         predicted_bytes = B * (T - P)
         total_loss += losses["byte_ce"] * predicted_bytes
@@ -338,7 +340,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
             byte_ids = batch.to(device, non_blocking=True)
 
             with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
-                out = model(byte_ids)
+                out = model(byte_ids, return_aux=False)
                 losses = compute_loss(out, byte_ids, model_cfg.patch_size)
                 loss = losses["loss"] / train_cfg.grad_accum_steps
 

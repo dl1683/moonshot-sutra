@@ -118,7 +118,7 @@ def evaluate_e1(student: SutraS0, align_proj: AlignProjection, eval_loader,
         B, T = byte_ids.shape
         N = T // P
         with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_cuda):
-            out = student(byte_ids)
+            out = student(byte_ids, return_aux=False)
             logits = out["logits"]
             targets = byte_ids.reshape(B, N, P)[:, 1:]
             loss = F.cross_entropy(logits.reshape(-1, 256), targets.reshape(-1))
@@ -517,6 +517,22 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
     while step < total_steps:
         phase = trainer.get_phase(step)
         if phase != current_phase:
+            if optimizer is not None:
+                if step % cfg.grad_accum != 0:
+                    trainable = [
+                        p for p in list(student.parameters()) + list(align_proj.parameters())
+                        if p.requires_grad]
+                    has_grad = any(p.grad is not None for p in trainable)
+                    if has_grad:
+                        if scaler is not None:
+                            scaler.unscale_(optimizer)
+                        nn.utils.clip_grad_norm_(trainable, cfg.max_grad_norm)
+                        if scaler is not None:
+                            scaler.step(optimizer)
+                            scaler.update()
+                        else:
+                            optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
             print(f"\n=== Phase: {phase} (step {step}) ===")
             trainer.configure_freeze(phase)
             optimizer = trainer.build_optimizer()
@@ -532,7 +548,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         byte_ids = byte_ids.to(device)
 
         with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_cuda):
-            out = student(byte_ids)
+            out = student(byte_ids, return_aux=False)
             logits = out["logits"]
             B, Nm1, Pp, V = logits.shape
             N = Nm1 + 1

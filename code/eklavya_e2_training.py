@@ -1092,7 +1092,7 @@ def evaluate_e2(student: SutraS0, eval_loader: DataLoader,
         N = T // P
 
         with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
-            out = student(byte_ids)
+            out = student(byte_ids, return_aux=False)
             logits = out["logits"]
             targets = byte_ids.reshape(B, N, P)[:, 1:]
             loss = F.cross_entropy(logits.reshape(-1, 256),
@@ -1307,7 +1307,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         byte_ids = byte_ids.to(device, non_blocking=True)
 
         with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
-            out = student(byte_ids)
+            out = student(byte_ids, return_aux=False)
             logits = out["logits"]
             patch_states = out["patch_states"]
             B_out, Nm1, Pp, V = logits.shape

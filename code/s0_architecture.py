@@ -165,15 +165,16 @@ class ByteEncoder(nn.Module):
         )
         self.residual_head = nn.Linear(cfg.byte_dim, 1)
 
-    def forward(self, byte_ids: torch.Tensor):
+    def forward(self, byte_ids: torch.Tensor, return_aux: bool = True):
         """
         Args:
             byte_ids: (B, T) byte token IDs where T is divisible by patch_size
+            return_aux: if False, skip entropy_head and residual_head
         Returns:
             patch_states: (B, T//P, d_model)
             byte_states: (B, T, byte_dim) — preserved for decoder
-            entropy_scores: (B, T//P, 1)
-            residual_flags: (B, T, 1)
+            entropy_scores: (B, T//P, 1) or None
+            residual_flags: (B, T, 1) or None
         """
         B, T = byte_ids.shape
         P = self.cfg.patch_size
@@ -187,8 +188,12 @@ class ByteEncoder(nn.Module):
         patch_input = byte_states.reshape(B, n_patches, P * self.cfg.byte_dim)
         patch_states = self.patch_agg(patch_input)  # (B, n_patches, d_model)
 
-        entropy_scores = self.entropy_head(patch_states)
-        residual_flags = self.residual_head(byte_states)
+        if return_aux:
+            entropy_scores = self.entropy_head(patch_states)
+            residual_flags = self.residual_head(byte_states)
+        else:
+            entropy_scores = None
+            residual_flags = None
 
         return patch_states, byte_states, entropy_scores, residual_flags
 
@@ -517,10 +522,11 @@ class SutraS0(nn.Module):
         self.governor = ComputeGovernor(self.cfg)
         self.memory = ReadOnlyMemory(self.cfg)
 
-    def forward(self, byte_ids: torch.Tensor):
+    def forward(self, byte_ids: torch.Tensor, return_aux: bool = True):
         """
         Args:
             byte_ids: (B, T) byte token IDs, T divisible by patch_size
+            return_aux: if False, skip verifier/governor/entropy/residual heads
         Returns:
             dict with logits and auxiliary outputs
         """
@@ -529,7 +535,8 @@ class SutraS0(nn.Module):
         assert T % P == 0, f"sequence length {T} not divisible by patch_size {P}"
 
         # I0: Encode bytes into patch states
-        patch_states, byte_states, entropy_scores, residual_flags = self.encoder(byte_ids)
+        patch_states, byte_states, entropy_scores, residual_flags = self.encoder(
+            byte_ids, return_aux=return_aux)
 
         # I1/I2: Global reasoning over patches (causal across patches)
         hidden = self.reasoner(patch_states)
@@ -551,22 +558,22 @@ class SutraS0(nn.Module):
         # I6: Decode bytes
         logits = self.decoder(pred_hidden, target_bytes, nearby)
 
-        # I3: Verification triage
-        verifier_out = self.verifier(hidden)
-
-        # I5: Compute governor (rule-based routing at S0)
-        governor_actions = self.governor(entropy_scores, verifier_out["escalate"])
-
-        return {
-            "logits": logits,                    # (B, N-1, P, 256) byte predictions (shifted)
-            "entropy_scores": entropy_scores,    # (B, N, 1)
-            "residual_flags": residual_flags,    # (B, T, 1)
-            "verifier": verifier_out,            # dict of triage outputs
-            "governor_actions": governor_actions, # (B, N) action codes
-            "hidden": hidden,                    # (B, N, d_model) for downstream use
-            "byte_states": byte_states,          # (B, T, byte_dim) preserved
-            "patch_states": patch_states,        # (B, N, d_model) pre-reasoning
+        result = {
+            "logits": logits,
+            "hidden": hidden,
+            "byte_states": byte_states,
+            "patch_states": patch_states,
         }
+
+        if return_aux:
+            verifier_out = self.verifier(hidden)
+            governor_actions = self.governor(entropy_scores, verifier_out["escalate"])
+            result["entropy_scores"] = entropy_scores
+            result["residual_flags"] = residual_flags
+            result["verifier"] = verifier_out
+            result["governor_actions"] = governor_actions
+
+        return result
 
     def count_parameters(self) -> dict[str, int]:
         """Report parameter counts by module (excluding non-parametric modules)."""
