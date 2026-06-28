@@ -1413,6 +1413,16 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
 
         grad_report = None
         if teacher_losses:
+            non_finite = {k: v.item() for k, v in teacher_losses.items()
+                          if not torch.isfinite(v)}
+            if non_finite:
+                warn_entry = {
+                    "step": step, "phase": str(phase),
+                    "WARNING": "non-finite teacher loss (filtered)",
+                    "non_finite_teachers": non_finite,
+                }
+                log_fh.write(json.dumps(warn_entry) + "\n")
+                log_fh.flush()
             teacher_losses = {
                 k: v for k, v in teacher_losses.items()
                 if torch.isfinite(v)
@@ -1486,6 +1496,14 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     f"E2 received NO teacher signal for {consecutive_ce_only} "
                     f"consecutive steps (phase={phase}, step={step}). "
                     f"Likely cache/seq_len mismatch — aborting."
+                )
+        elif cfg.bld_mode and bld_kl_loss is None:
+            consecutive_ce_only += 1
+            if consecutive_ce_only >= CE_ONLY_FAIL_THRESHOLD:
+                raise RuntimeError(
+                    f"BLD received NO anchor KL signal for "
+                    f"{consecutive_ce_only} consecutive steps (step={step}). "
+                    f"Anchor KL cache likely empty or misaligned — aborting."
                 )
         else:
             consecutive_ce_only = 0
@@ -1707,6 +1725,8 @@ def _build_parser():
     parser.add_argument("--bld-kl-weight", type=float, default=0.10,
                         help="KL loss weight for BLD mode (default: 0.10)")
     parser.add_argument("--shuffle-seed", type=int, default=1234)
+    parser.add_argument("--log-file", type=str, default=None,
+                        help="JSONL log file path. Default: logs/e2_{ablation_id}.jsonl")
     return parser
 
 
@@ -1714,9 +1734,10 @@ if __name__ == "__main__":
     parser = _build_parser()
     args = parser.parse_args()
 
+    log_file = args.log_file or f"logs/e2_{args.ablation_id.lower()}.jsonl"
     cfg = E2Config(
         checkpoint_dir=args.output_dir, cache_dir=args.cache_dir,
-        data_dir=args.data_dir,
+        data_dir=args.data_dir, log_file=log_file,
         resume_from=args.resume,
         ablation_id=args.ablation_id,
         teacher_include=args.teachers,

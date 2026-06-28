@@ -425,6 +425,12 @@ DECISION_RULES = [
      "Phased admission contributes"),
     ("A2", "A6", 0.02, "Signals are noise -- fundamental problem",
      "Teacher signals carry real information"),
+    ("A9c", "A6", 0.02, "Shuffled targets match gold-free router",
+     "Gold-free router uses real information (beats shuffled)"),
+    ("A9c", "A1", 0.02, "Gold-free router doesn't beat single-teacher",
+     "Gold-free multi-teacher beats single-teacher"),
+    ("A9c", "BLD", 0.02, "Gold-free router doesn't beat raw byte KL",
+     "Gold-free router beats raw byte KL baseline"),
     ("A2", "A3", 0.02, "Best diversity teacher expendable -- drop it",
      "Diversity teacher contributes"),
     ("A2", "A4", 0.02, "Semantic embeddings expendable -- drop embedding teacher",
@@ -447,6 +453,12 @@ GAP_CLASS_RULES = [
     ("A9c", "A5b", "bpb_high_nll", 0.03,
      "Router doesn't add value on high-NLL positions",
      "Router adds value on hard positions"),
+]
+
+ACCURACY_RULES = [
+    ("A9c", "A1", "first_byte_acc", 0.013,
+     "Gold-free router doesn't improve first-byte accuracy over single-teacher",
+     "Gold-free router improves first-byte accuracy"),
 ]
 
 
@@ -534,6 +546,26 @@ def evaluate_decision_rules(summaries: list[RunSummary]):
             msg = pass_msg
         print(f"\n  {symbol} {better_id} vs {worse_id} [{metric}]: "
               f"delta={delta:+.4f} BPB (threshold: {margin})")
+        print(f"    -> {msg}")
+
+    for better_id, worse_id, metric, margin, fail_msg, pass_msg in ACCURACY_RULES:
+        better_val = get_metric(better_id, metric)
+        worse_val = get_metric(worse_id, metric)
+        if better_val is None or worse_val is None:
+            continue
+        evaluated += 1
+        delta = better_val - worse_val
+        if delta < 0:
+            symbol = "[REGRESS]"
+            msg = fail_msg + f" ({better_id} is WORSE on {metric})"
+        elif delta < margin:
+            symbol = "[FAIL]"
+            msg = fail_msg
+        else:
+            symbol = "[PASS]"
+            msg = pass_msg
+        print(f"\n  {symbol} {better_id} vs {worse_id} [{metric}]: "
+              f"delta={delta:+.4f} (threshold: {margin})")
         print(f"    -> {msg}")
 
     if evaluated == 0:

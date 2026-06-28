@@ -5295,13 +5295,13 @@ class TestDecisionRules:
         assert "[PASS]" in out
         assert "E2 beats CE-only" in out
 
-    def test_a2_loses_to_a0_fails(self, capsys):
+    def test_a2_loses_to_a0_regresses(self, capsys):
         summaries = [self._make_summary("A2", 1.05),
                      self._make_summary("A0", 1.04)]
         evaluate_decision_rules(summaries)
         out = capsys.readouterr().out
-        assert "[FAIL]" in out
-        assert "abandon" in out.lower()
+        assert "[REGRESS]" in out
+        assert "WORSE" in out
 
     def test_goldfree_pass(self, capsys):
         summaries = [self._make_summary("A9c", 1.01),
@@ -5349,13 +5349,13 @@ class TestDecisionRules:
         assert "[PASS]" in out
         assert "Gold-free router beats tuned static" in out
 
-    def test_a9c_loses_to_a5b_fails(self, capsys):
+    def test_a9c_loses_to_a5b_regresses(self, capsys):
         summaries = [self._make_summary("A9c", 1.05),
                      self._make_summary("A5b", 1.04)]
         evaluate_decision_rules(summaries)
         out = capsys.readouterr().out
-        assert "[FAIL]" in out
-        assert "Tuned static matches gold-free router" in out
+        assert "[REGRESS]" in out
+        assert "WORSE" in out
 
     def test_a9c_beats_a5c_passes(self, capsys):
         summaries = [self._make_summary("A9c", 1.00),

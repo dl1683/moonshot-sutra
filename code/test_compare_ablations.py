@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from compare_ablations import (
     ce_to_bpb, load_log, load_eval_results, analyze_run, export_csv,
     RunSummary, evaluate_decision_rules, DECISION_RULES, GOLDFREE_RULES,
-    GAP_CLASS_RULES,
+    GAP_CLASS_RULES, ACCURACY_RULES,
 )
 
 
@@ -823,3 +823,47 @@ class TestRegressionDetection:
         out = capsys.readouterr().out
         assert "PASS" in out
         assert "REGRESS" not in out
+
+
+# ═══ Accuracy rules ═══════════════════════════════════════════════════
+
+class TestAccuracyRules:
+    def _make_summary(self, aid, eval_bpb, first_byte_acc=None):
+        s = RunSummary(ablation_id=aid, log_path="x.jsonl")
+        metrics = {"bpb": eval_bpb}
+        if first_byte_acc is not None:
+            metrics["first_byte_acc"] = first_byte_acc
+        s.eval_result = {"metrics": metrics}
+        return s
+
+    def test_accuracy_rules_table_not_empty(self):
+        assert len(ACCURACY_RULES) > 0
+        for rule in ACCURACY_RULES:
+            assert len(rule) == 6
+
+    def test_accuracy_pass(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0, first_byte_acc=0.35),
+            self._make_summary("A1", 4.1, first_byte_acc=0.32),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "improves first-byte accuracy" in out
+
+    def test_accuracy_fail_insufficient(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0, first_byte_acc=0.31),
+            self._make_summary("A1", 4.1, first_byte_acc=0.30),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "doesn't improve first-byte accuracy" in out
+
+    def test_accuracy_skipped_when_absent(self, capsys):
+        summaries = [
+            self._make_summary("A9c", 4.0),
+            self._make_summary("A1", 4.1),
+        ]
+        evaluate_decision_rules(summaries)
+        out = capsys.readouterr().out
+        assert "first_byte_acc" not in out
