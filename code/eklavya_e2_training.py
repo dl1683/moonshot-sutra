@@ -1301,10 +1301,14 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
                                    model_cfg.patch_size, shard_range=train_range)
+    sampler_gen = torch.Generator()
+    sampler_gen.manual_seed(42)
+    sampler_gen_state = sampler_gen.get_state()
+    batches_consumed_in_epoch = 0
     train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size,
                               shuffle=True, num_workers=2, pin_memory=True,
                               drop_last=True, persistent_workers=True,
-                              prefetch_factor=4)
+                              prefetch_factor=4, generator=sampler_gen)
 
     eval_range = (train_range[1], cache_end)
     eval_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
@@ -1340,11 +1344,24 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             random.setstate(resume_ckpt["py_rng_state"])
         if "np_rng_state" in resume_ckpt:
             np.random.set_state(resume_ckpt["np_rng_state"])
+        if "sampler_gen_state" in resume_ckpt:
+            sampler_gen.set_state(resume_ckpt["sampler_gen_state"])
+            sampler_gen_state = resume_ckpt["sampler_gen_state"]
+            batches_consumed_in_epoch = resume_ckpt.get(
+                "batches_consumed_in_epoch", 0)
         print(f"Resumed from step {step} phase {current_phase} "
               f"(best eval BPB: {best_eval_bpb:.3f})")
 
     t0 = time.time()
     data_iter = iter(train_loader)
+    if cfg.resume_from and batches_consumed_in_epoch > 0:
+        print(f"  Fast-forwarding {batches_consumed_in_epoch} batches "
+              f"for exact resume...")
+        for _ff in range(batches_consumed_in_epoch):
+            try:
+                next(data_iter)
+            except StopIteration:
+                break
     consecutive_ce_only = 0
     CE_ONLY_FAIL_THRESHOLD = 200
     warmup_signal_steps = 0
@@ -1371,15 +1388,25 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         best_eval_bpb = baseline["eval_bpb"]
         print(f"  BASELINE eval BPB: {best_eval_bpb:.3f}")
         best_path = os.path.join(cfg.checkpoint_dir, "e2_best.pt")
-        torch.save({
+        baseline_dict = {
             "step": 0,
             "phase": "BASELINE",
             "model": student.state_dict(),
             "model_cfg": model_cfg,
             "ports": ports.state_dict(),
+            "optimizer": optimizer.state_dict() if optimizer else None,
+            "scaler": scaler.state_dict() if scaler else None,
+            "rng_state": torch.get_rng_state(),
+            "py_rng_state": random.getstate(),
+            "np_rng_state": np.random.get_state(),
+            "sampler_gen_state": sampler_gen_state,
+            "batches_consumed_in_epoch": 0,
             "config": cfg.__dict__,
             "best_eval_bpb": best_eval_bpb,
-        }, best_path)
+        }
+        if device.type == "cuda":
+            baseline_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
+        torch.save(baseline_dict, best_path)
         print(f"  Saved baseline as initial best: {best_path}")
 
     while step < total:
@@ -1436,9 +1463,12 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
 
         try:
             batch = next(data_iter)
+            batches_consumed_in_epoch += 1
         except StopIteration:
+            sampler_gen_state = sampler_gen.get_state()
             data_iter = iter(train_loader)
             batch = next(data_iter)
+            batches_consumed_in_epoch = 1
 
         byte_ids, shard_ids, seq_starts = batch
         byte_ids = byte_ids.to(device, non_blocking=True)
@@ -1671,6 +1701,8 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     "rng_state": torch.get_rng_state(),
                     "py_rng_state": random.getstate(),
                     "np_rng_state": np.random.get_state(),
+                    "sampler_gen_state": sampler_gen_state,
+                    "batches_consumed_in_epoch": batches_consumed_in_epoch,
                     "config": cfg.__dict__,
                     "best_eval_bpb": best_eval_bpb,
                 }
@@ -1694,6 +1726,8 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 "rng_state": torch.get_rng_state(),
                 "py_rng_state": random.getstate(),
                 "np_rng_state": np.random.get_state(),
+                "sampler_gen_state": sampler_gen_state,
+                "batches_consumed_in_epoch": batches_consumed_in_epoch,
                 "config": cfg.__dict__,
                 "best_eval_bpb": best_eval_bpb,
             }
