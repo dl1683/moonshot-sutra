@@ -660,3 +660,39 @@ class TestExportCSVEdgeCases:
             assert vals[idx] == ""
         finally:
             os.unlink(out.name)
+
+
+class TestGCGCoherenceExtraction:
+    def test_pairwise_coherence_extracted(self):
+        path = _write_jsonl([
+            _train(0, bpb=7.0, grad_budget={
+                "ce_grad_norm": 1.0, "total_scale": 0.5,
+                "pairwise_coherence": 0.25,
+                "ce_teacher_cosines": {"t0": 0.8, "t1": -0.1}}),
+            _train(10, bpb=6.5, grad_budget={
+                "ce_grad_norm": 1.5, "total_scale": 0.4,
+                "pairwise_coherence": 0.35,
+                "ce_teacher_cosines": {"t0": 0.7, "t1": 0.0}}),
+        ])
+        try:
+            s = analyze_run("A2", path)
+            gb = s.grad_budget_stats
+            assert gb["mean_pairwise_coherence"] == pytest.approx(0.3)
+            assert "mean_ce_teacher_cosines" in gb
+            assert gb["mean_ce_teacher_cosines"]["t0"] == pytest.approx(0.75)
+            assert gb["mean_ce_teacher_cosines"]["t1"] == pytest.approx(-0.05)
+        finally:
+            os.unlink(path)
+
+    def test_no_coherence_when_absent(self):
+        path = _write_jsonl([
+            _train(0, bpb=7.0, grad_budget={
+                "ce_grad_norm": 1.0, "total_scale": 0.5}),
+        ])
+        try:
+            s = analyze_run("A2", path)
+            gb = s.grad_budget_stats
+            assert "mean_pairwise_coherence" not in gb
+            assert "mean_ce_teacher_cosines" not in gb
+        finally:
+            os.unlink(path)

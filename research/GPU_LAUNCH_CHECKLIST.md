@@ -201,6 +201,7 @@ Activations (batch=4, accum=2):  ~4-6 GB
 MultiTeacherProjectionPorts:     ~0.1 GB
 Embedding tables (active phase): ~0.5-2.5 GB (staged per phase)
 Gradient budget snapshots:       ~0.7-1.5 GB (saved + CE + accumulated teacher grads)
+GCG coherence (streaming):      ~0 GB extra (in-place dot/norm, every 10 steps)
 Cache mmap (disk-backed):        ~0 GB RAM
 Total:                           ~11-15 GB (fits within 24 GB)
 ```

@@ -187,6 +187,26 @@ def analyze_run(ablation_id: str, log_path: str) -> RunSummary:
             "n_entries": len(gb_entries),
         }
 
+        coherence_entries = [
+            e for e in gb_entries
+            if e["grad_budget"].get("pairwise_coherence") is not None
+        ]
+        if coherence_entries:
+            pw = [e["grad_budget"]["pairwise_coherence"]
+                  for e in coherence_entries]
+            summary.grad_budget_stats["mean_pairwise_coherence"] = round(
+                sum(pw) / len(pw), 4)
+            all_cosines = defaultdict(list)
+            for e in coherence_entries:
+                for k, v in e["grad_budget"].get(
+                        "ce_teacher_cosines", {}).items():
+                    all_cosines[k].append(v)
+            if all_cosines:
+                summary.grad_budget_stats["mean_ce_teacher_cosines"] = {
+                    k: round(sum(vs) / len(vs), 4)
+                    for k, vs in sorted(all_cosines.items())
+                }
+
     return summary
 
 
@@ -302,6 +322,22 @@ def print_gradient_budget_analysis(summaries: list[RunSummary]):
         if gb.get("mean_total_scale", 1) < 0.1:
             print("    *** WARNING: Teachers being aggressively clipped "
                   "(mean scale < 0.1) ***")
+
+        pw_coh = gb.get("mean_pairwise_coherence")
+        if pw_coh is not None:
+            print(f"    Pairwise coherence: {pw_coh:+.4f}")
+            if pw_coh > 0.3:
+                print("    (teachers largely agree — routing may add little)")
+            elif pw_coh < -0.1:
+                print("    (teachers conflict — gradient budgeting critical)")
+
+        ct_cos = gb.get("mean_ce_teacher_cosines")
+        if ct_cos:
+            parts = " ".join(f"{k}={v:+.4f}" for k, v in ct_cos.items())
+            print(f"    CE-teacher cosines: {parts}")
+            neg = [k for k, v in ct_cos.items() if v < -0.05]
+            if neg:
+                print(f"    *** WARNING: {neg} fight CE direction ***")
 
 
 def load_eval_results(paths: list[str]) -> dict[str, dict]:
