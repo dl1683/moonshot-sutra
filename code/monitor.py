@@ -162,6 +162,12 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
         scales = gb.get("per_teacher_scales", {})
         if scales:
             print(f"    Per-teacher: {' '.join(f'{k}={v:.3f}' for k, v in sorted(scales.items()))}")
+        cosines = gb.get("ce_teacher_cosines", {})
+        if cosines:
+            print(f"    CE-teacher cos: {' '.join(f'{k}={v:+.3f}' for k, v in sorted(cosines.items()))}")
+        coherence = gb.get("pairwise_coherence")
+        if coherence is not None:
+            print(f"    Pairwise coherence: {coherence:+.4f}")
 
     phases_seen = set()
     phase_transitions = []

@@ -64,6 +64,23 @@ Log entries now include `grad_budget` dict with:
 - `per_teacher_scales` all near 0 = teacher gradients vastly larger than CE, possibly unstable
 - `ce_grad_norm` near 0 = student not learning from CE, check freeze config
 
+### Gradient Coherence (GCG) Telemetry
+
+Logged every `gcg_log_interval` steps (default: 10) to avoid cloning full
+gradient vectors every microstep. Fields in `grad_budget`:
+
+- `ce_teacher_cosines`: cosine similarity between CE gradient and each teacher's
+  gradient. Positive = teacher pulls in same direction as CE. Negative = teacher
+  fights CE.
+- `pairwise_coherence`: mean pairwise cosine similarity across all teacher pairs.
+  Positive = teachers agree. Negative = teachers conflict. Near zero = orthogonal.
+
+**Interpretation:**
+- `pairwise_coherence > 0.3`: teachers largely agree — routing may not add much value
+- `pairwise_coherence ~ 0`: teachers orthogonal — good, routing is doing meaningful work
+- `pairwise_coherence < -0.1`: teachers actively conflict — gradient budgeting is critical
+- Single teacher with negative `ce_teacher_cosines`: that teacher may be hurting training
+
 ## GPU-Specific Failure Modes (CPU Tests Cannot Catch)
 
 1. **Sparse-cache starvation**: DataLoader samples arbitrary byte windows; if (shard_id, seq_start) lookup misses most cached positions, steps silently become CE-only

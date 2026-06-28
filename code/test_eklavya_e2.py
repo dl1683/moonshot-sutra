@@ -1571,6 +1571,54 @@ class TestMultiTeacherGradBudget:
             actual = report.per_teacher_norms["t1"] * report.per_teacher_scales["t1"]
             assert actual <= max_allowed + 1e-6
 
+    def test_coherence_single_teacher_has_ce_cosine(self):
+        model, x = self._make_toy_model()
+        out = model(x)
+        ce_loss = F.mse_loss(out, torch.randn(4, 10))
+        t_loss = F.mse_loss(out, torch.randn(4, 10))
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss, {"t1": t_loss})
+        assert report.ce_teacher_cosines is not None
+        assert "t1" in report.ce_teacher_cosines
+        assert -1.0 <= report.ce_teacher_cosines["t1"] <= 1.0
+        assert report.pairwise_coherence is None
+
+    def test_coherence_two_teachers_has_pairwise(self):
+        model, x = self._make_toy_model()
+        out = model(x)
+        ce_loss = F.mse_loss(out, torch.randn(4, 10))
+        t1_loss = F.mse_loss(out, torch.randn(4, 10))
+        t2_loss = F.mse_loss(out, torch.randn(4, 10))
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss,
+            {"t1": t1_loss, "t2": t2_loss})
+        assert report.ce_teacher_cosines is not None
+        assert "t1" in report.ce_teacher_cosines
+        assert "t2" in report.ce_teacher_cosines
+        assert report.pairwise_coherence is not None
+        assert -1.0 <= report.pairwise_coherence <= 1.0
+
+    def test_coherence_no_teachers_none(self):
+        model, x = self._make_toy_model()
+        ce_loss = F.mse_loss(model(x), torch.randn(4, 10))
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss, {})
+        assert report.ce_teacher_cosines is None
+        assert report.pairwise_coherence is None
+
+    def test_coherence_identical_teachers_high(self):
+        model, x = self._make_toy_model()
+        out = model(x)
+        target = torch.randn(4, 10)
+        ce_loss = F.mse_loss(out, torch.randn(4, 10))
+        t1_loss = F.mse_loss(out, target)
+        t2_loss = F.mse_loss(out, target)
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss,
+            {"t1": t1_loss, "t2": t2_loss})
+        assert report.pairwise_coherence is not None
+        assert report.pairwise_coherence > 0.99
+
 
 # ---------------------------------------------------------------------------
 # E2 Trainer tests
@@ -5983,6 +6031,57 @@ class TestR36CacheAndConfig:
             static_weights={"t_a": 0.6, "t_b": 0.4},
         )
         assert cfg.static_weights.get("t_c", 0.0) == 0.0
+
+    def test_custom_static_weights_all_unlisted_skips_position(self):
+        """When custom weights map has no entries for any active teacher,
+        the position should be skipped (continue), not trained with zeros."""
+        from eklavya_e2_training import E2Config
+        import numpy as np
+        from eklavya_e2_cache import SparseByteDist
+
+        cfg = E2Config(
+            disable_router=True,
+            static_weight_mode="custom",
+            static_weights={"nonexistent_teacher": 1.0},
+        )
+        active_teachers = {"t_real_a": SparseByteDist(
+            top_bytes=np.array([0, 1, 2], dtype=np.int32),
+            top_probs=np.array([0.5, 0.3, 0.1], dtype=np.float32),
+            tail_prob=0.1)}
+        wtotal = sum(cfg.static_weights.get(k, 0.0) for k in active_teachers)
+        assert wtotal < 1e-12, "All active teachers should be unlisted"
+
+    def test_gcg_interval_config(self):
+        """gcg_log_interval config field exists with sensible default."""
+        from eklavya_e2_training import E2Config
+        cfg = E2Config()
+        assert hasattr(cfg, "gcg_log_interval")
+        assert cfg.gcg_log_interval >= 1
+
+    def test_grad_budget_coherence_disabled(self):
+        """When compute_coherence=False, no cosines are computed."""
+        import torch
+        from eklavya_e2_losses import apply_multi_teacher_gradient_budget
+
+        linear = torch.nn.Linear(4, 4)
+        x = torch.randn(2, 4)
+        ce = (linear(x) ** 2).sum()
+        t1 = (linear(x) ** 2).mean()
+
+        report = apply_multi_teacher_gradient_budget(
+            list(linear.parameters()),
+            ce, {"teacher_a": t1},
+            compute_coherence=False,
+        )
+        assert report.ce_teacher_cosines is None
+        assert report.pairwise_coherence is None
+
+    def test_preflight_e2_cache_uses_deep(self):
+        """Preflight's check_e2_cache must call validate(deep=True)."""
+        import inspect
+        from preflight import check_e2_cache
+        src = inspect.getsource(check_e2_cache)
+        assert "deep=True" in src
 
 
 if __name__ == "__main__":

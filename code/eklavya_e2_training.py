@@ -157,6 +157,10 @@ class E2Config:
     # had teacher signal (projection ports would be untrained)
     warmup_min_coverage: float = 0.10
 
+    # GCG (gradient coherence) logging interval — compute every N grad-budget
+    # steps to avoid cloning full gradient vectors every microstep
+    gcg_log_interval: int = 10
+
 
 # ---------------------------------------------------------------------------
 # Ablation config validation
@@ -767,7 +771,7 @@ class E2Trainer:
                         wtotal = sum(cfg.static_weights.get(k, 0.0)
                                      for k in teacher_dists)
                         if wtotal < 1e-12:
-                            wtotal = 1.0
+                            continue
                         static_w = {k: cfg.static_weights.get(k, 0.0) / wtotal
                                     for k in teacher_dists}
                     else:
@@ -1420,6 +1424,8 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 for tname in per_teacher_losses
             }
 
+            do_gcg = (cfg.gcg_log_interval > 0
+                      and step % cfg.gcg_log_interval == 0)
             grad_report = apply_multi_teacher_gradient_budget(
                 list(student.parameters()) + list(ports.parameters()),
                 ce_loss / cfg.grad_accum,
@@ -1427,6 +1433,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 per_teacher_cap=per_caps,
                 total_teacher_cap=cfg.total_teacher_grad_cap,
                 scaler=scaler,
+                compute_coherence=do_gcg,
             )
         elif teacher_losses and cfg.disable_gradient_budget:
             total_loss = ce_loss / cfg.grad_accum + sum(
@@ -1517,13 +1524,20 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             if trainer._last_route_stats:
                 entry["route_stats"] = trainer._last_route_stats
             if grad_report is not None:
-                entry["grad_budget"] = {
+                gb_entry = {
                     "ce_grad_norm": round(grad_report.ce_grad_norm, 6),
                     "total_teacher_before": round(grad_report.total_teacher_norm_before, 6),
                     "total_teacher_after": round(grad_report.total_teacher_norm_after, 6),
                     "total_scale": round(grad_report.total_scale, 6),
                     "per_teacher_scales": {k: round(v, 4) for k, v in grad_report.per_teacher_scales.items()},
                 }
+                if grad_report.ce_teacher_cosines is not None:
+                    gb_entry["ce_teacher_cosines"] = {
+                        k: round(v, 4) for k, v in grad_report.ce_teacher_cosines.items()}
+                if grad_report.pairwise_coherence is not None:
+                    gb_entry["pairwise_coherence"] = round(
+                        grad_report.pairwise_coherence, 4)
+                entry["grad_budget"] = gb_entry
             elif cfg.disable_gradient_budget and teacher_losses:
                 entry["grad_budget"] = {"enabled": False}
             if bld_kl_loss is not None:

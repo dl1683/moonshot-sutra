@@ -153,6 +153,8 @@ class GradientBudgetReport:
     total_teacher_norm_before: float
     total_teacher_norm_after: float
     total_scale: float
+    ce_teacher_cosines: dict[str, float] | None = None
+    pairwise_coherence: float | None = None
 
 
 def _collect_grads(params) -> dict:
@@ -164,6 +166,25 @@ def _clear_grads(params):
         p.grad = None
 
 
+def _flat_grad_vec(grad_dict: dict, params: list) -> torch.Tensor:
+    parts = []
+    for p in params:
+        pid = id(p)
+        if pid in grad_dict:
+            parts.append(grad_dict[pid].float().reshape(-1))
+        else:
+            parts.append(torch.zeros(p.numel()))
+    return torch.cat(parts) if parts else torch.zeros(1)
+
+
+def _cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
+    na = a.norm()
+    nb = b.norm()
+    if na < 1e-12 or nb < 1e-12:
+        return 0.0
+    return float((a * b).sum() / (na * nb))
+
+
 def apply_multi_teacher_gradient_budget(
     params: list,
     ce_loss: torch.Tensor,
@@ -172,6 +193,7 @@ def apply_multi_teacher_gradient_budget(
     total_teacher_cap: float = 0.30,
     scaler=None,
     retain_graph: bool = False,
+    compute_coherence: bool = True,
 ) -> GradientBudgetReport:
     """Multi-teacher gradient budgeting.
 
@@ -207,6 +229,7 @@ def apply_multi_teacher_gradient_budget(
     per_teacher_norms = {}
     per_teacher_scales = {}
     total_teacher_grads = {}
+    per_teacher_grads_raw = {} if compute_coherence else None
 
     for i, name in enumerate(teacher_names):
         loss = teacher_losses[name]
@@ -222,6 +245,8 @@ def apply_multi_teacher_gradient_budget(
             for p in params if p.grad is not None
         ) ** 0.5
         per_teacher_norms[name] = t_norm
+        if compute_coherence:
+            per_teacher_grads_raw[name] = _collect_grads(params)
 
         cap = per_teacher_cap.get(name, 0.10) if isinstance(per_teacher_cap, dict) else per_teacher_cap
         scale = 1.0
@@ -272,6 +297,33 @@ def apply_multi_teacher_gradient_budget(
             else:
                 p.grad = g.clone()
 
+    ce_teacher_cosines = None
+    pairwise_coherence = None
+    if compute_coherence and per_teacher_grads_raw and ce_grads:
+        if len(teacher_names) >= 1:
+            ce_vec = _flat_grad_vec(ce_grads, params)
+            ce_teacher_cosines = {}
+            for name in teacher_names:
+                t_vec = _flat_grad_vec(per_teacher_grads_raw[name], params)
+                ce_teacher_cosines[name] = _cosine_sim(ce_vec, t_vec)
+
+        if len(teacher_names) >= 2:
+            teacher_vecs = {
+                name: _flat_grad_vec(per_teacher_grads_raw[name], params)
+                for name in teacher_names
+            }
+            pair_count = 0
+            cos_sum = 0.0
+            for ii in range(len(teacher_names)):
+                for jj in range(ii + 1, len(teacher_names)):
+                    cos_sum += _cosine_sim(
+                        teacher_vecs[teacher_names[ii]],
+                        teacher_vecs[teacher_names[jj]])
+                    pair_count += 1
+            pairwise_coherence = cos_sum / pair_count if pair_count > 0 else 0.0
+
+    del per_teacher_grads_raw
+
     return GradientBudgetReport(
         ce_grad_norm=ce_norm,
         per_teacher_norms=per_teacher_norms,
@@ -279,4 +331,6 @@ def apply_multi_teacher_gradient_budget(
         total_teacher_norm_before=total_norm_before,
         total_teacher_norm_after=total_norm_after,
         total_scale=total_scale,
+        ce_teacher_cosines=ce_teacher_cosines,
+        pairwise_coherence=pairwise_coherence,
     )
