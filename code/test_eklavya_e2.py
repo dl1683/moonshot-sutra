@@ -2505,6 +2505,85 @@ class TestE2TrainerTeacherLosses:
         align_losses = {k: v for k, v in losses.items() if "align" in k}
         assert len(align_losses) > 0, "Port warmup should produce align losses"
 
+    def test_align_loss_filters_out_of_bounds_align_records(self):
+        """Alignment loss must skip records where byte span exceeds patch states."""
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=64, n_heads=2, n_kv_heads=1,
+            n_layers=2, patch_size=4, vocab_size=260,
+            ffn_mult=2, max_seq_len=64,
+            decoder_dim=64, decoder_layers=1, decoder_heads=2,
+            byte_dim=64,
+        )
+        student = SutraS0(model_cfg)
+        P = model_cfg.patch_size
+        seq_len = 16 * P
+        n_patches = seq_len // P
+
+        n_pos = 6
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65,
+                student_nll=4.0, student_entropy=2.0, reason_mask=1,
+            )
+            for i in range(n_pos)
+        ]
+
+        anchor = TEACHER_REGISTRY[0]
+        kl_recs = [make_kl(pid=i, K=16) for i in range(n_pos)]
+        align_recs = []
+        for i in range(n_pos):
+            if i < 4:
+                align_recs.append(E2AlignRecord(
+                    position_id=i, byte_start=i * 4, byte_len=4,
+                    token_id=i, align_quality=0.9))
+            else:
+                align_recs.append(E2AlignRecord(
+                    position_id=i,
+                    byte_start=n_patches * P + 100,
+                    byte_len=8,
+                    token_id=i, align_quality=0.9))
+
+        emb_table = torch.randn(n_pos, anchor.hidden_dim)
+
+        teacher_data = {
+            anchor.name: {
+                "spec": anchor,
+                "kl_records": kl_recs,
+                "kl_K": 16,
+                "align_records": align_recs,
+                "embedding_table": emb_table,
+            }
+        }
+        manifest = {
+            "version": "e2.0", "n_positions": n_pos,
+            "kl_top_k": 16, "teacher_count": 1,
+            "teacher_specs": [anchor],
+        }
+        cache = {
+            "manifest": manifest, "positions": positions,
+            "teachers": teacher_data, "routes": [],
+        }
+        ports = MultiTeacherProjectionPorts(
+            student_dim=model_cfg.d_model, teachers=[anchor])
+        cfg = E2Config(
+            port_warmup_steps=2, consensus_steps=3,
+            semantic_landing_steps=3, disagreement_steps=5,
+        )
+        trainer = E2Trainer(cfg, student, ports, cache, torch.device("cpu"))
+
+        byte_ids = torch.randint(0, 256, (1, seq_len))
+        out = student(byte_ids)
+        losses = trainer.compute_teacher_losses(
+            out["logits"], out["patch_states"],
+            torch.tensor([0]), torch.tensor([0]),
+            E2Phase.PORT_WARMUP, step=0)
+
+        for name, loss in losses.items():
+            assert torch.isfinite(loss), f"{name} is not finite"
+
     def test_no_positions_returns_empty(self):
         trainer, student, ports, model_cfg, cfg = self._build_minimal_trainer()
         P = model_cfg.patch_size
@@ -2539,6 +2618,90 @@ class TestE2TrainerTeacherLosses:
         for name, loss in cal_losses.items():
             assert torch.isfinite(loss), f"{name} is not finite"
             assert loss.requires_grad, f"{name} has no grad"
+
+    def test_semantic_loss_filters_out_of_bounds_align_records(self):
+        """Semantic loss must skip alignment records where
+        byte_start + byte_len exceeds the patch state length.
+        Regression test for e0acef4."""
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=64, n_heads=2, n_kv_heads=1,
+            n_layers=2, patch_size=4, vocab_size=260,
+            ffn_mult=2, max_seq_len=64,
+            decoder_dim=64, decoder_layers=1, decoder_heads=2,
+            byte_dim=64,
+        )
+        student = SutraS0(model_cfg)
+        P = model_cfg.patch_size
+        seq_len = 16 * P
+        n_patches = seq_len // P
+
+        n_pos = 6
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65,
+                student_nll=4.0, student_entropy=2.0, reason_mask=1,
+            )
+            for i in range(n_pos)
+        ]
+
+        sem_teacher = TEACHER_REGISTRY[3]
+        assert sem_teacher.has_semantic
+
+        align_recs = []
+        for i in range(n_pos):
+            if i < 4:
+                align_recs.append(E2AlignRecord(
+                    position_id=i, byte_start=i * 4, byte_len=4,
+                    token_id=i, align_quality=0.9))
+            else:
+                align_recs.append(E2AlignRecord(
+                    position_id=i,
+                    byte_start=n_patches * P + 100,
+                    byte_len=8,
+                    token_id=i, align_quality=0.9))
+
+        emb_table = torch.randn(n_pos, sem_teacher.hidden_dim)
+
+        teacher_data = {
+            sem_teacher.name: {
+                "spec": sem_teacher,
+                "kl_records": [],
+                "kl_K": 16,
+                "align_records": align_recs,
+                "embedding_table": emb_table,
+            }
+        }
+        manifest = {
+            "version": "e2.0", "n_positions": n_pos,
+            "kl_top_k": 16, "teacher_count": 1,
+            "teacher_specs": [sem_teacher],
+        }
+        cache = {
+            "manifest": manifest, "positions": positions,
+            "teachers": teacher_data, "routes": [],
+        }
+        ports = MultiTeacherProjectionPorts(
+            student_dim=model_cfg.d_model, teachers=[sem_teacher])
+        cfg = E2Config(
+            port_warmup_steps=2, consensus_steps=3,
+            semantic_landing_steps=100, disagreement_steps=5,
+            no_phased_admission=True,
+        )
+        trainer = E2Trainer(cfg, student, ports, cache, torch.device("cpu"))
+
+        byte_ids = torch.randint(0, 256, (1, seq_len))
+        out = student(byte_ids)
+        step = cfg.port_warmup_steps + cfg.consensus_steps + 10
+        losses = trainer.compute_teacher_losses(
+            out["logits"], out["patch_states"],
+            torch.tensor([0]), torch.tensor([0]),
+            E2Phase.SEMANTIC, step=step)
+
+        for name, loss in losses.items():
+            assert torch.isfinite(loss), f"{name} is not finite"
 
     def test_ownership_phase_no_losses(self):
         trainer, student, ports, model_cfg, cfg = self._build_minimal_trainer()
