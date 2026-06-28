@@ -1267,6 +1267,12 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
     if train_pos_count < 100:
         print(f"  WARNING: only {train_pos_count} cached train positions — "
               f"expect sparse teacher signal")
+    if pos_per_shard < 10:
+        print(f"  WARNING: density {pos_per_shard:.1f} positions/shard is very "
+              f"low — most batches will be CE-only")
+    if eval_pos_count == 0:
+        print(f"  WARNING: zero cached eval positions — teacher diagnostics "
+              f"unavailable on eval set (CE-only eval still works)")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
                                    model_cfg.patch_size, shard_range=train_range)

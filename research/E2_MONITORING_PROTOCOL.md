@@ -66,13 +66,16 @@ Log entries now include `grad_budget` dict with:
 
 ### Gradient Coherence (GCG) Telemetry
 
-Logged every `gcg_log_interval` steps (default: 10) to avoid cloning full
-gradient vectors every microstep. Fields in `grad_budget`:
+Logged every `gcg_log_interval` steps (default: 10). Uses variance
+decomposition to avoid cloning per-teacher gradient dicts (~0.5 GB
+intermittent instead of ~2.5 GB). Fields in `grad_budget`:
 
 - `ce_teacher_cosines`: cosine similarity between CE gradient and each teacher's
-  gradient. Positive = teacher pulls in same direction as CE. Negative = teacher
-  fights CE.
-- `pairwise_coherence`: mean pairwise cosine similarity across all teacher pairs.
+  gradient. Computed inline from live p.grad references (zero extra memory).
+  Positive = teacher pulls in same direction as CE. Negative = teacher fights CE.
+- `pairwise_coherence`: norm-weighted mean pairwise cosine across teacher pairs.
+  Computed from running gradient sum via identity: Σ dot(gi,gj) = (||S||² - Σ||gi||²)/2.
+  Exact for 2 teachers; for 3+ gives more weight to larger-gradient pairs.
   Positive = teachers agree. Negative = teachers conflict. Near zero = orthogonal.
 
 **Interpretation:**
