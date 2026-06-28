@@ -939,6 +939,45 @@ class TestPurifyByteTarget:
         result = purify_byte_target({}, route)
         assert result is None
 
+    def test_arithmetic_zero_weight_fallback(self):
+        """When all route weights are zero, purify falls back to uniform."""
+        dists = {
+            "t1": _make_sparse_dist(gold=65, confidence=0.8),
+            "t2": _make_sparse_dist(gold=66, confidence=0.7),
+        }
+        route = RouteResult(weights={"t1": 0.0, "t2": 0.0}, jsd=0.1,
+                            route_entropy=0.0)
+        result = purify_byte_target(dists, route, mode="arithmetic", K=16)
+        assert result is not None
+        total = float(result.top_probs.sum()) + result.tail_prob
+        assert abs(total - 1.0) < 0.02
+
+    def test_log_pool_extreme_low_probs(self):
+        """Log-pool with near-zero probs should not produce NaN or Inf."""
+        d1 = SparseByteDist(
+            top_bytes=np.array([65], dtype=np.uint8),
+            top_probs=np.array([1e-30], dtype=np.float32),
+            tail_prob=1.0 - 1e-30,
+        )
+        d2 = _make_sparse_dist(gold=65, confidence=0.8)
+        dists = {"t1": d1, "t2": d2}
+        route = RouteResult(weights={"t1": 0.5, "t2": 0.5}, jsd=0.1,
+                            route_entropy=0.7)
+        result = purify_byte_target(dists, route, mode="log_pool", K=16)
+        assert result is not None
+        assert np.all(np.isfinite(result.top_probs))
+        assert math.isfinite(result.tail_prob)
+
+    def test_route_mode_all_zero_weights(self):
+        """Route mode with all-zero weights picks first sorted teacher."""
+        d1 = _make_sparse_dist(gold=65, confidence=0.9)
+        d2 = _make_sparse_dist(gold=66, confidence=0.7)
+        dists = {"t1": d1, "t2": d2}
+        route = RouteResult(weights={"t1": 0.0, "t2": 0.0}, jsd=0.0,
+                            route_entropy=0.0)
+        result = purify_byte_target(dists, route, mode="route")
+        assert result is not None
+
 
 class TestNaNGuards:
     """Verify NaN in cached distributions doesn't propagate."""
@@ -1500,6 +1539,37 @@ class TestMultiTeacherGradBudget:
             per_teacher_cap=0.10)
         if report.per_teacher_norms["t1"] > 0:
             assert report.per_teacher_scales["t1"] < 1.0
+
+    def test_per_teacher_dict_cap_unknown_teacher_uses_default(self):
+        """Dict-based per_teacher_cap uses 0.10 default for unknown teachers."""
+        model, x = self._make_toy_model()
+        out = model(x)
+        ce_loss = F.mse_loss(out, torch.randn(4, 10))
+        t_loss = 100.0 * F.mse_loss(out, torch.randn(4, 10))
+        cap_dict = {"other_teacher": 0.05}
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss, {"t1": t_loss},
+            per_teacher_cap=cap_dict)
+        assert "t1" in report.per_teacher_norms
+        if report.per_teacher_norms["t1"] > 0:
+            effective_cap = 0.10
+            max_allowed = effective_cap * max(report.ce_grad_norm, 1e-6)
+            assert report.per_teacher_norms["t1"] * report.per_teacher_scales["t1"] <= max_allowed + 1e-6
+
+    def test_per_teacher_dict_cap_known_teacher(self):
+        """Dict-based per_teacher_cap applies the specified cap."""
+        model, x = self._make_toy_model()
+        out = model(x)
+        ce_loss = F.mse_loss(out, torch.randn(4, 10))
+        t_loss = 100.0 * F.mse_loss(out, torch.randn(4, 10))
+        cap_dict = {"t1": 0.02}
+        report = apply_multi_teacher_gradient_budget(
+            model.parameters(), ce_loss, {"t1": t_loss},
+            per_teacher_cap=cap_dict)
+        if report.per_teacher_norms["t1"] > 0 and report.ce_grad_norm > 0:
+            max_allowed = 0.02 * max(report.ce_grad_norm, 1e-6)
+            actual = report.per_teacher_norms["t1"] * report.per_teacher_scales["t1"]
+            assert actual <= max_allowed + 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -2382,6 +2452,71 @@ class TestE2TrainerTeacherLosses:
         losses = trainer.compute_teacher_losses(
             out["logits"], out["patch_states"], shard_ids, seq_starts,
             E2Phase.OWNERSHIP, step=100)
+
+        assert len(losses) == 0
+
+    def test_all_teachers_excluded_returns_empty(self):
+        """When teacher_exclude filters all active teachers, losses are empty."""
+        from s0_architecture import S0Config, SutraS0
+
+        model_cfg = S0Config(
+            d_model=64, n_heads=2, n_kv_heads=1,
+            n_layers=2, patch_size=4, vocab_size=260,
+            ffn_mult=2, max_seq_len=64,
+            decoder_dim=64, decoder_layers=1, decoder_heads=2,
+            byte_dim=64,
+        )
+        student = SutraS0(model_cfg)
+
+        anchor = TEACHER_REGISTRY[0]
+        n_pos = 5
+        positions = [
+            PositionRecord(
+                position_id=i, shard_id=0, seq_offset=0,
+                patch_idx=i + 1, gold_byte=65 + i,
+                student_nll=4.0, student_entropy=2.0, reason_mask=1,
+            )
+            for i in range(n_pos)
+        ]
+        kl_recs = [make_kl(pid=i, K=16) for i in range(n_pos)]
+        teacher_data = {
+            anchor.name: {
+                "spec": anchor,
+                "kl_records": kl_recs,
+                "kl_K": 16,
+                "align_records": [],
+                "embedding_table": torch.empty(0),
+            }
+        }
+        manifest = {
+            "version": "e2.0", "n_positions": n_pos,
+            "kl_top_k": 16, "teacher_count": 1,
+            "teacher_specs": [anchor],
+        }
+        cache = {
+            "manifest": manifest, "positions": positions,
+            "teachers": teacher_data, "routes": [],
+        }
+        specs = [anchor]
+        ports = MultiTeacherProjectionPorts(student_dim=model_cfg.d_model,
+                                            teachers=specs)
+        cfg = E2Config(
+            port_warmup_steps=2, consensus_steps=3,
+            semantic_landing_steps=3, disagreement_steps=5,
+            teacher_exclude=[anchor.name],
+        )
+        device = torch.device("cpu")
+        trainer = E2Trainer(cfg, student, ports, cache, device)
+
+        P = model_cfg.patch_size
+        seq_len = 64 * P
+        byte_ids = torch.randint(0, 256, (1, seq_len))
+        out = student(byte_ids)
+
+        losses = trainer.compute_teacher_losses(
+            out["logits"], out["patch_states"],
+            torch.tensor([0]), torch.tensor([0]),
+            E2Phase.CONSENSUS, step=3)
 
         assert len(losses) == 0
 
