@@ -57,12 +57,13 @@ def test_first_byte_marginal():
             c = ids[0] % 128
             return chr(c) if 32 <= c < 127 else chr(65 + c % 26)
 
-    top_b, top_p, tail = first_byte_marginal(logits, FakeTokenizer(), top_vocab=50, K=8)
+    top_b, top_p, tail, coverage = first_byte_marginal(logits, FakeTokenizer(), top_vocab=50, K=8)
 
     assert top_b.shape == (8,), f"Expected (8,), got {top_b.shape}"
     assert top_p.shape == (8,), f"Expected (8,), got {top_p.shape}"
     assert top_p.dtype == np.float16
     assert 0.0 <= tail <= 1.0, f"Tail out of range: {tail}"
+    assert 0.0 <= coverage <= 1.0, f"Coverage out of range: {coverage}"
     total = float(top_p.astype(np.float64).sum()) + tail
     assert abs(total - 1.0) < 0.02, f"Probabilities should sum to ~1.0, got {total}"
     print("  test_first_byte_marginal PASSED")

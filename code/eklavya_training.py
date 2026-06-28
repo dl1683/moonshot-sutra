@@ -252,7 +252,7 @@ class EklavyaTrainer:
 
         self.embedding_table = cache["embedding_table"]
         if self.embedding_table is not None:
-            self.embedding_table = self.embedding_table.to(dtype=torch.bfloat16)
+            self.embedding_table = self.embedding_table.to(device=device, dtype=torch.bfloat16)
 
         self.align_records = cache["align_records"]
         self.kl_records = cache["kl_records"]
@@ -289,7 +289,7 @@ class EklavyaTrainer:
 
             if r.token_id < 0 or r.token_id >= len(self.embedding_table):
                 continue
-            teacher_emb = self.embedding_table[r.token_id].to(device=self.device, dtype=z_s.dtype)
+            teacher_emb = self.embedding_table[r.token_id].to(dtype=z_s.dtype)
             z_t = F.layer_norm(teacher_emb, (teacher_emb.shape[-1],))
 
             losses.append(F.mse_loss(z_s, z_t))
@@ -331,7 +331,8 @@ class EklavyaTrainer:
         self.align_records = updated["align_records"]
         self.kl_records = updated["kl_records"]
         if updated["embedding_table"] is not None:
-            self.embedding_table = updated["embedding_table"].to(dtype=torch.bfloat16)
+            self.embedding_table = updated["embedding_table"].to(
+                device=self.device, dtype=torch.bfloat16)
         else:
             self.embedding_table = None
         self._index_records()

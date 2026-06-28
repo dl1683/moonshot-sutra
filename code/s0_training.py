@@ -299,6 +299,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
 
     # Resume
     start_step = 0
+    best_eval_bpb = float("inf")
     if train_cfg.resume_from:
         ckpt = torch.load(train_cfg.resume_from, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
@@ -310,7 +311,12 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
             if device.type == "cuda" and "cuda_rng_state" in ckpt:
                 torch.cuda.set_rng_state(ckpt["cuda_rng_state"])
         start_step = ckpt["step"] + 1
-        print(f"Resumed from step {start_step}")
+        if "best_eval_bpb" in ckpt:
+            best_eval_bpb = ckpt["best_eval_bpb"]
+        if best_eval_bpb < float("inf"):
+            print(f"Resumed from step {start_step} (best eval BPB: {best_eval_bpb:.3f})")
+        else:
+            print(f"Resumed from step {start_step}")
 
     # Training loop
     model.train()
@@ -318,7 +324,6 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
     step = start_step
     accum_loss = 0.0
     accum_steps = 0
-    best_eval_bpb = float("inf")
     train_start = time.time()
     t0 = time.time()
 
@@ -425,6 +430,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
                 "scaler": scaler.state_dict(),
                 "model_cfg": model_cfg,
                 "train_cfg": train_cfg,
+                "best_eval_bpb": best_eval_bpb,
                 "rng_state": torch.get_rng_state(),
             }
             if device.type == "cuda":

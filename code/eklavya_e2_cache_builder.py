@@ -139,7 +139,7 @@ def build_position_manifest(
 
         amp_device = "cuda" if device.type == "cuda" else "cpu"
         with torch.amp.autocast(amp_device, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-            out = student(byte_ids)
+            out = student(byte_ids, return_aux=False)
 
         logits = out["logits"]
         B, Nm1, Pp, V = logits.shape
@@ -227,6 +227,7 @@ def build_teacher_records(
 
     kl_records = []
     align_records = []
+    coverage_accum = []
     needs_align = spec.has_align or spec.has_semantic
 
     for seq_offset, pos_list in pos_by_seq.items():
@@ -286,8 +287,9 @@ def build_teacher_records(
                     prefix_ids = prefix_ids[:, -max_len:]
 
                 t_logits = teacher_model(prefix_ids).logits[0, -1]
-                top_b, top_p, tail = first_byte_marginal(
+                top_b, top_p, tail, coverage = first_byte_marginal(
                     t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
+                coverage_accum.append(coverage)
 
                 q = torch.zeros(256, dtype=torch.float32)
                 q[top_b.astype(np.int64)] = torch.from_numpy(top_p.astype(np.float32))
@@ -311,6 +313,14 @@ def build_teacher_records(
                     top_bytes=top_b,
                     top_probs=top_p,
                 ))
+
+    if coverage_accum:
+        avg_cov = sum(coverage_accum) / len(coverage_accum)
+        min_cov = min(coverage_accum)
+        print(f"  {spec.name}: byte-marginal coverage "
+              f"avg={avg_cov:.3f} min={min_cov:.3f} ({len(coverage_accum)} positions)")
+        if avg_cov < 0.90:
+            print(f"  WARNING: low coverage ({avg_cov:.3f}) — top_vocab may be too small")
 
     return kl_records, align_records
 
@@ -591,6 +601,16 @@ def main():
         gc.collect()
 
     if args.positions_only:
+        preliminary = {
+            "version": "e2.0",
+            "n_positions": len(all_positions),
+            "shard_range": [shard_start, shard_end],
+            "positions_only": True,
+        }
+        manifest_json_path = os.path.join(args.output_dir, "manifest.json")
+        with open(manifest_json_path, "w") as f:
+            json.dump(preliminary, f, indent=2)
+        print(f"  Wrote preliminary manifest: {manifest_json_path}")
         print("\n=== Done (--positions-only) ===")
         return
 

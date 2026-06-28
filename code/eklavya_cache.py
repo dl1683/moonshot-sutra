@@ -78,7 +78,12 @@ def token_id_to_bytes(tokenizer, tok_id: int, _table: dict = None) -> bytes:
 
 def first_byte_marginal(logits: torch.Tensor, tokenizer, top_vocab: int = 4096,
                         K: int = 16, _byte_table: dict = None,
-                        ) -> tuple[np.ndarray, np.ndarray, float]:
+                        ) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Compute first-byte marginal from teacher token logits.
+
+    Returns (top_bytes, top_probs, tail_prob, coverage) where coverage
+    is the fraction of token probability mass captured by top_vocab.
+    """
     probs = torch.softmax(logits.float(), dim=-1)
     q = torch.zeros(256, device=probs.device, dtype=torch.float32)
 
@@ -88,9 +93,9 @@ def first_byte_marginal(logits: torch.Tensor, tokenizer, top_vocab: int = 4096,
         if bs:
             q[bs[0]] += probs[tok_id].item()
 
-    total = q.sum()
-    if total > 0:
-        q = q / total
+    coverage = q.sum().item()
+    if coverage > 0:
+        q = q / coverage
 
     top_probs, top_bytes = torch.topk(q, min(K, 256))
     tail = 1.0 - top_probs.sum().item()
@@ -99,6 +104,7 @@ def first_byte_marginal(logits: torch.Tensor, tokenizer, top_vocab: int = 4096,
         top_bytes.cpu().numpy().astype(np.uint8),
         top_probs.cpu().numpy().astype(np.float16),
         max(0.0, tail),
+        coverage,
     )
 
 
@@ -248,7 +254,7 @@ def build_cache_for_shard(
                 continue
 
             t_logits = teacher(prefix_ids).logits[0, -1]
-            top_b, top_p, tail = first_byte_marginal(
+            top_b, top_p, tail, coverage = first_byte_marginal(
                 t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
 
             q = torch.zeros(256, dtype=torch.float32)

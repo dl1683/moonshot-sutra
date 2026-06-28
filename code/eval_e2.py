@@ -85,7 +85,7 @@ def evaluate_bpb(
         N = T // P
 
         with torch.amp.autocast("cuda", enabled=device.type == "cuda"):
-            out = student(byte_ids)
+            out = student(byte_ids, return_aux=False)
             logits = out["logits"]
             targets = byte_ids.reshape(B, N, P)[:, 1:]
             loss = F.cross_entropy(logits.reshape(-1, 256),
