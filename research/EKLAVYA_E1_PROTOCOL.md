@@ -212,3 +212,10 @@ E2 only proceeds after E1 shows decisive gains (>2pp improvement over CE-only).
 | R3 | Token-level cache, not byte-level | Storage feasibility: 500MB vs 45TB |
 | R4 | Single linear projection (576→2048) | Avoid hiding failure behind trainable teacher projection |
 | R4 | 3-phase training: warmup → landing → full | Prevent noisy alignment gradients from damaging encoder |
+| R28 | Eval loop + best checkpoint saving | Training was blind without eval; now saves e1_best.pt on improvement |
+| R28 | Shard_range in cache manifest | Prevents training on uncached shards (CE-only signal waste) |
+| R28 | AMP/scaler device-gated | bf16 doesn't use GradScaler; CPU path skips autocast |
+| R28b | RNG state in all checkpoints | Reproducible resume requires torch/cuda/python/numpy RNG state |
+| R28b | Legacy cache hard-fail | Cache without shard_range → ValueError unless --allow-legacy-cache |
+| R28b | Record-based teacher signal detection | Track whether records were found, not whether loss > 0 |
+| R28b | 200-step consecutive CE-only hard-fail | Catches cache/shard mismatch before wasting GPU hours |
