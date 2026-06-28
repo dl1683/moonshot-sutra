@@ -50,7 +50,7 @@ Before E2 begins:
 2. S0 training has converged (burn-in passed, BPB < target)
 3. Teacher feasibility profiling (E2.0) passes for each candidate — see [E2 Teacher Feasibility](EKLAVYA_E2_TEACHER_FEASIBILITY.md)
 4. Pilot cache (25-50 shards) is built and validated
-5. E1 test suite (42 tests) still passes
+5. E1 test suite (44 tests) still passes
 6. E2 test suite (404 tests) passes
 
 ## 5. Teacher Roster and Roles

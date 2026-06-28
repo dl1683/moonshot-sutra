@@ -69,6 +69,60 @@ def test_first_byte_marginal():
     print("  test_first_byte_marginal PASSED")
 
 
+def test_first_byte_marginal_low_coverage_spreads_uniform():
+    """When top_vocab captures only a fraction of token mass, uncovered
+    probability must be spread uniformly across all 256 bytes — not
+    concentrated on the few bytes that were observed."""
+    logits = torch.zeros(200)
+    logits[0] = 10.0
+    logits[1] = 9.0
+
+    class TwoByteTokenizer:
+        def decode(self, ids, skip_special_tokens=False):
+            if ids[0] == 0:
+                return "A"
+            if ids[0] == 1:
+                return "B"
+            return ""
+
+    top_b, top_p, tail, coverage = first_byte_marginal(
+        logits, TwoByteTokenizer(), top_vocab=2, K=8,
+    )
+    assert coverage < 1.0, f"Coverage should be partial, got {coverage}"
+
+    top_probs_f64 = top_p.astype(np.float64)
+    max_prob = float(top_probs_f64.max())
+    assert max_prob < 0.80, (
+        f"With low coverage ({coverage:.3f}), max byte prob should be diluted "
+        f"by uniform spread, got {max_prob:.4f}"
+    )
+
+    total = float(top_probs_f64.sum()) + tail
+    assert abs(total - 1.0) < 0.02, f"Must still sum to ~1.0, got {total}"
+    print("  test_first_byte_marginal_low_coverage_spreads_uniform PASSED")
+
+
+def test_first_byte_marginal_full_coverage_no_dilution():
+    """When coverage is ~100%, uniform spread is negligible and top byte
+    probabilities stay concentrated (no spurious dilution)."""
+    logits = torch.full((10,), -100.0)
+    logits[0] = 10.0
+
+    class SingleTokenizer:
+        def decode(self, ids, skip_special_tokens=False):
+            return "X" if ids[0] == 0 else ""
+
+    top_b, top_p, tail, coverage = first_byte_marginal(
+        logits, SingleTokenizer(), top_vocab=10, K=8,
+    )
+    assert coverage > 0.99, f"Coverage should be ~1.0, got {coverage}"
+    max_prob = float(top_p.astype(np.float64).max())
+    assert max_prob > 0.95, (
+        f"Full coverage should keep top byte concentrated, got {max_prob:.4f}"
+    )
+    print("  test_first_byte_marginal_full_coverage_no_dilution PASSED")
+
+
 def test_compute_token_byte_spans():
     class FakeTokenizer:
         def decode(self, ids, skip_special_tokens=False):
