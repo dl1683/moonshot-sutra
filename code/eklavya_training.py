@@ -509,6 +509,8 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
     P = model_cfg.patch_size
     t0 = time.time()
     data_iter = iter(train_loader)
+    warmup_signal_steps = 0
+    warmup_total_steps = 0
 
     print(f"Starting E1 training: {total_steps} total steps")
     print(f"  E1.0 warmup: {cfg.projection_warmup_steps} steps")
@@ -535,6 +537,14 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                             optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             print(f"\n=== Phase: {phase} (step {step}) ===")
+            if phase == "E1.1_landing" and warmup_total_steps > 0:
+                ratio = warmup_signal_steps / warmup_total_steps
+                print(f"  Warmup signal coverage: "
+                      f"{warmup_signal_steps}/{warmup_total_steps} "
+                      f"({ratio:.0%})")
+                if ratio < 0.1:
+                    print(f"  WARNING: <10% of warmup steps had differentiable "
+                          f"align signal — projection may be untrained")
             trainer.configure_freeze(phase)
             optimizer = trainer.build_optimizer()
             current_phase = phase
@@ -592,6 +602,9 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             L_teacher = cfg.lambda_align * L_align + cfg.lambda_kl * L_kl
 
             if phase == "E1.0_warmup":
+                warmup_total_steps += 1
+                if L_align.requires_grad:
+                    warmup_signal_steps += 1
                 loss = L_align
             elif phase == "E1.1_landing":
                 loss = L_ce + cfg.lambda_align * L_align

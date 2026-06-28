@@ -40,10 +40,12 @@ class RunSummary:
     teacher_loss_final: dict[str, float] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     eval_result: dict = field(default_factory=dict)
+    had_hard_fail: bool = False
 
 
-def load_log(path: str) -> tuple[list[dict], list[dict]]:
+def load_log(path: str) -> tuple[list[dict], list[dict], bool]:
     train, eval_ = [], []
+    had_hard_fail = False
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -51,12 +53,13 @@ def load_log(path: str) -> tuple[list[dict], list[dict]]:
                 continue
             entry = json.loads(line)
             if "HARD_FAIL" in entry:
+                had_hard_fail = True
                 continue
             if "eval_bpb" in entry or "eval_loss" in entry:
                 eval_.append(entry)
             elif "ce_loss" in entry or "bpb" in entry:
                 train.append(entry)
-    return train, eval_
+    return train, eval_, had_hard_fail
 
 
 def ce_to_bpb(ce_nats: float) -> float:
@@ -64,14 +67,16 @@ def ce_to_bpb(ce_nats: float) -> float:
 
 
 def analyze_run(ablation_id: str, log_path: str) -> RunSummary:
-    train, eval_ = load_log(log_path)
+    train, eval_, had_hard_fail = load_log(log_path)
     if not train:
-        return RunSummary(ablation_id=ablation_id, log_path=log_path)
+        return RunSummary(ablation_id=ablation_id, log_path=log_path,
+                          had_hard_fail=had_hard_fail)
 
     summary = RunSummary(
         ablation_id=ablation_id,
         log_path=log_path,
         total_steps=train[-1].get("step", 0),
+        had_hard_fail=had_hard_fail,
     )
 
     bpb_key = "bpb" if "bpb" in train[0] else None
@@ -214,6 +219,11 @@ def print_comparison_table(summaries: list[RunSummary]):
     row("Elapsed (hours)",
         [s.elapsed_seconds / 3600 if s.elapsed_seconds else None for s in summaries],
         ".2f")
+
+    failed = [s for s in summaries if s.had_hard_fail]
+    if failed:
+        print(f"\n  WARNING: {len(failed)} run(s) had HARD_FAIL entries: "
+              f"{[s.ablation_id for s in failed]}")
 
     if len(summaries) >= 2:
         ref = summaries[0]

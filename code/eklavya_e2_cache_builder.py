@@ -236,7 +236,7 @@ def build_teacher_records(
 
         teacher_inputs = tokenizer(
             text, return_tensors="pt", truncation=True,
-            max_length=getattr(tokenizer, 'model_max_length', 2048) or 2048,
+            max_length=min(getattr(tokenizer, 'model_max_length', 2048) or 2048, 8192),
         ).to(device)
 
         input_ids = teacher_inputs.input_ids[0].tolist()
@@ -275,7 +275,7 @@ def build_teacher_records(
                 prefix_bytes = seq_bytes[:t]
                 prefix_text = bytes(prefix_bytes).decode("utf-8", errors="replace")
 
-                max_len = getattr(tokenizer, 'model_max_length', 2048) or 2048
+                max_len = min(getattr(tokenizer, 'model_max_length', 2048) or 2048, 8192)
                 prefix_ids = tokenizer(
                     prefix_text, return_tensors="pt",
                     truncation=False,

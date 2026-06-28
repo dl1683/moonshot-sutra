@@ -414,6 +414,8 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
             if eval_metrics["eval_bpb"] < best_eval_bpb:
                 best_eval_bpb = eval_metrics["eval_bpb"]
                 best_path = os.path.join(train_cfg.checkpoint_dir, "s0_best.pt")
+                # Lightweight checkpoint for E1 hand-off (no optimizer/RNG —
+                # E1 creates its own). Use s0_step{N}.pt for S0 resume.
                 best_ckpt = {
                     "step": step,
                     "model": model.state_dict(),

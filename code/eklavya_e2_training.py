@@ -1261,6 +1261,8 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
     data_iter = iter(train_loader)
     consecutive_ce_only = 0
     CE_ONLY_FAIL_THRESHOLD = 200
+    warmup_signal_steps = 0
+    warmup_total_steps = 0
 
     if cfg.ce_only and current_phase is None:
         current_phase = "CE_ONLY"
@@ -1306,6 +1308,15 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 active = trainer.get_active_teachers(phase)
                 print(f"\n[Step {step}] Phase {phase}")
                 print(f"  Active teachers: {[t.name for t in active]}")
+                if (current_phase == E2Phase.CONSENSUS
+                        and warmup_total_steps > 0):
+                    ratio = warmup_signal_steps / warmup_total_steps
+                    print(f"  Warmup signal coverage: "
+                          f"{warmup_signal_steps}/{warmup_total_steps} "
+                          f"({ratio:.0%})")
+                    if ratio < 0.1:
+                        print(f"  WARNING: <10% of warmup steps had teacher "
+                              f"signal — projection ports may be untrained")
         else:
             phase = current_phase
 
@@ -1381,6 +1392,11 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                     scaler.scale(scaled_ce).backward()
                 else:
                     scaled_ce.backward()
+
+        if phase == E2Phase.PORT_WARMUP:
+            warmup_total_steps += 1
+            if teacher_losses:
+                warmup_signal_steps += 1
 
         expects_teachers = (not cfg.ce_only and not cfg.bld_mode
                             and phase != E2Phase.PORT_WARMUP)

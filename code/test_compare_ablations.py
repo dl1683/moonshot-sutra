@@ -70,9 +70,10 @@ class TestLoadLog:
             _train(20, bpb=6.0),
         ])
         try:
-            train, eval_ = load_log(path)
+            train, eval_, had_hard_fail = load_log(path)
             assert len(train) == 2
             assert len(eval_) == 1
+            assert not had_hard_fail
         finally:
             os.unlink(path)
 
@@ -83,15 +84,16 @@ class TestLoadLog:
             _train(30, bpb=5.5),
         ])
         try:
-            train, eval_ = load_log(path)
+            train, eval_, had_hard_fail = load_log(path)
             assert len(train) == 2
+            assert had_hard_fail
         finally:
             os.unlink(path)
 
     def test_skips_empty_lines(self):
         path = _write_jsonl(["", _train(10, bpb=6.5), ""])
         try:
-            train, _ = load_log(path)
+            train, _, _ = load_log(path)
             assert len(train) == 1
         finally:
             os.unlink(path)
@@ -99,7 +101,7 @@ class TestLoadLog:
     def test_ce_loss_entries_parsed(self):
         path = _write_jsonl([_train(10, ce_loss=4.5)])
         try:
-            train, _ = load_log(path)
+            train, _, _ = load_log(path)
             assert len(train) == 1
             assert "ce_loss" in train[0]
         finally:
@@ -108,7 +110,7 @@ class TestLoadLog:
     def test_eval_loss_entries_parsed(self):
         path = _write_jsonl([{"step": 50, "eval_loss": 3.0, "eval_bpb": 4.33}])
         try:
-            _, eval_ = load_log(path)
+            _, eval_, _ = load_log(path)
             assert len(eval_) == 1
         finally:
             os.unlink(path)
@@ -601,7 +603,7 @@ class TestAlternateKeyPaths:
             {"step": 100, "eval_loss": 3.5},
         ])
         try:
-            train, eval_ = load_log(path)
+            train, eval_, _ = load_log(path)
             assert len(eval_) == 1
             assert eval_[0]["eval_loss"] == 3.5
         finally:

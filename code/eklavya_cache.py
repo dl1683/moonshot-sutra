@@ -211,7 +211,7 @@ def build_cache_for_shard(
         text = bytes(seq_bytes).decode("utf-8", errors="replace")
         teacher_inputs = tokenizer(
             text, return_tensors="pt", truncation=True,
-            max_length=tokenizer.model_max_length or 2048,
+            max_length=min(tokenizer.model_max_length or 2048, 8192),
         ).to(device)
 
         input_ids = teacher_inputs.input_ids[0].tolist()
@@ -249,7 +249,7 @@ def build_cache_for_shard(
 
             prefix_ids = tokenizer(
                 prefix_text, return_tensors="pt", truncation=True,
-                max_length=tokenizer.model_max_length or 2048,
+                max_length=min(tokenizer.model_max_length or 2048, 8192),
             ).input_ids.to(device)
 
             if prefix_ids.shape[1] == 0:
@@ -497,8 +497,8 @@ def main():
     print(f"Loading teacher: {args.teacher}")
     tokenizer = AutoTokenizer.from_pretrained(args.teacher)
     teacher = AutoModelForCausalLM.from_pretrained(
-        args.teacher, torch_dtype=torch.bfloat16, device_map=device,
-    )
+        args.teacher, torch_dtype=torch.bfloat16,
+    ).to(device)
     teacher.eval()
 
     embedding_table = teacher.get_input_embeddings().weight.detach().clone()
