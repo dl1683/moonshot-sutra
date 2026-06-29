@@ -39,9 +39,13 @@ def load_entries(log_path: str) -> tuple[list[dict], list[dict]]:
 
 
 def detect_mode(train: list[dict]) -> str:
-    """Detect log format: 's0' or 'e2'."""
+    """Detect log format: 's0', 'e1', or 'e2'."""
     for entry in train[:5]:
-        if "phase" in entry or "teacher_losses_bits" in entry or "teacher_losses" in entry or "ce_loss" in entry:
+        if "teacher_losses_bits" in entry or "teacher_losses" in entry or "route_stats" in entry:
+            return "e2"
+        if "phase" in entry and "align" in entry and "kl" in entry:
+            return "e1"
+        if "ce_loss" in entry:
             return "e2"
     return "s0"
 
@@ -108,6 +112,68 @@ def display_s0(train: list[dict], eval_: list[dict], log_path: str):
                        if "eval_byte_acc" in entry else "")
             print(f"    step {entry['step']:>5d}: bpb {entry['eval_bpb']:.3f} "
                   f"|{bar:<40s}| {acc_str}")
+
+
+def display_e1(train: list[dict], eval_: list[dict], log_path: str):
+    latest = train[-1]
+    first = train[0]
+
+    print(f"\n{'=' * 60}")
+    print(f"  E1 Single-Teacher KD Monitor — {log_path}")
+    print(f"{'=' * 60}")
+
+    step = latest["step"]
+    phase = latest.get("phase", "?")
+    bpb = latest.get("bpb", 0)
+    first_bpb = first.get("bpb", 0)
+
+    print(f"\n  Step: {step}")
+    print(f"  Phase: {phase}")
+    print(f"  CE BPB: {first_bpb:.3f} -> {bpb:.3f}  "
+          f"(delta: {bpb - first_bpb:+.3f})")
+
+    align = latest.get("align", 0)
+    kl = latest.get("kl", 0)
+    print(f"  Align loss: {align:.4f}  |  KL loss: {kl:.4f}")
+
+    gb_scale = latest.get("gb_scale", 1.0)
+    if gb_scale < 1.0:
+        print(f"  Gradient budget scale: {gb_scale:.3f} "
+              f"(CE norm: {latest.get('gb_ce_norm', 0):.4f}, "
+              f"teacher norm: {latest.get('gb_teacher_norm', 0):.4f})")
+
+    if latest.get("elapsed"):
+        print(f"  Elapsed: {format_time(latest['elapsed'])}")
+
+    if eval_:
+        latest_eval = eval_[-1]
+        first_eval = eval_[0]
+        print(f"\n  Eval BPB: {first_eval['eval_bpb']:.3f} -> "
+              f"{latest_eval['eval_bpb']:.3f}  "
+              f"(delta: {latest_eval['eval_bpb'] - first_eval['eval_bpb']:+.3f})")
+
+    phases_seen = set()
+    phase_transitions = []
+    for entry in train:
+        p = entry.get("phase", "?")
+        if p not in phases_seen:
+            phases_seen.add(p)
+            phase_transitions.append((entry["step"], p))
+
+    if len(phase_transitions) > 1:
+        print("\n  Phase transitions:")
+        for s, p in phase_transitions:
+            print(f"    step {s:5d}: {p}")
+
+    print("\n  Recent loss trajectory:")
+    recent = train[-min(10, len(train)):]
+    for entry in recent:
+        bar_width = int(max(0, min(40, (entry.get("bpb", 0) / 8.0) * 40)))
+        bar = "#" * bar_width
+        a = entry.get("align", 0)
+        k = entry.get("kl", 0)
+        print(f"    step {entry['step']:>5d}: bpb {entry.get('bpb', 0):.3f} "
+              f"a={a:.3f} k={k:.3f} |{bar:<40s}|")
 
 
 def display_e2(train: list[dict], eval_: list[dict], log_path: str):
@@ -427,6 +493,8 @@ def display(log_path: str):
     mode = detect_mode(train)
     if mode == "e2":
         display_e2(train, eval_, log_path)
+    elif mode == "e1":
+        display_e1(train, eval_, log_path)
     else:
         display_s0(train, eval_, log_path)
 
@@ -434,6 +502,8 @@ def display(log_path: str):
     if len(train) >= 3:
         if mode == "e2":
             losses = [e.get("ce_loss", 0) / math.log(2) for e in train]
+        elif mode == "e1":
+            losses = [e.get("bpb", 0) for e in train]
         else:
             losses = [e.get("bpb", 0) for e in train]
         for i in range(2, len(losses)):

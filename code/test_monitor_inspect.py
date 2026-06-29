@@ -158,6 +158,16 @@ class TestDetectMode:
         train = [{"step": 1, "ce_loss": 4.8}]
         assert detect_mode(train) == "e2"
 
+    def test_e1_mode(self):
+        train = [{"step": 1, "phase": "E1.0_warmup", "bpb": 2.0,
+                  "align": 0.5, "kl": 0.0}]
+        assert detect_mode(train) == "e1"
+
+    def test_e1_not_confused_with_e2(self):
+        train = [{"step": 1, "phase": "E1.2_full", "bpb": 1.9,
+                  "align": 0.1, "kl": 0.05, "gb_scale": 0.8}]
+        assert detect_mode(train) == "e1"
+
     def test_empty_train_defaults_s0(self):
         assert detect_mode([]) == "s0"
 
@@ -194,6 +204,33 @@ class TestDisplay:
             assert "E2 Multi-Teacher KD Monitor" in out
             assert "Phase: CONSENSUS" in out
             assert "t0_anchor" in out
+            assert "Phase transitions:" in out
+        finally:
+            os.unlink(path)
+
+    def test_e1_display_has_expected_sections(self, capsys):
+        path = _write_log([
+            {"step": 1, "phase": "E1.0_warmup", "bpb": 2.1,
+             "ce": 1.46, "align": 0.5, "kl": 0.0,
+             "gb_ce_norm": 0.0, "gb_teacher_norm": 0.0, "gb_scale": 1.0,
+             "loss": 0.5, "elapsed": 30},
+            {"step": 500, "phase": "E1.1_landing", "bpb": 2.0,
+             "ce": 1.39, "align": 0.3, "kl": 0.0,
+             "gb_ce_norm": 0.4, "gb_teacher_norm": 0.2, "gb_scale": 1.0,
+             "loss": 1.43, "elapsed": 300},
+            {"step": 2000, "phase": "E1.2_full", "bpb": 1.9,
+             "ce": 1.32, "align": 0.1, "kl": 0.05,
+             "gb_ce_norm": 0.5, "gb_teacher_norm": 0.8, "gb_scale": 0.6,
+             "loss": 1.37, "elapsed": 1200},
+        ])
+        try:
+            display(path)
+            out = capsys.readouterr().out
+            assert "E1 Single-Teacher KD Monitor" in out
+            assert "Phase: E1.2_full" in out
+            assert "Align loss" in out
+            assert "KL loss" in out
+            assert "Gradient budget scale: 0.600" in out
             assert "Phase transitions:" in out
         finally:
             os.unlink(path)
