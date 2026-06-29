@@ -86,27 +86,33 @@ def first_byte_marginal(logits: torch.Tensor, tokenizer, top_vocab: int = 4096,
     is the fraction of token probability mass captured by top_vocab.
     """
     probs = torch.softmax(logits.float(), dim=-1)
-    q = torch.zeros(256, device=probs.device, dtype=torch.float32)
+    top_k = min(top_vocab, probs.shape[-1])
+    top_probs_t, top_ids_t = torch.topk(probs, top_k)
+    top_id_list = top_ids_t.cpu().tolist()
+    top_prob_arr = top_probs_t.cpu().numpy()
 
-    top_ids = torch.topk(probs, min(top_vocab, probs.shape[-1])).indices
-    for tok_id in top_ids.tolist():
+    q = np.zeros(256, dtype=np.float64)
+    for i, tok_id in enumerate(top_id_list):
         bs = token_id_to_bytes(tokenizer, tok_id, _byte_table)
         if bs:
-            q[bs[0]] += probs[tok_id].item()
+            q[bs[0]] += float(top_prob_arr[i])
 
-    coverage = q.sum().item()
+    coverage = float(q.sum())
     if coverage > 0:
         uncovered = max(0.0, 1.0 - coverage)
         q = q + uncovered / 256.0
         q = q / q.sum()
 
-    top_probs, top_bytes = torch.topk(q, min(K, 256))
-    tail = 1.0 - top_probs.sum().item()
+    k = min(K, 256)
+    top_indices = np.argpartition(-q, k)[:k]
+    top_indices = top_indices[np.argsort(-q[top_indices])]
+    top_probs_val = q[top_indices].astype(np.float16)
+    tail = max(0.0, 1.0 - float(top_probs_val.astype(np.float64).sum()))
 
     return (
-        top_bytes.cpu().numpy().astype(np.uint8),
-        top_probs.cpu().numpy().astype(np.float16),
-        max(0.0, tail),
+        top_indices.astype(np.uint8),
+        top_probs_val,
+        tail,
         coverage,
     )
 
@@ -130,35 +136,41 @@ def multi_byte_marginal(logits: torch.Tensor, tokenizer, n_positions: int = 4,
     one per byte position.
     """
     probs = torch.softmax(logits.float(), dim=-1)
-    top_ids = torch.topk(probs, min(top_vocab, probs.shape[-1])).indices
+    top_k = min(top_vocab, probs.shape[-1])
+    top_probs_t, top_ids_t = torch.topk(probs, top_k)
+    top_id_list = top_ids_t.cpu().tolist()
+    top_prob_arr = top_probs_t.cpu().numpy()
 
-    q_per_pos = [torch.zeros(256, dtype=torch.float32) for _ in range(n_positions)]
+    q_per_pos = [np.zeros(256, dtype=np.float64) for _ in range(n_positions)]
 
-    for tok_id in top_ids.tolist():
+    for i, tok_id in enumerate(top_id_list):
         bs = token_id_to_bytes(tokenizer, tok_id, _byte_table)
         if not bs:
             continue
-        p = probs[tok_id].item()
+        p = float(top_prob_arr[i])
         for pos in range(min(len(bs), n_positions)):
             q_per_pos[pos][bs[pos]] += p
 
     results = []
     for pos in range(n_positions):
         q = q_per_pos[pos]
-        coverage = q.sum().item()
+        coverage = float(q.sum())
         if coverage > 0:
             uncovered = max(0.0, 1.0 - coverage)
             q = q + uncovered / 256.0
             q = q / q.sum()
         else:
-            q = torch.ones(256, dtype=torch.float32) / 256.0
+            q = np.ones(256, dtype=np.float64) / 256.0
 
-        top_probs_val, top_bytes_val = torch.topk(q, min(K, 256))
-        tail = 1.0 - top_probs_val.sum().item()
+        k = min(K, 256)
+        top_indices = np.argpartition(-q, k)[:k]
+        top_indices = top_indices[np.argsort(-q[top_indices])]
+        top_probs_val = q[top_indices].astype(np.float16)
+        tail = max(0.0, 1.0 - float(top_probs_val.astype(np.float64).sum()))
         results.append((
-            top_bytes_val.cpu().numpy().astype(np.uint8),
-            top_probs_val.cpu().numpy().astype(np.float16),
-            max(0.0, tail),
+            top_indices.astype(np.uint8),
+            top_probs_val,
+            tail,
             coverage,
         ))
 
