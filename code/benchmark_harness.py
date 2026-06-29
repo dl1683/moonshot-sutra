@@ -321,7 +321,8 @@ def eval_multiple_choice(
             acc = correct / total
             acc_n = correct_norm / total
             print(f"  [{benchmark_name}] {i+1}/{len(examples)}: "
-                  f"acc={acc:.3f} acc_norm={acc_n:.3f} ({elapsed:.0f}s)")
+                  f"acc={acc:.3f} acc_norm={acc_n:.3f} ({elapsed:.0f}s)",
+                  flush=True)
 
     elapsed = time.time() - t0
     return BenchmarkResult(
@@ -367,7 +368,8 @@ def eval_winogrande(
             acc = correct / total
             acc_n = correct_norm / total
             print(f"  [winogrande] {i+1}/{len(examples)}: "
-                  f"acc={acc:.3f} acc_norm={acc_n:.3f} ({elapsed:.0f}s)")
+                  f"acc={acc:.3f} acc_norm={acc_n:.3f} ({elapsed:.0f}s)",
+                  flush=True)
 
     elapsed = time.time() - t0
     return BenchmarkResult(
@@ -413,7 +415,8 @@ def eval_lambada(
             acc = correct / total
             byte_acc = byte_correct / max(byte_total, 1)
             print(f"  [LAMBADA] {i+1}/{len(examples)}: "
-                  f"acc={acc:.3f} byte_acc={byte_acc:.3f} ({elapsed:.0f}s)")
+                  f"acc={acc:.3f} byte_acc={byte_acc:.3f} ({elapsed:.0f}s)",
+                  flush=True)
 
     elapsed = time.time() - t0
     return BenchmarkResult(
@@ -617,7 +620,7 @@ def run_benchmarks(
 ) -> dict:
     use_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
     device = torch.device("cuda" if use_cuda else "cpu")
-    print(f"Device: {device}")
+    print(f"Device: {device}", flush=True)
 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model_cfg = ckpt["model_cfg"]
@@ -625,7 +628,8 @@ def run_benchmarks(
     model.load_state_dict(ckpt["model"])
     model.eval()
     step = ckpt.get("step", "?")
-    print(f"Loaded checkpoint from step {step} (eval_bpb={ckpt.get('eval_bpb', '?')})")
+    print(f"Loaded checkpoint from step {step} (eval_bpb={ckpt.get('eval_bpb', '?')})",
+          flush=True)
 
     counts = model.count_parameters()
     print(f"Parameters: {counts['total']:,} ({counts['total']/1e6:.1f}M)")
@@ -672,7 +676,7 @@ def run_benchmarks(
         examples = BENCHMARK_LOADERS[name]()
         if max_examples > 0:
             examples = examples[:max_examples]
-        print(f"  Loaded {len(examples)} examples")
+        print(f"  Loaded {len(examples)} examples", flush=True)
 
         if name == "lambada":
             result = eval_lambada(model, examples, device)
@@ -692,7 +696,7 @@ def run_benchmarks(
         print(f"\n  {name}: acc={result.accuracy:.4f} "
               f"acc_norm={result.accuracy_norm:.4f} "
               f"bpb={result.mean_bpb:.3f} "
-              f"({result.elapsed_s:.0f}s)")
+              f"({result.elapsed_s:.0f}s)", flush=True)
 
     print(f"\n{'='*60}")
     print("SUMMARY")

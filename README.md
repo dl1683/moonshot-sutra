@@ -42,7 +42,7 @@ knowledge can be absorbed without vocabulary alignment hacks.
 | Component | Status | Key File |
 |-----------|--------|----------|
 | Benchmark harness (HellaSwag, PIQA, ARC, etc.) | Built & tested | `code/benchmark_harness.py` |
-| Unit tests (19 tests) | All passing | `code/test_benchmark_harness.py` |
+| Unit tests (22 tests) | All passing | `code/test_benchmark_harness.py` |
 
 **E1 (Single-Teacher KD)** — implementation complete, tested, pending S0 checkpoint.
 
@@ -152,7 +152,7 @@ cd code
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py test_monitor_inspect.py test_option_c.py test_benchmark_harness.py -v
 ```
 
-All 834 tests run on CPU without any data, models, or GPU. They validate
+All 837 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality),
 the full E1/E2 infrastructure (binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, training
