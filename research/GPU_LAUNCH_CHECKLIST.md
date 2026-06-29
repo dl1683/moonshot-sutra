@@ -5,6 +5,25 @@ Pre-flight for when GPU becomes available. Execute sequentially.
 **During E2 training**, consult [E2 Monitoring Protocol](E2_MONITORING_PROTOCOL.md)
 for phase-specific intervention rules, gradient budget red flags, and GPU failure modes.
 
+## Pipeline Summary (Codex R49/R49b)
+
+```
+S0 burn-in (500 steps)
+→ S0 full (50K steps, CE-only)
+→ S0 benchmarks (HellaSwag baseline)
+→ E1 cache (Qwen anchor teacher)
+→ Aggressive Qwen-only E1 (22K steps, lambda_kl=0.35, base_lr=6e-5)
+→ E1 benchmarks (must improve over S0)
+→ E2 cache (4 teachers, Qwen-primary priors 0.65/0.15/0.15/0.05)
+→ Qwen-primary E2 (13750 steps, teacher cap 0.30)
+→ E2 benchmarks
+→ E2 ablations (Phase 1 gate, then Phase 2 if passed)
+→ Final benchmarks on best checkpoint
+```
+
+Key principle: "Do not dilute the best teacher before the student has absorbed it."
+Mamba2 teacher (t4_diversity_ssm) is DROPPED — fails on Windows.
+
 ## Phase 1: S0 Burn-In (500 steps, ~15 min)
 
 ### Prerequisites
@@ -65,6 +84,23 @@ python s0_training.py \
 ### Output
 Best checkpoint: `C:/sutra_fast/checkpoints/s0_full/s0_best.pt`
 
+## Phase 2.5: S0 Benchmark Evaluation (~30 min)
+
+### Prerequisites
+- [ ] S0 best checkpoint exists at `C:/sutra_fast/checkpoints/s0_full/s0_best.pt`
+
+### Launch
+```bash
+python benchmark_harness.py \
+    --checkpoint C:/sutra_fast/checkpoints/s0_full/s0_best.pt \
+    --benchmarks hellaswag piqa arc_easy arc_challenge winogrande lambada \
+    --output ../results/benchmarks_s0.json
+```
+
+### Purpose
+Establishes the CE-only baseline before any KD. All subsequent E1/E2
+benchmarks compare against this. Key number: HellaSwag accuracy.
+
 ## Phase 3: E1 Cache Building (~2-4 hours)
 
 ### Prerequisites
@@ -95,40 +131,106 @@ python eklavya_cache.py \
 With default `grad_accum=2`, E1/E2 "12000 steps" = 6000 optimizer updates.
 Phase lengths, checkpoint labels, and eval cadence all count micro-steps.
 
-## Phase 4: E1 Training (12K steps, ~6-10 hours)
+## Phase 4: Aggressive Qwen-Only E1 (22K steps, ~10-16 hours)
+
+**Strategy (Codex R49b):** Absorb the best teacher (Qwen3-4B) aggressively
+before diluting with multiple teachers in E2. CBD's lesson: "do not dilute the
+best teacher before the student has absorbed it."
 
 ### Prerequisites
 - [ ] S0 best checkpoint exists
 - [ ] E1 cache built and validated (Phase 3)
+- [ ] S0 benchmark results recorded (Phase 2.5)
 
-### Launch
+### Launch — Aggressive Settings (Codex R49b)
 ```bash
 python eklavya_training.py \
     --student-checkpoint C:/sutra_fast/checkpoints/s0_full/s0_best.pt \
     --cache-dir C:/sutra_fast/eklavya_cache \
     --output-dir C:/sutra_fast/checkpoints/e1 \
     --data-dir ../data/shards_bytes_full \
-    --steps 12000
+    --steps 22000 \
+    --lambda-kl 0.35 \
+    --base-lr 6e-5 \
+    --teacher-grad-budget 0.45
 ```
+
+### Escalation (only if stable after 3K full-E1 steps)
+If eval BPB is stable, grad norms are smooth, and no pos_acc collapse:
+```bash
+# Resume with escalated settings
+python eklavya_training.py \
+    --student-checkpoint C:/sutra_fast/checkpoints/s0_full/s0_best.pt \
+    --cache-dir C:/sutra_fast/eklavya_cache \
+    --output-dir C:/sutra_fast/checkpoints/e1 \
+    --data-dir ../data/shards_bytes_full \
+    --steps 22000 \
+    --lambda-kl 0.45 \
+    --base-lr 7.5e-5 \
+    --teacher-grad-budget 0.55 \
+    --resume C:/sutra_fast/checkpoints/e1/e1_step<N>.pt
+```
+
+Do NOT escalate to `lambda_kl=0.50, base_lr=1e-4` unless 5K full-E1 steps
+show no regression, stable grad norms, and no pos_acc collapse.
 
 ### Phase Schedule
 | Phase | Steps | What Trains | Losses |
 |-------|-------|-------------|--------|
 | E1.0 | 0-499 | align_proj only | L_align |
 | E1.1 | 500-1999 | encoder + align_proj | CE + L_align |
-| E1.2 | 2000-11999 | all params | CE + L_align + L_kl |
+| E1.2 | 2000-21999 | all params | CE + L_align + L_kl |
+
+### Monitoring — Gradient Budget Telemetry
+E1 logs `gb_ce_norm`, `gb_teacher_norm`, and `gb_scale` per step.
+- **gb_scale < 0.15 for extended stretches**: teacher signal is being clipped.
+  Increase `teacher_grad_budget` or decrease `lambda_kl`.
+- **gb_scale ≈ 1.0 consistently**: budget is not binding; can lower budget safely.
+- **pos_acc divergence**: E1 KL only supervises byte position 0 in each patch.
+  If pos0 acc rises while pos1-3 drop, KL is distorting the first-byte channel.
 
 ### Success Criteria
 - E1 > CE-only continuation on eval BPB
 - Shuffled targets fail or underperform
 - BPB does not regress from S0 baseline
+- gb_scale stays above 0.15 (teacher signal not fully clipped)
+- No pos_acc position divergence (pos0 vs pos1-3 gap < 5pp)
 
-## Phase 5: E2 Cache Building (~4-8 hours)
+## Phase 4.5: E1 Benchmark Evaluation (~30 min)
+
+### Prerequisites
+- [ ] E1 best checkpoint exists at `C:/sutra_fast/checkpoints/e1/e1_best.pt`
+
+### Launch
+```bash
+python benchmark_harness.py \
+    --checkpoint C:/sutra_fast/checkpoints/e1/e1_best.pt \
+    --benchmarks hellaswag piqa arc_easy arc_challenge winogrande lambada \
+    --output ../results/benchmarks_e1.json
+```
+
+### Decision Gate
+Compare E1 vs S0 benchmarks. E1 must show improvement, especially on HellaSwag.
+If E1 HellaSwag < S0 HellaSwag, diagnose before proceeding to E2.
+
+## Phase 5: E2 Cache Building (~3-6 hours)
+
+**Qwen-primary, 4 teachers (Mamba2 dropped).**
 
 ### Prerequisites
 - [ ] E1 best checkpoint exists with decisive KD gains (>2pp over CE-only)
-- [ ] All 5 teachers downloadable (total ~9.2 GB VRAM during cache build)
+- [ ] E1 benchmarks show improvement over S0 (Phase 4.5)
+- [ ] 4 teachers downloadable (total ~7.5 GB VRAM during cache build)
 - [ ] Output dir: `C:/sutra_fast/eklavya_e2_cache/`
+
+### Teacher Priors (Qwen-Primary, Codex R49b)
+```
+t0_anchor_decoder (Qwen3-4B):     0.65  ← primary teacher
+t1_diversity_hybrid (Granite):    0.15
+t2_control_decoder (Llama):       0.15
+t3_semantic_embedding (BGE-M3):   0.05
+t4_diversity_ssm (Mamba2):        0.00  ← DROPPED (fails on Windows)
+```
 
 ### VRAM Budget (Cache Build — One Teacher at a Time)
 ```
@@ -175,19 +277,21 @@ C:/sutra_fast/eklavya_e2_cache/
       ...
     t3_semantic_embedding/
       ...
-    t4_diversity_ssm/
-      ...
 ```
+Note: t4_diversity_ssm is DROPPED — no directory created.
 
 ### Validation
-- [ ] manifest.json shows n_positions > 0 and teacher_count == 5
-- [ ] Each teacher subdir has non-empty records
+- [ ] manifest.json shows n_positions > 0 and teacher_count == 4
+- [ ] Each of the 4 teacher subdirs has non-empty records
 - [ ] `python -c "from eklavya_e2_cache import E2CacheView; v=E2CacheView('C:/sutra_fast/eklavya_e2_cache'); print(v.manifest); v.close()"`
 - [ ] Zero non-finite-skip warnings in cache build output (NaN positions = corrupted checkpoint)
 - [ ] Inspect S0 and E1 checkpoints: `python inspect_checkpoint.py C:/sutra_fast/checkpoints/s0_full/s0_best.pt`
 - [ ] Run opsec scan incl. history: `python code/check_opsec.py --history` (clean before any push)
 
-## Phase 6: E2 Training (~12-24 hours)
+## Phase 6: Qwen-Primary E2 Training (~12-24 hours)
+
+**After aggressive E1, E2 refines and routes — it does not bulldoze. Total
+teacher cap at 0.30 (Codex R49b).**
 
 ### Prerequisites
 - [ ] E1 best checkpoint exists
@@ -245,6 +349,29 @@ python eklavya_e2_training.py \
     --ablation-id A2 \
     --resume C:/sutra_fast/checkpoints/e2/e2_step10000.pt
 ```
+
+## Phase 6.5: E2 Benchmark Evaluation (~30 min)
+
+### Prerequisites
+- [ ] E2 best checkpoint exists at `C:/sutra_fast/checkpoints/e2/e2_best.pt`
+
+### Launch
+```bash
+python benchmark_harness.py \
+    --checkpoint C:/sutra_fast/checkpoints/e2/e2_best.pt \
+    --benchmarks hellaswag piqa arc_easy arc_challenge winogrande lambada \
+    --output ../results/benchmarks_e2.json
+```
+
+### Decision Gate
+Compare E2 vs E1 vs S0 benchmarks. Key targets (from CBD and SmolLM2):
+- HellaSwag: 42.65% (CBD with Qwen3-4B) / 42.1% (SmolLM2)
+- PIQA: 68.4% (SmolLM2)
+- ARC avg: 43.9% (SmolLM2)
+
+If E2 HellaSwag < 30% (Pythia-160M bar), diagnose before ablations.
+If E2 HellaSwag > 42%, proceed to ablations. If 30-42%, still proceed
+but note that Option C (chain-init) may be needed for competitive results.
 
 ## Phase 7: E2 Ablation Controls
 
@@ -329,7 +456,7 @@ python eklavya_e2_training.py \
     --cache-dir C:/sutra_fast/eklavya_e2_cache \
     --output-dir C:/sutra_fast/checkpoints/e2_a5b \
     --ablation-id A5b --disable-router --static-weight-mode custom \
-    --static-weights "t0_anchor_decoder:0.45,t1_diversity_hybrid:0.25,t2_control_decoder:0.15,t4_diversity_ssm:0.15" \
+    --static-weights "t0_anchor_decoder:0.53,t1_diversity_hybrid:0.29,t2_control_decoder:0.18" \
     --steps 8000
 
 # A5c if time permits

@@ -684,12 +684,13 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             consecutive_ce_only = 0
 
         if has_teacher_signal and cfg.teacher_grad_budget > 0:
-            apply_gradient_budget(
+            gb_ce_norm, gb_teacher_norm, gb_scale = apply_gradient_budget(
                 trainable_params, L_ce / cfg.grad_accum,
                 L_teacher / cfg.grad_accum, cfg.teacher_grad_budget,
                 scaler=scaler,
             )
         else:
+            gb_ce_norm, gb_teacher_norm, gb_scale = 0.0, 0.0, 1.0
             scaled_loss = loss / cfg.grad_accum
             if scaled_loss.requires_grad:
                 if scaler is not None:
@@ -725,6 +726,9 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 "step": step, "phase": phase,
                 "loss": loss.item(), "ce": L_ce.item(), "bpb": bpb,
                 "align": L_align.item(), "kl": L_kl.item(),
+                "gb_ce_norm": round(gb_ce_norm, 4),
+                "gb_teacher_norm": round(gb_teacher_norm, 4),
+                "gb_scale": round(gb_scale, 4),
                 "elapsed": time.time() - t0,
             }
             log_fh.write(json.dumps(entry) + "\n")
@@ -821,6 +825,10 @@ def main():
     parser.add_argument("--output-dir", default="checkpoints/e1")
     parser.add_argument("--data-dir", default="data/shards_bytes_full")
     parser.add_argument("--steps", type=int, default=12000)
+    parser.add_argument("--lambda-kl", type=float, default=None)
+    parser.add_argument("--lambda-align", type=float, default=None)
+    parser.add_argument("--base-lr", type=float, default=None)
+    parser.add_argument("--teacher-grad-budget", type=float, default=None)
     parser.add_argument("--resume-from", default=None,
                         help="Path to E1 checkpoint to resume from")
     parser.add_argument("--allow-legacy-cache", action="store_true",
@@ -835,6 +843,14 @@ def main():
         resume_from=args.resume_from,
         allow_legacy_cache=args.allow_legacy_cache,
     )
+    if args.lambda_kl is not None:
+        cfg.lambda_kl = args.lambda_kl
+    if args.lambda_align is not None:
+        cfg.lambda_align = args.lambda_align
+    if args.base_lr is not None:
+        cfg.base_lr = args.base_lr
+    if args.teacher_grad_budget is not None:
+        cfg.teacher_grad_budget = args.teacher_grad_budget
 
     train_e1(cfg, args.student_checkpoint, args.cache_dir)
 

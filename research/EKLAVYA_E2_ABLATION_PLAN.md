@@ -140,13 +140,15 @@ python code/eklavya_e2_training.py \
 
 # A5b: No router (tuned static weights — strongest static baseline)
 # NOTE: t3_semantic_embedding has no KL, so only KL teachers get weights.
+# NOTE: t4_diversity_ssm (Mamba2) DROPPED — only 3 KL teachers remain.
 # Tune final weights from A5a validation telemetry. Starting point below.
 python code/eklavya_e2_training.py \
   --student-checkpoint checkpoints/e1/e1_best.pt \
   --cache-dir eklavya_e2_cache \
   --output-dir checkpoints/e2_a5b_tuned \
   --ablation-id A5b --disable-router --static-weight-mode custom \
-  --static-weights "t0_anchor_decoder:0.45,t1_diversity_hybrid:0.25,t2_control_decoder:0.15,t4_diversity_ssm:0.15"
+  --static-weights "t0_anchor_decoder:0.53,t1_diversity_hybrid:0.29,t2_control_decoder:0.18" \
+  --exclude-teachers t4_diversity_ssm
 
 # A5c: Best-2 teachers, prior-weighted, no router (X-Token 2-teacher comparison)
 # Default: anchor + hybrid (most architecturally diverse pair).
@@ -286,6 +288,28 @@ For each leave-one-out run (A3, and any per-teacher LOO runs):
 - Does removing teacher T *improve* performance on any gap class?
 - If yes, that teacher's signal interferes with another's domain.
 - Reduce its weight or restrict its gap-class scope.
+
+## Benchmark Evaluation (Post-Training)
+
+After each ablation produces a final checkpoint, run the benchmark harness
+for standard downstream comparison:
+
+```bash
+python code/benchmark_harness.py \
+  --checkpoint checkpoints/e2_<ablation>/e2_best.pt \
+  --benchmarks hellaswag piqa arc_easy arc_challenge winogrande lambada \
+  --output results/benchmarks_<ablation>.json
+```
+
+Key competitive targets (from CBD at 138M and SmolLM2-135M):
+- HellaSwag: 42.65% (CBD with best teacher) / 42.1% (SmolLM2)
+- PIQA: 68.4% (SmolLM2)
+- ARC avg: 43.9% (SmolLM2)
+- WinoGrande: 51.3% (SmolLM2)
+
+BPB ablations answer "does this mechanism help the learning process."
+Benchmark ablations answer "does this mechanism produce a better model."
+Both are needed.
 
 ## Cost Note
 
