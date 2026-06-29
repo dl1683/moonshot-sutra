@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import os
@@ -259,6 +260,57 @@ def select_kl_patches(student_logits: torch.Tensor, byte_ids: torch.Tensor,
     return selected
 
 
+def _extract_marginal_records(t_logits, tokenizer, shard_id, offset,
+                              patch_idx, kl_top_k, byte_table,
+                              byte_positions, patch_size):
+    """Extract ByteKLRecords from teacher logits at a single position."""
+    records = []
+    if byte_positions == "all":
+        _min_cov = [0.0, 0.50, 0.35, 0.25]
+        marginals = multi_byte_marginal(
+            t_logits, tokenizer, n_positions=patch_size,
+            K=kl_top_k, _byte_table=byte_table)
+        for bpos, (top_b, top_p, tail, cov) in enumerate(marginals):
+            min_cov = _min_cov[bpos] if bpos < len(_min_cov) else 0.25
+            if cov < min_cov:
+                continue
+            q = torch.zeros(256, dtype=torch.float32)
+            q[top_b] = torch.from_numpy(top_p.astype(np.float32))
+            q_sum = q.sum()
+            if q_sum > 0:
+                q = q / q_sum
+            ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
+            records.append(ByteKLRecord(
+                shard_id=shard_id,
+                seq_offset=offset,
+                patch_idx=patch_idx,
+                top_bytes=top_b,
+                top_probs=top_p,
+                tail_prob=tail,
+                entropy=ent,
+                byte_pos=bpos,
+            ))
+    else:
+        top_b, top_p, tail, coverage = first_byte_marginal(
+            t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
+        q = torch.zeros(256, dtype=torch.float32)
+        q[top_b] = torch.from_numpy(top_p.astype(np.float32))
+        q_sum = q.sum()
+        if q_sum > 0:
+            q = q / q_sum
+        ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
+        records.append(ByteKLRecord(
+            shard_id=shard_id,
+            seq_offset=offset,
+            patch_idx=patch_idx,
+            top_bytes=top_b,
+            top_probs=top_p,
+            tail_prob=tail,
+            entropy=ent,
+        ))
+    return records
+
+
 @torch.no_grad()
 def build_cache_for_shard(
     teacher,
@@ -277,6 +329,7 @@ def build_cache_for_shard(
     sample_seed: int = 491,
     skip_align: bool = False,
     byte_positions: str = "first",
+    single_pass: bool = True,
 ) -> tuple[list[AlignRecord], list[ByteKLRecord]]:
     teacher.eval()
     if student_model is not None:
@@ -305,8 +358,9 @@ def build_cache_for_shard(
 
         input_ids = teacher_inputs.input_ids[0].tolist()
 
+        token_spans = compute_token_byte_spans(tokenizer, input_ids, byte_table)
+
         if not skip_align:
-            token_spans = compute_token_byte_spans(tokenizer, input_ids, byte_table)
             span_valid = validate_token_byte_alignment(
                 bytes(seq_bytes), token_spans, input_ids, tokenizer, byte_table)
 
@@ -336,65 +390,40 @@ def build_cache_for_shard(
                 student_out["logits"], byte_ids, patch_size, nll_threshold,
             )
 
-        for patch_idx in selected_patches:
-            t = patch_idx * patch_size
-            prefix_bytes = seq_bytes[:t]
-            prefix_clean = bytes(b if b != 0xFF else 0x0A for b in prefix_bytes)
-            prefix_text = prefix_clean.decode("utf-8", errors="replace")
+        if single_pass and selected_patches:
+            all_logits = teacher(teacher_inputs.input_ids).logits[0]
+            byte_ends = [be for (_bs, be) in token_spans]
 
-            prefix_ids = tokenizer(
-                prefix_text, return_tensors="pt", truncation=True,
-                max_length=min(tokenizer.model_max_length or 2048, 8192),
-            ).input_ids.to(device)
+            for patch_idx in selected_patches:
+                t = patch_idx * patch_size
+                tok_pos = bisect.bisect_right(byte_ends, t) - 1
+                if tok_pos < 0 or tok_pos >= all_logits.shape[0]:
+                    continue
+                t_logits = all_logits[tok_pos]
+                kl_records.extend(_extract_marginal_records(
+                    t_logits, tokenizer, shard_id, offset,
+                    patch_idx, kl_top_k, byte_table,
+                    byte_positions, patch_size))
+        else:
+            for patch_idx in selected_patches:
+                t = patch_idx * patch_size
+                prefix_bytes = seq_bytes[:t]
+                prefix_clean = bytes(b if b != 0xFF else 0x0A for b in prefix_bytes)
+                prefix_text = prefix_clean.decode("utf-8", errors="replace")
 
-            if prefix_ids.shape[1] == 0:
-                continue
+                prefix_ids = tokenizer(
+                    prefix_text, return_tensors="pt", truncation=True,
+                    max_length=min(tokenizer.model_max_length or 2048, 8192),
+                ).input_ids.to(device)
 
-            t_logits = teacher(prefix_ids).logits[0, -1]
+                if prefix_ids.shape[1] == 0:
+                    continue
 
-            if byte_positions == "all":
-                _min_cov = [0.0, 0.50, 0.35, 0.25]
-                marginals = multi_byte_marginal(
-                    t_logits, tokenizer, n_positions=patch_size,
-                    K=kl_top_k, _byte_table=byte_table)
-                for bpos, (top_b, top_p, tail, cov) in enumerate(marginals):
-                    min_cov = _min_cov[bpos] if bpos < len(_min_cov) else 0.25
-                    if cov < min_cov:
-                        continue
-                    q = torch.zeros(256, dtype=torch.float32)
-                    q[top_b] = torch.from_numpy(top_p.astype(np.float32))
-                    q_sum = q.sum()
-                    if q_sum > 0:
-                        q = q / q_sum
-                    ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
-                    kl_records.append(ByteKLRecord(
-                        shard_id=shard_id,
-                        seq_offset=offset,
-                        patch_idx=patch_idx,
-                        top_bytes=top_b,
-                        top_probs=top_p,
-                        tail_prob=tail,
-                        entropy=ent,
-                        byte_pos=bpos,
-                    ))
-            else:
-                top_b, top_p, tail, coverage = first_byte_marginal(
-                    t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
-                q = torch.zeros(256, dtype=torch.float32)
-                q[top_b] = torch.from_numpy(top_p.astype(np.float32))
-                q_sum = q.sum()
-                if q_sum > 0:
-                    q = q / q_sum
-                ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
-                kl_records.append(ByteKLRecord(
-                    shard_id=shard_id,
-                    seq_offset=offset,
-                    patch_idx=patch_idx,
-                    top_bytes=top_b,
-                    top_probs=top_p,
-                    tail_prob=tail,
-                    entropy=ent,
-                ))
+                t_logits = teacher(prefix_ids).logits[0, -1]
+                kl_records.extend(_extract_marginal_records(
+                    t_logits, tokenizer, shard_id, offset,
+                    patch_idx, kl_top_k, byte_table,
+                    byte_positions, patch_size))
 
         if (seq_idx + 1) % 100 == 0:
             print(f"  shard {shard_id} seq {seq_idx+1}/{n_seqs}: "
@@ -735,6 +764,8 @@ def main():
     parser.add_argument("--byte-positions", choices=["first", "all"],
                         default="first",
                         help="Which byte positions to cache: first (v1) or all (v2)")
+    parser.add_argument("--no-single-pass", action="store_true",
+                        help="Use per-patch teacher forward passes instead of one-pass")
     args = parser.parse_args()
 
     if args.selection_policy == "nll" and args.student_checkpoint is None:
@@ -800,6 +831,7 @@ def main():
             sample_seed=args.sample_seed,
             skip_align=args.no_align,
             byte_positions=args.byte_positions,
+            single_pass=not args.no_single_pass,
         )
         writer.write_shard(align, kl)
 

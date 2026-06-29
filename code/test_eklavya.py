@@ -1260,6 +1260,36 @@ def test_cli_arg_overrides():
     print("  test_cli_arg_overrides PASSED")
 
 
+def test_single_pass_byte_to_token_lookup():
+    """Single-pass mode correctly maps byte offsets to token positions."""
+    import bisect
+    # Token spans: BOS(0,0), tok1(0,5), tok2(5,8), tok3(8,12)
+    byte_ends = [0, 5, 8, 12]
+
+    # Patch at byte 4: last token ending ≤ 4 is tok0 (byte_end=0), so pos=0
+    assert bisect.bisect_right(byte_ends, 4) - 1 == 0
+    # Patch at byte 8: last token ending ≤ 8 is tok2 (byte_end=8), so pos=2
+    assert bisect.bisect_right(byte_ends, 8) - 1 == 2
+    # Patch at byte 12: last token ending ≤ 12 is tok3 (byte_end=12), so pos=3
+    assert bisect.bisect_right(byte_ends, 12) - 1 == 3
+    # Patch at byte 6: last token ending ≤ 6 is tok1 (byte_end=5), so pos=1
+    assert bisect.bisect_right(byte_ends, 6) - 1 == 1
+
+    # Edge: no token before byte 0 (BOS has byte_end=0, bisect_right returns 1)
+    # But patch_idx starts at 1 (byte 4), so byte 0 never queried in practice
+
+    # Longer sequence: verify no off-by-one
+    byte_ends_long = [0, 3, 7, 10, 14, 18]
+    for t in [4, 8, 12, 16]:
+        pos = bisect.bisect_right(byte_ends_long, t) - 1
+        assert pos >= 0
+        assert byte_ends_long[pos] <= t
+        if pos + 1 < len(byte_ends_long):
+            assert byte_ends_long[pos + 1] > t
+
+    print("  test_single_pass_byte_to_token_lookup PASSED")
+
+
 def test_cli_arg_defaults_unchanged():
     """When CLI args are None, EklavyaConfig defaults are preserved."""
     cfg = EklavyaConfig()
@@ -1338,6 +1368,7 @@ if __name__ == "__main__":
         test_cli_arg_overrides,
         test_cli_arg_defaults_unchanged,
         test_cli_arg_partial_override,
+        test_single_pass_byte_to_token_lookup,
     ]
 
     passed = 0

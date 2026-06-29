@@ -557,6 +557,7 @@ def main():
     parser.add_argument("--min-lr", type=float, default=2e-5)
     parser.add_argument("--warmup-steps", type=int, default=1500)
     parser.add_argument("--resume", default=None)
+    parser.add_argument("--eval-hold-shards", type=int, default=5)
     parser.add_argument("--log-file", default="logs/option_c.jsonl")
     args = parser.parse_args()
 
@@ -570,6 +571,7 @@ def main():
         checkpoint_dir=args.checkpoint_dir,
         log_file=args.log_file,
         resume_from=args.resume,
+        eval_hold_shards=args.eval_hold_shards,
     )
 
     train_option_c(cfg)
