@@ -203,6 +203,34 @@ class TestNoisify:
         assert noised[0]["context"] != examples[0]["context"]
 
 
+class TestContextTruncation:
+    def test_overlong_context_truncated_no_crash(self, tiny_model):
+        max_bytes = tiny_model.cfg.max_seq_len * tiny_model.cfg.patch_size
+        ctx = list(range(256)) * ((max_bytes * 2) // 256 + 1)
+        ctx = ctx[: max_bytes * 2]
+        comp = list(b"test")
+        result = score_completion(tiny_model, ctx, comp, torch.device("cpu"))
+        assert result.n_bytes > 0
+        assert math.isfinite(result.bpb)
+
+    def test_overlong_completion_truncated_no_crash(self, tiny_model):
+        max_bytes = tiny_model.cfg.max_seq_len * tiny_model.cfg.patch_size
+        ctx = list(b"Hello")
+        comp = list(range(256)) * ((max_bytes * 2) // 256 + 1)
+        comp = comp[: max_bytes * 2]
+        result = score_completion(tiny_model, ctx, comp, torch.device("cpu"))
+        assert result.n_bytes > 0
+        assert math.isfinite(result.bpb)
+
+    def test_exact_limit_no_crash(self, tiny_model):
+        max_bytes = tiny_model.cfg.max_seq_len * tiny_model.cfg.patch_size
+        ctx = [i % 256 for i in range(max_bytes - 8)]
+        comp = list(b"test1234")
+        result = score_completion(tiny_model, ctx, comp, torch.device("cpu"))
+        assert result.n_bytes > 0
+        assert math.isfinite(result.bpb)
+
+
 class TestDataLoaders:
     @pytest.mark.skipif(
         not _datasets_available(),

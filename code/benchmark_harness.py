@@ -69,12 +69,22 @@ def score_completion(
     model, and extracts cross-entropy loss only on completion byte positions.
     """
     P = model.cfg.patch_size
+    max_bytes = model.cfg.max_seq_len * P
 
     context_len = len(context_bytes)
     completion_len = len(completion_bytes)
 
     if completion_len == 0:
         return ScoredChoice("", float("inf"), 0, float("inf"))
+
+    if completion_len > max_bytes - 2 * P:
+        completion_bytes = completion_bytes[: max_bytes - 2 * P]
+        completion_len = len(completion_bytes)
+
+    budget = max_bytes - completion_len
+    if context_len > budget:
+        context_bytes = context_bytes[context_len - budget :]
+        context_len = len(context_bytes)
 
     ctx_pad = (P - (context_len % P)) % P
     padded_context = [0] * ctx_pad + context_bytes
