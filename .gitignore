@@ -61,6 +61,12 @@ checkpoints/
 logs/
 *.jsonl
 
+# Research archive (contains model names, pre-reset docs)
+research/archive/
+
+# GPU launch checklist (contains operational teacher identities)
+research/GPU_LAUNCH_CHECKLIST.md
+
 # Private teacher identity config (real HF model IDs)
 config/teacher_config.json
 config/teacher_config.*.json

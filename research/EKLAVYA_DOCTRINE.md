@@ -970,12 +970,12 @@ SE1_teacher_roster_v0:
   encoder_teacher_primary:
     candidates:
       - embedding-candidate-0.6B
-      - BAAI/bge-m3
+      - t3_semantic_embedding (see teacher registry)
     purpose: geometry_anchor_and_retrieval_paraphrase_surface
 
   encoder_teacher_small_control:
     candidates:
-      - BAAI/bge-small-en-v1.5
+      - t3_semantic_embedding_small (see teacher registry)
     purpose: detect_when_encoder_teacher_scale_is_irrelevant
 
   verifier_teacher:
