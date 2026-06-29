@@ -24,7 +24,7 @@ knowledge can be absorbed without vocabulary alignment hacks.
 
 ## Current State
 
-**S0 (Scout Build)** — implementation complete, training imminent.
+**S0 (Scout Build)** — training in progress (step ~10K/50K).
 
 | Component | Status | Key File |
 |-----------|--------|----------|
@@ -37,26 +37,33 @@ knowledge can be absorbed without vocabulary alignment hacks.
 | Live training monitor | Ready | `code/monitor.py` |
 | Evaluation + generation | Ready | `code/s0_eval.py` |
 
+**Benchmarks** — evaluation harness ready.
+
+| Component | Status | Key File |
+|-----------|--------|----------|
+| Benchmark harness (HellaSwag, PIQA, ARC, etc.) | Built & tested | `code/benchmark_harness.py` |
+| Unit tests (19 tests) | All passing | `code/test_benchmark_harness.py` |
+
 **E1 (Single-Teacher KD)** — implementation complete, tested, pending S0 checkpoint.
 
 | Component | Status | Key File |
 |-----------|--------|----------|
 | Teacher signal cache builder | Built & tested | `code/eklavya_cache.py` |
 | KD training loop (3-phase) | Built & tested | `code/eklavya_training.py` |
-| Unit tests (46 tests) | All passing | `code/test_eklavya.py` |
+| Unit tests (53 tests) | All passing | `code/test_eklavya.py` |
 
 **E2 (Multi-Teacher KD)** — fully wired with mmap-backed cache, integration tests, and GPU launch checklist. Ready for GPU.
 
 | Component | Status | Key File |
 |-----------|--------|----------|
-| Teacher registry (5 teachers) | Built & tested | `code/eklavya_e2_cache.py` |
+| Teacher registry (4 active teachers) | Built & tested | `code/eklavya_e2_cache.py` |
 | Binary cache records & I/O | Built & tested | `code/eklavya_e2_cache.py` |
 | PL-style router & purifier | Built & tested | `code/eklavya_e2_router.py` |
 | Projection ports & losses | Built & tested | `code/eklavya_e2_losses.py` |
 | Multi-teacher gradient budget | Built & tested | `code/eklavya_e2_losses.py` |
 | Calibration loss | Built & tested | `code/eklavya_e2_training.py` |
-| Unit tests (452 E2 tests) | All passing | `code/test_eklavya_e2.py` |
-| Data loader tests (8 tests) | All passing | `code/test_overfit.py` |
+| Unit tests (473 E2 tests) | All passing | `code/test_eklavya_e2.py` |
+| Data loader tests (18 tests) | All passing | `code/test_overfit.py` |
 | Cache builder (2-pass) | Built | `code/eklavya_e2_cache_builder.py` |
 | E2 trainer with curriculum | Built & reviewed | `code/eklavya_e2_training.py` |
 | Ablation evaluation harness | Built | `code/eval_e2.py` |
@@ -64,6 +71,14 @@ knowledge can be absorbed without vocabulary alignment hacks.
 | Ablation comparison & decisions | Built | `code/compare_ablations.py` |
 | Protocol document | Written | [E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) |
 | Monitoring protocol | Written | [E2 Monitoring](research/E2_MONITORING_PROTOCOL.md) |
+
+**Option C (Teacher-Guided Pretraining)** — alternative path: KD from step 0.
+
+| Component | Status | Key File |
+|-----------|--------|----------|
+| Option C trainer | Built & tested | `code/s0_option_c_training.py` |
+| Mapped byte-KL cache | Built & tested | `code/eklavya_cache.py` |
+| Unit tests (7 tests) | All passing | `code/test_option_c.py` |
 
 ### S0 Architecture
 
@@ -98,9 +113,9 @@ Three admitted Common Pile subsets (Public Domain / CC0 only):
 
 ```
 D0: Data admission (source/license filtering)        ✅ Complete
-S0: Byte/patch scout (121.7M, fixed compute)          ⏳ Training next
-E1: Single-teacher byte-level KD (anchor teacher → S0)   📐 Designed
-E2: Multi-teacher KD (5 teachers → S0)                📐 Infrastructure built
+S0: Byte/patch scout (121.7M, fixed compute)          ⏳ Training (step ~10K/50K)
+E1: Single-teacher byte-level KD (anchor teacher → S0)   📐 Ready for GPU
+E2: Multi-teacher KD (4 teachers → S0)                📐 Infrastructure built
 T0: Teacher feasibility profiling (parallel)           ◻ After S0
 G0: Gap mapping on real student traces                 ◻ After S0 trained
 P0: Packet compilation for observed gaps               ◻ After G0
@@ -134,10 +149,10 @@ O0: Ownership/credit/efficiency gates                  ◻ After G1
 ```bash
 pip install torch numpy transformers pytest
 cd code
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py test_monitor_inspect.py -v
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py test_monitor_inspect.py test_option_c.py test_benchmark_harness.py -v
 ```
 
-All 795 tests run on CPU without any data, models, or GPU. They validate
+All 834 tests run on CPU without any data, models, or GPU. They validate
 the S0 architecture (config presets, loss shape, LR schedule, causality),
 the full E1/E2 infrastructure (binary record I/O, router, purifier, losses,
 gradient budget, cache builder, position manifest, teacher records, training

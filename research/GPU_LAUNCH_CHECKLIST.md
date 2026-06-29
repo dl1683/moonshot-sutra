@@ -549,7 +549,7 @@ multi-teacher E2 enrichment.
 | Burn-in verdict | `code/burnin_verdict.py` |
 | E1 cache builder | `code/eklavya_cache.py` (supports --selection-policy uniform) |
 | E1 training loop | `code/eklavya_training.py` |
-| E1 unit tests | `code/test_eklavya.py` (48 tests) |
+| E1 unit tests | `code/test_eklavya.py` (53 tests) |
 | Option C trainer | `code/s0_option_c_training.py` |
 | Option C tests | `code/test_option_c.py` (7 tests) |
 | E2 cache builder | `code/eklavya_e2_cache_builder.py` |
@@ -557,13 +557,15 @@ multi-teacher E2 enrichment.
 | E2 router/purifier | `code/eklavya_e2_router.py` |
 | E2 losses/ports | `code/eklavya_e2_losses.py` |
 | E2 evaluator | `code/eval_e2.py` |
-| E2 unit tests | `code/test_eklavya_e2.py` (467 tests) |
-| S0 tests | `code/test_overfit.py` (17 tests) |
+| E2 unit tests | `code/test_eklavya_e2.py` (473 tests) |
+| S0 tests | `code/test_overfit.py` (18 tests) |
 | Burnin verdict tests | `code/test_burnin_verdict.py` (44 tests) |
 | Export CSV tests | `code/test_export_log_csv.py` (22 tests) |
 | Utility tests | `code/test_utilities.py` (35 tests) |
 | Ablation comparison tests | `code/test_compare_ablations.py` (72 tests) |
 | VRAM profile tests | `code/test_vram_profile.py` (18 tests) |
+| Benchmark harness | `code/benchmark_harness.py` |
+| Benchmark harness tests | `code/test_benchmark_harness.py` (19 tests) |
 | Monitor/inspect/config tests | `code/test_monitor_inspect.py` (73 tests) |
 | E1 protocol | `research/EKLAVYA_E1_PROTOCOL.md` |
 | E2 protocol | `research/EKLAVYA_E2_PROTOCOL.md` |
@@ -585,7 +587,7 @@ multi-teacher E2 enrichment.
 2. **Telemetry units**: JSONL logs emit `teacher_losses_bits` (for comparison with BPB) and `teacher_losses_nats` (raw gradient-scale values)
 3. **Mmap cache**: E2 trainer uses `E2CacheView` (memory-mapped). Record data stays on disk; only accessed records unpack at runtime. **Index RAM**: pilot (50K positions, 5 teachers) ~28 MB; production (10M positions, 5 teachers) ~5.7 GB. Check with `estimate_index_memory()` before building full-scale cache
 4. **GradScaler safety**: PORT_WARMUP phase may produce zero backward passes on some batches; the trainer handles this gracefully
-5. **Checkpoint resume**: E1/E2 step/best checkpoints save all RNG states (torch, CUDA, Python, NumPy) and best_eval_bpb. S0 also saves best_eval_bpb. DataLoader iterator position is NOT saved — resume starts a fresh shuffled loader (acceptable for continuation, not bit-exact replay). Final checkpoints (`e2_final.pt`, `s0_best.pt`) are export-only (model + config, no optimizer/RNG state). **Accumulation alignment**: E1/E2 checkpoints are only saved at gradient accumulation boundaries (after optimizer step + zero_grad). With `grad_accum=2` and `checkpoint_every=1000`, the step checkpoint may land at step 1001 instead of 1000 — this ensures resume never loses pending accumulated gradients
+5. **Checkpoint resume**: S0/E1/E2/Option C step checkpoints save all RNG states (torch, CUDA, Python, NumPy), DataLoader sampler state, and best_eval_bpb. Resume is bit-exact: sampler state restores shuffle order, then fast-forward skips consumed batches. Final checkpoints (`e2_final.pt`, `s0_best.pt`) are export-only (model + config, no optimizer/RNG state). **Accumulation alignment**: E1/E2 checkpoints are only saved at gradient accumulation boundaries (after optimizer step + zero_grad). With `grad_accum=2` and `checkpoint_every=1000`, the step checkpoint may land at step 1001 instead of 1000 — this ensures resume never loses pending accumulated gradients
 6. **NaN hard-fail**: E2 training aborts immediately with `RuntimeError` if CE loss or grad_norm becomes non-finite. A `HARD_FAIL` entry is written to the JSONL log before aborting. The monitor also flags non-finite CE loss values during live monitoring
 7. **Per-ablation logs**: Each E2 ablation writes to its own log file (`logs/e2_{ablation_id}.jsonl`), auto-derived from `--ablation-id`. Override with `--log-file` if needed. Monitor with: `python monitor.py --log logs/e2_a2.jsonl --watch`
 8. **GPU memory telemetry**: Peak GPU memory (GB) is logged at phase transitions and in periodic log entries (`gpu_mem_gb` field). The monitor displays the latest reading. Use to validate VRAM budget assumptions early
