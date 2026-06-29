@@ -958,8 +958,8 @@ SE1_teacher_roster_v0:
 
   decoder_teacher_efficiency_reference:
     candidates:
-      - HuggingFaceTB/SmolLM3-3B
-      - HuggingFaceTB/SmolLM3-3B-Base
+      - efficiency-reference-3B
+      - efficiency-reference-3B-base
     purpose: small_efficient_decoder_peer_and_curriculum_reference
 
   decoder_teacher_small_control:

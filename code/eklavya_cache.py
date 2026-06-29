@@ -130,7 +130,7 @@ def multi_byte_marginal(logits: torch.Tensor, tokenizer, n_positions: int = 4,
     marginals for positions 0 through n_positions-1.
 
     Coverage at position i = fraction of token probability mass on tokens
-    with >= (i+1) bytes. For Qwen3 tokenizer: ~100%, 99.9%, 97%, 80%
+    with >= (i+1) bytes. Typical BPE: ~100%, 99.9%, 97%, 80%
     for positions 0-3.
 
     Returns list of (top_bytes, top_probs, tail_prob, coverage) tuples,

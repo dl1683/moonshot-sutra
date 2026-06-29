@@ -1,4 +1,4 @@
-"""Option C: Teacher-guided S0 pretraining with Qwen KL from step 0.
+"""Option C: Teacher-guided S0 pretraining with KL from step 0.
 
 Unlike E1 (post-training KD), Option C applies KD loss during initial
 pretraining. The core bet: early output-distribution guidance while CE
@@ -9,7 +9,7 @@ Imports primitives from s0_training and eklavya_training — no duplication.
 Usage:
     python s0_option_c_training.py \
         --data-dir ../data/shards_bytes_full \
-        --cache-dir C:/sutra_fast/option_c_qwen_cache \
+        --cache-dir C:/sutra_fast/option_c_cache \
         --checkpoint-dir C:/sutra_fast/checkpoints/option_c_pilot \
         --steps 10000
 """

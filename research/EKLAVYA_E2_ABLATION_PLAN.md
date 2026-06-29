@@ -140,7 +140,7 @@ python code/eklavya_e2_training.py \
 
 # A5b: No router (tuned static weights — strongest static baseline)
 # NOTE: t3_semantic_embedding has no KL, so only KL teachers get weights.
-# NOTE: t4_diversity_ssm (Mamba2) DROPPED — only 3 KL teachers remain.
+# NOTE: t4_diversity_ssm DROPPED — only 3 KL teachers remain.
 # Tune final weights from A5a validation telemetry. Starting point below.
 python code/eklavya_e2_training.py \
   --student-checkpoint checkpoints/e1/e1_best.pt \
