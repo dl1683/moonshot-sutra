@@ -1018,6 +1018,7 @@ class E2Trainer:
         else:
             active = []
 
+        active = [s for s in active if s.prior > 0]
         if self.cfg.teacher_include is not None:
             active = [s for s in active if s.name in self.cfg.teacher_include]
         if self.cfg.teacher_exclude:

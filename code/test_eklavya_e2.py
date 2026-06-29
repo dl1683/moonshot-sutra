@@ -2899,7 +2899,7 @@ class TestE2TrainerTeacherLosses:
         student = SutraS0(model_cfg)
 
         t0 = TEACHER_REGISTRY[0]  # t0_anchor_decoder
-        t4 = TEACHER_REGISTRY[4]  # t4_diversity_ssm
+        t1 = TEACHER_REGISTRY[1]  # t1_diversity_hybrid (prior > 0)
 
         n_pos = 10
         positions = [
@@ -2913,7 +2913,7 @@ class TestE2TrainerTeacherLosses:
 
         kl_K = 16
         kl_recs_t0 = []
-        kl_recs_t4 = []
+        kl_recs_t1 = []
         for i in range(n_pos):
             probs = np.zeros(kl_K, dtype=np.float32)
             probs[0] = 0.90
@@ -2925,7 +2925,7 @@ class TestE2TrainerTeacherLosses:
                 top_bytes=top_bytes, top_probs=probs,
                 tail_prob=0.0, entropy=2.0, logp_gold=-1.5,
             ))
-            kl_recs_t4.append(E2KLRecord(
+            kl_recs_t1.append(E2KLRecord(
                 position_id=i, patch_idx=i + 1,
                 top_bytes=top_bytes, top_probs=probs,
                 tail_prob=0.0, entropy=2.0, logp_gold=-1.5,
@@ -2939,9 +2939,9 @@ class TestE2TrainerTeacherLosses:
                 "align_records": [],
                 "embedding_table": torch.empty(0),
             },
-            t4.name: {
-                "spec": t4,
-                "kl_records": kl_recs_t4,
+            t1.name: {
+                "spec": t1,
+                "kl_records": kl_recs_t1,
                 "kl_K": kl_K,
                 "align_records": [],
                 "embedding_table": torch.empty(0),
@@ -2953,7 +2953,7 @@ class TestE2TrainerTeacherLosses:
             "n_positions": n_pos,
             "kl_top_k": kl_K,
             "teacher_count": 2,
-            "teacher_specs": [t0, t4],
+            "teacher_specs": [t0, t1],
         }
         cache = {
             "manifest": manifest,
@@ -2961,7 +2961,7 @@ class TestE2TrainerTeacherLosses:
             "teachers": teacher_data,
             "routes": [],
         }
-        specs = [t0, t4]
+        specs = [t0, t1]
         ports = MultiTeacherProjectionPorts(student_dim=model_cfg.d_model,
                                             teachers=specs)
         cfg = E2Config(
@@ -2988,8 +2988,8 @@ class TestE2TrainerTeacherLosses:
             "per-teacher (kl_purified_{name})")
         assert any(k == f"kl_purified_{t0.name}" for k in kl_keys), (
             f"Missing kl_purified_{t0.name} in {list(losses.keys())}")
-        assert any(k == f"kl_purified_{t4.name}" for k in kl_keys), (
-            f"Missing kl_purified_{t4.name} in {list(losses.keys())}")
+        assert any(k == f"kl_purified_{t1.name}" for k in kl_keys), (
+            f"Missing kl_purified_{t1.name} in {list(losses.keys())}")
         for k in kl_keys:
             assert torch.isfinite(losses[k]), f"{k} is not finite"
             assert losses[k].requires_grad, f"{k} has no grad"

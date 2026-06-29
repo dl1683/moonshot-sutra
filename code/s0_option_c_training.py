@@ -212,8 +212,10 @@ def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):
     if "shard_range" in cache_manifest:
         cr = cache_shard_range
         if cr[0] > train_range[0] or cr[1] < train_range[1]:
-            print(f"WARNING: Cache shard range {cr} does not cover "
-                  f"train range {train_range}")
+            raise RuntimeError(
+                f"Cache shard range {cr} does not cover train range "
+                f"{train_range}. Rebuild cache with --max-shards >= "
+                f"{train_range[1]}.")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len_bytes,
                                     model_cfg.patch_size, shard_range=train_range)

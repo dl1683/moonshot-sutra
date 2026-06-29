@@ -518,11 +518,14 @@ def main():
     device = torch.device("cuda" if use_cuda else "cpu")
     print(f"Device: {device}")
 
-    # Select teachers
+    # Select teachers (skip those with prior=0 unless explicitly requested)
     if args.teachers:
         specs = [get_teacher_by_name(n) for n in args.teachers]
     else:
-        specs = list(TEACHER_REGISTRY)
+        specs = [t for t in TEACHER_REGISTRY if t.prior > 0]
+        dropped = [t.name for t in TEACHER_REGISTRY if t.prior == 0]
+        if dropped:
+            print(f"Skipping teachers with prior=0: {dropped}")
 
     # Resolve private HF names from config
     config_path = args.teacher_config or os.environ.get("SUTRA_TEACHER_CONFIG")
