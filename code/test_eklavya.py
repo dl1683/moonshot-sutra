@@ -1176,7 +1176,9 @@ def test_select_uniform_kl_patches_different_seeds():
 
 def test_mapped_byte_kl_cache_roundtrip():
     """MappedByteKLCache can index and retrieve records written by StreamingCacheWriter."""
-    with tempfile.TemporaryDirectory() as td:
+    td = tempfile.mkdtemp()
+    cache = None
+    try:
         writer = StreamingCacheWriter(td, kl_top_k=4)
 
         records = [
@@ -1213,8 +1215,14 @@ def test_mapped_byte_kl_cache_roundtrip():
 
         assert cache.has_sequence(0, 0)
         assert not cache.has_sequence(99, 0)
-
-        cache.close()
+    finally:
+        if cache is not None:
+            cache.close()
+        import shutil
+        try:
+            shutil.rmtree(td)
+        except OSError:
+            pass
     print("  test_mapped_byte_kl_cache_roundtrip PASSED")
 
 
