@@ -51,6 +51,7 @@ class ByteKLRecord:
     top_probs: np.ndarray    # float16[K]
     tail_prob: float
     entropy: float
+    byte_pos: int = 0        # byte position within patch (0-3 for P=4)
 
 
 def build_token_byte_table(tokenizer) -> dict[int, bytes]:
@@ -108,6 +109,60 @@ def first_byte_marginal(logits: torch.Tensor, tokenizer, top_vocab: int = 4096,
         max(0.0, tail),
         coverage,
     )
+
+
+def multi_byte_marginal(logits: torch.Tensor, tokenizer, n_positions: int = 4,
+                        top_vocab: int = 4096, K: int = 16,
+                        _byte_table: dict = None,
+                        ) -> list[tuple[np.ndarray, np.ndarray, float, float]]:
+    """Compute per-byte-position marginals from teacher token logits.
+
+    Extracts teacher signal for ALL byte positions from a SINGLE forward pass
+    by decomposing the token probability distribution. Each token maps to a
+    byte sequence; accumulating probability mass per byte position gives
+    marginals for positions 0 through n_positions-1.
+
+    Coverage at position i = fraction of token probability mass on tokens
+    with >= (i+1) bytes. For Qwen3 tokenizer: ~100%, 99.9%, 97%, 80%
+    for positions 0-3.
+
+    Returns list of (top_bytes, top_probs, tail_prob, coverage) tuples,
+    one per byte position.
+    """
+    probs = torch.softmax(logits.float(), dim=-1)
+    top_ids = torch.topk(probs, min(top_vocab, probs.shape[-1])).indices
+
+    q_per_pos = [torch.zeros(256, dtype=torch.float32) for _ in range(n_positions)]
+
+    for tok_id in top_ids.tolist():
+        bs = token_id_to_bytes(tokenizer, tok_id, _byte_table)
+        if not bs:
+            continue
+        p = probs[tok_id].item()
+        for pos in range(min(len(bs), n_positions)):
+            q_per_pos[pos][bs[pos]] += p
+
+    results = []
+    for pos in range(n_positions):
+        q = q_per_pos[pos]
+        coverage = q.sum().item()
+        if coverage > 0:
+            uncovered = max(0.0, 1.0 - coverage)
+            q = q + uncovered / 256.0
+            q = q / q.sum()
+        else:
+            q = torch.ones(256, dtype=torch.float32) / 256.0
+
+        top_probs_val, top_bytes_val = torch.topk(q, min(K, 256))
+        tail = 1.0 - top_probs_val.sum().item()
+        results.append((
+            top_bytes_val.cpu().numpy().astype(np.uint8),
+            top_probs_val.cpu().numpy().astype(np.float16),
+            max(0.0, tail),
+            coverage,
+        ))
+
+    return results
 
 
 def compute_token_byte_spans(tokenizer, input_ids: list[int],
@@ -209,6 +264,7 @@ def build_cache_for_shard(
     sample_frac: float = 0.25,
     sample_seed: int = 491,
     skip_align: bool = False,
+    byte_positions: str = "first",
 ) -> tuple[list[AlignRecord], list[ByteKLRecord]]:
     teacher.eval()
     if student_model is not None:
@@ -283,25 +339,50 @@ def build_cache_for_shard(
                 continue
 
             t_logits = teacher(prefix_ids).logits[0, -1]
-            top_b, top_p, tail, coverage = first_byte_marginal(
-                t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
 
-            q = torch.zeros(256, dtype=torch.float32)
-            q[top_b] = torch.from_numpy(top_p.astype(np.float32))
-            q_sum = q.sum()
-            if q_sum > 0:
-                q = q / q_sum
-            ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
-
-            kl_records.append(ByteKLRecord(
-                shard_id=shard_id,
-                seq_offset=offset,
-                patch_idx=patch_idx,
-                top_bytes=top_b,
-                top_probs=top_p,
-                tail_prob=tail,
-                entropy=ent,
-            ))
+            if byte_positions == "all":
+                _min_cov = [0.0, 0.50, 0.35, 0.25]
+                marginals = multi_byte_marginal(
+                    t_logits, tokenizer, n_positions=patch_size,
+                    K=kl_top_k, _byte_table=byte_table)
+                for bpos, (top_b, top_p, tail, cov) in enumerate(marginals):
+                    min_cov = _min_cov[bpos] if bpos < len(_min_cov) else 0.25
+                    if cov < min_cov:
+                        continue
+                    q = torch.zeros(256, dtype=torch.float32)
+                    q[top_b] = torch.from_numpy(top_p.astype(np.float32))
+                    q_sum = q.sum()
+                    if q_sum > 0:
+                        q = q / q_sum
+                    ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
+                    kl_records.append(ByteKLRecord(
+                        shard_id=shard_id,
+                        seq_offset=offset,
+                        patch_idx=patch_idx,
+                        top_bytes=top_b,
+                        top_probs=top_p,
+                        tail_prob=tail,
+                        entropy=ent,
+                        byte_pos=bpos,
+                    ))
+            else:
+                top_b, top_p, tail, coverage = first_byte_marginal(
+                    t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
+                q = torch.zeros(256, dtype=torch.float32)
+                q[top_b] = torch.from_numpy(top_p.astype(np.float32))
+                q_sum = q.sum()
+                if q_sum > 0:
+                    q = q / q_sum
+                ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
+                kl_records.append(ByteKLRecord(
+                    shard_id=shard_id,
+                    seq_offset=offset,
+                    patch_idx=patch_idx,
+                    top_bytes=top_b,
+                    top_probs=top_p,
+                    tail_prob=tail,
+                    entropy=ent,
+                ))
 
         if (seq_idx + 1) % 100 == 0:
             print(f"  shard {shard_id} seq {seq_idx+1}/{n_seqs}: "
@@ -314,10 +395,12 @@ def build_cache_for_shard(
 class StreamingCacheWriter:
     """Writes cache records incrementally to disk to avoid OOM on large datasets."""
 
-    def __init__(self, output_dir: str, kl_top_k: int = 16):
+    def __init__(self, output_dir: str, kl_top_k: int = 16,
+                 cache_format_version: int = 1):
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir = output_dir
         self.kl_top_k = kl_top_k
+        self.format_version = cache_format_version
         self.n_align = 0
         self.n_kl = 0
 
@@ -339,6 +422,8 @@ class StreamingCacheWriter:
 
         for r in kl_records:
             self._kl_f.write(struct.pack("<IqH", r.shard_id, r.seq_offset, r.patch_idx))
+            if self.format_version >= 2:
+                self._kl_f.write(struct.pack("<B", r.byte_pos))
             self._kl_f.write(r.top_bytes.tobytes())
             self._kl_f.write(r.top_probs.tobytes())
             self._kl_f.write(struct.pack("<ee", r.tail_prob, r.entropy))
@@ -370,6 +455,7 @@ class StreamingCacheWriter:
             "n_kl": self.n_kl,
             "kl_top_k": self.kl_top_k,
             "has_embeddings": embedding_table is not None,
+            "cache_format_version": self.format_version,
         }
         if shard_range is not None:
             manifest["shard_range"] = list(shard_range)
@@ -378,7 +464,8 @@ class StreamingCacheWriter:
         with open(os.path.join(self.output_dir, "cache_manifest.json"), "w") as f:
             json.dump(manifest, f, indent=2)
 
-        print(f"Finalized cache: {self.n_align} align, {self.n_kl} kl records")
+        print(f"Finalized cache: {self.n_align} align, {self.n_kl} kl records "
+              f"(format v{self.format_version})")
 
 
 class MappedByteKLCache:
@@ -395,6 +482,8 @@ class MappedByteKLCache:
         with open(os.path.join(cache_dir, "cache_manifest.json")) as f:
             self.manifest = json.load(f)
 
+        self.format_version = self.manifest.get("cache_format_version", 1)
+
         kl_path = os.path.join(cache_dir, "kl_records.bin")
         self._kl_file = open(kl_path, "rb")
         self._kl_mm = mmap_mod.mmap(
@@ -404,7 +493,9 @@ class MappedByteKLCache:
         self.n_records = hdr[0]
         self.kl_top_k = hdr[1]
         self._header_size = 8
-        self._rec_size = 14 + self.kl_top_k + self.kl_top_k * 2 + 4
+        # v2 adds 1 byte for byte_pos after patch_idx
+        self._byte_pos_size = 1 if self.format_version >= 2 else 0
+        self._rec_size = 14 + self._byte_pos_size + self.kl_top_k + self.kl_top_k * 2 + 4
 
         self._index: dict[tuple[int, int], tuple[int, int]] = {}
         self._build_index()
@@ -445,6 +536,11 @@ class MappedByteKLCache:
             sid, soff, pidx = struct.unpack(
                 "<IqH", self._kl_mm[offset:offset + 14])
             pos = offset + 14
+            if self.format_version >= 2:
+                byte_pos = struct.unpack("<B", self._kl_mm[pos:pos + 1])[0]
+                pos += 1
+            else:
+                byte_pos = 0
             top_b = np.frombuffer(
                 self._kl_mm[pos:pos + K], dtype=np.uint8).copy()
             pos += K
@@ -453,7 +549,9 @@ class MappedByteKLCache:
             pos += K * 2
             tail, ent = struct.unpack("<ee", self._kl_mm[pos:pos + 4])
 
-            rec = ByteKLRecord(sid, soff, pidx, top_b, top_p, float(tail), float(ent))
+            rec = ByteKLRecord(
+                sid, soff, pidx, top_b, top_p, float(tail), float(ent),
+                byte_pos=byte_pos)
             if _kl_record_is_valid(rec):
                 records.append(rec)
 
@@ -472,7 +570,8 @@ class MappedByteKLCache:
 
 def save_cache(output_dir: str, align_records: list[AlignRecord],
                kl_records: list[ByteKLRecord], embedding_table: Optional[torch.Tensor] = None,
-               shard_range: Optional[tuple[int, int]] = None):
+               shard_range: Optional[tuple[int, int]] = None,
+               cache_format_version: int = 1):
     os.makedirs(output_dir, exist_ok=True)
 
     align_path = os.path.join(output_dir, "align_records.bin")
@@ -490,6 +589,8 @@ def save_cache(output_dir: str, align_records: list[AlignRecord],
         f.write(struct.pack("<II", len(kl_records), K))
         for r in kl_records:
             f.write(struct.pack("<IqH", r.shard_id, r.seq_offset, r.patch_idx))
+            if cache_format_version >= 2:
+                f.write(struct.pack("<B", r.byte_pos))
             f.write(r.top_bytes.tobytes())
             f.write(r.top_probs.tobytes())
             f.write(struct.pack("<ee", r.tail_prob, r.entropy))
@@ -507,13 +608,15 @@ def save_cache(output_dir: str, align_records: list[AlignRecord],
         "n_kl": len(kl_records),
         "kl_top_k": K,
         "has_embeddings": embedding_table is not None,
+        "cache_format_version": cache_format_version,
     }
     if shard_range is not None:
         manifest["shard_range"] = list(shard_range)
     with open(os.path.join(output_dir, "cache_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"Saved cache: {len(align_records)} align, {len(kl_records)} kl records")
+    print(f"Saved cache: {len(align_records)} align, {len(kl_records)} kl records "
+          f"(format v{cache_format_version})")
 
 
 def _kl_record_is_valid(rec: ByteKLRecord) -> bool:
@@ -562,15 +665,22 @@ def load_cache(cache_dir: str) -> dict:
         else:
             n, K = struct.unpack("<II", hdr_data)
             kl_hdr = 8
-            kl_rec_size = 14 + K + K * 2 + 4  # IqH + top_bytes + top_probs + ee
+            fmt_version = manifest.get("cache_format_version", 1)
+            byte_pos_size = 1 if fmt_version >= 2 else 0
+            kl_rec_size = 14 + byte_pos_size + K + K * 2 + 4
             if file_size < kl_hdr + n * kl_rec_size:
                 n = max(0, (file_size - kl_hdr) // kl_rec_size)
         for _ in range(n):
             sid, soff, pidx = struct.unpack("<IqH", f.read(14))
+            if fmt_version >= 2:
+                byte_pos = struct.unpack("<B", f.read(1))[0]
+            else:
+                byte_pos = 0
             top_b = np.frombuffer(f.read(K), dtype=np.uint8).copy()
             top_p = np.frombuffer(f.read(K * 2), dtype=np.float16).copy()
             tail, ent = struct.unpack("<ee", f.read(4))
-            rec = ByteKLRecord(sid, soff, pidx, top_b, top_p, tail, ent)
+            rec = ByteKLRecord(sid, soff, pidx, top_b, top_p, tail, ent,
+                               byte_pos=byte_pos)
             if _kl_record_is_valid(rec):
                 kl_records.append(rec)
 
@@ -606,6 +716,9 @@ def main():
                         help="Seed for reproducible uniform sampling")
     parser.add_argument("--no-align", action="store_true",
                         help="Skip alignment record building (KL-only cache)")
+    parser.add_argument("--byte-positions", choices=["first", "all"],
+                        default="first",
+                        help="Which byte positions to cache: first (v1) or all (v2)")
     args = parser.parse_args()
 
     if args.selection_policy == "nll" and args.student_checkpoint is None:
@@ -653,7 +766,8 @@ def main():
     n_shards = min(len(shards), args.max_shards)
     print(f"Processing {n_shards} shards from {args.data_dir}")
 
-    writer = StreamingCacheWriter(args.output_dir)
+    cache_fmt = 2 if args.byte_positions == "all" else 1
+    writer = StreamingCacheWriter(args.output_dir, cache_format_version=cache_fmt)
     t0 = time.time()
 
     for i in range(n_shards):
@@ -669,20 +783,22 @@ def main():
             sample_frac=args.sample_frac,
             sample_seed=args.sample_seed,
             skip_align=args.no_align,
+            byte_positions=args.byte_positions,
         )
         writer.write_shard(align, kl)
 
     elapsed = time.time() - t0
     print(f"\nDone in {elapsed:.0f}s")
 
-    manifest_extra = {}
+    manifest_extra = {
+        "byte_positions": args.byte_positions,
+    }
     if args.selection_policy == "uniform":
-        manifest_extra = {
+        manifest_extra.update({
             "selection_policy": "uniform",
             "sample_frac": args.sample_frac,
             "sample_seed": args.sample_seed,
-            "position_source": "option_c_uniform_pretrain_v1",
-        }
+        })
 
     writer.finalize(
         embedding_table, shard_range=(0, n_shards),

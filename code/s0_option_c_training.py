@@ -53,11 +53,11 @@ class OptionCConfig:
 
     batch_size: int = 4
     seq_len_bytes: int = 4096
-    grad_accum_steps: int = 2
+    grad_accum_steps: int = 16
     dtype: str = "bfloat16"
 
     kl_temperature: float = 2.0
-    max_kl_per_seq: int = 64
+    max_kl_per_seq: int = 2048
 
     checkpoint_dir: str = "checkpoints/option_c"
     log_file: str = "logs/option_c.jsonl"
@@ -83,21 +83,25 @@ class OptionCConfig:
 
 
 def get_lambda_kd(step: int) -> float:
-    if step < 2000:
-        return 0.05 + (0.20 - 0.05) * step / 2000
-    elif step < 20000:
+    if step < 1000:
+        return 0.05 + (0.20 - 0.05) * step / 1000
+    elif step < 5000:
+        return 0.20 + (0.35 - 0.20) * (step - 1000) / 4000
+    elif step < 30000:
+        return 0.35
+    elif step < 45000:
         return 0.25
-    elif step < 40000:
-        return 0.20
     else:
-        return 0.10
+        return 0.15
 
 
 def get_teacher_grad_budget(step: int) -> float:
-    if step < 2000:
-        return 0.30
-    elif step < 40000:
-        return 0.45
+    if step < 1000:
+        return 0.35
+    elif step < 30000:
+        return 0.65
+    elif step < 45000:
+        return 0.50
     else:
         return 0.35
 
@@ -109,7 +113,7 @@ def compute_batch_kl_loss(
     cache: MappedByteKLCache,
     device: torch.device,
     T: float = 2.0,
-    max_per_seq: int = 64,
+    max_per_seq: int = 2048,
 ) -> tuple[torch.Tensor, int, int]:
     B, Nm1, P, V = logits.shape
     all_losses = []
@@ -134,8 +138,10 @@ def compute_batch_kl_loss(
             logit_idx = r.patch_idx - 1
             if logit_idx < 0 or logit_idx >= Nm1:
                 continue
+            if r.byte_pos < 0 or r.byte_pos >= P:
+                continue
 
-            student_logit = logits[b, logit_idx, 0]
+            student_logit = logits[b, logit_idx, r.byte_pos]
 
             top_b = torch.from_numpy(r.top_bytes).to(device)
             top_p = torch.from_numpy(r.top_probs.astype(np.float32)).to(device)
