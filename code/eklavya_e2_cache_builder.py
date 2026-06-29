@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import gc
 import json
 import math
@@ -237,6 +238,7 @@ def build_teacher_records(
     device: torch.device = torch.device("cuda"),
     byte_table: dict = None,
     max_context_len: int = 8192,
+    single_pass: bool = True,
 ) -> tuple[list[E2KLRecord], list[E2AlignRecord]]:
     """Build per-teacher KL and align records at selected positions."""
     teacher_model.eval()
@@ -273,6 +275,8 @@ def build_teacher_records(
     n_kl_skip_empty_prefix = 0
     n_kl_skip_nonfinite = 0
     needs_align = spec.has_align or spec.has_semantic
+    needs_token_spans = needs_align or (spec.has_kl and single_pass)
+    n_kl_skip_nonaligned = 0
 
     for seq_offset, pos_list in pos_by_seq.items():
         seq_bytes = shard_data[seq_offset:seq_offset + seq_len]
@@ -286,8 +290,11 @@ def build_teacher_records(
 
         input_ids = teacher_inputs.input_ids[0].tolist()
 
-        if needs_align:
+        token_spans = None
+        if needs_token_spans:
             token_spans = compute_token_byte_spans(tokenizer, input_ids, byte_table)
+
+        if needs_align:
             span_valid = validate_token_byte_alignment(
                 bytes(seq_bytes), token_spans, input_ids, tokenizer, byte_table)
 
@@ -314,7 +321,51 @@ def build_teacher_records(
                             best_align[pos.position_id] = (overlap, rec)
             align_records.extend(rec for _, rec in best_align.values())
 
-        if spec.has_kl:
+        if spec.has_kl and single_pass and pos_list:
+            all_logits = teacher_model(teacher_inputs.input_ids).logits[0]
+            byte_ends = [be for (_bs, be) in token_spans]
+
+            for pos in pos_list:
+                n_kl_attempted += 1
+                t = pos.patch_idx * patch_size
+                tok_pos = bisect.bisect_right(byte_ends, t) - 1
+                if tok_pos < 0 or tok_pos >= all_logits.shape[0]:
+                    n_kl_skip_nonaligned += 1
+                    continue
+                if byte_ends[tok_pos] != t:
+                    n_kl_skip_nonaligned += 1
+                    continue
+
+                t_logits = all_logits[tok_pos]
+                top_b, top_p, tail, coverage = first_byte_marginal(
+                    t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
+                coverage_accum.append(coverage)
+
+                q = torch.zeros(256, dtype=torch.float32)
+                q[top_b.astype(np.int64)] = torch.from_numpy(top_p.astype(np.float32))
+                q_sum = q.sum()
+                if q_sum > 0:
+                    q = q / q_sum
+                ent = -(q * (q + 1e-10).log()).sum().item() / math.log(2)
+                logp_gold = math.log(max(q[pos.gold_byte].item(), 1e-20))
+
+                if not (math.isfinite(ent) and math.isfinite(logp_gold)
+                        and math.isfinite(tail)
+                        and np.all(np.isfinite(top_p))):
+                    n_kl_skip_nonfinite += 1
+                    continue
+
+                kl_records.append(E2KLRecord(
+                    position_id=pos.position_id,
+                    patch_idx=pos.patch_idx,
+                    tail_prob=tail,
+                    entropy=ent,
+                    logp_gold=logp_gold,
+                    top_bytes=top_b,
+                    top_probs=top_p,
+                ))
+
+        elif spec.has_kl:
             for pos in pos_list:
                 n_kl_attempted += 1
                 t = pos.patch_idx * patch_size
@@ -373,9 +424,12 @@ def build_teacher_records(
     if n_kl_attempted > 0 and spec.has_kl:
         n_kl_produced = len(kl_records)
         kl_coverage = n_kl_produced / n_kl_attempted
+        skip_parts = [f"empty_prefix={n_kl_skip_empty_prefix}",
+                      f"nonfinite={n_kl_skip_nonfinite}"]
+        if n_kl_skip_nonaligned > 0:
+            skip_parts.append(f"nonaligned={n_kl_skip_nonaligned}")
         print(f"  {spec.name}: KL records {n_kl_produced}/{n_kl_attempted} "
-              f"({kl_coverage:.1%}), skips: empty_prefix={n_kl_skip_empty_prefix}, "
-              f"nonfinite={n_kl_skip_nonfinite}")
+              f"({kl_coverage:.1%}), skips: {', '.join(skip_parts)}")
         if n_kl_skip_nonfinite > 0 and kl_coverage < 0.90:
             raise RuntimeError(
                 f"HARD_FAIL: {spec.name} KL coverage {kl_coverage:.1%} "
@@ -505,6 +559,8 @@ def main():
                         help="Skip post-teacher disagreement annotation pass")
     parser.add_argument("--allow-nonfinite-drop", action="store_true",
                         help="Allow dropping non-finite positions instead of hard-failing (diagnostic only)")
+    parser.add_argument("--no-single-pass", action="store_true",
+                        help="Use per-patch teacher forward passes instead of one-pass (slower but exact)")
     args = parser.parse_args()
 
     if not (1 <= args.kl_top_k <= 256):
@@ -739,6 +795,7 @@ def main():
                     device=device,
                     byte_table=byte_table,
                     max_context_len=max_ctx,
+                    single_pass=not args.no_single_pass,
                 )
                 kl_writer.extend(kl_recs)
                 align_writer.extend(align_recs)

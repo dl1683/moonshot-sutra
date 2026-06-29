@@ -399,6 +399,9 @@ def build_cache_for_shard(
                 tok_pos = bisect.bisect_right(byte_ends, t) - 1
                 if tok_pos < 0 or tok_pos >= all_logits.shape[0]:
                     continue
+                if byte_ends[tok_pos] != t:
+                    n_skipped_alignment += 1
+                    continue
                 t_logits = all_logits[tok_pos]
                 kl_records.extend(_extract_marginal_records(
                     t_logits, tokenizer, shard_id, offset,
@@ -840,6 +843,7 @@ def main():
 
     manifest_extra = {
         "byte_positions": args.byte_positions,
+        "single_pass": not args.no_single_pass,
     }
     if args.selection_policy == "uniform":
         manifest_extra.update({

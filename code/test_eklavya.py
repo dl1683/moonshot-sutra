@@ -1290,6 +1290,46 @@ def test_single_pass_byte_to_token_lookup():
     print("  test_single_pass_byte_to_token_lookup PASSED")
 
 
+def test_single_pass_alignment_guard():
+    """Single-pass skips patches that don't align to token boundaries."""
+    import bisect
+    # Token spans: tok0(0,4), tok1(4,8), tok2(8,13), tok3(13,16)
+    # byte_ends = [4, 8, 13, 16]
+    byte_ends = [4, 8, 13, 16]
+    patch_size = 4
+    n_logits = len(byte_ends)
+
+    aligned = []
+    skipped = []
+    for patch_idx in range(5):  # patches at bytes 0, 4, 8, 12, 16
+        t = patch_idx * patch_size
+        tok_pos = bisect.bisect_right(byte_ends, t) - 1
+        if tok_pos < 0 or tok_pos >= n_logits:
+            skipped.append(t)
+            continue
+        if byte_ends[tok_pos] != t:
+            skipped.append(t)
+            continue
+        aligned.append(t)
+
+    # byte 0: tok_pos=-1 (before all tokens) → skipped
+    # byte 4: byte_ends[0]=4=t → aligned
+    # byte 8: byte_ends[1]=8=t → aligned
+    # byte 12: tok_pos=1, byte_ends[1]=8≠12 → skipped (inside tok2)
+    # byte 16: byte_ends[3]=16=t → aligned
+    assert aligned == [4, 8, 16], f"Expected [4, 8, 16] got {aligned}"
+    assert skipped == [0, 12], f"Expected [0, 12] got {skipped}"
+
+    # Truncation case: patches beyond token coverage
+    byte_ends_short = [4, 8]
+    for t in [12, 16, 20]:
+        tok_pos = bisect.bisect_right(byte_ends_short, t) - 1
+        assert tok_pos >= 0
+        assert byte_ends_short[tok_pos] != t, f"t={t} should not align"
+
+    print("  test_single_pass_alignment_guard PASSED")
+
+
 def test_cli_arg_defaults_unchanged():
     """When CLI args are None, EklavyaConfig defaults are preserved."""
     cfg = EklavyaConfig()
@@ -1369,6 +1409,7 @@ if __name__ == "__main__":
         test_cli_arg_defaults_unchanged,
         test_cli_arg_partial_override,
         test_single_pass_byte_to_token_lookup,
+        test_single_pass_alignment_guard,
     ]
 
     passed = 0
