@@ -34,6 +34,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(__file__))
 from s0_architecture import SutraS0
+from s0_training import TrainConfig  # noqa: F401 — needed for checkpoint unpickling
 
 
 @dataclass
