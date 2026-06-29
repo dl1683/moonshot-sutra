@@ -38,7 +38,7 @@ from s0_training import (
     TrainConfig,
 )
 from eklavya_training import (
-    topk_tail_kl, apply_gradient_budget, EklavyaDataset, _rng_state,
+    apply_gradient_budget, EklavyaDataset, _rng_state,
 )
 from eklavya_cache import MappedByteKLCache, ByteKLRecord
 
@@ -116,9 +116,14 @@ def compute_batch_kl_loss(
     max_per_seq: int = 2048,
 ) -> tuple[torch.Tensor, int, int]:
     B, Nm1, P, V = logits.shape
-    all_losses = []
-    n_records_used = 0
     n_seqs_with_signal = 0
+
+    batch_indices = []
+    logit_indices = []
+    byte_pos_indices = []
+    all_top_bytes = []
+    all_top_probs = []
+    all_tail_probs = []
 
     for b in range(B):
         sid = int(shard_ids[b].item())
@@ -140,20 +145,33 @@ def compute_batch_kl_loss(
                 continue
             if r.byte_pos < 0 or r.byte_pos >= P:
                 continue
+            batch_indices.append(b)
+            logit_indices.append(logit_idx)
+            byte_pos_indices.append(r.byte_pos)
+            all_top_bytes.append(r.top_bytes)
+            all_top_probs.append(r.top_probs.astype(np.float32))
+            all_tail_probs.append(r.tail_prob)
 
-            student_logit = logits[b, logit_idx, r.byte_pos]
-
-            top_b = torch.from_numpy(r.top_bytes).to(device)
-            top_p = torch.from_numpy(r.top_probs.astype(np.float32)).to(device)
-            tail_p = torch.tensor(r.tail_prob, device=device, dtype=torch.float32)
-
-            loss = topk_tail_kl(student_logit, top_b, top_p, tail_p, T=T)
-            all_losses.append(loss)
-            n_records_used += 1
-
-    if not all_losses:
+    n_records = len(batch_indices)
+    if n_records == 0:
         return torch.tensor(0.0, device=device), 0, 0
-    return torch.stack(all_losses).mean(), n_records_used, n_seqs_with_signal
+
+    student_logits = logits[batch_indices, logit_indices, byte_pos_indices]
+    top_b = torch.from_numpy(np.stack(all_top_bytes)).long().to(device)
+    top_p = torch.from_numpy(np.stack(all_top_probs)).to(device)
+    tail_p = torch.tensor(all_tail_probs, device=device, dtype=torch.float32)
+
+    logp = F.log_softmax(student_logits / T, dim=-1)
+    p = F.softmax(student_logits / T, dim=-1)
+    logp_top = logp.gather(1, top_b)
+    p_top_sum = p.gather(1, top_b).sum(dim=1)
+    p_tail = (1.0 - p_top_sum).clamp(min=1e-8)
+
+    loss_top = -(top_p * logp_top).sum(dim=1)
+    loss_tail = -tail_p * torch.log(p_tail)
+    losses = (T * T) * (loss_top + loss_tail)
+
+    return losses.mean(), n_records, n_seqs_with_signal
 
 
 def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):

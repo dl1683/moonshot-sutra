@@ -493,9 +493,13 @@ class MappedByteKLCache:
         self.n_records = hdr[0]
         self.kl_top_k = hdr[1]
         self._header_size = 8
-        # v2 adds 1 byte for byte_pos after patch_idx
         self._byte_pos_size = 1 if self.format_version >= 2 else 0
         self._rec_size = 14 + self._byte_pos_size + self.kl_top_k + self.kl_top_k * 2 + 4
+
+        file_size = len(self._kl_mm)
+        max_records = (file_size - self._header_size) // self._rec_size
+        if self.n_records > max_records:
+            self.n_records = max(0, max_records)
 
         self._index: dict[tuple[int, int], tuple[int, int]] = {}
         self._build_index()
@@ -658,6 +662,7 @@ def load_cache(cache_dir: str) -> dict:
     kl_path = os.path.join(cache_dir, "kl_records.bin")
     kl_records = []
     file_size = os.path.getsize(kl_path)
+    fmt_version = manifest.get("cache_format_version", 1)
     with open(kl_path, "rb") as f:
         hdr_data = f.read(8)
         if len(hdr_data) < 8:
@@ -665,7 +670,6 @@ def load_cache(cache_dir: str) -> dict:
         else:
             n, K = struct.unpack("<II", hdr_data)
             kl_hdr = 8
-            fmt_version = manifest.get("cache_format_version", 1)
             byte_pos_size = 1 if fmt_version >= 2 else 0
             kl_rec_size = 14 + byte_pos_size + K + K * 2 + 4
             if file_size < kl_hdr + n * kl_rec_size:

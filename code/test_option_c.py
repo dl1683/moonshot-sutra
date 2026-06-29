@@ -28,7 +28,7 @@ from s0_option_c_training import (
 )
 from eklavya_cache import (
     ByteKLRecord, StreamingCacheWriter, MappedByteKLCache,
-    multi_byte_marginal,
+    multi_byte_marginal, load_cache,
 )
 
 
@@ -411,6 +411,29 @@ def test_v1_cache_backward_compat():
     print("  test_v1_cache_backward_compat PASSED")
 
 
+def test_load_cache_v2():
+    """load_cache() reads v2 format with byte_pos correctly."""
+    td = tempfile.mkdtemp()
+    try:
+        _make_v2_cache(td, n_patches=2, n_byte_positions=4)
+        result = load_cache(td)
+
+        assert result["manifest"]["cache_format_version"] == 2
+        kl_records = result["kl_records"]
+        assert len(kl_records) == 8  # 2 patches × 4 positions
+        byte_positions = [r.byte_pos for r in kl_records]
+        assert set(byte_positions) == {0, 1, 2, 3}
+        for r in kl_records:
+            assert r.top_bytes[0] == 10 + r.byte_pos
+    finally:
+        import shutil
+        try:
+            shutil.rmtree(td)
+        except OSError:
+            pass
+    print("  test_load_cache_v2 PASSED")
+
+
 if __name__ == "__main__":
     print("\n=== Option C Test Suite ===\n")
 
@@ -427,6 +450,7 @@ if __name__ == "__main__":
         test_multi_byte_marginal_basic,
         test_multi_byte_marginal_all_single_byte,
         test_v1_cache_backward_compat,
+        test_load_cache_v2,
     ]
 
     passed = 0
