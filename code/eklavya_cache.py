@@ -141,6 +141,21 @@ def validate_token_byte_alignment(seq_bytes: bytes, token_spans: list[tuple[int,
     return valid
 
 
+def _stable_seed(base_seed: int, shard_id: int, seq_offset: int) -> int:
+    import hashlib
+    h = hashlib.blake2b(
+        f"{base_seed}:{shard_id}:{seq_offset}".encode(), digest_size=8)
+    return int.from_bytes(h.digest(), "little")
+
+
+def select_uniform_kl_patches(n_patches: int, shard_id: int, seq_offset: int,
+                               frac: float = 0.25, seed: int = 491) -> list[int]:
+    candidates = np.arange(1, n_patches, dtype=np.uint16)
+    k = max(1, round(frac * len(candidates)))
+    rng = np.random.default_rng(_stable_seed(seed, shard_id, seq_offset))
+    return sorted(rng.choice(candidates, size=k, replace=False).tolist())
+
+
 def select_kl_patches(student_logits: torch.Tensor, byte_ids: torch.Tensor,
                       P: int = 4, nll_floor: float = 3.5,
                       control_frac: float = 0.15) -> list[int]:
@@ -190,9 +205,14 @@ def build_cache_for_shard(
     kl_top_k: int = 16,
     device: torch.device = torch.device("cuda"),
     byte_table: dict = None,
+    selection_policy: str = "nll",
+    sample_frac: float = 0.25,
+    sample_seed: int = 491,
+    skip_align: bool = False,
 ) -> tuple[list[AlignRecord], list[ByteKLRecord]]:
     teacher.eval()
-    student_model.eval()
+    if student_model is not None:
+        student_model.eval()
 
     if byte_table is None:
         byte_table = build_token_byte_table(tokenizer)
@@ -217,31 +237,36 @@ def build_cache_for_shard(
 
         input_ids = teacher_inputs.input_ids[0].tolist()
 
-        token_spans = compute_token_byte_spans(tokenizer, input_ids, byte_table)
-        span_valid = validate_token_byte_alignment(
-            bytes(seq_bytes), token_spans, input_ids, tokenizer, byte_table)
+        if not skip_align:
+            token_spans = compute_token_byte_spans(tokenizer, input_ids, byte_table)
+            span_valid = validate_token_byte_alignment(
+                bytes(seq_bytes), token_spans, input_ids, tokenizer, byte_table)
 
-        for tok_idx, (bs, be) in enumerate(token_spans):
-            if be <= bs or be > seq_len:
-                continue
-            if not span_valid[tok_idx]:
-                n_skipped_alignment += 1
-                continue
-            align_records.append(AlignRecord(
-                shard_id=shard_id,
-                seq_offset=offset,
-                byte_start=bs,
-                byte_len=be - bs,
-                token_id=input_ids[tok_idx],
-            ))
+            for tok_idx, (bs, be) in enumerate(token_spans):
+                if be <= bs or be > seq_len:
+                    continue
+                if not span_valid[tok_idx]:
+                    n_skipped_alignment += 1
+                    continue
+                align_records.append(AlignRecord(
+                    shard_id=shard_id,
+                    seq_offset=offset,
+                    byte_start=bs,
+                    byte_len=be - bs,
+                    token_id=input_ids[tok_idx],
+                ))
 
-        amp_device = "cuda" if device.type == "cuda" else "cpu"
-        with torch.amp.autocast(amp_device, dtype=torch.bfloat16, enabled=device.type == "cuda"):
-            student_out = student_model(byte_ids)
-
-        selected_patches = select_kl_patches(
-            student_out["logits"], byte_ids, patch_size, nll_threshold,
-        )
+        n_patches = seq_len // patch_size
+        if selection_policy == "uniform":
+            selected_patches = select_uniform_kl_patches(
+                n_patches, shard_id, offset, frac=sample_frac, seed=sample_seed)
+        else:
+            amp_device = "cuda" if device.type == "cuda" else "cpu"
+            with torch.amp.autocast(amp_device, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+                student_out = student_model(byte_ids)
+            selected_patches = select_kl_patches(
+                student_out["logits"], byte_ids, patch_size, nll_threshold,
+            )
 
         for patch_idx in selected_patches:
             t = patch_idx * patch_size
@@ -320,7 +345,8 @@ class StreamingCacheWriter:
         self.n_kl += len(kl_records)
 
     def finalize(self, embedding_table: Optional[torch.Tensor] = None,
-                 shard_range: Optional[tuple[int, int]] = None):
+                 shard_range: Optional[tuple[int, int]] = None,
+                 extra_manifest: Optional[dict] = None):
         self._align_f.seek(0)
         self._align_f.write(struct.pack("<I", self.n_align))
         self._align_f.flush()
@@ -347,10 +373,101 @@ class StreamingCacheWriter:
         }
         if shard_range is not None:
             manifest["shard_range"] = list(shard_range)
+        if extra_manifest:
+            manifest.update(extra_manifest)
         with open(os.path.join(self.output_dir, "cache_manifest.json"), "w") as f:
             json.dump(manifest, f, indent=2)
 
         print(f"Finalized cache: {self.n_align} align, {self.n_kl} kl records")
+
+
+class MappedByteKLCache:
+    """Memory-mapped KL cache with indexed lookups by (shard_id, seq_offset).
+
+    Unlike load_cache() which materializes all records, this uses mmap and
+    builds a dict index for O(1) sequence lookups. Designed for Option C
+    training where shuffled batches need random-access into the cache.
+    """
+
+    def __init__(self, cache_dir: str):
+        import mmap as mmap_mod
+
+        with open(os.path.join(cache_dir, "cache_manifest.json")) as f:
+            self.manifest = json.load(f)
+
+        kl_path = os.path.join(cache_dir, "kl_records.bin")
+        self._kl_file = open(kl_path, "rb")
+        self._kl_mm = mmap_mod.mmap(
+            self._kl_file.fileno(), 0, access=mmap_mod.ACCESS_READ)
+
+        hdr = struct.unpack("<II", self._kl_mm[:8])
+        self.n_records = hdr[0]
+        self.kl_top_k = hdr[1]
+        self._header_size = 8
+        self._rec_size = 14 + self.kl_top_k + self.kl_top_k * 2 + 4
+
+        self._index: dict[tuple[int, int], tuple[int, int]] = {}
+        self._build_index()
+
+    def _build_index(self):
+        current_key = None
+        run_start = 0
+        run_count = 0
+
+        for i in range(self.n_records):
+            offset = self._header_size + i * self._rec_size
+            sid, soff, _ = struct.unpack("<IqH", self._kl_mm[offset:offset + 14])
+            key = (sid, soff)
+
+            if key == current_key:
+                run_count += 1
+            else:
+                if current_key is not None:
+                    self._index[current_key] = (run_start, run_count)
+                current_key = key
+                run_start = i
+                run_count = 1
+
+        if current_key is not None:
+            self._index[current_key] = (run_start, run_count)
+
+    def get_records(self, shard_id: int, seq_offset: int) -> list[ByteKLRecord]:
+        key = (shard_id, seq_offset)
+        if key not in self._index:
+            return []
+
+        start_idx, count = self._index[key]
+        records = []
+        K = self.kl_top_k
+
+        for i in range(start_idx, start_idx + count):
+            offset = self._header_size + i * self._rec_size
+            sid, soff, pidx = struct.unpack(
+                "<IqH", self._kl_mm[offset:offset + 14])
+            pos = offset + 14
+            top_b = np.frombuffer(
+                self._kl_mm[pos:pos + K], dtype=np.uint8).copy()
+            pos += K
+            top_p = np.frombuffer(
+                self._kl_mm[pos:pos + K * 2], dtype=np.float16).copy()
+            pos += K * 2
+            tail, ent = struct.unpack("<ee", self._kl_mm[pos:pos + 4])
+
+            rec = ByteKLRecord(sid, soff, pidx, top_b, top_p, float(tail), float(ent))
+            if _kl_record_is_valid(rec):
+                records.append(rec)
+
+        return records
+
+    def has_sequence(self, shard_id: int, seq_offset: int) -> bool:
+        return (shard_id, seq_offset) in self._index
+
+    def close(self):
+        self._kl_mm.close()
+        self._kl_file.close()
+
+    def __len__(self):
+        return len(self._index)
 
 
 def save_cache(output_dir: str, align_records: list[AlignRecord],
@@ -477,11 +594,22 @@ def main():
                         help="HuggingFace model ID for the teacher")
     parser.add_argument("--data-dir", default="data/shards_bytes_full")
     parser.add_argument("--output-dir", default="eklavya_cache")
-    parser.add_argument("--student-checkpoint", required=True)
+    parser.add_argument("--student-checkpoint", default=None)
     parser.add_argument("--max-shards", type=int, default=50)
     parser.add_argument("--nll-threshold", type=float, default=3.5)
     parser.add_argument("--seq-len", type=int, default=4096)
+    parser.add_argument("--selection-policy", choices=["nll", "uniform"],
+                        default="nll")
+    parser.add_argument("--sample-frac", type=float, default=0.25,
+                        help="Fraction of patches to sample (uniform policy)")
+    parser.add_argument("--sample-seed", type=int, default=491,
+                        help="Seed for reproducible uniform sampling")
+    parser.add_argument("--no-align", action="store_true",
+                        help="Skip alignment record building (KL-only cache)")
     args = parser.parse_args()
+
+    if args.selection_policy == "nll" and args.student_checkpoint is None:
+        parser.error("--student-checkpoint required for NLL selection policy")
 
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
@@ -498,18 +626,28 @@ def main():
     ).to(device)
     teacher.eval()
 
-    embedding_table = teacher.get_input_embeddings().weight.detach().clone()
-    print(f"Teacher embedding table: {embedding_table.shape}")
+    embedding_table = None
+    if not args.no_align:
+        embedding_table = teacher.get_input_embeddings().weight.detach().clone()
+        print(f"Teacher embedding table: {embedding_table.shape}")
 
-    from s0_architecture import SutraS0
-    print(f"Loading student: {args.student_checkpoint}")
-    ckpt = torch.load(args.student_checkpoint, map_location="cpu", weights_only=False)
-    student = SutraS0(ckpt["model_cfg"]).to(device)
-    student.load_state_dict(ckpt["model"])
-    student.eval()
+    student = None
+    patch_size = 4
+    if args.student_checkpoint is not None:
+        from s0_architecture import SutraS0
+        print(f"Loading student: {args.student_checkpoint}")
+        ckpt = torch.load(args.student_checkpoint, map_location="cpu",
+                          weights_only=False)
+        student = SutraS0(ckpt["model_cfg"]).to(device)
+        student.load_state_dict(ckpt["model"])
+        student.eval()
+        patch_size = ckpt["model_cfg"].patch_size
+    else:
+        print("No student checkpoint — using uniform selection (no NLL)")
 
     byte_table = build_token_byte_table(tokenizer)
     print(f"Built token→byte table: {len(byte_table)} entries")
+    print(f"Selection policy: {args.selection_policy}")
 
     shards = sorted(Path(args.data_dir).glob("*.bin"))
     n_shards = min(len(shards), args.max_shards)
@@ -523,16 +661,33 @@ def main():
         align, kl = build_cache_for_shard(
             teacher, tokenizer, student, shards[i], i,
             seq_len=args.seq_len,
-            patch_size=ckpt["model_cfg"].patch_size,
+            patch_size=patch_size,
             nll_threshold=args.nll_threshold,
             device=device,
             byte_table=byte_table,
+            selection_policy=args.selection_policy,
+            sample_frac=args.sample_frac,
+            sample_seed=args.sample_seed,
+            skip_align=args.no_align,
         )
         writer.write_shard(align, kl)
 
     elapsed = time.time() - t0
     print(f"\nDone in {elapsed:.0f}s")
-    writer.finalize(embedding_table, shard_range=(0, n_shards))
+
+    manifest_extra = {}
+    if args.selection_policy == "uniform":
+        manifest_extra = {
+            "selection_policy": "uniform",
+            "sample_frac": args.sample_frac,
+            "sample_seed": args.sample_seed,
+            "position_source": "option_c_uniform_pretrain_v1",
+        }
+
+    writer.finalize(
+        embedding_table, shard_range=(0, n_shards),
+        extra_manifest=manifest_extra,
+    )
 
 
 if __name__ == "__main__":

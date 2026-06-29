@@ -735,8 +735,9 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
             log_fh.flush()
 
             if step % (cfg.log_every * 10) == 0:
+                gb_info = f" | gb_scale={gb_scale:.2f}" if gb_scale < 1.0 else ""
                 print(f"  step {step:5d} | phase={phase} | bpb={bpb:.3f} | "
-                      f"align={L_align.item():.4f} | kl={L_kl.item():.4f}")
+                      f"align={L_align.item():.4f} | kl={L_kl.item():.4f}{gb_info}")
 
         if step > 0 and step % cfg.eval_every == 0:
             eval_metrics = evaluate_e1(student, align_proj, eval_loader,

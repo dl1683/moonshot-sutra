@@ -489,6 +489,56 @@ python eval_e2.py \
     --output ablations/a2_heldout.json
 ```
 
+## Phase 8: Option C — Teacher-Guided Pretraining (Codex R49b/R50)
+
+**Run AFTER Option B (E1→E2) is complete and benchmarked.** Only if 50%+
+HellaSwag is the target and Option B falls short.
+
+### Phase 8.1: Option C Cache (~2-4 hours)
+
+Build a uniform-sampled KL cache (no student needed):
+```bash
+python eklavya_cache.py \
+    --teacher <HF-model-ID> \
+    --data-dir ../data/shards_bytes_full \
+    --output-dir C:/sutra_fast/option_c_qwen_cache \
+    --selection-policy uniform \
+    --sample-frac 0.25 \
+    --sample-seed 491 \
+    --no-align \
+    --max-shards <n_train_shards>
+```
+
+### Phase 8.2: 10K-Step Pilot
+```bash
+python s0_option_c_training.py \
+    --data-dir ../data/shards_bytes_full \
+    --cache-dir C:/sutra_fast/option_c_qwen_cache \
+    --checkpoint-dir C:/sutra_fast/checkpoints/option_c_pilot \
+    --steps 10000 \
+    --lr 2e-4 \
+    --min-lr 2e-5 \
+    --warmup-steps 1500
+```
+
+### Pilot Decision Gate
+Compare Option C pilot (10K steps) vs CE-only S0 (10K steps):
+- If Option C BPB < S0-at-10K BPB → proceed to full 50K
+- If Option C shows better HellaSwag subset → proceed to full 50K
+- Otherwise: CE-only S0 + E1 + E2 is the path
+
+### Phase 8.3: Full Option C (50K steps, if pilot passes)
+```bash
+python s0_option_c_training.py \
+    --data-dir ../data/shards_bytes_full \
+    --cache-dir C:/sutra_fast/option_c_qwen_cache \
+    --checkpoint-dir C:/sutra_fast/checkpoints/option_c_full \
+    --steps 50000
+```
+
+Then feed into E2: skip E1 (teacher already absorbed), go directly to
+multi-teacher E2 enrichment.
+
 ## Quick Reference: File Locations
 
 | What | Where |
@@ -497,9 +547,11 @@ python eval_e2.py \
 | S0 training loop | `code/s0_training.py` |
 | S0 configs | `code/s0_configs.py` |
 | Burn-in verdict | `code/burnin_verdict.py` |
-| E1 cache builder | `code/eklavya_cache.py` |
+| E1 cache builder | `code/eklavya_cache.py` (supports --selection-policy uniform) |
 | E1 training loop | `code/eklavya_training.py` |
-| E1 unit tests | `code/test_eklavya.py` (46 tests) |
+| E1 unit tests | `code/test_eklavya.py` (48 tests) |
+| Option C trainer | `code/s0_option_c_training.py` |
+| Option C tests | `code/test_option_c.py` (7 tests) |
 | E2 cache builder | `code/eklavya_e2_cache_builder.py` |
 | E2 training loop | `code/eklavya_e2_training.py` |
 | E2 router/purifier | `code/eklavya_e2_router.py` |
@@ -521,9 +573,10 @@ python eval_e2.py \
 | Log CSV export | `code/export_log_csv.py` |
 | Checkpoint inspector | `code/inspect_checkpoint.py` |
 | Training logs | `logs/e2_{ablation_id}.jsonl` (per-ablation, auto-derived) |
-| Checkpoints | `C:/sutra_fast/checkpoints/{s0,e1,e2}/` |
+| Checkpoints | `C:/sutra_fast/checkpoints/{s0_full,e1,e2,option_c_*}/` |
 | E1 cache | `C:/sutra_fast/eklavya_cache/` |
 | E2 cache | `C:/sutra_fast/eklavya_e2_cache/` |
+| Option C cache | `C:/sutra_fast/option_c_qwen_cache/` |
 | Data shards | `data/shards_bytes_full/*.bin` |
 
 ## Critical Operational Notes

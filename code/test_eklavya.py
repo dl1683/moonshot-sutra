@@ -28,9 +28,11 @@ from s0_architecture import S0Config, SutraS0
 from eklavya_cache import (
     AlignRecord, ByteKLRecord,
     first_byte_marginal, compute_token_byte_spans,
-    select_kl_patches, save_cache, load_cache,
+    select_kl_patches, select_uniform_kl_patches,
+    save_cache, load_cache,
     validate_token_byte_alignment, token_id_to_bytes,
     build_token_byte_table, StreamingCacheWriter,
+    MappedByteKLCache,
 )
 from eklavya_training import (
     AlignProjection, overlap_pool, topk_tail_kl,
@@ -1149,6 +1151,133 @@ def test_legacy_cache_hard_fail():
     print("  test_legacy_cache_hard_fail PASSED")
 
 
+def test_select_uniform_kl_patches_deterministic():
+    """Uniform KL patch selection is deterministic and reproducible."""
+    a = select_uniform_kl_patches(256, shard_id=5, seq_offset=4096, frac=0.25, seed=491)
+    b = select_uniform_kl_patches(256, shard_id=5, seq_offset=4096, frac=0.25, seed=491)
+    assert a == b, "Same inputs should produce same selection"
+
+    c = select_uniform_kl_patches(256, shard_id=5, seq_offset=8192, frac=0.25, seed=491)
+    assert a != c, "Different offsets should produce different selections"
+
+    assert all(1 <= p < 256 for p in a), "Patches must be in range [1, n_patches)"
+    assert len(a) == max(1, round(0.25 * 255)), f"Expected ~64 patches, got {len(a)}"
+    assert a == sorted(a), "Selection must be sorted"
+    print("  test_select_uniform_kl_patches_deterministic PASSED")
+
+
+def test_select_uniform_kl_patches_different_seeds():
+    """Different seeds produce different selections."""
+    a = select_uniform_kl_patches(256, 0, 0, frac=0.25, seed=491)
+    b = select_uniform_kl_patches(256, 0, 0, frac=0.25, seed=999)
+    assert a != b, "Different seeds should produce different selections"
+    print("  test_select_uniform_kl_patches_different_seeds PASSED")
+
+
+def test_mapped_byte_kl_cache_roundtrip():
+    """MappedByteKLCache can index and retrieve records written by StreamingCacheWriter."""
+    with tempfile.TemporaryDirectory() as td:
+        writer = StreamingCacheWriter(td, kl_top_k=4)
+
+        records = [
+            ByteKLRecord(0, 0, 5,
+                         np.array([10, 20, 30, 40], dtype=np.uint8),
+                         np.array([0.4, 0.3, 0.2, 0.05], dtype=np.float16),
+                         0.05, 1.5),
+            ByteKLRecord(0, 0, 12,
+                         np.array([50, 60, 70, 80], dtype=np.uint8),
+                         np.array([0.5, 0.25, 0.15, 0.05], dtype=np.float16),
+                         0.05, 2.0),
+            ByteKLRecord(0, 4096, 3,
+                         np.array([1, 2, 3, 4], dtype=np.uint8),
+                         np.array([0.6, 0.2, 0.1, 0.05], dtype=np.float16),
+                         0.05, 0.8),
+        ]
+        writer.write_shard([], records)
+        writer.finalize(None, shard_range=(0, 1))
+
+        cache = MappedByteKLCache(td)
+        assert len(cache) == 2, f"Expected 2 sequences, got {len(cache)}"
+
+        seq0 = cache.get_records(0, 0)
+        assert len(seq0) == 2, f"Expected 2 records for seq (0,0), got {len(seq0)}"
+        assert seq0[0].patch_idx == 5
+        assert seq0[1].patch_idx == 12
+
+        seq1 = cache.get_records(0, 4096)
+        assert len(seq1) == 1
+        assert seq1[0].patch_idx == 3
+
+        empty = cache.get_records(99, 0)
+        assert len(empty) == 0
+
+        assert cache.has_sequence(0, 0)
+        assert not cache.has_sequence(99, 0)
+
+        cache.close()
+    print("  test_mapped_byte_kl_cache_roundtrip PASSED")
+
+
+def test_streaming_writer_extra_manifest():
+    """StreamingCacheWriter.finalize() merges extra_manifest into manifest."""
+    with tempfile.TemporaryDirectory() as td:
+        writer = StreamingCacheWriter(td, kl_top_k=4)
+        writer.finalize(None, shard_range=(0, 1), extra_manifest={
+            "selection_policy": "uniform",
+            "sample_frac": 0.25,
+        })
+        import json as json_mod
+        with open(os.path.join(td, "cache_manifest.json")) as f:
+            manifest = json_mod.load(f)
+        assert manifest["selection_policy"] == "uniform"
+        assert manifest["sample_frac"] == 0.25
+        assert manifest["n_kl"] == 0
+    print("  test_streaming_writer_extra_manifest PASSED")
+
+
+def test_cli_arg_overrides():
+    """CLI args override EklavyaConfig defaults for aggressive E1 settings."""
+    cfg = EklavyaConfig()
+    assert cfg.lambda_kl == 0.10
+    assert cfg.base_lr == 3e-5
+    assert cfg.teacher_grad_budget == 0.30
+
+    cfg.lambda_kl = 0.35
+    cfg.base_lr = 6e-5
+    cfg.teacher_grad_budget = 0.45
+
+    assert cfg.lambda_kl == 0.35
+    assert cfg.base_lr == 6e-5
+    assert cfg.teacher_grad_budget == 0.45
+    print("  test_cli_arg_overrides PASSED")
+
+
+def test_cli_arg_defaults_unchanged():
+    """When CLI args are None, EklavyaConfig defaults are preserved."""
+    cfg = EklavyaConfig()
+    for val in [None]:
+        if val is not None:
+            cfg.lambda_kl = val
+
+    assert cfg.lambda_kl == 0.10
+    assert cfg.lambda_align == 0.05
+    assert cfg.base_lr == 3e-5
+    assert cfg.teacher_grad_budget == 0.30
+    print("  test_cli_arg_defaults_unchanged PASSED")
+
+
+def test_cli_arg_partial_override():
+    """Only specified CLI args override; others retain defaults."""
+    cfg = EklavyaConfig()
+    cfg.lambda_kl = 0.45
+
+    assert cfg.lambda_kl == 0.45
+    assert cfg.lambda_align == 0.05
+    assert cfg.base_lr == 3e-5
+    assert cfg.teacher_grad_budget == 0.30
+    print("  test_cli_arg_partial_override PASSED")
+
+
 if __name__ == "__main__":
     print("\n=== Eklavya E1 Test Suite ===\n")
 
@@ -1194,6 +1323,13 @@ if __name__ == "__main__":
         test_rng_state_roundtrip,
         test_align_loss_oob_token_id,
         test_legacy_cache_hard_fail,
+        test_select_uniform_kl_patches_deterministic,
+        test_select_uniform_kl_patches_different_seeds,
+        test_mapped_byte_kl_cache_roundtrip,
+        test_streaming_writer_extra_manifest,
+        test_cli_arg_overrides,
+        test_cli_arg_defaults_unchanged,
+        test_cli_arg_partial_override,
     ]
 
     passed = 0
