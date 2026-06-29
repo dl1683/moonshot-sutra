@@ -247,6 +247,29 @@ a niche problem. Now there are 8+ competing approaches.
   or phased admission specifically. Their similarity-router architecture
   parallels our PL-style router concept.
 
+### CBD — Chain-based Distillation (Jun 2025)
+- **arXiv:** 2605.07783
+- **Authors:** Kuhn et al.
+- **Core idea:** Progressive KD through a chain of intermediate teacher sizes.
+  Student initialized from a chain of distilled checkpoints, not from scratch.
+- **Scale:** 138M to 537M parameters. Results at EXACTLY our scale.
+- **Results at 138M:**
+  - HellaSwag: **42.01%** (500M tokens, GPT2-XL teacher via CBD)
+  - WinoGrande: **63.20%** (78M tokens, GPT2-XL teacher via CBD)
+  - Random init baseline at 78M tokens: HellaSwag 23.68%
+  - CBD-initialized model at 78M tokens: HellaSwag 31.15%
+  - CBD surpasses 10B-token random-init training at every config tested
+  - 80x speedup to equivalent loss vs random initialization
+- **Teachers used:** GPT2-XL (1.5B), Llama3-8B, Qwen3-4B, Pythia-1.4B
+- **RELEVANCE TO E2:** **VERY HIGH — DIRECT COMPETITOR AT OUR SCALE.**
+  CBD at 138M matches SmolLM2-135M's 42.1% HellaSwag with 4000x less
+  training data. Proves KD can close the data gap at our parameter scale.
+  But: single-teacher, same-architecture family, token-level models.
+  Our advantages: multi-teacher (4 diverse architectures), cross-architecture
+  transfer, gap-driven routing. Our challenge: byte-level substrate adds
+  complexity. We need to match or exceed CBD's 42% HellaSwag to prove
+  our approach adds value over simpler chain distillation.
+
 ### MST-Distill — Mixture of Specialized Teachers (ACM MM 2025)
 - **arXiv:** 2507.07015
 - **Core idea:** Diverse teacher ensemble with instance-level routing and

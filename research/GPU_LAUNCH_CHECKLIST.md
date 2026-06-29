@@ -10,7 +10,7 @@ for phase-specific intervention rules, gradient budget red flags, and GPU failur
 ### Prerequisites
 - [ ] Data shards present: `data/shards_bytes_full/*.bin` (500+ shards expected)
 - [ ] No other GPU process running (`nvidia-smi` shows free VRAM)
-- [ ] Checkpoint dir exists: `C:/sutra_fast/checkpoints/s0/`
+- [ ] Checkpoint dir exists: `C:/sutra_fast/checkpoints/s0_full/`
 - [ ] OneDrive NOT syncing checkpoint dir (use C:/sutra_fast, not repo path)
 
 ### Launch
@@ -19,7 +19,7 @@ cd code/
 python s0_training.py \
     --burnin \
     --data-dir ../data/shards_bytes_full \
-    --checkpoint-dir C:/sutra_fast/checkpoints/s0
+    --checkpoint-dir C:/sutra_fast/checkpoints/s0_full
 ```
 
 ### Success Criteria
@@ -42,11 +42,11 @@ python burnin_verdict.py --log logs/s0_burnin.jsonl
 ```bash
 python s0_training.py \
     --data-dir ../data/shards_bytes_full \
-    --checkpoint-dir C:/sutra_fast/checkpoints/s0 \
+    --checkpoint-dir C:/sutra_fast/checkpoints/s0_full \
     --steps 50000 \
     --warmup-steps 1000 \
     --eval-every 500 \
-    --resume C:/sutra_fast/checkpoints/s0/s0_step500.pt
+    --resume C:/sutra_fast/checkpoints/s0_full/s0_step500.pt
 ```
 
 ### Milestones
@@ -63,7 +63,7 @@ python s0_training.py \
 - Train/eval gap > 1.0 BPB
 
 ### Output
-Best checkpoint: `C:/sutra_fast/checkpoints/s0/s0_best.pt`
+Best checkpoint: `C:/sutra_fast/checkpoints/s0_full/s0_best.pt`
 
 ## Phase 3: E1 Cache Building (~2-4 hours)
 
@@ -78,7 +78,7 @@ python eklavya_cache.py \
     --teacher anchor-decoder-1.7B \
     --data-dir ../data/shards_bytes_full \
     --output-dir C:/sutra_fast/eklavya_cache \
-    --student-checkpoint C:/sutra_fast/checkpoints/s0/s0_best.pt \
+    --student-checkpoint C:/sutra_fast/checkpoints/s0_full/s0_best.pt \
     --max-shards 50
 ```
 
@@ -104,7 +104,7 @@ Phase lengths, checkpoint labels, and eval cadence all count micro-steps.
 ### Launch
 ```bash
 python eklavya_training.py \
-    --student-checkpoint C:/sutra_fast/checkpoints/s0/s0_best.pt \
+    --student-checkpoint C:/sutra_fast/checkpoints/s0_full/s0_best.pt \
     --cache-dir C:/sutra_fast/eklavya_cache \
     --output-dir C:/sutra_fast/checkpoints/e1 \
     --data-dir ../data/shards_bytes_full \
@@ -184,7 +184,7 @@ C:/sutra_fast/eklavya_e2_cache/
 - [ ] Each teacher subdir has non-empty records
 - [ ] `python -c "from eklavya_e2_cache import E2CacheView; v=E2CacheView('C:/sutra_fast/eklavya_e2_cache'); print(v.manifest); v.close()"`
 - [ ] Zero non-finite-skip warnings in cache build output (NaN positions = corrupted checkpoint)
-- [ ] Inspect S0 and E1 checkpoints: `python inspect_checkpoint.py C:/sutra_fast/checkpoints/s0/s0_best.pt`
+- [ ] Inspect S0 and E1 checkpoints: `python inspect_checkpoint.py C:/sutra_fast/checkpoints/s0_full/s0_best.pt`
 - [ ] Run opsec scan incl. history: `python code/check_opsec.py --history` (clean before any push)
 
 ## Phase 6: E2 Training (~12-24 hours)
