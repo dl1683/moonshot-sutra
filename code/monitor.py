@@ -39,12 +39,14 @@ def load_entries(log_path: str) -> tuple[list[dict], list[dict]]:
 
 
 def detect_mode(train: list[dict]) -> str:
-    """Detect log format: 's0', 'e1', or 'e2'."""
+    """Detect log format: 's0', 'e1', 'option_c', or 'e2'."""
     for entry in train[:5]:
         if "teacher_losses_bits" in entry or "teacher_losses" in entry or "route_stats" in entry:
             return "e2"
         if "phase" in entry and "align" in entry and "kl" in entry:
             return "e1"
+        if "lambda_kd" in entry and "kl" in entry:
+            return "option_c"
         if "ce_loss" in entry:
             return "e2"
     return "s0"
@@ -174,6 +176,74 @@ def display_e1(train: list[dict], eval_: list[dict], log_path: str):
         k = entry.get("kl", 0)
         print(f"    step {entry['step']:>5d}: bpb {entry.get('bpb', 0):.3f} "
               f"a={a:.3f} k={k:.3f} |{bar:<40s}|")
+
+
+def display_option_c(train: list[dict], eval_: list[dict], log_path: str):
+    latest = train[-1]
+    first = train[0]
+
+    print(f"\n{'=' * 60}")
+    print(f"  Option C Teacher-Guided Pretraining -- {log_path}")
+    print(f"{'=' * 60}")
+
+    step = latest["step"]
+    bpb = latest.get("bpb", 0)
+    first_bpb = first.get("bpb", 0)
+
+    print(f"\n  Step: {step}")
+    print(f"  CE BPB: {first_bpb:.3f} -> {bpb:.3f}  "
+          f"(delta: {bpb - first_bpb:+.3f})")
+
+    lam = latest.get("lambda_kd", 0)
+    kl = latest.get("kl", 0)
+    budget = latest.get("teacher_grad_budget", 0)
+    print(f"  KL loss: {kl:.4f}  |  lambda_kd: {lam:.3f}  |  "
+          f"grad budget: {budget:.2f}")
+
+    kl_recs = latest.get("kl_records_used", 0)
+    kl_seqs = latest.get("kl_seq_coverage", 0)
+    gb_scale = latest.get("gb_scale", 1.0)
+    print(f"  KL records: {kl_recs}  |  seqs w/ signal: {kl_seqs}  |  "
+          f"gb_scale: {gb_scale:.3f}")
+
+    if latest.get("tok_per_sec"):
+        print(f"  Throughput: {latest['tok_per_sec']:,.0f} bytes/s")
+    if latest.get("lr"):
+        print(f"  Learning rate: {latest['lr']:.2e}")
+
+    if eval_:
+        latest_eval = eval_[-1]
+        first_eval = eval_[0]
+        print(f"\n  Eval BPB: {first_eval['eval_bpb']:.3f} -> "
+              f"{latest_eval['eval_bpb']:.3f}  "
+              f"(delta: {latest_eval['eval_bpb'] - first_eval['eval_bpb']:+.3f})")
+        if "eval_byte_acc" in latest_eval:
+            print(f"  Byte accuracy: {latest_eval['eval_byte_acc']:.4f}")
+        if "eval_pos_acc" in latest_eval:
+            pos = latest_eval["eval_pos_acc"]
+            print(f"  Per-position: "
+                  f"{' '.join(f'p{i}={a:.4f}' for i, a in enumerate(pos))}")
+
+    print("\n  Recent loss trajectory:")
+    recent = train[-min(10, len(train)):]
+    for entry in recent:
+        bar_width = int(max(0, min(40, (entry.get("bpb", 0) / 8.0) * 40)))
+        bar = "#" * bar_width
+        k = entry.get("kl", 0)
+        lam_k = entry.get("lambda_kd", 0)
+        print(f"    step {entry['step']:>5d}: bpb {entry.get('bpb', 0):.3f} "
+              f"kl={k:.3f} lam={lam_k:.2f} |{bar:<40s}|")
+
+    if len(eval_) > 1:
+        print("\n  Eval trajectory:")
+        for entry in eval_:
+            bpb_val = entry.get("eval_bpb", 0)
+            bar_width = int(max(0, min(40, (bpb_val / 8.0) * 40)))
+            bar = "#" * bar_width
+            acc_str = (f"acc={entry.get('eval_byte_acc', 0):.4f}"
+                       if "eval_byte_acc" in entry else "")
+            print(f"    step {entry['step']:>5d}: bpb {bpb_val:.3f} "
+                  f"|{bar:<40s}| {acc_str}")
 
 
 def display_e2(train: list[dict], eval_: list[dict], log_path: str):
@@ -556,6 +626,8 @@ def display(log_path: str):
         display_e2(train, eval_, log_path)
     elif mode == "e1":
         display_e1(train, eval_, log_path)
+    elif mode == "option_c":
+        display_option_c(train, eval_, log_path)
     else:
         display_s0(train, eval_, log_path)
 
