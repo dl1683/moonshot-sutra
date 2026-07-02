@@ -58,6 +58,14 @@ def export_train_csv(log_path: str, output_path: str):
                 row["gb_ce_norm"] = round(entry["gb_ce_norm"], 4)
             if "gb_teacher_norm" in entry:
                 row["gb_teacher_norm"] = round(entry["gb_teacher_norm"], 4)
+            if "lambda_kd" in entry:
+                row["lambda_kd"] = round(entry["lambda_kd"], 4)
+            if "teacher_grad_budget" in entry:
+                row["teacher_grad_budget"] = round(entry["teacher_grad_budget"], 2)
+            if "kl_records_used" in entry:
+                row["kl_records_used"] = entry["kl_records_used"]
+            if "kl_seq_coverage" in entry:
+                row["kl_seq_coverage"] = entry["kl_seq_coverage"]
 
             if "bld_kl_bits" in entry:
                 row["bld_kl_bits"] = round(entry["bld_kl_bits"], 6)
