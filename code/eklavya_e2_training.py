@@ -1858,7 +1858,8 @@ if __name__ == "__main__":
     parser = _build_parser()
     args = parser.parse_args()
 
-    log_file = args.log_file or f"logs/e2_{args.ablation_id.lower()}.jsonl"
+    log_dir = os.path.join(os.path.dirname(args.output_dir), "logs")
+    log_file = args.log_file or os.path.join(log_dir, f"e2_{args.ablation_id.lower()}.jsonl")
     cfg = E2Config(
         checkpoint_dir=args.output_dir, cache_dir=args.cache_dir,
         data_dir=args.data_dir, log_file=log_file,
