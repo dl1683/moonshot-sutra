@@ -839,8 +839,10 @@ def main():
                         help="Allow caches without shard_range (unsafe)")
     args = parser.parse_args()
 
+    log_dir = os.path.join(os.path.dirname(args.output_dir), "logs")
     cfg = EklavyaConfig(
         checkpoint_dir=args.output_dir,
+        log_file=os.path.join(log_dir, "e1_train.jsonl"),
         data_dir=args.data_dir,
         cache_dir=args.cache_dir,
         full_e1_steps=args.steps - 2000,
