@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 # ═══ monitor.format_time ════════════════════════════════════════════════
 
 from monitor import (format_time, load_entries, detect_mode, display,
-                     _e2_anomalies, _phase_boundary_checks)
+                     _e1_anomalies, _e2_anomalies, _phase_boundary_checks)
 
 
 class TestFormatTime:
@@ -335,6 +335,72 @@ class TestDisplay:
             assert "near-uniform" in out
         finally:
             os.unlink(path)
+
+
+class TestE1Anomalies:
+    def test_clean_e1_no_anomalies(self):
+        entries = []
+        for i in range(15):
+            entries.append({"step": i, "phase": "E1.0_warmup",
+                            "bpb": 2.5, "align": 0.3, "kl": 0.0})
+        for i in range(15, 30):
+            entries.append({"step": i, "phase": "E1.1_landing",
+                            "bpb": 2.4, "align": 0.2, "kl": 0.0})
+        for i in range(30, 50):
+            entries.append({"step": i, "phase": "E1.2_full",
+                            "bpb": 2.3, "align": 0.1, "kl": 1.5,
+                            "gb_scale": 0.8})
+        assert _e1_anomalies(entries) == []
+
+    def test_warmup_align_dropout(self):
+        entries = [{"step": i, "phase": "E1.0_warmup",
+                    "bpb": 2.5, "align": 0.0, "kl": 0.0}
+                   for i in range(15)]
+        anomalies = _e1_anomalies(entries)
+        assert any("Align signal zero" in a and "warmup" in a for a in anomalies)
+
+    def test_landing_align_dropout(self):
+        entries = [{"step": i, "phase": "E1.1_landing",
+                    "bpb": 2.5, "align": 0.0, "kl": 0.0}
+                   for i in range(15)]
+        anomalies = _e1_anomalies(entries)
+        assert any("Align signal zero" in a and "landing" in a for a in anomalies)
+
+    def test_full_phase_kl_dropout(self):
+        entries = [{"step": i, "phase": "E1.2_full",
+                    "bpb": 2.3, "align": 0.1, "kl": 0.0, "gb_scale": 1.0}
+                   for i in range(25)]
+        anomalies = _e1_anomalies(entries)
+        assert any("KL signal zero" in a for a in anomalies)
+
+    def test_gradient_budget_saturation(self):
+        entries = [{"step": i, "phase": "E1.2_full",
+                    "bpb": 2.3, "align": 0.1, "kl": 1.5, "gb_scale": 0.01}
+                   for i in range(15)]
+        anomalies = _e1_anomalies(entries)
+        assert any("Gradient budget near zero" in a for a in anomalies)
+
+    def test_landing_bpb_regression(self):
+        entries = [{"step": i, "phase": "E1.1_landing",
+                    "bpb": 2.0 + i * 0.05, "align": 0.2, "kl": 0.0}
+                   for i in range(10)]
+        anomalies = _e1_anomalies(entries)
+        assert any("BPB regression during landing" in a for a in anomalies)
+
+    def test_full_phase_bpb_regression(self):
+        entries = [{"step": i, "phase": "E1.2_full",
+                    "bpb": 2.0 + i * 0.04, "align": 0.1, "kl": 1.5,
+                    "gb_scale": 0.5}
+                   for i in range(15)]
+        anomalies = _e1_anomalies(entries)
+        assert any("BPB regression during full phase" in a for a in anomalies)
+
+    def test_no_false_positive_with_signal(self):
+        entries = [{"step": i, "phase": "E1.0_warmup",
+                    "bpb": 2.5, "align": 0.3 + 0.01 * (i % 3), "kl": 0.0}
+                   for i in range(15)]
+        anomalies = _e1_anomalies(entries)
+        assert not any("Align signal zero" in a for a in anomalies)
 
 
 class TestE2Anomalies:

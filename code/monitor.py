@@ -286,6 +286,67 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
                   f"|{bar:<40s}|")
 
 
+def _e1_anomalies(train: list[dict],
+                  eval_: list[dict] | None = None) -> list[str]:
+    """E1-specific anomaly detection."""
+    anomalies = []
+
+    by_phase: dict[str, list[dict]] = {}
+    for e in train:
+        p = e.get("phase", "")
+        by_phase.setdefault(p, []).append(e)
+
+    warmup = by_phase.get("E1.0_warmup", [])
+    if len(warmup) >= 10:
+        recent_align = [e.get("align", 0) for e in warmup[-10:]]
+        if all(a == 0 for a in recent_align):
+            anomalies.append(
+                "Align signal zero for last 10 warmup steps — "
+                "cache may not cover any training shards")
+
+    landing = by_phase.get("E1.1_landing", [])
+    if len(landing) >= 10:
+        recent_align = [e.get("align", 0) for e in landing[-10:]]
+        if all(a == 0 for a in recent_align):
+            anomalies.append(
+                "Align signal zero for last 10 landing steps — "
+                "projection may not be learning")
+
+    full = by_phase.get("E1.2_full", [])
+    if len(full) >= 20:
+        recent_kl = [e.get("kl", 0) for e in full[-20:]]
+        if all(k == 0 for k in recent_kl):
+            anomalies.append(
+                "KL signal zero for last 20 full-phase steps — "
+                "no KL records matching training sequences")
+
+    gb_scales = [e.get("gb_scale", 1.0) for e in full if "gb_scale" in e]
+    if len(gb_scales) >= 10:
+        recent_gb = gb_scales[-10:]
+        if max(recent_gb) < 0.05:
+            anomalies.append(
+                f"Gradient budget near zero: last 10 gb_scale < 0.05 "
+                f"(max {max(recent_gb):.4f}) — teacher signal suppressed")
+
+    if landing and len(landing) >= 5:
+        first_bpb = landing[0].get("bpb", 0)
+        last_bpb = landing[-1].get("bpb", 0)
+        if first_bpb > 0 and last_bpb > first_bpb + 0.3:
+            anomalies.append(
+                f"BPB regression during landing: {first_bpb:.3f} -> "
+                f"{last_bpb:.3f} — teacher signal may be hurting")
+
+    if full and len(full) >= 10:
+        first_bpb = full[0].get("bpb", 0)
+        last_bpb = full[-1].get("bpb", 0)
+        if first_bpb > 0 and last_bpb > first_bpb + 0.3:
+            anomalies.append(
+                f"BPB regression during full phase: {first_bpb:.3f} -> "
+                f"{last_bpb:.3f} — KL signal may be destabilizing")
+
+    return anomalies
+
+
 def _e2_anomalies(train: list[dict],
                   eval_: list[dict] | None = None) -> list[str]:
     """E2-specific anomaly detection."""
@@ -521,6 +582,8 @@ def display(log_path: str):
 
     if mode == "e2":
         anomalies.extend(_e2_anomalies(train, eval_))
+    elif mode == "e1":
+        anomalies.extend(_e1_anomalies(train, eval_))
 
     if anomalies:
         print("\n  Anomalies:")

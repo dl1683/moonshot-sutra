@@ -48,6 +48,17 @@ def export_train_csv(log_path: str, output_path: str):
                 "elapsed_s": round(entry["elapsed"], 2) if "elapsed" in entry else "",
             }
 
+            if "align" in entry:
+                row["align_loss"] = round(entry["align"], 6)
+            if "kl" in entry:
+                row["kl_loss"] = round(entry["kl"], 6)
+            if "gb_scale" in entry:
+                row["gb_scale"] = round(entry["gb_scale"], 4)
+            if "gb_ce_norm" in entry:
+                row["gb_ce_norm"] = round(entry["gb_ce_norm"], 4)
+            if "gb_teacher_norm" in entry:
+                row["gb_teacher_norm"] = round(entry["gb_teacher_norm"], 4)
+
             if "bld_kl_bits" in entry:
                 row["bld_kl_bits"] = round(entry["bld_kl_bits"], 6)
             if "gpu_mem_gb" in entry:

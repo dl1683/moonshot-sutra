@@ -289,6 +289,34 @@ class TestExportTrainCSV:
             os.unlink(log)
             os.unlink(out)
 
+    def test_e1_fields(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 2.5, "phase": "E1.0_warmup",
+             "align": 0.45, "kl": 0.0, "gb_scale": 1.0,
+             "gb_ce_norm": 0.0, "gb_teacher_norm": 0.0, "elapsed": 1.0},
+            {"step": 2010, "bpb": 2.3, "phase": "E1.2_full",
+             "align": 0.12, "kl": 3.5, "gb_scale": 0.65,
+             "gb_ce_norm": 1.8, "gb_teacher_norm": 4.2, "elapsed": 120.0},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert len(rows) == 2
+            assert "align_loss" in fields
+            assert "kl_loss" in fields
+            assert "gb_scale" in fields
+            assert "gb_ce_norm" in fields
+            assert "gb_teacher_norm" in fields
+            assert float(rows[0]["align_loss"]) == pytest.approx(0.45)
+            assert float(rows[0]["kl_loss"]) == pytest.approx(0.0)
+            assert float(rows[1]["gb_scale"]) == pytest.approx(0.65)
+            assert float(rows[1]["gb_ce_norm"]) == pytest.approx(1.8)
+            assert float(rows[1]["gb_teacher_norm"]) == pytest.approx(4.2)
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
     def test_no_bld_fields_when_absent(self):
         log = _write_jsonl([
             {"step": 10, "bpb": 6.5, "phase": "e2"},
