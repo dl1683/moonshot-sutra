@@ -331,6 +331,7 @@ def build_cache_for_shard(
     skip_align: bool = False,
     byte_positions: str = "first",
     single_pass: bool = True,
+    max_seqs: int | None = None,
 ) -> tuple[list[AlignRecord], list[ByteKLRecord]]:
     teacher.eval()
     if student_model is not None:
@@ -341,6 +342,8 @@ def build_cache_for_shard(
 
     shard_data = np.fromfile(shard_path, dtype=np.uint8)
     n_seqs = len(shard_data) // seq_len
+    if max_seqs is not None and max_seqs > 0:
+        n_seqs = min(n_seqs, max_seqs)
     align_records = []
     kl_records = []
     n_skipped_alignment = 0
@@ -770,6 +773,8 @@ def main():
                         help="Which byte positions to cache: first (v1) or all (v2)")
     parser.add_argument("--no-single-pass", action="store_true",
                         help="Use per-patch teacher forward passes instead of one-pass")
+    parser.add_argument("--max-seqs", type=int, default=None,
+                        help="Max sequences per shard (default: all)")
     args = parser.parse_args()
 
     if args.selection_policy == "nll" and args.student_checkpoint is None:
@@ -836,6 +841,7 @@ def main():
             skip_align=args.no_align,
             byte_positions=args.byte_positions,
             single_pass=not args.no_single_pass,
+            max_seqs=args.max_seqs,
         )
         writer.write_shard(align, kl)
 
