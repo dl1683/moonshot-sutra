@@ -558,9 +558,11 @@ def main():
     parser.add_argument("--warmup-steps", type=int, default=1500)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--eval-hold-shards", type=int, default=5)
-    parser.add_argument("--log-file", default="logs/option_c.jsonl")
+    parser.add_argument("--log-file", default=None)
     args = parser.parse_args()
 
+    log_dir = os.path.join(os.path.dirname(args.checkpoint_dir), "logs")
+    log_file = args.log_file or os.path.join(log_dir, "option_c.jsonl")
     cfg = OptionCConfig(
         total_steps=args.steps,
         lr=args.lr,
@@ -569,7 +571,7 @@ def main():
         data_dir=args.data_dir,
         cache_dir=args.cache_dir,
         checkpoint_dir=args.checkpoint_dir,
-        log_file=args.log_file,
+        log_file=log_file,
         resume_from=args.resume,
         eval_hold_shards=args.eval_hold_shards,
     )
