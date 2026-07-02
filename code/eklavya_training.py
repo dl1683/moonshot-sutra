@@ -1,4 +1,4 @@
-"""Eklavya E1 — Knowledge distillation training for S0.
+"""Eklavya E1 -- Knowledge distillation training for S0.
 
 Three-phase training schedule:
   E1.0: Projection warmup (500 steps, freeze S0, train align_proj only)
@@ -22,7 +22,7 @@ import random
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +33,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(__file__))
 from s0_architecture import SutraS0
-from s0_training import ByteShardDataset
+from s0_training import ByteShardDataset, TrainConfig  # noqa: F401 -- TrainConfig needed for checkpoint unpickling
 from eklavya_cache import load_cache, AlignRecord, ByteKLRecord
 
 
@@ -205,7 +205,7 @@ def _grad_norm(params):
 def apply_gradient_budget(params, L_ce, L_teacher, budget: float, scaler=None):
     """Two-pass backward with teacher gradient budget.
 
-    Ensures teacher gradient norm ≤ budget × CE gradient norm.
+    Ensures teacher gradient norm <= budget * CE gradient norm.
     Preserves previously accumulated gradients for grad_accum > 1.
     Uses scaler.scale() when scaler is provided for CUDA AMP compatibility.
     Returns (ce_grad_norm, teacher_grad_norm, scale_applied).
@@ -328,7 +328,10 @@ class EklavyaTrainer:
             if logit_idx < 0 or logit_idx >= N_minus_1:
                 continue
 
-            student_logit = logits[0, logit_idx, 0]  # position 0 within patch
+            byte_pos = getattr(r, 'byte_pos', 0)
+            if byte_pos >= logits.shape[2]:
+                continue
+            student_logit = logits[0, logit_idx, byte_pos]
 
             top_b = torch.from_numpy(r.top_bytes).to(self.device)
             top_p = torch.from_numpy(r.top_probs.astype(np.float32)).to(self.device)
@@ -465,7 +468,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         n_eval = min(2, max(1, len(all_shards) // 10))
         train_range = (0, len(all_shards) - n_eval)
         eval_range = (len(all_shards) - n_eval, len(all_shards))
-        print("  WARNING: Cache has no shard_range — training on all shards. "
+        print("  WARNING: Cache has no shard_range -- training on all shards. "
               "Uncached shards will get CE-only signal.")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
@@ -579,7 +582,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                       f"({ratio:.0%})")
                 if ratio < 0.1:
                     print(f"  WARNING: <10% of warmup steps had differentiable "
-                          f"align signal — projection may be untrained")
+                          f"align signal -- projection may be untrained")
             trainer.configure_freeze(phase)
             optimizer = trainer.build_optimizer()
             current_phase = phase
@@ -679,7 +682,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 raise RuntimeError(
                     f"E1 received NO teacher signal for {consecutive_ce_only} "
                     f"consecutive steps (phase={phase}, step={step}). "
-                    f"Likely cache/shard mismatch — aborting.")
+                    f"Likely cache/shard mismatch -- aborting.")
         else:
             consecutive_ce_only = 0
 
@@ -760,13 +763,13 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                     "optimizer": optimizer.state_dict(),
                     "scaler": scaler.state_dict() if scaler is not None else None,
                     "best_eval_bpb": best_eval_bpb,
-                    "config": cfg,
+                    "config": asdict(cfg),
                     "sampler_gen_state": sampler_gen_state,
                     "batches_consumed_in_epoch": batches_consumed_in_epoch,
                     **_rng_state(device),
                 }, best_path)
                 print(f"  eval bpb={eval_metrics['eval_bpb']:.3f} "
-                      f"[NEW BEST] — saved {best_path}")
+                      f"[NEW BEST] -- saved {best_path}")
             else:
                 print(f"  eval bpb={eval_metrics['eval_bpb']:.3f} "
                       f"(best={best_eval_bpb:.3f})")
@@ -790,7 +793,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
                 "optimizer": optimizer.state_dict(),
                 "scaler": scaler.state_dict() if scaler is not None else None,
                 "best_eval_bpb": best_eval_bpb,
-                "config": cfg,
+                "config": asdict(cfg),
                 "sampler_gen_state": sampler_gen_state,
                 "batches_consumed_in_epoch": batches_consumed_in_epoch,
                 **_rng_state(device),
@@ -810,7 +813,7 @@ def train_e1(cfg: EklavyaConfig, student_ckpt_path: str, cache_dir: str):
         "optimizer": optimizer.state_dict(),
         "scaler": scaler.state_dict() if scaler is not None else None,
         "best_eval_bpb": best_eval_bpb,
-        "config": cfg,
+        "config": asdict(cfg),
         "sampler_gen_state": sampler_gen_state,
         "batches_consumed_in_epoch": batches_consumed_in_epoch,
         **_rng_state(device),

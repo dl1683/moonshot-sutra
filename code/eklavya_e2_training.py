@@ -1526,6 +1526,15 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 if torch.isfinite(v)
             }
         if bld_kl_loss is not None:
+            if not torch.isfinite(bld_kl_loss):
+                fail_entry = {"step": step, "phase": str(phase),
+                              "HARD_FAIL": "non-finite BLD KL loss",
+                              "bld_kl_loss": bld_kl_loss.item()}
+                log_fh.write(json.dumps(fail_entry) + "\n")
+                log_fh.flush()
+                log_fh.close()
+                raise RuntimeError(
+                    f"E2 HARD FAIL: non-finite BLD KL loss at step {step}")
             total_loss = (ce_loss + cfg.bld_kl_weight * bld_kl_loss) / cfg.grad_accum
             if scaler is not None:
                 scaler.scale(total_loss).backward()

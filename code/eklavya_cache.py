@@ -1,7 +1,7 @@
-"""Eklavya E1 — Offline teacher signal cache builder.
+"""Eklavya E1 -- Offline teacher signal cache builder.
 
 Builds two types of cached records from a teacher model:
-1. AlignRecords: token-span → patch mapping for embedding alignment
+1. AlignRecords: token-span -> patch mapping for embedding alignment
 2. ByteKLRecords: first-byte marginals at selected patch positions
 
 Cache is sparse: only selected high-value positions are stored.
@@ -32,6 +32,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
+from s0_training import TrainConfig  # noqa: F401 -- needed for checkpoint unpickling
 
 
 @dataclass
@@ -56,7 +57,7 @@ class ByteKLRecord:
 
 
 def build_token_byte_table(tokenizer) -> dict[int, bytes]:
-    """Build token_id → bytes mapping from vocabulary (cached once per tokenizer)."""
+    """Build token_id -> bytes mapping from vocabulary (cached once per tokenizer)."""
     table = {}
     vocab_size = getattr(tokenizer, 'vocab_size', None) or len(tokenizer)
     for tok_id in range(vocab_size):
@@ -275,7 +276,7 @@ def _extract_marginal_records(t_logits, tokenizer, shard_id, offset,
             if cov < min_cov:
                 continue
             q = torch.zeros(256, dtype=torch.float32)
-            q[top_b] = torch.from_numpy(top_p.astype(np.float32))
+            q[top_b.astype(np.int64)] = torch.from_numpy(top_p.astype(np.float32))
             q_sum = q.sum()
             if q_sum > 0:
                 q = q / q_sum
@@ -294,7 +295,7 @@ def _extract_marginal_records(t_logits, tokenizer, shard_id, offset,
         top_b, top_p, tail, coverage = first_byte_marginal(
             t_logits, tokenizer, K=kl_top_k, _byte_table=byte_table)
         q = torch.zeros(256, dtype=torch.float32)
-        q[top_b] = torch.from_numpy(top_p.astype(np.float32))
+        q[top_b.astype(np.int64)] = torch.from_numpy(top_p.astype(np.float32))
         q_sum = q.sum()
         if q_sum > 0:
             q = q / q_sum
@@ -785,7 +786,7 @@ def main():
     print(f"Loading teacher: {args.teacher}")
     tokenizer = AutoTokenizer.from_pretrained(args.teacher)
     teacher = AutoModelForCausalLM.from_pretrained(
-        args.teacher, torch_dtype=torch.bfloat16,
+        args.teacher, dtype=torch.bfloat16,
     ).to(device)
     teacher.eval()
 
@@ -806,10 +807,10 @@ def main():
         student.eval()
         patch_size = ckpt["model_cfg"].patch_size
     else:
-        print("No student checkpoint — using uniform selection (no NLL)")
+        print("No student checkpoint -- using uniform selection (no NLL)")
 
     byte_table = build_token_byte_table(tokenizer)
-    print(f"Built token→byte table: {len(byte_table)} entries")
+    print(f"Built token->byte table: {len(byte_table)} entries")
     print(f"Selection policy: {args.selection_policy}")
 
     shards = sorted(Path(args.data_dir).glob("*.bin"))
