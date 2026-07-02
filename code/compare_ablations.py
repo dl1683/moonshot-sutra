@@ -327,9 +327,9 @@ def print_gradient_budget_analysis(summaries: list[RunSummary]):
         if pw_coh is not None:
             print(f"    Pairwise coherence: {pw_coh:+.4f}")
             if pw_coh > 0.3:
-                print("    (teachers largely agree — routing may add little)")
+                print("    (teachers largely agree -- routing may add little)")
             elif pw_coh < -0.1:
-                print("    (teachers conflict — gradient budgeting critical)")
+                print("    (teachers conflict -- gradient budgeting critical)")
 
         ct_cos = gb.get("mean_ce_teacher_cosines")
         if ct_cos:
@@ -606,14 +606,14 @@ def evaluate_phase1_gate(summaries: list[RunSummary]) -> bool:
                 if s.eval_result and s.ablation_id not in hard_failed}
 
     print(f"\n{'=' * 72}")
-    print("  PHASE 1 GATE — proceed to Phase 2?")
+    print("  PHASE 1 GATE -- proceed to Phase 2?")
     print(f"{'=' * 72}")
 
     if hard_failed:
         print(f"\n  NOTE: Excluding {sorted(hard_failed)} (had HARD_FAIL)")
 
     if "A2" in hard_failed:
-        print("\n  GATE FAIL: A2 had a HARD_FAIL — oracle run is invalid")
+        print("\n  GATE FAIL: A2 had a HARD_FAIL -- oracle run is invalid")
         return False
 
     if "A2" not in has_eval:
@@ -643,11 +643,11 @@ def evaluate_phase1_gate(summaries: list[RunSummary]) -> bool:
         if delta < 0:
             print(f"\n  [REGRESS] {better_id} vs {worse_id}: "
                   f"delta={delta:+.4f} BPB (threshold: {margin})")
-            print(f"    -> {description}: FAILED — {better_id} is WORSE")
+            print(f"    -> {description}: FAILED -- {better_id} is WORSE")
         elif delta < margin:
             print(f"\n  [FAIL] {better_id} vs {worse_id}: "
                   f"delta={delta:+.4f} BPB (threshold: {margin})")
-            print(f"    -> {description}: FAILED — below margin")
+            print(f"    -> {description}: FAILED -- below margin")
         else:
             passed += 1
             print(f"\n  [PASS] {better_id} vs {worse_id}: "
@@ -663,17 +663,17 @@ def evaluate_phase1_gate(summaries: list[RunSummary]) -> bool:
     gate_pass = (passed == evaluated)
     print(f"\n  {'=' * 50}")
     if gate_pass:
-        print(f"  GATE PASS: {passed}/{evaluated} rules passed — "
+        print(f"  GATE PASS: {passed}/{evaluated} rules passed -- "
               f"proceed to Phase 2")
         if skipped > 0:
             missing = [w for _, w, _, _ in PHASE1_GATE_RULES
                        if w not in has_eval]
             print(f"  WARNING: {skipped} baseline(s) not evaluated: "
                   f"{sorted(missing)}")
-            print(f"  Gate passed with partial baselines — re-run when "
+            print(f"  Gate passed with partial baselines -- re-run when "
                   f"all baselines are available.")
     else:
-        print(f"  GATE FAIL: {passed}/{evaluated} rules passed — "
+        print(f"  GATE FAIL: {passed}/{evaluated} rules passed -- "
               f"do NOT proceed to Phase 2")
         print(f"  A2 is oracle-aided upper bound; if it can't beat baselines,")
         print(f"  the gold-free router (A9c) certainly can't.")

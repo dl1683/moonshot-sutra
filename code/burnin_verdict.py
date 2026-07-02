@@ -180,7 +180,7 @@ def main():
         for f in hard:
             print(f"  FAIL: {f}")
     else:
-        print("  None — all hard criteria pass")
+        print("  None -- all hard criteria pass")
 
     print("\n=== SOFT CONCERNS ===")
     soft = check_soft_concerns(train, eval_)
@@ -197,12 +197,12 @@ def main():
 
     print("\n" + "=" * 50)
     if hard:
-        print("VERDICT: NO-GO — hard failures detected. Fix before proceeding.")
+        print("VERDICT: NO-GO -- hard failures detected. Fix before proceeding.")
         sys.exit(1)
     elif soft:
-        print("VERDICT: CONDITIONAL GO — tune the flagged concerns, but architecture is sound.")
+        print("VERDICT: CONDITIONAL GO -- tune the flagged concerns, but architecture is sound.")
     else:
-        print("VERDICT: GO — burn-in passed all criteria. Proceed to full training.")
+        print("VERDICT: GO -- burn-in passed all criteria. Proceed to full training.")
 
 
 if __name__ == "__main__":

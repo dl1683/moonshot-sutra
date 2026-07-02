@@ -63,7 +63,7 @@ def display_s0(train: list[dict], eval_: list[dict], log_path: str):
     first = train[0]
 
     print(f"\n{'=' * 60}")
-    print(f"  S0 Training Monitor — {log_path}")
+    print(f"  S0 Training Monitor -- {log_path}")
     print(f"{'=' * 60}")
 
     step = latest["step"]
@@ -119,7 +119,7 @@ def display_e1(train: list[dict], eval_: list[dict], log_path: str):
     first = train[0]
 
     print(f"\n{'=' * 60}")
-    print(f"  E1 Single-Teacher KD Monitor — {log_path}")
+    print(f"  E1 Single-Teacher KD Monitor -- {log_path}")
     print(f"{'=' * 60}")
 
     step = latest["step"]
@@ -181,7 +181,7 @@ def display_e2(train: list[dict], eval_: list[dict], log_path: str):
     first = train[0]
 
     print(f"\n{'=' * 60}")
-    print(f"  E2 Multi-Teacher KD Monitor — {log_path}")
+    print(f"  E2 Multi-Teacher KD Monitor -- {log_path}")
     print(f"{'=' * 60}")
 
     step = latest["step"]
