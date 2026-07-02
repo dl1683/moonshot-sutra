@@ -227,19 +227,26 @@ def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):
     scaler = torch.amp.GradScaler("cuda", enabled=(amp_dtype == torch.float16))
 
     all_shards = sorted(Path(cfg.data_dir).glob("*.bin"))
-    n_shards = len(all_shards)
-    n_eval = min(cfg.eval_hold_shards, max(1, n_shards // 10))
-    train_range = (0, n_shards - n_eval)
-    eval_range = (n_shards - n_eval, n_shards)
-    print(f"Data split: {train_range[1]} train shards, {n_eval} eval shards")
 
     if "shard_range" in cache_manifest:
-        cr = cache_shard_range
-        if cr[0] > train_range[0] or cr[1] < train_range[1]:
-            raise RuntimeError(
-                f"Cache shard range {cr} does not cover train range "
-                f"{train_range}. Rebuild cache with --max-shards >= "
-                f"{train_range[1]}.")
+        cache_start, cache_end = cache_shard_range
+        n_cached = cache_end - cache_start
+        if n_cached < 2:
+            raise ValueError(
+                f"Cache covers only {n_cached} shards ({cache_start}-{cache_end}). "
+                f"Need at least 2 (1 train + 1 eval).")
+        n_eval = min(cfg.eval_hold_shards, max(1, n_cached // 10))
+        train_range = (cache_start, cache_end - n_eval)
+        eval_range = (cache_end - n_eval, cache_end)
+        print(f"Cache shard range: [{cache_start}, {cache_end}), "
+              f"train [{train_range[0]}, {train_range[1]}), "
+              f"eval [{eval_range[0]}, {eval_range[1]})")
+    else:
+        n_shards = len(all_shards)
+        n_eval = min(cfg.eval_hold_shards, max(1, n_shards // 10))
+        train_range = (0, n_shards - n_eval)
+        eval_range = (n_shards - n_eval, n_shards)
+        print(f"Data split: {train_range[1]} train shards, {n_eval} eval shards")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len_bytes,
                                     model_cfg.patch_size, shard_range=train_range)
