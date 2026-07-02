@@ -419,7 +419,7 @@ def build_teacher_records(
         print(f"  {spec.name}: byte-marginal coverage "
               f"avg={avg_cov:.3f} min={min_cov:.3f} ({len(coverage_accum)} positions)")
         if avg_cov < 0.90:
-            print(f"  WARNING: low coverage ({avg_cov:.3f}) — top_vocab may be too small")
+            print(f"  WARNING: low coverage ({avg_cov:.3f}) -- top_vocab may be too small")
 
     if n_kl_attempted > 0 and spec.has_kl:
         n_kl_produced = len(kl_records)

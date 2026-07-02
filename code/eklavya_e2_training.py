@@ -1257,7 +1257,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         ports.warm_start_from_e1(e1_proj)
         print("Warm-started anchor port from E1 AlignProjection")
     elif not cfg.ce_only and not cfg.resume_from:
-        print("  WARNING: No align_proj in checkpoint — anchor port is random. "
+        print("  WARNING: No align_proj in checkpoint -- anchor port is random. "
               "E2 protocol expects warm-start from E1.")
 
     trainer = E2Trainer(cfg, student, ports, cache_view, device)
@@ -1308,13 +1308,13 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             f"[{train_range[0]}, {train_range[1]}). Cache is empty for "
             f"training data — rebuild cache or check shard_range.")
     if train_pos_count < 100:
-        print(f"  WARNING: only {train_pos_count} cached train positions — "
+        print(f"  WARNING: only {train_pos_count} cached train positions -- "
               f"expect sparse teacher signal")
     if pos_per_shard < 10:
         print(f"  WARNING: density {pos_per_shard:.1f} positions/shard is very "
               f"low — most batches will be CE-only")
     if eval_pos_count == 0:
-        print(f"  WARNING: zero cached eval positions — teacher diagnostics "
+        print(f"  WARNING: zero cached eval positions -- teacher diagnostics "
               f"unavailable on eval set (CE-only eval still works)")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len,
@@ -1389,13 +1389,13 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
         current_phase = "CE_ONLY"
         trainer.configure_freeze(current_phase)
         optimizer = trainer.build_optimizer()
-        print(f"\n[Step {step}] CE-only mode — all student params trainable, no teachers")
+        print(f"\n[Step {step}] CE-only mode -- all student params trainable, no teachers")
 
     if cfg.bld_mode and current_phase is None:
         current_phase = "BLD"
         trainer.configure_freeze(current_phase)
         optimizer = trainer.build_optimizer()
-        print(f"\n[Step {step}] BLD mode — all student params trainable, "
+        print(f"\n[Step {step}] BLD mode -- all student params trainable, "
               f"single-teacher byte KL (weight={cfg.bld_kl_weight})")
 
     if not cfg.resume_from and step == 0:
@@ -1432,7 +1432,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
             phase = get_e2_phase(step, cfg)
 
             if phase == E2Phase.OWNERSHIP:
-                print(f"\n[Step {step}] Phase E2.5: ownership/ablation — stopping training")
+                print(f"\n[Step {step}] Phase E2.5: ownership/ablation -- stopping training")
                 break
 
             if phase != current_phase:
@@ -1736,7 +1736,7 @@ def _train_e2_inner(cfg: E2Config, student: SutraS0, model_cfg,
                 if device.type == "cuda":
                     best_dict["cuda_rng_state"] = torch.cuda.get_rng_state()
                 atomic_save(best_dict, best_path)
-                print(f"  New best eval BPB {best_eval_bpb:.3f} — saved {best_path}")
+                print(f"  New best eval BPB {best_eval_bpb:.3f} -- saved {best_path}")
 
         accum_aligned = (step + 1) % cfg.grad_accum == 0
         if (accum_aligned and step >= cfg.checkpoint_every
