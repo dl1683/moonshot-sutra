@@ -328,7 +328,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
         if "optimizer" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer"])
         else:
-            print("WARNING: No optimizer state in checkpoint — warm-starting model only")
+            print("WARNING: No optimizer state in checkpoint -- warm-starting model only")
         if "scaler" in ckpt:
             scaler.load_state_dict(ckpt["scaler"])
         if "rng_state" in ckpt:
@@ -461,7 +461,7 @@ def train(model_cfg: Optional[S0Config] = None, train_cfg: Optional[TrainConfig]
                     "eval_bpb": best_eval_bpb,
                 }
                 atomic_save(best_ckpt, best_path)
-                print(f"  New best eval BPB {best_eval_bpb:.3f} — saved {best_path}")
+                print(f"  New best eval BPB {best_eval_bpb:.3f} -- saved {best_path}")
 
         # Checkpoint
         if step % train_cfg.checkpoint_every == 0:

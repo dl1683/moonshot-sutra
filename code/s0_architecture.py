@@ -635,7 +635,7 @@ def main():
             S0Config(**kwargs)
             print(f"  {name}: constructed (ok if expected)")
         except AssertionError as e:
-            print(f"  {name}: BLOCKED — {e}")
+            print(f"  {name}: BLOCKED -- {e}")
 
     print("\nAll checks passed.")
 

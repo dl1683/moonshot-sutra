@@ -212,7 +212,7 @@ def _preflight_e2(args):
 
     mode_label = "CPU-only" if args.cpu_only else "GPU"
     print("=" * 60)
-    print(f"E2 Pre-Training Preflight — {mode_label}")
+    print(f"E2 Pre-Training Preflight -- {mode_label}")
     print("=" * 60)
 
     all_ok = True
@@ -252,7 +252,7 @@ def _preflight_s0(args):
 
     mode_label = "CPU-only" if args.cpu_only else f"config={args.config}"
     print("=" * 60)
-    print(f"S0 Pre-Training Preflight — {mode_label}, burnin={args.burnin}")
+    print(f"S0 Pre-Training Preflight -- {mode_label}, burnin={args.burnin}")
     print("=" * 60)
 
     all_ok = True
@@ -276,7 +276,7 @@ def _preflight_s0(args):
             print(f"  python code/s0_training.py --config {args.config} {mode}")
     elif not gpu_ok:
         print("GPU not available. Training cannot start yet.")
-        print("Other checks ran on CPU — re-run preflight when GPU is free.")
+        print("Other checks ran on CPU -- re-run preflight when GPU is free.")
     else:
         print("SOME CHECKS FAILED. Fix issues before training.")
 

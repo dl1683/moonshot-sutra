@@ -4,7 +4,7 @@ Unlike E1 (post-training KD), Option C applies KD loss during initial
 pretraining. The core bet: early output-distribution guidance while CE
 anchors byte modeling produces better representations than CE-only.
 
-Imports primitives from s0_training and eklavya_training — no duplication.
+Imports primitives from s0_training and eklavya_training -- no duplication.
 
 Usage:
     python s0_option_c_training.py \
@@ -438,7 +438,7 @@ def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):
             if step % (cfg.log_every * 10) == 0:
                 gb_info = f" | gb={gb_scale:.2f}" if gb_scale < 1.0 else ""
                 print(f"step {step:>6d} | bpb {bpb:.3f} | kl {avg_kl:.4f} | "
-                      f"λ_kd {get_lambda_kd(step):.3f} | "
+                      f"lam_kd {get_lambda_kd(step):.3f} | "
                       f"lr {lr:.2e} | gnorm {grad_norm:.2f} | "
                       f"{tokens_per_sec:.0f} tok/s{gb_info}")
 
@@ -510,7 +510,7 @@ def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):
                     "model_cfg": model_cfg,
                     "eval_bpb": eval_bpb,
                 }, best_path)
-                print(f"  New best: {eval_bpb:.3f} → {best_path}")
+                print(f"  New best: {eval_bpb:.3f} -> {best_path}")
 
             model.train()
 
