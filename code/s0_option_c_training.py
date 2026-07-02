@@ -470,8 +470,9 @@ def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):
                         eout = model(ebyte_ids, return_aux=False)
                         elosses = compute_loss(eout, ebyte_ids, P)
 
-                    eval_loss += elosses["byte_ce"] * B
-                    eval_tokens += B
+                    predicted_bytes = B * (T - model_cfg.patch_size)
+                    eval_loss += elosses["byte_ce"] * predicted_bytes
+                    eval_tokens += predicted_bytes
 
                     elogits = eout["logits"]
                     N = T // P
