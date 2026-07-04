@@ -53,11 +53,29 @@ def s0_d768() -> S0Config:
     )
 
 
+def s0_wide7() -> S0Config:
+    """Width-depth swap scout: D=1152, 7 layers. ~121.7M params.
+
+    Same param count as default 576x30, but crosses the critical
+    width threshold (~1065) from arXiv 2604.04037. Tests whether
+    the representation bottleneck is geometric (width) not depth.
+    Codex R60 design.
+    """
+    return S0Config(
+        d_model=1152,
+        n_layers=7,
+        n_heads=18,
+        n_kv_heads=6,
+        decoder_dim=384,
+    )
+
+
 ALL_CONFIGS = {
     "p4": s0_p4,
     "p8": s0_p8,
     "d640": s0_d640,
     "d768": s0_d768,
+    "wide7": s0_wide7,
 }
 
 

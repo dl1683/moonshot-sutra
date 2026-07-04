@@ -96,7 +96,8 @@ class ByteShardDataset(Dataset):
     fixed-length chunks of bytes for autoregressive training.
     """
     def __init__(self, data_dir: str, seq_len: int, patch_size: int = 4,
-                 shard_range: tuple[int, int] | None = None):
+                 shard_range: tuple[int, int] | None = None,
+                 max_seqs_per_shard: int | None = None):
         self.seq_len = seq_len
         if seq_len % patch_size != 0:
             raise ValueError(f"seq_len ({seq_len}) must be divisible by patch_size ({patch_size})")
@@ -115,6 +116,8 @@ class ByteShardDataset(Dataset):
         for shard in self.shards:
             size = shard.stat().st_size
             n_seqs = size // seq_len
+            if max_seqs_per_shard is not None:
+                n_seqs = min(n_seqs, max_seqs_per_shard)
             self.shard_sizes.append(n_seqs)
             self.cumulative.append(self.cumulative[-1] + n_seqs)
 
@@ -161,6 +164,8 @@ def get_lr(step: int, cfg: TrainConfig) -> float:
 
 def setup_activation_checkpointing(model: SutraS0, every_n: int = 2):
     """Wrap reasoner layers with activation checkpointing."""
+    if every_n < 1:
+        return
     from torch.utils.checkpoint import checkpoint
 
     def checkpointed_forward(patch_states):
@@ -502,7 +507,7 @@ if __name__ == "__main__":
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--eval-every", type=int, default=None)
     parser.add_argument("--warmup-steps", type=int, default=None)
-    parser.add_argument("--config", choices=["p4", "p8", "d640", "d768"], default="p4")
+    parser.add_argument("--config", choices=["p4", "p8", "d640", "d768", "wide7"], default="p4")
     parser.add_argument("--grad-accum-steps", type=int, default=None)
     parser.add_argument("--eval-hold-shards", type=int, default=None)
     parser.add_argument("--eval-batches", type=int, default=None)
