@@ -217,24 +217,25 @@ def evaluate(model: SutraS0, eval_loader: DataLoader, device: torch.device, cfg:
     pos_correct = torch.zeros(P, device=device)
     pos_total = torch.zeros(P, device=device)
 
-    for i, batch in enumerate(eval_loader):
-        if cfg.eval_batches > 0 and i >= cfg.eval_batches:
-            break
-        byte_ids = batch.to(device)
-        B, T = byte_ids.shape
-        N = T // P
-        with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
-            out = model(byte_ids, return_aux=False)
-            losses = compute_loss(out, byte_ids, P)
-        predicted_bytes = B * (T - P)
-        total_loss += losses["byte_ce"] * predicted_bytes
-        total_tokens += predicted_bytes
+    with torch.no_grad():
+        for i, batch in enumerate(eval_loader):
+            if cfg.eval_batches > 0 and i >= cfg.eval_batches:
+                break
+            byte_ids = batch.to(device)
+            B, T = byte_ids.shape
+            N = T // P
+            with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=device.type == "cuda"):
+                out = model(byte_ids, return_aux=False)
+                losses = compute_loss(out, byte_ids, P)
+            predicted_bytes = B * (T - P)
+            total_loss += losses["byte_ce"].item() * predicted_bytes
+            total_tokens += predicted_bytes
 
-        targets = byte_ids.reshape(B, N, P)[:, 1:]  # (B, N-1, P)
-        preds = out["logits"].argmax(dim=-1)  # (B, N-1, P)
-        for p in range(P):
-            pos_correct[p] += (preds[:, :, p] == targets[:, :, p]).sum()
-            pos_total[p] += targets[:, :, p].numel()
+            targets = byte_ids.reshape(B, N, P)[:, 1:]
+            preds = out["logits"].argmax(dim=-1)
+            for p in range(P):
+                pos_correct[p] += (preds[:, :, p] == targets[:, :, p]).sum()
+                pos_total[p] += targets[:, :, p].numel()
 
     model.train()
     avg_loss = total_loss / max(total_tokens, 1)
@@ -512,6 +513,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval-hold-shards", type=int, default=None)
     parser.add_argument("--eval-batches", type=int, default=None)
     parser.add_argument("--checkpoint-every", type=int, default=None)
+    parser.add_argument("--log-file", type=str, default=None,
+                        help="Override JSONL log path (use non-OneDrive path)")
     args = parser.parse_args()
 
     from s0_configs import ALL_CONFIGS
@@ -546,5 +549,7 @@ if __name__ == "__main__":
         train_cfg.eval_batches = args.eval_batches
     if args.checkpoint_every:
         train_cfg.checkpoint_every = args.checkpoint_every
+    if args.log_file:
+        train_cfg.log_file = args.log_file
 
     train(model_cfg, train_cfg)
