@@ -404,12 +404,20 @@ def train_and_probe(teacher, variant, seed, data_seed):
                 loss = loss + LAMBDA_CF_AUG * L_cf
 
             if not cf.is_noop and uses_cf_rel:
-                orig_scores = student.score_candidates_batch(tokens + [correct], candidates)
-                cf_scores = student.score_candidates_batch(cf.tokens + [cf.correct], cf_candidates)
+                from toy_opgeom_og1b import make_relational_candidates
+                rel_candidates, orig_ri, cf_ri = make_relational_candidates(
+                    correct, cf.correct, meta["query_attr"], cf.query_attr, rng)
                 if variant == "E_adv":
-                    L_rel = compute_relational_cf_loss(cf_scores, orig_scores, cf_gold_idx, gold_idx)
+                    wrong_cf_pool = [c for c in cf_candidates if c != cf.correct]
+                    fake_cf_correct = rng.choice(wrong_cf_pool)
+                    adv_cf_gold = cf_candidates.index(fake_cf_correct)
+                    L_rel, _ = compute_relational_cf_loss(
+                        student, tokens, cf.tokens, cf_candidates, adv_cf_gold,
+                        rel_candidates, cf_ri, orig_ri)
                 else:
-                    L_rel = compute_relational_cf_loss(orig_scores, cf_scores, gold_idx, cf_gold_idx)
+                    L_rel, _ = compute_relational_cf_loss(
+                        student, tokens, cf.tokens, cf_candidates, cf_gold_idx,
+                        rel_candidates, orig_ri, cf_ri)
                 loss = loss + LAMBDA_CF_REL * L_rel
 
         optimizer.zero_grad()
