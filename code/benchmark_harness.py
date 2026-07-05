@@ -9,12 +9,15 @@ Supported benchmarks:
   - ARC-Easy / ARC-Challenge (4-choice reasoning)
   - LAMBADA (last-word prediction accuracy + BPB)
   - WinoGrande (2-choice coreference)
+  - OpenBookQA (4-choice science + retrieval)
+  - MMLU (57-subject multitask knowledge, 4-choice)
   - WikiText-103 (corpus BPB for byte-level model comparison)
 
 Usage:
     python benchmark_harness.py \
         --checkpoint C:/sutra_fast/checkpoints/s0_full/s0_best.pt \
         --benchmarks hellaswag piqa arc_easy arc_challenge lambada \
+            winogrande openbookqa mmlu \
         --output results/benchmarks.json
 """
 
@@ -92,6 +95,11 @@ def score_completion(
     full_seq = padded_context + completion_bytes
     end_pad = (P - (len(full_seq) % P)) % P
     full_seq = full_seq + [0] * end_pad
+
+    if len(full_seq) > max_bytes:
+        trim = len(full_seq) - max_bytes
+        full_seq = full_seq[trim:]
+        ctx_pad = max(0, ctx_pad - trim)
 
     if len(full_seq) < 2 * P:
         full_seq = [0] * (2 * P - len(full_seq)) + full_seq
@@ -245,6 +253,39 @@ def load_winogrande(split: str = "validation") -> list[dict]:
             "completion": after,
             "label": answer,
         })
+    return examples
+
+
+def load_openbookqa(split: str = "test") -> list[dict]:
+    from datasets import load_dataset
+    ds = load_dataset("allenai/openbookqa", "main", split=split)
+    examples = []
+    for row in ds:
+        question = row["question_stem"]
+        choices = row["choices"]["text"]
+        label_key = row["answerKey"]
+        label_map = {k: i for i, k in enumerate(row["choices"]["label"])}
+        label = label_map.get(label_key, 0)
+        context = f"Question: {question}\nAnswer:"
+        examples.append({"context": context, "choices": choices, "label": label})
+    return examples
+
+
+def load_mmlu(split: str = "test") -> list[dict]:
+    from datasets import load_dataset
+    ds = load_dataset("cais/mmlu", "all", split=split)
+    examples = []
+    choice_letters = ["A", "B", "C", "D"]
+    for row in ds:
+        question = row["question"]
+        choices_raw = row["choices"]
+        label = int(row["answer"])
+        formatted_choices = "\n".join(
+            f"{choice_letters[i]}. {c}" for i, c in enumerate(choices_raw)
+        )
+        context = f"Question: {question}\n{formatted_choices}\nAnswer:"
+        choice_completions = [f" {c}" for c in choices_raw]
+        examples.append({"context": context, "choices": choice_completions, "label": label})
     return examples
 
 
@@ -607,6 +648,8 @@ BENCHMARK_LOADERS = {
     "arc_challenge": lambda: load_arc("challenge"),
     "lambada": lambda: load_lambada(),
     "winogrande": lambda: load_winogrande(),
+    "openbookqa": lambda: load_openbookqa(),
+    "mmlu": lambda: load_mmlu(),
     "hellaswag_noised": lambda: noisify_examples(load_hellaswag(), noise_rate=0.1),
     "piqa_noised": lambda: noisify_examples(load_piqa(), noise_rate=0.1),
 }
@@ -624,7 +667,14 @@ def run_benchmarks(
 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model_cfg = ckpt["model_cfg"]
-    model = SutraS0(model_cfg).to(device)
+
+    if ckpt.get("model_type") == "codec":
+        from codec_phase2_model import SutraCodecModel, load_codec_for_phase2
+        codec = load_codec_for_phase2(ckpt["codec_checkpoint"], d_model=model_cfg.d_model)
+        model = SutraCodecModel(model_cfg, codec).to(device)
+    else:
+        model = SutraS0(model_cfg).to(device)
+
     model.load_state_dict(ckpt["model"])
     model.eval()
     step = ckpt.get("step", "?")
@@ -732,7 +782,8 @@ def main():
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--benchmarks", nargs="+",
                         default=["hellaswag", "piqa", "arc_easy", "arc_challenge",
-                                 "lambada", "winogrande", "wikitext", "generation"])
+                                 "lambada", "winogrande", "openbookqa", "mmlu",
+                                 "wikitext", "generation"])
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--max-examples", type=int, default=0,
                         help="Limit examples per benchmark (0 = all)")

@@ -168,6 +168,15 @@ class TestDetectMode:
                   "align": 0.1, "kl": 0.05, "gb_scale": 0.8}]
         assert detect_mode(train) == "e1"
 
+    def test_option_c_mode(self):
+        train = [{"step": 10, "bpb": 7.0, "kl": 0.3, "lambda_kd": 0.05}]
+        assert detect_mode(train) == "option_c"
+
+    def test_option_c_not_confused_with_e1(self):
+        train = [{"step": 10, "bpb": 7.0, "kl": 0.3, "lambda_kd": 0.05,
+                  "kl_records_used": 320}]
+        assert detect_mode(train) == "option_c"
+
     def test_empty_train_defaults_s0(self):
         assert detect_mode([]) == "s0"
 
@@ -232,6 +241,32 @@ class TestDisplay:
             assert "KL loss" in out
             assert "Gradient budget scale: 0.600" in out
             assert "Phase transitions:" in out
+        finally:
+            os.unlink(path)
+
+    def test_option_c_display_has_expected_sections(self, capsys):
+        path = _write_log([
+            {"step": 10, "bpb": 7.5, "kl": 0.3, "lambda_kd": 0.05,
+             "teacher_grad_budget": 0.35, "gb_scale": 0.8,
+             "gb_ce_norm": 1.2, "gb_teacher_norm": 0.4,
+             "kl_records_used": 320, "kl_seq_coverage": 4,
+             "lr": 0.0001, "grad_norm": 0.5, "tok_per_sec": 50000},
+            {"step": 100, "bpb": 6.8, "kl": 0.25, "lambda_kd": 0.10,
+             "teacher_grad_budget": 0.35, "gb_scale": 0.9,
+             "gb_ce_norm": 1.0, "gb_teacher_norm": 0.3,
+             "kl_records_used": 350, "kl_seq_coverage": 4,
+             "lr": 0.0002, "grad_norm": 0.4, "tok_per_sec": 52000},
+            {"step": 100, "eval_bpb": 7.2, "eval_byte_acc": 0.05},
+        ])
+        try:
+            display(path)
+            out = capsys.readouterr().out
+            assert "Option C" in out
+            assert "KL loss" in out
+            assert "lambda_kd" in out
+            assert "grad budget" in out
+            assert "KL records" in out
+            assert "Eval BPB" in out
         finally:
             os.unlink(path)
 
@@ -555,8 +590,8 @@ from s0_architecture import S0Config
 
 
 class TestS0Configs:
-    def test_all_configs_dict_has_four_entries(self):
-        assert set(ALL_CONFIGS.keys()) == {"p4", "p8", "d640", "d768"}
+    def test_all_configs_dict_has_expected_entries(self):
+        assert set(ALL_CONFIGS.keys()) == {"p4", "p8", "d640", "d768", "wide7"}
 
     def test_all_configs_return_s0config(self):
         for name, fn in ALL_CONFIGS.items():
