@@ -1,9 +1,9 @@
 # FRAMESEED-SHEETS-0 Precommit Specification
 
 **Date:** 2026-07-07  
-**Status:** PRECOMMIT SPEC ONLY. No implementation, no hidden run, no result.  
-**Role:** W-Loop B29 worker  
-**Purpose:** typed-domain escape from the Boolean absorption result.
+**Status:** HARDENED PRECOMMIT SPEC. Public audit implementation may exist; no hidden run and no result.  
+**Role:** W-Loop B29 spec, hardened by W-Loop B30 against Q-Loop B37.  
+**Purpose:** typed-domain escape from the Boolean absorption result, after domain-specific prior-art absorbers receive first refusal.
 
 ## 0. Scope
 
@@ -18,10 +18,11 @@ worlds are small enough that exact finite teaching/search solves them. The next
 arena is:
 
 ```text
-Can a compact, inspectable packet transmit reusable typed frames to a bounded
-cheap learner in spreadsheet/data-cleaning worlds where brute search over
-schemas, joins, units, records, constraints, and actions is combinatorially
-expensive?
+Can a compact, inspectable packet transmit reusable typed obligation structure
+to a bounded cheap learner in spreadsheet/data-cleaning worlds after relational
+algebra, unit systems, entity resolution, schema matching, PBE, wrangling
+scripts, constraint repair, typed CEGIS, retrieval, active learning, and
+library learning receive equal executable information?
 ```
 
 Maximum positive claim:
@@ -42,53 +43,77 @@ Binding invariants:
 
 ## 1. Terminal Tokens
 
-SHEETS-0 uses the same absorption ladder as the hardened Boolean spec, with
-SHEETS-specific names. If an implementation keeps the original token namespace,
-these map one-to-one to `FRAMESEED_T3_*`.
+SHEETS-0 no longer uses only the Boolean-era absorption ladder. Q-Loop B37 made
+the typed-domain prior-art absorbers terminal. Implementations may keep
+Boolean-era generic absorber names internally, but public SHEETS verdicts use
+the following namespace.
 
 ```text
-FRAMESEED_SHEETS_T3R_SIGNAL
-FRAMESEED_SHEETS_ABSORBED_BY_TEACHING_DIMENSION
-FRAMESEED_SHEETS_ABSORBED_BY_REPRESENTATION_PRIOR
-FRAMESEED_SHEETS_ABSORBED_BY_NUISANCE_ORACLE
-FRAMESEED_SHEETS_ABSORBED_BY_LIBRARY_LEARNING
-FRAMESEED_SHEETS_ABSORBED_BY_ACTIVE_LEARNING
-FRAMESEED_SHEETS_ABSORBED_BY_CEGIS
-FRAMESEED_SHEETS_ABSORBED_BY_RAG
-FRAMESEED_SHEETS_BOOLEAN_TRAP
-FRAMESEED_SHEETS_VOID_SMUGGLED_FRAME
-FRAMESEED_SHEETS_NEGATIVE
+FRAMESEED_SHEETS0_SIGNAL
+FRAMESEED_SHEETS0_ABSORBED_BY_REPRESENTATION_PRIOR
+FRAMESEED_SHEETS0_ABSORBED_BY_PARSER_PRIOR
+FRAMESEED_SHEETS0_ABSORBED_BY_RELATIONAL_ALGEBRA
+FRAMESEED_SHEETS0_ABSORBED_BY_UNIT_SYSTEM
+FRAMESEED_SHEETS0_ABSORBED_BY_EXACT_KEY_MATCHING
+FRAMESEED_SHEETS0_ABSORBED_BY_ENTITY_RESOLUTION
+FRAMESEED_SHEETS0_ABSORBED_BY_SCHEMA_MATCHING
+FRAMESEED_SHEETS0_ABSORBED_BY_SCHEMA_BINDING
+FRAMESEED_SHEETS0_ABSORBED_BY_PBE
+FRAMESEED_SHEETS0_ABSORBED_BY_DATA_WRANGLING
+FRAMESEED_SHEETS0_ABSORBED_BY_CONSTRAINT_SOLVING
+FRAMESEED_SHEETS0_ABSORBED_BY_DATA_REPAIR
+FRAMESEED_SHEETS0_ABSORBED_BY_TYPED_CEGIS
+FRAMESEED_SHEETS0_ABSORBED_BY_LIBRARY_LEARNING
+FRAMESEED_SHEETS0_ABSORBED_BY_TEACHING_DIMENSION
+FRAMESEED_SHEETS0_ABSORBED_BY_NUISANCE_ORACLE
+FRAMESEED_SHEETS0_ABSORBED_BY_ACTIVE_LEARNING
+FRAMESEED_SHEETS0_ABSORBED_BY_RAG
+FRAMESEED_SHEETS0_TYPED_BOOLEAN_TRAP
+FRAMESEED_SHEETS0_VOID_SMUGGLED_SCHEMA
+FRAMESEED_SHEETS0_NEGATIVE
 ```
 
 Precedence:
 
 1. Smuggling, hidden leakage, baseline parity failure, constructor
-   noninterference failure, or post-hidden protocol mutation -> VOID.
+   noninterference failure, typed generator leakage, human-labor opacity,
+   subjective hidden goal semantics, or post-hidden protocol mutation -> VOID.
 2. Typed task degenerates into renamed Boolean masks, one-hot lookup, binary-only
-   labels, or type/name leakage -> BOOLEAN_TRAP.
-3. L0 already contains the frame as a low-cost primitive, parser, macro,
-   verifier, feature mask, tie-break, or reachable hypothesis ->
-   REPRESENTATION_PRIOR.
-4. L3 full packet misses typed hidden thresholds -> NEGATIVE unless a stronger
-   absorber applies.
-5. Absorbing baseline at matched or less-than-4x total budget -> the most
-   specific absorber, in this order: TEACHING_DIMENSION, LIBRARY_LEARNING,
-   NUISANCE_ORACLE, CEGIS, ACTIVE_LEARNING, RAG.
-6. All signal gates pass -> T3R_SIGNAL.
-7. Any remaining non-smuggling failure -> NEGATIVE.
+   labels, finite lookup tables, or a tiny typed DSL whose answer is enumerable
+   inside the public substrate -> TYPED_BOOLEAN_TRAP.
+3. L0 or the public type/parser substrate already contains the frame as a
+   low-cost primitive, parser, macro, verifier, feature mask, tie-break, schema
+   matcher, unit dimension, key detector, or reachable hypothesis ->
+   PARSER_PRIOR or REPRESENTATION_PRIOR.
+4. Any domain-specific absorber at matched or less-than-4x total budget -> the
+   most specific domain token in this order: RELATIONAL_ALGEBRA, UNIT_SYSTEM,
+   EXACT_KEY_MATCHING, ENTITY_RESOLUTION, SCHEMA_MATCHING, SCHEMA_BINDING, PBE,
+   DATA_WRANGLING, CONSTRAINT_SOLVING, DATA_REPAIR, TYPED_CEGIS,
+   LIBRARY_LEARNING.
+5. L3 full packet misses typed hidden thresholds -> NEGATIVE unless a stronger
+   absorber above applies.
+6. Any generic Boolean-era absorber at matched or less-than-4x total budget ->
+   the most specific generic token in this order: TEACHING_DIMENSION,
+   NUISANCE_ORACLE, ACTIVE_LEARNING, RAG.
+7. All signal gates pass -> SIGNAL.
+8. Any remaining non-smuggling failure -> NEGATIVE.
 
 Multi-absorption rule:
 
 ```text
-If at least two of teaching dimension, representation prior, active learning,
-CEGIS, RAG, nuisance oracle, or library learning absorb in SHEETS-0, kill
-FrameSeed as the main moonshot direction or radically reframe it.
+If at least two of representation prior, parser prior, relational algebra, unit
+system, exact key matching, entity resolution, schema matching, schema binding,
+PBE, data wrangling, constraint solving, data repair, typed CEGIS, library
+learning, teaching dimension, nuisance oracle, active learning, or RAG absorb in
+SHEETS-0, kill FrameSeed as the main moonshot direction or radically reframe it.
 ```
 
 Allowed reframes: typed CEGIS/proof compilation, MDL library learning, active
-counterexample selection, or self-discovered transformation grammars. Disallowed
-rescues: weakening baselines, hiding typed semantics from baselines, larger L3,
-natural-language packet priors, or threshold changes after hidden opening.
+counterexample selection, goal-conditioned obligation discovery, schema-binding
+science, or self-discovered transformation grammars. Disallowed rescues:
+weakening baselines, hiding typed semantics from baselines, larger L3,
+natural-language packet priors, demo-only spreadsheet stories, or threshold
+changes after hidden opening.
 
 ## 2. 20-Iteration Design Ledger
 
@@ -505,10 +530,24 @@ Library learner:
   may invent reusable typed macros such as canonicalize_id, join_on_key,
   normalize_unit, validate_constraints, and guarded_action across target and
   siblings. Total library + per-task program + query bits are counted.
+
+Domain-specific first-refusal suite:
+  relational algebra / SQL / pandas-merge search;
+  UCUM-style unit system and unit-library search;
+  exact-key detector and entity-resolution/linkage learners;
+  schema-matching and ontology-alignment learners;
+  PROSE-style typed PBE and table-transform CEGIS;
+  OpenRefine/Wrangler-style action-history and saved-script learners;
+  declared-constraint executor, constraint learner, SMT/finite-domain solver,
+  data-repair learner, and action-guard learner;
+  operation-verifier search, goal-conditioned CEGIS, active goal disambiguator,
+  obligation-template library learner, and abstention-aware validator.
 ```
 
-If L2 or the library learner matches under less-than-4x budget, accept the
-absorption. They are serious expected absorbers, not strawmen.
+If any domain-specific baseline matches under matched or less-than-4x budget,
+accept the specific absorption. If L2 or the library learner matches under
+less-than-4x budget, accept the absorption. These are expected serious
+absorbers, not strawmen.
 
 ### W29-I15: Siblings And AFTD
 
@@ -669,7 +708,7 @@ change after hidden opening voids the run unless hidden seeds rotate.
 
 ### W29-I19: Signal And Absorption Conditions
 
-Emit `FRAMESEED_SHEETS_T3R_SIGNAL` only if all hold:
+Emit `FRAMESEED_SHEETS0_SIGNAL` only if all hold:
 
 1. Smuggling and noninterference audits pass.
 2. Representation-noncontainment passes.
@@ -678,10 +717,18 @@ Emit `FRAMESEED_SHEETS_T3R_SIGNAL` only if all hold:
 5. Mean HFA is at least 0.97.
 6. Packet growth is sublinear.
 7. AFTD and AFTD_all_in pass.
-8. TD-H0 does not absorb.
-9. L0, L1, L2, RAG, nuisance-oracle, and library baselines do not absorb.
-10. Ablations drop by at least 20 points where required.
-11. Role/schema permutation stability passes:
+8. Representation-prior and parser-prior audits do not absorb.
+9. Relational algebra, unit-system, exact-key, entity-resolution,
+   schema-matching, schema-binding, PBE, data-wrangling, constraint-solving,
+   data-repair, typed-CEGIS, and library-learning baselines do not absorb.
+10. TD-H0, L0, L1, RAG, and nuisance-oracle baselines do not absorb.
+11. Frame/binding/program/parser/human-labor costs are separated and AFTD_all_in
+    passes.
+12. Goal/obligation semantics are frozen, objective, and not leaked.
+13. Composed frames show subadditive cost or local repair after pipeline,
+    CEGIS, wrangling, and library baselines fail or pay >=4x.
+14. Ablations drop by at least 20 points where required.
+15. Role/schema permutation stability passes:
 
 ```text
 same terminal token for >= 95% of permutation bundles
@@ -690,10 +737,10 @@ packet length coefficient of variation <= 0.10
 AFTD coefficient of variation <= 0.10
 ```
 
-12. Randomized-label control stays <= 0.60 HFA.
-13. Every packet, query, binding, verifier, frame patch, program, library, macro,
+16. Randomized-label control stays <= 0.60 HFA.
+17. Every packet, query, binding, verifier, frame patch, program, library, macro,
     and residual teaching bit is counted.
-14. The result report honors the claim ceiling.
+18. The result report honors the claim ceiling.
 
 Token-specific absorbers follow Section 1. Mixed results cannot be narrated into
 signal.
@@ -729,6 +776,280 @@ frames from a small inspectable packet, and hostile typed baselines with the sam
 information cannot cheaply reproduce the transfer.
 ```
 
+## 3. W-Loop B30 Hardening Ledger
+
+These clauses incorporate Q-Loop B37. Where they conflict with W29 wording,
+this B30 section is binding.
+
+### B30-I1: Typed Representation-Noncontainment Certificate
+
+The certificate is typed, not generic. It freezes `R0_typed`, parser inventory,
+unit grammar, date grammar, ID grammar, string-similarity functions, key
+candidate features, schema-matching features, constraint language, action
+semantics, `H0_typed`, `A0_typed`, and all budgets. It must answer this role
+isomorphism question for every public primitive and parser:
+
+```text
+Can this public primitive identify stable identity, quantity semantics,
+constraint obligations, schema bindings, or action policy under role/schema
+permutation at cost <= B0?
+```
+
+If yes, emit `FRAMESEED_SHEETS0_ABSORBED_BY_PARSER_PRIOR` or
+`FRAMESEED_SHEETS0_ABSORBED_BY_REPRESENTATION_PRIOR`. Parser invention is not
+free: if L3 gets invented parsers or type semantics that baselines cannot use,
+void for substrate asymmetry.
+
+### B30-I2: Parser And Human-Labor Ledger
+
+Every run reports four human/parser surfaces:
+
+```text
+H_public_substrate: hand-authored types, parsers, unit registry, grammar, action API
+H_packet_design: manually designed packet templates, frame entries, verifier forms
+H_frozen_before_hidden: code/spec/manifests fixed before hidden opening
+H_hidden_eval_only: hidden seeds, hidden families, hidden labels, scorer internals
+```
+
+Parser and human-labor costs are charged or declared outside the claim. A result
+whose intelligence is in a hand-authored parser, schema designer, unit ontology,
+or human-selected binding cannot be narrated as frame transfer.
+
+### B30-I3: Frame/Binding/Program Cost Split
+
+All cost ledgers split:
+
+```text
+F = reusable typed frame packet
+B_i = task-specific schema/entity/unit/constraint/action binding packet
+P_i = executable per-task program or action policy
+H = charged share of parser/human-authored type substrate
+```
+
+Report:
+
+```text
+AFTD_frame_only = |F| / count_reduced_siblings
+AFTD_all_in = (|F| + sum_i |B_i| + sum_i |P_i| + charged H share) /
+              count_reduced_siblings
+binding_ratio = sum_i |B_i| / max(1, |F| + sum_i |B_i|)
+program_ratio = sum_i |P_i| / max(1, |F| + sum_i |B_i| + sum_i |P_i|)
+```
+
+If binding or program cost explains the win, emit schema-binding, PBE,
+wrangling, CEGIS, or library-learning absorption. A tiny truism frame plus large
+hidden bindings is not signal.
+
+### B30-I4: Domain-Specific Absorption Tokens
+
+The domain tokens in Section 1 are terminal. They are not diagnostics. If a
+specific boring system reaches threshold at matched or less-than-4x total
+information cost, the run emits its absorber even when the spreadsheet demo is
+useful.
+
+### B30-I5: Relational Algebra Baseline
+
+Run a frozen relational baseline with candidate key discovery, primary/foreign
+key constraints, joins, projections, selections, grouping, aggregation,
+row-order invariance, and name-blind role inference from public examples. If it
+solves target plus siblings, emit `FRAMESEED_SHEETS0_ABSORBED_BY_RELATIONAL_ALGEBRA`.
+If L3 receives relation types or joins denied to this baseline, void.
+
+### B30-I6: Unit-System Baseline
+
+Run unit baselines:
+
+```text
+U0 UCUM/dimensional oracle: unit expressions and dimensions, no target answer
+U1 unit-library search: conversion, compatibility, affine exceptions, grouping
+U2 unit-PBE synthesizer: intended unit transform from examples/counterexamples
+U3 unit-error detector: rejects raw aggregation and incompatible comparisons
+```
+
+If any matches, emit `FRAMESEED_SHEETS0_ABSORBED_BY_UNIT_SYSTEM`. L3 cannot be
+the only system allowed to parse or convert units.
+
+### B30-I7: Entity-Resolution Baseline
+
+Run entity baselines:
+
+```text
+E0 exact-key detector: uniqueness, stability, cross-table agreement
+E1 deterministic linkage: normalized IDs, names, dates, aliases, blocking
+E2 probabilistic linkage: match/non-match weights from public examples
+E3 active entity matcher: buys counterexamples under budget
+E4 transitive clustering: entity consistency across tables
+```
+
+Exact stable-key discovery emits `EXACT_KEY_MATCHING`; probabilistic or active
+record linkage emits `ENTITY_RESOLUTION`. If the packet names stable columns,
+those bits are binding bits, not frame bits.
+
+### B30-I8: Schema-Matching Baseline
+
+Run schema-matching and ontology-alignment baselines using public type tags,
+value distributions, column overlap, uniqueness, key overlap, unit dimensions,
+operation examples, and role/schema permutations. If schema matching cheaply
+finds the bindings that make L3 succeed, emit `SCHEMA_MATCHING` or
+`SCHEMA_BINDING`.
+
+### B30-I9: PBE/PROSE-Style Baseline
+
+Run a PROSE-like typed PBE baseline that synthesizes table/string/unit/date/join
+transforms from the same input-output examples and counterexamples. If it
+synthesizes the target or transferable sibling transform at matched or <4x cost,
+emit `PBE`.
+
+### B30-I10: OpenRefine/Wrangling-Script Baseline
+
+Run OpenRefine/Wrangler-like action-history and saved-script baselines with
+cluster, reconcile, canonicalize, derive column, join, filter, validate,
+normalize, and action-guard steps. If a saved recipe, local script, SQL query,
+spreadsheet formula, pandas pipeline, or action history matches, emit
+`DATA_WRANGLING`, `RELATIONAL_ALGEBRA`, `PBE`, or `LIBRARY_LEARNING` as
+appropriate.
+
+### B30-I11: Constraint-Solver/Data-Repair Baseline
+
+Run declared-constraint executors, constraint learners, finite-domain/SMT search,
+data-repair baselines, and action-guard learners. L3 verifier clauses must be
+available as executable obligations to these baselines. If they learn or execute
+the guard and match hidden success, emit `CONSTRAINT_SOLVING` or `DATA_REPAIR`.
+
+### B30-I12: Typed CEGIS And Library-Learning Baselines
+
+Before hidden opening, report:
+
+```text
+N_join_candidates
+N_unit_transform_candidates
+N_schema_bindings
+N_constraint_sets
+N_action_policies
+typed_pruning_factor
+public_example_version_space
+minimum_distinguishing_counterexamples
+```
+
+Run exact typed CEGIS where feasible, beam CEGIS where exact is infeasible, MDL
+library learning over the generator operator family, and active table
+counterexample learners. If the finite typed DSL is small enough or these
+systems solve, emit typed-CEGIS, teaching-dimension, active-learning, or
+library-learning absorption. Combinatorial expense must be measured, not assumed.
+
+### B30-I13: Typed Generator Leakage Audit
+
+The typed generator audit probes names, indices, row order, value formats, ID
+formats, unit symbol choices, date formats, row counts, duplicate patterns,
+missingness, foreign-key overlap, constraint violation locations, action labels,
+serialized representations, schema IDs, and packet order. It computes MI and
+predictability for:
+
+```text
+latent_role | public_column_features
+frame_family | public_schema_statistics
+binding_target | value_distribution_features
+packet_entry_order | latent_role
+sibling_template | target_binding_template
+```
+
+If public statistics predict latent roles or frame family above the frozen
+threshold, void. A role predictor over public schema statistics is itself a
+baseline.
+
+### B30-I14: Goal/Obligation Semantics Contract
+
+Task goals are verifier obligations, not prose labels:
+
+```text
+Goal = finite set of public and hidden obligations:
+  preservation obligations
+  transformation obligations
+  rejection obligations
+  uncertainty/abstention obligations
+  repair obligations
+  action-safety obligations
+```
+
+Hidden scoring is objective only if the obligation set is frozen and the output
+canonicalization is deterministic. Add operation-enumerator, goal-conditioned
+CEGIS, active goal-disambiguation, obligation-template library, and
+abstention-aware validator baselines. If SHEETS-0 merely executes known
+operations after the goal is handed over, absorb into prior art.
+
+### B30-I15: Composition And Local-Repair Gate
+
+For every composed task report:
+
+```text
+cost(F_join), cost(F_unit), cost(F_constraint), cost(F_composed)
+cost(bindings per component)
+interference failures
+repair packet size after failure
+library learner composed macro cost
+PBE/CEGIS pipeline cost
+OpenRefine-like action history cost
+```
+
+Signal requires:
+
+```text
+cost(F_composed) < cost(F_join) + cost(F_unit) + cost(F_constraint)
+repairs preserve earlier verified behavior
+library, pipeline, CEGIS, and wrangling baselines fail or pay >=4x
+```
+
+If composition is only a saved ETL/query/wrangling pipeline, emit the relevant
+pipeline absorber. If repair packets are full replacement programs, absorb into
+program synthesis.
+
+### B30-I16: Solvedness Audit
+
+For each task family, name the closest existing tool or literature family, run
+or approximate its baseline, state what remains unabsorbed, and declare whether
+the family is a science test, a utility demo, or both. A useful local automation
+demo cannot carry the FrameSeed signal if ordinary local tools explain it.
+
+### B30-I17: Typed Boolean-Trap Guard
+
+SHEETS-0 is typed only if non-Boolean typed outputs, nontrivial schema binding,
+unit/identity ambiguity, and obligation semantics matter. A finite generator
+with obvious low-cost terms, one-hot labels, binary-only answers, or type tags
+that isolate targets emits `FRAMESEED_SHEETS0_TYPED_BOOLEAN_TRAP`.
+
+### B30-I18: Baseline Parity Contract
+
+Every executable packet field L3 can run is provided to each baseline as either
+identical executable bytes or a declared lossless translation. Baselines optimize
+canonical typed functional accuracy, not table reconstruction. Denying a boring
+baseline the typed semantics L3 receives voids the run.
+
+### B30-I19: Minimum Signal Conditions From Q37
+
+`FRAMESEED_SHEETS0_SIGNAL` may be emitted only if:
+
+1. typed smuggling audit passes;
+2. parser/type-system representation-prior audit passes;
+3. L3 reaches hidden target and sibling thresholds;
+4. frame/binding/program/human-labor costs are separated;
+5. AFTD_all_in beats independent typed teaching sets;
+6. domain-specific absorbers fail or pay >=4x;
+7. generic Boolean-era absorbers fail or pay >=4x;
+8. packet-erasure drops sibling transfer;
+9. role/name/schema/unit/row permutations preserve the token;
+10. composed frames show subadditive cost or local repair;
+11. no ordinary local tool/script baseline matches the result;
+12. the claim ceiling remains controlled evidence for typed amortized
+    frame-teaching separation.
+
+### B30-I20: Implementation Boundary For This Batch
+
+B30 may implement public audit infrastructure, generator scaffolding,
+serialization, budget ledgers, baseline rosters, token precedence, golden
+controls, and public smoke tests. It must not open hidden seeds or report hidden
+HFA unless the static audit, parity, generator leakage, cost-split, and golden
+control surfaces pass first. CPU-only execution is binding.
+
 ## Final Precommit Checklist
 
 - [ ] Domain uses typed tables, records, IDs, display names, units, dates,
@@ -753,8 +1074,23 @@ information cannot cheaply reproduce the transfer.
       equivalent teaching sets, and type ambiguity.
 - [ ] TD-H0, L0, L1, L2, RAG, nuisance-oracle, and library-learning baselines
       receive equal typed information and matched budgets.
+- [ ] Relational algebra, unit-system, exact-key, entity-resolution,
+      schema-matching, PBE/PROSE, OpenRefine/wrangling, constraint-solving,
+      data-repair, typed-CEGIS, goal/obligation, and typed-library baselines
+      receive equal executable information and matched budgets.
 - [ ] Baselines optimize functional typed accuracy, not table reconstruction.
 - [ ] Unit/date/ID parsers and typed schemas are shared wherever L3 can use them.
+- [ ] Parser inventory and human-labor ledger separate public substrate,
+      packet design, frozen-before-hidden surfaces, and hidden-eval-only data.
+- [ ] Frame, binding, program, parser, and human-labor costs are reported.
+- [ ] Typed generator leakage audit covers names, indices, row order, value
+      distributions, ID formats, unit symbols, missingness, duplicates,
+      constraint locations, action labels, schema ids, and packet order.
+- [ ] Goal semantics are encoded as finite verifier obligations, not prose.
+- [ ] Composition reports subadditive cost, interference failures, repair packet
+      size, and pipeline/library/PBE/CEGIS comparisons.
+- [ ] Solvedness audit names the closest existing tool or literature family for
+      each task family and removes demo-only families from the signal path.
 - [ ] At least three sibling tasks are required.
 - [ ] AFTD and AFTD_all_in are measured.
 - [ ] Evaluation uses m = {4,16,64,256}, at least 64 hidden worlds per m, at
