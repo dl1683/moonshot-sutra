@@ -1,133 +1,130 @@
 # Project Status
 
-**Last updated:** 2026-07-07 (post-check-in #7)
-**Current loop state:** W-Loop B9 running, Q-Loop B12 running
-**Live moonshot candidate:** Coordinate-Inheritance Sutra v1 (v0 KILLED at Stage 1, repairs in progress)
+**Last updated:** 2026-07-07
+**Current loop state:** Vision reset and alignment cleanup
+**Live moonshot candidate:** None
+**Fixed points:** The five sacred outcomes in `research/VISION.md`
 
 This file is the current source of truth. Older research files remain as
-provenance, but this page governs the live interpretation of the project.
+provenance and should not be deleted, but they are historical records unless
+they are explicitly re-admitted through the new vision.
 
 ## Executive Summary
 
-Coordinate-inheritance v0 ran a full 1000-sequence Stage 1 preflight and produced
-MASSIVE signal: +6.13 nats/token copied-vs-random advantage (3x threshold), 99.3%
-gap closure at token-end, and 0% adapter share of NLL lift. The adapter-does-the-work
-story is killed by the data.
+The project is no longer committed to any specific neural architecture, KD
+protocol, byte-level substrate, coordinate-inheritance story, evidence-native
+implementation, CTI law, benchmark target, or build order.
 
-However, v0 FAILED two precommitted Stage 1 controls:
-1. Patch-boundary frozen-core gain = 66.3% (need >=70%)
-2. Token-end rotation no-inverse retention = 33% (need <=30%)
+The current mission is broader:
 
-Both are borderline. v0 is killed before benchmark training per the gate chain. v1
-repairs are in progress (readout-conditioned adapter, stronger disruption controls,
-layer depth curve, generic pretrained control).
+> Find the structure that makes intelligence cheap.
 
-The surviving thesis:
+The five sacred outcomes are the only non-negotiables:
 
-**A small byte-native runtime may need to inherit reasoning geometry discovered by
-large-scale token models, then compress and expose it through bytes. The geometry
-itself — not just pretrained initialization — is load-bearing. The v0 Stage 1 data
-strongly supports this, pending two control repairs.**
+1. Genuine intelligence
+2. Improvability
+3. Democratized development
+4. Data efficiency
+5. Inference efficiency
 
-## Alive, Dead, In Progress
+Neural networks remain a possible substrate, but they are not the default
+answer. Symbolic, algebraic, program-synthesis, verifier-first, energy/search,
+physics-inspired, hybrid, or unknown substrates are all open.
 
-| Track | Status | Current role | Notes |
-|-------|--------|--------------|-------|
-| Coordinate-Inheritance v1 | **MAINLINE** | Sole moonshot candidate | v0 Stage 1 massive signal but 2 borderline gate failures; v1 repairs in W-Loop B9 |
-| Coordinate-Inheritance v0 | **KILLED** | Precursor | Stage 1 failed; signal preserved, controls insufficient |
-| Chain-init | Alive as baseline | Engineering fallback | Subsumed by coordinate-inheritance |
-| Codec | Alive as infrastructure | Byte-to-token bridge | Phase 1.5: 37.89% patch top-1 |
-| Evidence-Native direction | **PERMANENTLY DEAD** | Falsified | 2 architectures, 2 corpora, 2 scales |
-| Brainseed v0 | **DEAD** | Negative-result science | All scorers worse than codec-only |
+## What The Kill History Means Now
 
-## Current Dual-Loop State
+The prior kill sequence is not a trail of isolated implementation mistakes. The
+pattern is more important:
 
-| Loop | Batch | Status | Artifact |
-|------|-------|--------|----------|
-| Work Loop | B9 (iter 81-90) | **Running** | v1 repairs + Stage 1 re-run; Stage 2 if passes |
-| Work Loop | B8 (iter 71-80) | Completed | v0 Stage 1 preflight — KILLED (check-in #7) |
-| Question Loop | B12 (iter 78-84) | **Running** | Attack v1 repairs + Stage 1 interpretation |
-| Question Loop | B11 (iter 71-77) | Completed | Adapter attribution framework, 5 story classifications |
-| Supervisor | Check-in 7 | Completed | v0 Stage 1 assessment, v1 repair orders |
+- KD improved byte prediction without producing downstream judgment.
+- Brainseed and coordinate inheritance produced surface or NLL signal without
+  reliable function.
+- Evidence-native variants exposed retrieval/proxy shortcuts rather than robust
+  reasoning.
+- CTI-style smooth laws tracked proxy behavior while failing function.
+- Several variants optimized measured quantities while the actual capability did
+  not move, or moved in the wrong direction.
 
-## Key Findings
+The correct interpretation is that the neural-training frame itself has not
+earned default status. Ten killed approaches inside that frame are evidence that
+"train the neural model harder or more cleverly" may be the wrong level of
+analysis.
 
-1. **Coordinate-inheritance v0 Stage 1: massive signal, borderline failures.**
-   - Copied advantage: 6.13 nats/token (3x threshold)
-   - Gap closure: 99.3% at token-end
-   - Adapter attribution: 0% adapter share (adapter+random = baseline)
-   - Layer geometry matters: shuffled collapses, rotation with inverse recovers perfectly
-   - Failed: patch frozen-core 66.3% (70%), token rotation 33% (30%)
+## Alive, Dead, Historical
 
-2. **Adapter-does-the-work story: KILLED.**
-   - Same adapter + random core = 18.18 NLL
-   - Same adapter + copied core = 12.05 NLL
-   - 6.13 nat gap is entirely core geometry, not adapter learning
+| Track | Status | Current role |
+|-------|--------|--------------|
+| Five sacred outcomes | **ACTIVE** | Only fixed points |
+| `research/VISION.md` | **ACTIVE** | Governing doctrine |
+| Substrate-open intelligence search | **ACTIVE** | Current research frame |
+| CPU-first formalization and toy tests | **ACTIVE** | Operating discipline |
+| Neural networks | Candidate substrate | Must earn their place against alternatives |
+| Sutra as fixed byte-native NN | Historical | Name may survive; architecture is not doctrine |
+| Eklavya as multi-teacher KD | Historical | Aspiration to learn from sources must be rebuilt from first principles |
+| Byte-level modeling | Historical candidate | Useful only if rejustified by function |
+| Coordinate inheritance / Brainseed / evidence-native / CTI | Killed or historical | Evidence about proxy-function divergence |
+| Work loop and question loop batch files | Historical record | Do not delete; mine for evidence only |
 
-3. **Missing controls (needed for v1):**
-   - Generic pretrained control (non-Qwen layers)
-   - Readout-conditioned adapter (separate for token-end vs patch-boundary)
-   - Stronger disruption (beyond input-gauge rotation)
+## Current Research Questions
 
-4. **CBD remains the competitor:** 42.65% HellaSwag at 138M via chain KD.
+1. What is intelligence as a mathematical structure, not as a training recipe?
+2. What invariants make a system genuinely capable, repairable, data-efficient,
+   inference-efficient, and democratically buildable?
+3. What measurements are function-aligned rather than proxy-aligned?
+4. Which substrates can expose explicit repair operations and cheap
+   falsification tests?
+5. What is the smallest toy world that can distinguish real intelligence
+   geometry from proxy optimization?
 
-## Coordinate-Inheritance Gate System (from Q-Loop B10)
+## Operating Rules
 
-| Stage | Gate | Status |
-|-------|------|--------|
-| 0 | Artifact requirements (3 seeds, paired stats) | Pending |
-| 1 | Codec/gauge preflight (>=2 nats, >=60% closure, frozen-core >=70%, rotation collapses) | **v0 FAILED (2 borderline); v1 in progress** |
-| 2 | Uncompressed benchmark (>=35% HellaSwag, >=+8pp over Wide7) | Blocked by Stage 1 |
-| 3 | 121M compression (>=35% HellaSwag at 121M active) | Pending |
-| 4 | Byte-native story (robustness/cross-tokenizer advantages) | Pending |
-| 5 | Moonshot promotion (beat SmolLM2-135M targets) | Pending |
-
-## v0 Stage 1 Results (1000 sequences, for reference)
-
-| Gate | Token-End | Patch-Boundary | Required | Overall |
-|------|-----------|----------------|----------|---------|
-| Copied advantage | 6.13 nats | 4.70 nats | >=2.0 | PASS |
-| Gap closure | 99.3% | 87.7% | >=60% | PASS |
-| Gap to true NLL | 0.042 nats | 0.66 nats | <=1.5/2.0 | PASS |
-| Frozen core gain | 72.3% | 66.3% | >=70% | FAIL |
-| Rotation no-inverse | 33% retained | 30% retained | <=30% | FAIL |
-| Rotation inverse | 100% | 100% | >=80% | PASS |
-| Adapter params | 263K | - | <=2M | PASS |
+- Start from `research/VISION.md`.
+- Treat every mechanism as replaceable.
+- Do not assume neural networks, KD, bytes, retrieval, chain-init, CTI, or any
+  previous track is the answer.
+- Think first, formalize first, test small.
+- Use CPU-first experiments unless the user explicitly authorizes a larger run.
+- Before any experiment, state the function being created and why the
+  measurement is aligned with that function.
+- Negative results are valuable when they remove a real assumption.
 
 ## Artifact Index
 
-### Pivot and Supervisory Documents
+### Active Canon
 
-- `research/dual_loop_supervisor_checkin_7.md` - v0 Stage 1 assessment, v1 repair orders
-- `research/dual_loop_supervisor_checkin_6.md` - Evidence-native DEAD, coordinate-inheritance formal mainline
-- `research/dual_loop_supervisor_checkin_5.md` - Evidence-native v0 post-mortem
-- `research/dual_loop_supervisor_checkin_4.md` - Brainseed dead, evidence-native mainline candidate
+- `research/VISION.md` - first-principles vision and five sacred outcomes.
+- `research/STATUS.md` - current state and live interpretation.
+- `research/DEEP_RETHINK.md` - historical kill log plus current paradigm-level
+  interpretation.
+- `research/alignment_cleanup_summary.md` - record of this alignment pass.
 
-### Loop Batches
+### Historical Record
 
-- Work loop: B1-B7 (historical), B8 (v0 Stage 1, completed), B9 (v1 repairs, running)
-- Question loop: B1-B10 (historical), B11 (adapter attribution, completed), B12 (v1 attacks, running)
+- `research/work_loop_batch*.md`
+- `research/question_loop_batch*.md`
+- `research/dual_loop_supervisor_checkin_*.md`
+- Past code under `code/`
+- Past experiment ledger entries under `experiments/`
 
-### Coordinate-Inheritance Artifacts
-
-- `code/coordinate_inheritance.py` - Full implementation (preflight + benchmark modes)
-- `tmp_coordinate_inheritance_full/preflight_metrics.json` - v0 Stage 1 raw data
-- `tmp_coordinate_inheritance_full/calibration_adapter.pt` - v0 calibration adapter (263K params)
-
-### Evidence-Native v1 Artifacts (archival)
-
-- `code/evidence_native_v1.py` - v1 implementation
-- `tmp_evidence_native_v1_full2/` - v1 results (2 of 3 seeds completed)
+These files preserve evidence. They do not define the live doctrine.
 
 ## Wording Rules For Fresh Readers
 
 Use:
-- "v0 Stage 1 produced massive signal but failed two borderline controls — v1 repairs in progress."
-- "The adapter-does-the-work story is killed: same adapter + random core = baseline."
-- "CBD at 42.65% HellaSwag is the number to beat."
-- "No benchmark-level evidence yet — Stage 2 blocked by Stage 1."
+
+- "The project is in a substrate-open vision reset."
+- "The five sacred outcomes are fixed; all mechanisms are replaceable."
+- "The kill history is evidence of proxy-function divergence and possible
+  neural-paradigm mismatch."
+- "Neural networks are candidates, not doctrine."
+- "CPU-first means think first, formalize first, test small."
 
 Avoid:
-- "Coordinate-inheritance works" — v0 failed Stage 1; v1 untested.
-- "The geometry proof is complete" — two controls failed.
-- "We're close to benchmarks" — Stage 2 is gated on clean Stage 1 pass.
+
+- "Coordinate inheritance is the mainline."
+- "Evidence-native is the live moonshot."
+- "Eklavya/multi-teacher KD is the mission."
+- "Byte-level modeling is the core."
+- "The next step is a bigger training run."
+- "Intelligence = Geometry" as a neural-geometry slogan. It means the
+  mathematical structure of intelligence itself.
