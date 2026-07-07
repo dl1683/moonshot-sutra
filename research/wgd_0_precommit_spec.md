@@ -1,8 +1,8 @@
 # WGD-0 Precommit Specification
 
 **Date:** 2026-07-07  
-**Role:** W-Loop B34 worker  
-**Status:** PRECOMMIT SPEC. No implementation, hidden seed, hidden score, or signal claim exists here.  
+**Role:** W-Loop B35 worker
+**Status:** HARDENED PRECOMMIT SPEC. No implementation, hidden seed, hidden score, or signal claim exists here.
 **Direction:** World Grammar Discovery (WGD).
 
 ## 0. Scope
@@ -51,17 +51,21 @@ Sacred outcomes served: genuine intelligence, improvability, democratized
   development, data efficiency, and inference efficiency.
 Ordinary explanation that would make it boring: schema matching, PBE, CEGIS,
   active learning, constraint learning, causal discovery, MDL library learning,
-  or hand-authored substrate already contains the grammar under matched or <4x
-  all-in cost.
+  generator-family identification, verifier or obligation-label supply,
+  post-hoc compression, or hand-authored substrate already contains the grammar
+  under matched or <4x all-in cost.
 Evidence that kills it: any native absorber reaches the same functional gates;
   the public substrate leaks the grammar; hidden semantics are not behaviorally
-  identifiable; or WGD misses the gates.
+  identifiable; public statistics identify the generator branch; or WGD misses
+  the gates.
 Evidence that would make an adversary pause: compact executable grammar transfers
   to held-out siblings and compositions, passes repair and abstention gates,
   survives erasures, and defeats every native absorber with clean parity.
 ```
 
-## 2. W-Loop B34 Design Ledger: 20 Iterations
+## 2. W-Loop B34/B35 Design Ledger
+
+### B34 Design Ledger: 20 Iterations
 
 ### B34-I1: Directive Grounding
 
@@ -178,6 +182,139 @@ Final B34 token:
 WGD_0_PRECOMMIT_SPEC_READY_FOR_Q_LOOP_ATTACK_NO_SIGNAL_CLAIMED
 ```
 
+### B35-I1: B42 Absorption Presumption
+
+Imported Q-Loop B42's adversarial premise: WGD is absorbed until proven
+otherwise. The spec now treats PBE, CEGIS, active learning, schema matching,
+library learning, verifier supply, generator leakage, and human substrate as
+first explanations, not afterthoughts.
+
+### B35-I2: Generator Family Is Not The Target
+
+Separated latent generator family identification from executable behavioral
+grammar. A classifier that predicts hidden family id, obligation class, or
+transform family from public transcript statistics moves the terminal token.
+
+### B35-I3: Substrate Accounting Regimes
+
+Added substrate-free and substrate-charged accounting. WGD may claim discovered
+grammar only relative to the public substrate; it may not claim that the parser,
+typed DSL, proposal interface, validators, or constructor were learned unless
+the charged condition also survives.
+
+### B35-I4: Native PBE Contract
+
+Strengthened PBE from a roster name into a native executable baseline that must
+emit transformations, guards, invalidity, unsafe predicates, repairs,
+abstention, and composition programs from the exact public transcript.
+
+### B35-I5: Native CEGIS Contract
+
+Made black-box feedback a specification oracle unless charged and shared.
+Counterexamples, failure traces, repair hints, scalar rewards, and binary
+accept/reject answers are all declared feedback channels for native CEGIS.
+
+### B35-I6: Active CEGIS And Query Ledger
+
+Added active CEGIS and active-learning query accounting. Repair attempts,
+chosen candidate actions, abstention probes, and oracle calls are queries, not
+free mystery.
+
+### B35-I7: MDL Library Refusal
+
+Required a native MDL/sibling library learner with the same hypothesis class,
+sibling set, split policy, output obligations, and all-in cost categories.
+
+### B35-I8: Schema And Binding Split
+
+Expanded schema/binding absorption into name matching, type/shape matching,
+distributional matching, key/entity resolution, unit/scale detection,
+constraint mining, and combined schema-plus-PBE pipelines.
+
+### B35-I9: Verifier And Obligation Smuggling
+
+Split training feedback labels, evaluation-only labels, learner-output
+obligation predicates, hidden gold obligations, and scorer explanation bits.
+Obligation F1 is valid only for behaviorally identifiable obligations.
+
+### B35-I10: Operation Ontology Erasure
+
+Made the proposal interface and public primitives suspect. If the action DSL,
+typed substrate, parser, or primitive inventory already carves the operation
+space at low cost, WGD is absorbed by ontology, representation, or substrate.
+
+### B35-I11: Identifiability Audit
+
+Required a component-level audit that searches for public-evidence-equivalent
+but hidden-evaluation-distinct grammar alternatives. Unseparated components
+cannot support discovery claims.
+
+### B35-I12: Language And Human Prior Split
+
+Separated language, symbolic-erasure, no-language, and substrate-charged
+conditions so pretrained semantics or hand-authored DSL design cannot be
+smuggled into the cheap-system claim.
+
+### B35-I13: Post-Hoc Compression Guard
+
+Froze `G_hat` before held-out evaluation and added post-hoc compression
+absorption. A neat grammar artifact is signal only if erasing it hurts future
+action, repair, abstention, and transfer.
+
+### B35-I14: Repair Baselines
+
+Required repair-without-feedback and repair-with-feedback conditions, with
+feedback charged. Nearest-valid search, constraint solvers, and active retry
+baselines receive first refusal.
+
+### B35-I15: Abstention Calibration
+
+Added risk/coverage, abstention cost, false-abstention cost, unsafe false
+negative cost, and anomaly/uncertainty baselines. Abstention cannot be used to
+hide hard composition failures.
+
+### B35-I16: Sibling Independence
+
+Made sibling counting clone-resistant: no shared role names, schema positions,
+nuisance fingerprints, or near-duplicate generator templates; behavioral
+distance and `count_nonduplicate_reduced_siblings` are frozen before hidden
+open.
+
+### B35-I17: Composition Absorbers
+
+Composition now requires held-out forms not supplied by the interface. Saved
+pipelines, synthesized composed programs, generator reuse, or library
+composition move the token.
+
+### B35-I18: Leakage Audit Expansion
+
+Expanded predictive leakage audits to generator family id, obligation labels,
+role maps, binding labels, repair locations, query buckets, and serializer or
+feedback timing artifacts.
+
+### B35-I19: Terminal Token Expansion
+
+Added B42-specific tokens for active CEGIS, entity resolution, obligation label
+supply, generator leakage/family identification, representation prior,
+post-hoc compression, anomaly/constraint solver absorption, and near-duplicate
+sibling traps.
+
+### B35-I20: Final Hardening Check
+
+The hostile reviewer sentence is now binding:
+
+```text
+Show me that the system discovered executable obligation geometry, not that your
+typed substrate, generator, query oracle, schema fingerprints, or library learner
+already contained it.
+```
+
+Final B35 token:
+
+```text
+WGD_0_PRECOMMIT_SPEC_HARDENED_AGAINST_Q_LOOP_B42_NO_SIGNAL_CLAIMED
+```
+
 ## 3. Spec-Public Versus Learner-Public
 
 WGD-0 has two public surfaces:
@@ -199,6 +336,22 @@ programs. If a hand-authored solver is built from the spec-public description,
 its operation ontology and human labor are charged as `O` and `H`; if it solves
 under matched or <4x all-in cost, WGD is absorbed.
 
+Two accounting regimes are mandatory:
+
+```text
+substrate_free: all systems receive the frozen public substrate at zero substrate
+  cost, with equal information and equal parser privileges.
+substrate_charged: parser, type predicates, proposal DSL, validators,
+  constructor conveniences, baseline adapters, public feature extractors, and
+  manual substrate design are charged as H.
+```
+
+`WGD_SIGNAL` can claim discovered grammar only relative to the substrate-free
+regime. If the discovery claim survives only because the public substrate was
+free, the report must say: `No claim is made that the hand-authored substrate
+was learned.` If the substrate itself contains the operation ontology, verifier,
+role map, or low-cost program space, the token is an absorber, not signal.
+
 ## 4. Public Substrate
 
 WGD-0 uses finite opaque typed state-transition worlds.
@@ -214,6 +367,22 @@ query: input_state plus a requested output channel; the request says answer
 feedback: ACCEPTED, REJECTED, UNSAFE, AMBIGUOUS, or WRONG, plus public typed
   deltas/counterexamples only when the protocol buys and charges them.
 ```
+
+Every feedback channel is frozen before hidden open:
+
+```text
+training_feedback_labels: labels visible before scoring, charged as E_i/C_i.
+evaluation_only_labels: labels used only by the scorer, never visible to a
+  learner, constructor, or absorber before submission.
+scorer_explanation_bits: any public failure reason, witness, trace, diff,
+  repair hint, unsafe explanation, ambiguity reason, or counterexample payload.
+feedback_channel: exact content returned on accepted, rejected, unsafe,
+  ambiguous, wrong, abstained, and repair-attempt outcomes.
+```
+
+If WGD receives a feedback bit, native CEGIS, active-learning, PBE, repair, and
+schema/binding absorbers receive the identical bit or a declared lossless
+translation. Explanatory feedback is verifier supply unless charged and shared.
 
 Allowed value syntax:
 
@@ -296,6 +465,23 @@ hidden grammars induce identical behavior over the frozen public and hidden
 query distribution, obligation and discovery claims for their distinction are
 void.
 
+The latent generator family id is not itself a discovery target. Reports must
+separate:
+
+```text
+latent_generator_family_id
+behavioral_equivalence_class
+discoverable_executable_grammar
+nuisance_surface_statistics
+```
+
+If public transcript statistics predict latent family id, transform family,
+obligation class, role map, repair location, or composition template above the
+frozen leakage thresholds, the token is leakage/family-identification absorption
+or void. If a claimed grammar component has a public-evidence-equivalent but
+hidden-evaluation-distinct alternative that the evaluation never separates, no
+discovery claim is allowed for that component.
+
 Required hidden pressures:
 
 ```text
@@ -318,12 +504,18 @@ operators, query mix, and sibling worlds are hidden until manifest opening.
 
 ## 6. Learner Output Contract
 
-A WGD system must output an executable grammar before hidden scoring. It must
-contain transformation predicates, invalidity predicates, unsafe predicates,
-obligation predicates, abstention predicates, local repair operators,
-composition rules, uncertainty, and provenance. A solver that emits only
-per-task answers can be scored as a baseline or engineering condition, but it
-cannot receive `WGD_SIGNAL`.
+A WGD system must output and freeze an executable grammar before held-out hidden
+scoring. It must contain transformation predicates, invalidity predicates,
+unsafe predicates, obligation predicates, abstention predicates, local repair
+operators, composition rules, uncertainty, and provenance. A solver that emits
+only per-task answers can be scored as a baseline or engineering condition, but
+it cannot receive `WGD_SIGNAL`.
+
+`G_hat` is causal evidence only if it is frozen before hidden failures, improves
+future action/repair/abstention/transfer, and loses capability under component
+erasure. A grammar synthesized after task solving or after hidden failures is
+post-hoc compression and receives `WGD_ABSORBED_BY_POST_HOC_COMPRESSION` or the
+more specific PBE/CEGIS/MDL token.
 
 ## 7. Terminal Tokens
 
@@ -334,97 +526,174 @@ WGD_SIGNAL
 WGD_NEGATIVE
 WGD_INCONCLUSIVE_BASELINES_NOT_NATIVE
 WGD_VOID_POST_HIDDEN_MUTATION
+WGD_VOID_PROTOCOL_OR_LEAKAGE
 WGD_VOID_SUBSTRATE_ASYMMETRY
 WGD_VOID_GENERATOR_LEAKAGE
-WGD_VOID_HIDDEN_SEMANTICS_NOT_IDENTIFIABLE
+WGD_VOID_UNIDENTIFIABLE_GRAMMAR
+WGD_VOID_SUBJECTIVE_HIDDEN_SEMANTICS
 WGD_VOID_BASELINE_PARITY_FAILURE
 WGD_VOID_COST_LEDGER_FAILURE
 WGD_TRAP_LOOKUP_OR_TINY_DSL
+WGD_TRAP_NEAR_DUPLICATE_SIBLINGS
 WGD_ABSORBED_BY_OPERATION_ONTOLOGY_SUPPLY
 WGD_ABSORBED_BY_VERIFIER_TEMPLATE_SUPPLY
+WGD_ABSORBED_BY_OBLIGATION_LABEL_SUPPLY
 WGD_ABSORBED_BY_HAND_AUTHORED_SUBSTRATE
-WGD_ABSORBED_BY_REPRESENTATION_OR_PARSER_PRIOR
+WGD_ABSORBED_BY_REPRESENTATION_PRIOR
 WGD_ABSORBED_BY_SCHEMA_OR_BINDING_DISCOVERY
+WGD_ABSORBED_BY_ENTITY_RESOLUTION
 WGD_ABSORBED_BY_PBE
+WGD_ABSORBED_BY_PBE_CEGIS
 WGD_ABSORBED_BY_CEGIS
+WGD_ABSORBED_BY_ACTIVE_CEGIS
 WGD_ABSORBED_BY_MDL_LIBRARY_LEARNING
 WGD_ABSORBED_BY_ACTIVE_LEARNING
 WGD_ABSORBED_BY_CAUSAL_OR_INVARIANT_DISCOVERY
+WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY
 WGD_ABSORBED_BY_CONSTRAINT_LEARNING
+WGD_ABSORBED_BY_ANOMALY_OR_CONSTRAINT_SOLVER
 WGD_ABSORBED_BY_NUISANCE_OR_LEAKAGE_ORACLE
 WGD_ABSORBED_BY_LLM_OR_LANGUAGE_PRIOR
 WGD_ABSORBED_BY_SIBLING_LIBRARY_LEARNING
+WGD_ABSORBED_BY_GENERATOR_LEAKAGE
+WGD_ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION
+WGD_ABSORBED_BY_GENERATOR_REUSE
+WGD_ABSORBED_BY_POST_HOC_COMPRESSION
 ```
 
 Precedence:
 
 1. Post-hidden mutation of constructor, scorer, token policy, timeout, baseline,
-   serializer, parser, budget, query mix, seed, or hidden family under the same
-   hidden seed -> `WGD_VOID_POST_HIDDEN_MUTATION`.
-2. Baseline parity failure, substrate asymmetry, denied executable information,
-   cost-ledger failure, or uncounted human/parser work -> the matching `VOID`.
-3. Generator leakage, hidden metadata leakage, banned strings, hidden labels in
-   public artifacts, or predictive public features above frozen thresholds ->
-   `WGD_VOID_GENERATOR_LEAKAGE`, unless the feature is intentionally public and
-   all baselines use it, in which case the most specific absorber applies.
-4. Hidden semantics not behaviorally identifiable ->
-   `WGD_VOID_HIDDEN_SEMANTICS_NOT_IDENTIFIABLE`.
+   serializer, parser, budget, feedback channel, query mix, seed, hidden family,
+   sibling-count function, or token threshold under the same hidden seed ->
+   `WGD_VOID_POST_HIDDEN_MUTATION`.
+2. Protocol leakage, denied executable information, baseline parity failure,
+   substrate asymmetry, uncounted human/parser work, cost-ledger failure, or
+   missing cost categories -> the matching `VOID`.
+3. Hidden semantics or obligation components not behaviorally identifiable ->
+   `WGD_VOID_UNIDENTIFIABLE_GRAMMAR`; subjective hidden semantics that cannot be
+   scored from behavior -> `WGD_VOID_SUBJECTIVE_HIDDEN_SEMANTICS`.
+4. Accidental generator leakage, hidden metadata leakage, banned strings, hidden
+   labels in public artifacts, or predictive public features above frozen
+   thresholds -> `WGD_VOID_GENERATOR_LEAKAGE`. If the predictive structure is
+   intentionally public, equally available, and functionally solves the task,
+   assign the most specific absorber, such as generator leakage, generator
+   family identification, representation prior, schema/binding, nuisance oracle,
+   or language prior.
 5. Degenerate tasks, finite lookup tables, renamed Boolean masks, tiny
-   enumerable DSLs, one-hot labels, or public type tags isolating answers ->
-   `WGD_TRAP_LOOKUP_OR_TINY_DSL`.
-6. Public substrate, operation ontology, verifier templates, parser, feature
-   inventory, or hand-authored design already contains the grammar at low cost
-   -> the most specific ontology, verifier, representation, parser, or
+   enumerable DSLs, one-hot labels, public type tags isolating answers, clone
+   siblings, or near-duplicate generator templates -> `WGD_TRAP_LOOKUP_OR_TINY_DSL`
+   or `WGD_TRAP_NEAR_DUPLICATE_SIBLINGS`.
+6. Public substrate, operation ontology, verifier templates, obligation labels,
+   action DSL, parser, feature inventory, language names, or hand-authored
+   design already contains the grammar at low cost -> the most specific
+   ontology, verifier, obligation-label, representation, language, or
    hand-substrate absorber.
-7. Schema/binding discovery, PBE, CEGIS, MDL library learning, active learning,
-   causal/invariant discovery, constraint learning, nuisance oracle, language
-   prior, or sibling-library baseline reaches signal functional thresholds at
-   matched or <4x all-in cost -> the most specific absorber token.
-8. Any required native absorber is missing, proxy-only, capability-mode-only, or
-   denied equal information -> `WGD_INCONCLUSIVE_BASELINES_NOT_NATIVE`.
+7. Schema/binding discovery, entity resolution, PBE, PBE+CEGIS, CEGIS, active
+   CEGIS, MDL library learning, sibling library learning, active learning,
+   causal/invariant discovery, constraint learning, anomaly/nearest-valid
+   repair, nuisance oracle, generator-family classifier, or post-hoc compression
+   reaches signal functional thresholds at matched or <4x all-in cost -> the
+   most specific absorber token.
+8. Any required native absorber is missing, proxy-only, capability-mode-only,
+   untested, or denied equal information before hidden opening ->
+   `WGD_INCONCLUSIVE_BASELINES_NOT_NATIVE`.
 9. WGD misses any functional signal gate -> `WGD_NEGATIVE`, unless a
    higher-precedence token applies.
-10. All signal gates pass, every native absorber fails or pays >=4x all-in, and
-    the claim ceiling is honored -> `WGD_SIGNAL`.
+10. All signal gates pass, every native absorber fails or pays >=4x all-in, the
+    query/cost/substrate ledgers pass, and the claim ceiling is honored ->
+    `WGD_SIGNAL`.
 
-Mixed evidence cannot be narrated into signal.
+Mixed evidence cannot be narrated into signal. If the strongest boring
+explanation is not implemented natively, proven as a formal lower bound, or
+explicitly labeled untested before hidden open, the result cannot be
+`WGD_SIGNAL`.
 
 ## 8. Native Absorbers
 
 Each absorber must declare inputs, lossless translation from learner-public,
-information cost, runtime cost, human-substrate cost, metrics, thresholds,
-status (`native_executable`, `proxy_absorber`, `capability_mode_scored`, or
-`formal_lower_bound`), failure mode, and absorption token.
+information cost, runtime cost, query cost, human-substrate cost, metrics,
+thresholds, status (`native_executable`, `proxy_absorber`,
+`capability_mode_scored`, `formal_lower_bound`, or `untested_roster_entry`),
+failure mode, and absorption token.
 
 Required absorbers:
 
 | Absorber | Required status | Absorbs when |
 |---|---|---|
-| Schema/binding discovery | native executable | Role, field, object, relation, or action bindings explain success at matched or <4x cost. |
-| PBE | native executable | Input-output examples synthesize the same action policy or transformations at matched or <4x cost. |
-| CEGIS | native executable or formal lower bound | Counterexample-guided search over the same public typed interface reaches thresholds at matched or <4x cost. |
-| MDL library learning | native executable | Reusable macros across target and siblings explain transfer after counting library plus per-task programs. |
-| Active learning | native executable | Charged queries isolate the grammar and reach thresholds at matched or <4x cost. |
-| Causal/invariant discovery | native executable or formal lower bound | Invariants or causal structure explain valid/invalid/unsafe predictions and transfer. |
-| Constraint learning and repair | native executable | Learned constraints, repairs, or validators explain obligations, invalidity, safety, and repair. |
-| Operation-ontology oracle | native executable control | Giving operation labels or hidden family labels explains WGD success. |
-| Verifier-template oracle | native executable control | Giving obligation templates explains WGD success. |
-| Nuisance/leakage oracle | native executable | Public nuisance removal or leaked public features solve the benchmark. |
-| LLM/language prior | native executable condition if used | Natural-language names or pretrained semantic priors explain success. |
-| Sibling library learner | native executable | A library learned from target/sibling families explains transfer. |
+| Schema/binding discovery | native executable | Role, field, object, relation, unit, scale, type, key, or action bindings explain success at matched or <4x cost. Must include name/description matcher if names exist, type/shape matcher, distributional matcher, key/entity resolver, unit/scale detector, constraint miner, and combined schema+PBE pipeline. |
+| Entity resolution | native executable | Record linkage, key discovery, deduplication, canonical-entity recovery, or foreign-key-like co-occurrence explains target, repair, or sibling transfer. |
+| PBE | native executable | Input-output examples synthesize the same action policy, transformations, guards, invalidity, unsafe predicates, repair program, abstention rule, or composition program at matched or <4x cost. |
+| PBE+CEGIS | native executable | A PBE engine refined by the same failure/counterexample channel reaches thresholds at matched or <4x cost. |
+| CEGIS | native executable or formal lower bound | Counterexample-guided search over the same public typed interface, feedback channel, and hypothesis class reaches thresholds at matched or <4x cost. |
+| Active CEGIS | native executable | Adaptive action proposals, repair attempts, abstention probes, or membership/equivalence-style queries isolate the grammar at matched or <4x all-in query cost. |
+| MDL library learning | native executable | Reusable macros across target and siblings explain transfer after counting library bits, bindings, per-task programs, repairs, and residual teaching/search. Must use the same grammar hypothesis class and output obligations. |
+| Sibling library learner | native executable | A library learned from target/sibling families, or generator-template reuse across siblings, explains transfer or AFTD. |
+| Active learning | native executable | A native active learner with identical query budget and answer channel isolates the grammar or sufficient policy at matched or <4x cost. |
+| Causal/invariant discovery | native executable or formal lower bound | Invariants or causal structure explain valid/invalid/unsafe predictions, obligations, repairs, and transfer. |
+| Constraint learning and repair | native executable | Learned constraints, validators, repairs, or nearest-valid search explain obligations, invalidity, safety, repair, or abstention. |
+| Anomaly/uncertainty abstention | native executable | Risk/coverage, anomaly detection, calibrated uncertainty, or abstain-when-hard rules match abstention metrics at matched or <4x cost. |
+| Operation-ontology oracle | native executable control | Giving operation labels, hidden family labels, action categories, or named transform families explains WGD success. |
+| Verifier-template oracle | native executable control | Giving obligation templates, validator clauses, unsafe templates, repair templates, or postcondition forms explains WGD success. |
+| Obligation-label oracle | native executable control | Training feedback labels, failure messages, witness shapes, test names, or scorer explanations transmit obligation boundaries. |
+| Generator leakage classifier | native executable | Public transcript features predict latent family id, role map, obligation class, transform family, repair location, composition form, or hidden query bucket above thresholds and that prediction explains performance. |
+| Nuisance/leakage oracle | native executable | Removing nuisance features, selecting leaked public features, or using public-feature oracle bits solves the benchmark. |
+| Representation/parser/substrate prior | native executable condition | Public type system, parser, primitive predicates, serializer, proposal DSL, feature extractor, or hand-authored substrate carves the operation space at low cost. |
+| LLM/language prior | native executable condition if used | Natural-language names, descriptions, pretrained semantics, or imported domain priors explain success. Must be split from symbolic-erasure and no-language conditions. |
+| Post-hoc compression | native executable or audit | Per-task programs, saved pipelines, solved traces, or held-out failures can be compressed into a grammar-looking artifact without causal grammar use. |
 
 If a required absorber is not native or formally bounded before hidden opening,
-maximum token is `WGD_INCONCLUSIVE_BASELINES_NOT_NATIVE`.
+maximum token is `WGD_INCONCLUSIVE_BASELINES_NOT_NATIVE`. A proxy result can
+motivate the next run but cannot support signal.
 
+Minimum native output contracts:
+
+```text
+PBE outputs: transform_program, validity_guard, invalidity_guard, unsafe_guard,
+  repair_program, abstention_rule, composition_program.
+CEGIS outputs: hypothesis, counterexample_history, oracle_bits_used,
+  final_policy_or_grammar, unresolved_counterexample_count.
+MDL outputs: library_bits L, per_task_program_bits P_i, binding_bits B_i,
+  repair_bits R_i, abstention_bits A_i, residual_teaching_bits.
+Schema outputs: role_binding_map, confidence, matched_features, entity_links,
+  unit_scale_map, constraint_map, costed_feature_bits.
+Verifier outputs: supplied_template_bits O, obligation_predicates, witness_bits,
+  label_bits, hidden-template dependency.
+```
 ## 9. Equal-Information Contract
 
 Every executable field available to WGD is available to absorbers as identical
 bytes or a declared lossless translation: same training data, typed values,
 public schemas, parsers, action interface, examples, failures, feedback,
 counterexamples, smoke/hidden boundary, scorer, output canonicalization,
-abstention rules, budgets, parser privileges, and bans. If WGD receives typed
-semantics, parser support, verifier syntax, action slots, or feedback that an
-absorber cannot use, the run is void.
+abstention rules, repair rules, query budgets, parser privileges, and bans. If
+WGD receives typed semantics, parser support, verifier syntax, action slots,
+query answers, feedback labels, or repair hints that an absorber cannot use, the
+run is void.
+
+Discovery mode is frozen before hidden open:
+
+```text
+passive_discovery: no chosen queries; only frozen public transcripts.
+active_discovery: chosen action/query/repair/abstention attempts are allowed,
+  charged, logged, and shared with native active absorbers.
+```
+
+Active WGD cannot claim passive discovery. Query access is a specification
+oracle until the active learner and active CEGIS baselines lose under identical
+budget and answer channel.
+
+Every run logs:
+
+```text
+query_count
+query_type
+answer_bits
+whether_query_was_adaptive
+whether_query_touched_hidden_evaluation_distribution
+which system received the answer
+cost category charged
+```
 
 ## 10. Cost Ledger
 
@@ -435,35 +704,42 @@ G = reusable discovered grammar bits.
 B_i = task/world-specific binding bits.
 P_i = per-task executable program or policy bits.
 E_i = examples and outcome labels.
-C_i = counterexamples and active-query answers.
+C_i = counterexamples and active-query answer bits.
+Q_i = charged query/action-proposal count converted by the frozen per-query price.
 V_i = verifier or obligation clauses, discovered or supplied.
 R_i = task-specific repair patches and repair examples.
 A_i = task-specific abstention/ambiguity evidence and policies.
 L = learned library or macro bits shared across worlds.
 H = charged human-authored substrate, parser, generator, scorer, feature
-    inventory, baseline adapter, and manual design work.
-O = supplied operation ontology or verifier-template bits.
-N = nuisance oracle, leakage oracle, or public-feature selector bits.
+    inventory, baseline adapter, proposal DSL, and manual design work.
+O = supplied operation ontology, verifier-template, obligation-label, or hidden
+    family-label bits.
+N = nuisance oracle, leakage oracle, public-feature selector, or generator-family
+    classifier bits.
 ```
 
-Report:
+Report both accounting regimes:
 
 ```text
-total_cost = G + L + H + O + N
-  + sum_i(B_i + P_i + E_i + C_i + V_i + R_i + A_i)
+total_cost_substrate_free = G + L + O + N
+  + sum_i(B_i + P_i + E_i + C_i + Q_i + V_i + R_i + A_i)
+total_cost_substrate_charged = total_cost_substrate_free + H
 grammar_only_cost = G
-binding_ratio = sum_i(B_i) / max(1, total_cost)
-program_ratio = sum_i(P_i) / max(1, total_cost)
-library_ratio = L / max(1, total_cost)
-human_substrate_ratio = H / max(1, total_cost)
-ontology_ratio = O / max(1, total_cost)
-residual_task_ratio = sum_i(B_i + P_i + E_i + C_i + V_i + R_i + A_i) / max(1, total_cost)
+binding_ratio = sum_i(B_i) / max(1, total_cost_substrate_free)
+program_ratio = sum_i(P_i) / max(1, total_cost_substrate_free)
+library_ratio = L / max(1, total_cost_substrate_free)
+human_substrate_ratio = H / max(1, total_cost_substrate_charged)
+ontology_ratio = O / max(1, total_cost_substrate_free)
+query_ratio = sum_i(Q_i + C_i) / max(1, total_cost_substrate_free)
+residual_task_ratio = sum_i(B_i + P_i + E_i + C_i + Q_i + V_i + R_i + A_i) / max(1, total_cost_substrate_free)
 ```
 
 Signal-side expectations: `binding_ratio <= 0.35`, `program_ratio <= 0.35`,
-`ontology_ratio == 0` for the main condition, human substrate reported but not
-counted as discovery, and `AFTD_all_in` passes after every category is counted.
-
+`ontology_ratio == 0` for the main condition, `query_ratio` reported and unable
+to explain the result, human substrate reported in both regimes, and
+`AFTD_all_in` passes after every category is counted. If a result works only
+when H is treated as free, the claim ceiling is limited to discovered grammar
+under the supplied substrate; no claim is made that the substrate was learned.
 ## 11. Functional, Sibling/Composition, Repair, And Abstention Gates
 
 This section is the binding sibling/composition gates contract.
@@ -476,14 +752,22 @@ minimum_per_hidden_family_HFA >= 0.90
 transformation_accuracy >= 0.95
 invalidity_f1 >= 0.90
 unsafe_f1 >= 0.90
-obligation_f1 >= 0.90
+obligation_f1 >= 0.90 for behaviorally identifiable obligations
 repair_success >= 0.80
+repair_without_feedback_reported
+repair_with_feedback_charged
 abstention_recall >= 0.90
 abstention_precision >= 0.85
 over_abstention_on_identifiable_valid_cases <= 0.20
-sibling_HFA >= 0.90 on at least 3 reduced siblings
+risk_coverage_curve_reported
+abstention_cost_reported
+false_abstention_cost_reported
+unsafe_false_negative_cost_reported
+sibling_HFA >= 0.90 on at least 3 nonduplicate reduced siblings
 composition_HFA >= 0.85 on held-out composition forms
-AFTD_all_in passes
+component_erasure_drop >= 20 points where applicable
+AFTD_all_in passes under substrate_free accounting
+substrate_charged accounting reported
 all native absorbers fail or pay >=4x all-in
 ```
 
@@ -495,6 +779,18 @@ S2_parameter_shift: new arity, value ranges, conflict patterns, and feedback spa
 S3_composition_shift: new composition with held-out order, guard, or interference.
 ```
 
+Sibling independence is frozen before hidden open:
+
+```text
+no shared role names
+no shared schema positions
+no shared nuisance fingerprints
+no shared generator-family classifier shortcut
+minimum behavioral distance between siblings
+maximum generator-template overlap
+count_nonduplicate_reduced_siblings function
+```
+
 Definitions:
 
 ```text
@@ -502,75 +798,102 @@ TD_H0(t) = minimum counted teaching/search cost for baseline H0 to reach target
   thresholds on task t with no representation additions.
 reduced(sibling) iff HFA(sibling) >= 0.90 and
   TD_after(G_hat, sibling) <= 0.50 * TD_H0(sibling), with residual binding,
-  program, library, and teaching bits unable to explain the reduction.
-AFTD_frame = G / max(1, count_reduced_siblings)
-AFTD_all_in = total_cost / max(1, count_reduced_siblings)
+  program, library, query, and teaching bits unable to explain the reduction.
+AFTD_frame = G / max(1, count_nonduplicate_reduced_siblings)
+AFTD_all_in = total_cost_substrate_free / max(1, count_nonduplicate_reduced_siblings)
 ```
 
-Signal requires at least three reduced siblings and `AFTD_all_in` better than
-independent H0 teaching/search by at least 2.0x. If the reduction is explained
-by macro library, binding, PBE programs, active queries, or residual teaching,
-emit the corresponding absorber.
+Signal requires at least three nonduplicate reduced siblings and `AFTD_all_in`
+better than independent H0 teaching/search by at least 2.0x. If the reduction is
+explained by macro library, generator reuse, binding, PBE programs, active
+queries, or residual teaching, emit the corresponding absorber.
 
 Composition reports component grammar cost, composed grammar cost, component
 bindings/programs, interference failures, order errors, guard failures, repair
 patch size, and PBE/CEGIS/MDL/active costs. Signal requires `G_composed_cost <
-sum(G_component_costs)`, `composition_HFA >= 0.85`, preserved component
-behavior after repair, and PBE/CEGIS/active/MDL baselines failing or paying
->=4x. Saved pipelines or synthesized composed programs are absorption.
+sum(G_component_costs)`, `composition_HFA >= 0.85`, preserved component behavior
+after repair, and PBE/CEGIS/active/MDL baselines failing or paying >=4x. Saved
+pipelines, synthesized composed programs, interface-supplied composition forms,
+or generator-template reuse are absorption.
 
-Local repair protocol freezes `G_hat`, presents failed cases with black-box
-feedback, charges all feedback and patch bits, and re-scores failing,
-neighborhood, and preserved-behavior suites. Locality thresholds:
+Local repair protocol freezes `G_hat`, presents failed cases with the frozen
+feedback channel, charges all feedback, attempts, and patch bits, and re-scores
+failing, neighborhood, and preserved-behavior suites. Locality thresholds:
 
 ```text
 changed_grammar_nodes <= max(2, ceil(0.10 * total_grammar_nodes))
 repair_patch_bits <= 0.25 * original_G_bits
+repair_attempt_budget frozen and charged
 preserved_behavior_HFA >= 0.98 on previously passed cases
 repair_success >= 0.80
 ```
 
+Repair must be reported in two conditions:
+
+```text
+repair_without_feedback: no new feedback after failure presentation.
+repair_with_feedback: every new failure, accept/reject answer, witness, and
+  retry is charged as C_i/Q_i and shared with active/CEGIS repair baselines.
+```
+
+Nearest-valid search, learned validators, constraint solvers, and active retry
+baselines get first refusal. If they match repair at <4x all-in, assign
+`WGD_ABSORBED_BY_ANOMALY_OR_CONSTRAINT_SOLVER`, `WGD_ABSORBED_BY_CONSTRAINT_LEARNING`,
+or `WGD_ABSORBED_BY_ACTIVE_LEARNING`.
+
 Abstention-required cases are underidentified, unsafe, out-of-scope, or
-inconsistent-feedback cases. Abstention is scored as a functional output.
-Always-abstain, abstain-when-hard, or abstain-to-hide-composition-failure is
-negative unless a higher-precedence token applies.
+inconsistent-feedback cases. Abstention is scored as a functional output with
+opportunity cost. Always-abstain, abstain-when-hard, anomaly-only abstention, or
+abstain-to-hide-composition-failure is negative or absorbed unless a
+higher-precedence token applies.
 
 Perfect HFA is not enough. FrameSeed already showed that perfect HFA can still
 be absorption.
-
 ## 12. Geometry-Erasure Ablations
 
 Required ablations:
 
 | Ablation | Expected if WGD is real | Absorption or failure if not |
 |---|---|---|
-| Remove full grammar `G_hat` | Target and sibling HFA drop by >=20 points. | If no drop, grammar was not active. |
+| Remove full grammar `G_hat` | Target and sibling HFA drop by >=20 points. | If no drop, grammar was not active or is post-hoc compression. |
 | Remove transformations `T_hat` | Valid transform accuracy drops by >=20 points. | If no drop, PBE/program/binding likely explains action. |
-| Remove obligations `O_hat` | invalidity/unsafe/obligation F1 drops by >=20 points. | If no drop, verifier claim unsupported. |
+| Remove obligations `O_hat` | invalidity/unsafe/obligation F1 drops by >=20 points. | If no drop, verifier/obligation claim unsupported. |
 | Remove repairs `R_hat` | repair_success drops below 0.50. | If no drop, repair is not in discovered grammar. |
-| Remove abstention `A_hat` | unsafe overcommit or underidentified errors rise. | If no drop, abstention unsupported. |
-| Remove composition `C_hat` | composition_HFA drops by >=20 points. | If no drop, composition may be pipeline/library. |
-| Bindings-only | Cannot exceed 0.70 HFA or pass siblings. | If it passes, schema/binding absorption. |
-| Examples/counterexamples-only | Cannot reach all gates under matched cost. | If it passes, teaching/PBE/active absorption. |
-| MDL-library replacement | Cannot match all gates under <4x all-in. | If it matches, MDL absorption. |
-| Randomized labels/obligations | HFA and obligation F1 stay near chance and <=0.60. | If high, leakage or trap. |
-| Role/name/order permutation | Terminal token and metrics are stable. | If unstable, representation/parser prior or leakage. |
+| Remove abstention `A_hat` | unsafe overcommit or underidentified errors rise. | If no drop, abstention unsupported or anomaly-only. |
+| Remove composition `C_hat` | composition_HFA drops by >=20 points. | If no drop, composition may be pipeline/library/interface supply. |
+| Bindings-only | Cannot exceed 0.70 HFA or pass siblings. | If it passes, schema/binding or entity-resolution absorption. |
+| Examples/counterexamples-only | Cannot reach all gates under matched cost. | If it passes, teaching/PBE/CEGIS/active absorption. |
+| Active-query-only | Cannot isolate grammar under the same query budget. | If it passes, active-learning or active-CEGIS absorption. |
+| MDL-library replacement | Cannot match all gates under <4x all-in. | If it matches, MDL or sibling-library absorption. |
+| Per-task-program replacement | Cannot match transfer/repair/composition under <4x all-in. | If it matches, PBE/CEGIS/post-hoc compression absorption. |
+| Verifier-template/obligation-label oracle | Should improve only oracle controls, not main condition. | If main condition depended on labels/templates, verifier supply absorption. |
+| Generator-family classifier | Cannot predict hidden family, transform, obligation, role, repair, or composition labels above thresholds. | If predictive and useful, generator leakage/family absorption or void. |
+| Randomized labels/obligations | HFA and obligation F1 stay near chance and <=0.60. | If high, leakage, trap, or label smuggling. |
+| Role/name/unit/order permutation | Terminal token and metrics are stable. | If unstable, representation/parser/schema prior or leakage. |
+| Value-distribution/key-cardinality decoy | Schema matchers fail to recover roles from nuisance fingerprints. | If not, schema/binding absorption. |
+| Schema-isomorphism holdout | Grammar transfers across isomorphic but surface-different schemas. | If not, schema-position or parser prior. |
+| Repair without feedback | Repair remains local and useful without retry oracle. | If only feedback version works, active query absorption may apply. |
+| No-language symbolic condition | Opaque symbolic condition remains viable. | If only language condition works, language-prior absorption. |
+| Substrate-charged accounting | Result and claim ceiling remain honest after H is reported. | If not, no claim that substrate was learned; if substrate contains grammar, hand-substrate absorption. |
 | Hidden-family holdout | Held-out family metrics remain above floors. | If not, no discovery claim for that family. |
+| Sibling clone audit | Nonduplicate sibling count remains >=3. | If not, `WGD_TRAP_NEAR_DUPLICATE_SIBLINGS`. |
 
 If a required erasure cannot be run, maximum token is inconclusive or negative,
 depending on which claim the missing erasure supports.
 
-## 13. Predictive Leakage Audits
+## 13. Predictive Leakage And Identifiability Audits
 
-Audit targets: latent grammar family, latent role map, target bindings, valid or
-invalid action label, unsafe condition, obligation class, repair location,
-abstention requirement, composition form, sibling template, and hidden query
-bucket.
+Audit targets: latent generator family id, behavioral equivalence class, latent
+role map, target bindings, valid or invalid action label, unsafe condition,
+obligation class, obligation-label source, repair location, abstention
+requirement, composition form, sibling template, hidden query bucket, and scorer
+explanation category.
 
 Public feature sets to audit: object/field/relation ids, row/order position,
-event order, value distributions, missingness, duplicates, type tags, opaque
-string formats, lengths, hashes, serializer offsets, packet/provenance order,
-feedback timing, query order, and split metadata.
+event order, value distributions, missingness, duplicates, key cardinality,
+unit/scale fingerprints, type tags, opaque string formats, lengths, hashes,
+serializer offsets, packet/provenance order, feedback timing, query order,
+error-message shape, test-case names, and split metadata.
 
 Minimum audit roster:
 
@@ -579,18 +902,26 @@ MI audit: normalized mutual information <= 0.05 for each target unless
   intentionally public and baseline-visible.
 Predictor audit: frozen linear, tree/forest, nearest-neighbor, and small
   program-feature predictors must not exceed majority_baseline + 0.10 accuracy
-  or AUC 0.60.
-Permutation audit: names, ids, roles, row order, field order, event order, and
-  nuisance features are permuted; token and metrics remain stable.
+  or AUC 0.60 for family, role, obligation, repair, and composition targets.
+Generator-family classifier audit: no public-feature classifier may predict the
+  hidden family or generator branch well enough to explain performance.
+Permutation audit: names, ids, roles, row order, field order, event order,
+  units, key/cardinality patterns, and nuisance features are permuted; token and
+  metrics remain stable.
 Banned-metadata audit: no hidden family names, role labels, target ids, seeds,
-  solution hashes, verifier labels, or operation names in public artifacts.
+  solution hashes, verifier labels, operation names, repair templates, scorer
+  explanations, or test names in learner-public artifacts.
 No-language audit: fully opaque symbolic condition is run; semantic-name
   condition is separate and charged as language prior.
+Identifiability audit: for every claimed grammar component, search for a
+  public-evidence-equivalent but hidden-evaluation-distinct alternative.
 ```
 
 Accidental leakage emits `WGD_VOID_GENERATOR_LEAKAGE`. Intentionally public
 predictive structure must be equally available and then competes as
-representation, parser, schema, nuisance, or language absorption.
+representation, parser, schema, nuisance, generator-family, or language
+absorption. If an identifiable alternative is not separated by the frozen hidden
+evaluation, the component claim is void even if action HFA is high.
 
 ## 14. Claim Ceilings
 
@@ -598,18 +929,21 @@ Strongest allowed positive sentence after `WGD_SIGNAL`:
 
 ```text
 In WGD-0's synthetic opaque typed state-transition worlds, a cheap learner
-discovered an executable transformation-and-obligation grammar that transferred
-to held-out siblings and compositions, supported local repair and abstention,
-and defeated the required native absorbers under clean all-in accounting.
+operating on the frozen public substrate discovered an executable
+transformation-and-obligation grammar that transferred to held-out nonduplicate
+siblings and compositions, supported local repair and calibrated abstention, and
+defeated the required native absorbers under clean all-in accounting.
 ```
 
 Allowed support: evidence for discovered geometry in the tested family;
-inspectable executable grammar; the absorption methodology survived another
-direction; harder WGD families and real-domain translations are motivated.
+inspectable executable grammar; causal erasure evidence that the grammar was an
+active ingredient; the absorption methodology survived another direction;
+harder WGD families and real-domain translations are motivated.
 
 Banned even after signal: general intelligence, real user data solved, outside
 all synthesis/active/library learning in general, a favored substrate proven,
-scaling invalidated, or any claim based on non-native baselines.
+scaling invalidated, public substrate learned unless the charged condition
+proves it, or any claim based on non-native baselines.
 
 If absorbed, name the absorber plainly. If negative, name failed gates. If void,
 no performance narrative is allowed under that hidden seed.
@@ -624,10 +958,17 @@ generator code and constructor code
 public substrate serializer
 public/smoke/hidden seed manifest
 hidden family manifest commitment
+behavioral-equivalence and identifiability audit plan
+feedback channel declaration
+query ledger rules and query prices
+substrate-free and substrate-charged accounting rules
+hidden family / generator-leakage classifier roster
+sibling independence and count_nonduplicate_reduced_siblings function
 scorer and canonicalizer
 token precedence
 cost ledger rules
 baseline roster and status labels
+native absorber implementation handles
 baseline adapters and lossless translations
 timeouts and compute budgets
 query budgets and active-query costs
@@ -647,17 +988,19 @@ hidden_seed: opened exactly once after manifest freeze.
 
 Constructor blind mode: learner, grammar constructor, and baselines may read only
 learner-public artifacts. They cannot read latent role maps, hidden labels,
-hidden family ids, solution programs, hidden query labels, scorer internals, or
-hidden sibling answers.
+hidden family ids, solution programs, hidden query labels, scorer internals,
+hidden sibling answers, hidden composition forms, hidden obligation templates,
+or hidden family classifier targets.
 
 Post-hidden mutation rule: any change to constructor, scorer, serializer, hidden
-family, query mix, baseline, timeout, parser, cost accounting, token precedence,
-or audit threshold after hidden opening voids the run under that seed. To
-continue, rotate hidden seed and report the old opening as void.
+family, query mix, feedback channel, baseline, timeout, parser, cost accounting,
+token precedence, sibling-count function, or audit threshold after hidden
+opening voids the run under that seed. To continue, rotate hidden seed and
+report the old opening as void.
 
 Every artifact entry logs source public fact, constructor rule, bits charged,
-category (`G`, `B_i`, `P_i`, `E_i`, `C_i`, `V_i`, `R_i`, `A_i`, `L`, `H`, `O`,
-`N`), executable status, human author, and hash.
+category (`G`, `B_i`, `P_i`, `E_i`, `C_i`, `Q_i`, `V_i`, `R_i`, `A_i`, `L`,
+`H`, `O`, `N`), executable status, human author, and hash.
 
 ## 16. Measurement Report Skeleton
 
@@ -673,6 +1016,8 @@ Terminal token:
 ## Executive Verdict
 ## What Was Tested
 ## Learner-Public Substrate
+## Substrate-Free And Substrate-Charged Accounting
+## Feedback Channel And Query Ledger
 ## Hidden-Open Discipline
 ## Token Precedence Applied
 ## Harness Integrity
@@ -680,12 +1025,14 @@ Terminal token:
 ## Equal-Information Baseline Contract
 ## Cost Ledger
 ## Functional Metrics
-## Sibling And AFTD Results
+## Identifiability Audit
+## Sibling Independence And AFTD Results
 ## Composition Results
 ## Local Repair Results
-## Abstention Results
+## Abstention And Risk-Coverage Results
 ## Geometry-Erasure Ablations
 ## Predictive Leakage Audits
+## Operation / Verifier / Obligation Oracle Controls
 ## What Absorbed
 ## What Did Not Absorb
 ## Claim Ceiling
@@ -696,33 +1043,52 @@ Terminal token:
 
 - [ ] WGD starts from `research/VISION.md`.
 - [ ] The claim is discovery of executable grammar, not packet transmission.
+- [ ] B42's absorption presumption is binding: WGD is absorbed until native
+      boring explanations lose or pay >=4x all-in.
 - [ ] Spec-public and learner-public surfaces are separated.
 - [ ] Public substrate is opaque typed state-transition data.
+- [ ] Substrate-free and substrate-charged accounting are both reported.
 - [ ] Learner-public artifacts exclude operation labels, verifier templates,
-      exact bindings, latent role names, semantic names, hidden family ids, and
-      solution programs.
+      obligation labels, exact bindings, latent role names, semantic names,
+      hidden family ids, and solution programs.
+- [ ] Feedback channel content is frozen before hidden open.
+- [ ] Query ledger and active-query prices are frozen before hidden open.
 - [ ] Hidden grammar contains transformations, invalidity, unsafe conditions,
       obligations, repairs, abstention, composition, bindings, and nuisance.
-- [ ] Hidden semantics are behaviorally identifiable.
+- [ ] Latent generator family id is separated from behavioral grammar.
+- [ ] Hidden semantics and obligations are behaviorally identifiable.
 - [ ] Terminal tokens and precedence are exact.
 - [ ] Native absorbers are declared before hidden opening.
+- [ ] PBE outputs transformations, guards, repairs, abstention, and composition.
+- [ ] CEGIS and active CEGIS receive the exact same feedback/counterexample
+      channel as WGD.
+- [ ] MDL and sibling library learners use the same hypothesis class and sibling
+      split policy.
+- [ ] Schema/binding absorbers include names, types, distributions, keys,
+      entity resolution, units/scales, constraints, and schema+PBE pipelines.
+- [ ] Verifier-template and obligation-label oracle controls are native.
+- [ ] Generator-family and predictive leakage classifiers are native.
 - [ ] PBE, CEGIS, MDL library learning, active learning, schema/binding,
-      causal/invariant, constraint-learning, ontology-oracle,
-      verifier-template, nuisance, language-prior, and sibling-library
-      absorbers receive equal information.
+      entity-resolution, causal/invariant, constraint-learning, repair,
+      anomaly/abstention, ontology-oracle, verifier-template,
+      obligation-label, nuisance, language-prior, post-hoc compression, and
+      sibling-library absorbers receive equal information.
 - [ ] Missing native absorbers lower the maximum token to inconclusive.
-- [ ] Cost ledger includes `G`, `B_i`, `P_i`, `E_i`, `C_i`, `V_i`, `R_i`,
-      `A_i`, `L`, `H`, `O`, and `N`.
+- [ ] Cost ledger includes `G`, `B_i`, `P_i`, `E_i`, `C_i`, `Q_i`, `V_i`,
+      `R_i`, `A_i`, `L`, `H`, `O`, and `N`.
 - [ ] Functional gates include HFA, transformation accuracy, invalidity, unsafe
-      detection, obligations, repair, abstention, siblings, composition, and
-      `AFTD_all_in`.
-- [ ] At least three reduced siblings are required.
-- [ ] Held-out composition forms are required.
-- [ ] Local repair preserves prior behavior.
-- [ ] Abstention is scored and cannot be used as an escape hatch.
+      detection, identifiable obligations, repair, abstention, risk/coverage,
+      siblings, composition, and `AFTD_all_in`.
+- [ ] At least three nonduplicate reduced siblings are required.
+- [ ] Sibling independence and `count_nonduplicate_reduced_siblings` are frozen.
+- [ ] Held-out composition forms are required and not interface-supplied.
+- [ ] Local repair preserves prior behavior and reports no-feedback and
+      feedback-charged conditions.
+- [ ] Abstention is scored, calibrated, costed, and cannot hide hard cases.
 - [ ] Geometry-erasure ablations are frozen.
 - [ ] Predictive leakage audits include MI, public-feature predictors,
-      permutation stability, banned metadata, and no-language controls.
+      generator-family classifiers, permutation stability, banned metadata,
+      no-language controls, and identifiability alternatives.
 - [ ] Claim ceiling is written before results.
 - [ ] Artifact freeze protocol is written before implementation.
 - [ ] Hidden seed opens only after manifest freeze.
@@ -733,9 +1099,10 @@ Terminal token:
 
 WGD-0 matters only if the discovered grammar is the active ingredient. If the
 active ingredient is a public parser, operation ontology, verifier checklist,
-schema matcher, PBE program, CEGIS search, active query policy, constraint
-learner, MDL macro library, language prior, or human-authored substrate, move the
-token plainly.
+obligation labels, schema matcher, entity resolver, PBE program, CEGIS search,
+active query policy, constraint learner, anomaly detector, MDL macro library,
+generator-family fingerprint, language prior, post-hoc compression, or
+human-authored substrate, move the token plainly.
 
 ```text
 DISCOVER THE GEOMETRY OR LET THE ABSORBERS KILL IT.
