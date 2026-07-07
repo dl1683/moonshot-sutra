@@ -1,179 +1,111 @@
 # Sutra & Eklavya
 
-**Sutra** is a from-scratch language model designed to be the world's most
-efficient learning mechanism — absorbing knowledge from multiple pretrained
-teachers of diverse architectures and using their reach as signal. It currently
-uses a byte-level patch-global architecture, but the architecture serves the
-goal; the goal is not to build a byte model.
+Sutra is a small-model intelligence research program built around one question:
+can a cheap byte-native system reason well by separating reasoning geometry from
+factual storage?
 
-**Eklavya** is the multi-teacher learning protocol that trains Sutra. It extracts
-invariants from diverse teacher models (different architectures, different
-tokenizers) and routes them based on measured disagreement. The key insight:
-teachers are instruments, not masters. The student learns from their
-disagreements, not their consensus.
+The current answer is sharper than where the project started. We proved that
+transplanting teacher coordinates into a newborn byte model does not work as a
+moonshot mechanism. That negative result forced the project toward
+evidence-native judgment. The first evidence-native prototype has now failed its
+own gates, so the live direction is under pressure rather than proven.
 
-## Why Bytes (For Now)?
+## Current Thesis
 
-Tokenizers create invisible walls. Bytes provide a simpler and more universal
-interface for cross-architecture knowledge transfer than token-projection or
-chunk-matching alternatives. Every teacher's output can be compared at the byte
-level, regardless of internal tokenization.
+**Intelligence = reasoning geometry + factual knowledge search.**
 
-This is how Eklavya becomes practical: a universal substrate where any teacher's
-knowledge can be absorbed without vocabulary alignment hacks.
+Reasoning geometry should be compact, cheap, transferable, and trainable on
+limited hardware. Factual knowledge should not be crammed into a 121M parameter
+model from scratch. It should live in retrievable evidence, with the model
+trained to judge, compare, and use that evidence better than dumb retrieval
+baselines.
 
-## Current State
+That makes the live moonshot candidate:
 
-**S0 (Scout Build)** — training in progress (step ~10K/50K).
+**Evidence-Native Retrieval-Born Sutra** - a byte-native evidence-conditioned
+judge that learns how to decide from retrieved public evidence.
 
-| Component | Status | Key File |
-|-----------|--------|----------|
-| Architecture (121.7M params) | Built & tested | `code/s0_architecture.py` |
-| Training loop + burn-in | Ready | `code/s0_training.py` |
-| Data pipeline (byte shards) | Complete (565 shards, 141 GiB) | `code/prepare_byte_shards.py` |
-| Pre-training preflight | All checks pass | `code/preflight.py` |
-| Causality regression tests | Passing | `code/test_overfit.py` |
-| Burn-in verdict automation | Ready | `code/burnin_verdict.py` |
-| Live training monitor | Ready | `code/monitor.py` |
-| Evaluation + generation | Ready | `code/s0_eval.py` |
+But the v0 implementation did not prove the claim. It lost the first gate:
+retrieved evidence did not beat no-evidence, shuffled evidence, or the best
+same-retriever dumb baseline. Evidence-native remains alive only as a stronger,
+more demanding next test, not as a result.
 
-**Benchmarks** — evaluation harness ready.
+## The Pivot
 
-| Component | Status | Key File |
-|-----------|--------|----------|
-| Benchmark harness (HellaSwag, PIQA, ARC, etc.) | Built & tested | `code/benchmark_harness.py` |
-| Unit tests (22 tests) | All passing | `code/test_benchmark_harness.py` |
+Brainseed v0 is dead as the mainline.
 
-**E1 (Single-Teacher KD)** — implementation complete, tested, pending S0 checkpoint.
+After 50 work-loop iterations and 42 question-loop iterations, every Brainseed
+scorer tested worse than raw codec-only scoring. Ridge, MLP, bilinear, and
+learned-cosine variants all failed to beat the codec baseline. Zero-cost chart
+rescues did not change the conclusion.
 
-| Component | Status | Key File |
-|-----------|--------|----------|
-| Teacher signal cache builder | Built & tested | `code/eklavya_cache.py` |
-| KD training loop (3-phase) | Built & tested | `code/eklavya_training.py` |
-| Unit tests (50 tests) | All passing | `code/test_eklavya.py` |
+That is not a project failure. It is a discovery:
 
-**E2 (Multi-Teacher KD)** — fully wired with mmap-backed cache, integration tests, and GPU launch checklist. Ready for GPU.
+> We proved that transplanting coordinates fails, but the search for reasoning
+> geometry led us to evidence-native judgment - a fundamentally different
+> approach to small-model intelligence.
 
-| Component | Status | Key File |
-|-----------|--------|----------|
-| Teacher registry (4 active teachers) | Built & tested | `code/eklavya_e2_cache.py` |
-| Binary cache records & I/O | Built & tested | `code/eklavya_e2_cache.py` |
-| PL-style router & purifier | Built & tested | `code/eklavya_e2_router.py` |
-| Projection ports & losses | Built & tested | `code/eklavya_e2_losses.py` |
-| Multi-teacher gradient budget | Built & tested | `code/eklavya_e2_losses.py` |
-| Calibration loss | Built & tested | `code/eklavya_e2_training.py` |
-| Unit tests (473 E2 tests) | All passing | `code/test_eklavya_e2.py` |
-| Data loader tests (18 tests) | All passing | `code/test_overfit.py` |
-| Cache builder (2-pass) | Built | `code/eklavya_e2_cache_builder.py` |
-| E2 trainer with curriculum | Built & reviewed | `code/eklavya_e2_training.py` |
-| Ablation evaluation harness | Built | `code/eval_e2.py` |
-| Ablation modes (A0-A9c + BLD) | Implemented & tested | `code/eklavya_e2_training.py` |
-| Ablation comparison & decisions | Built | `code/compare_ablations.py` |
-| Protocol document | Written | [E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) |
-| Monitoring protocol | Written | [E2 Monitoring](research/E2_MONITORING_PROTOCOL.md) |
+The first evidence-native v0 run then gave the next hard lesson: adding evidence
+is not enough. The model must learn judgment geometry that survives controls.
 
-**Option C (Teacher-Guided Pretraining)** — alternative path: KD from step 0.
+## What Still Matters
 
-| Component | Status | Key File |
-|-----------|--------|----------|
-| Option C trainer | Built & tested | `code/s0_option_c_training.py` |
-| Mapped byte-KL cache | Built & tested | `code/eklavya_cache.py` |
-| Unit tests (13 tests) | All passing | `code/test_option_c.py` |
+The codec is infrastructure, not the moonshot. It remains useful as a
+byte-to-token addressability layer and diagnostic bridge, but it is not itself
+the breakthrough claim.
 
-### S0 Architecture
+Chain-init is the baseline, not the moonshot. It showed a weak positive
+compatibility signal and remains the pragmatic fallback number to beat. If a
+future Evidence-Native Sutra cannot beat chain-init and same-retriever controls,
+it is not the mainline either.
 
-```
-ByteEncoder (P=4 bytes → 1 patch state)
-  └─ 2-layer local mixer (patch-isolated, no future leakage)
-  └─ Gated MLP aggregator → D=576 patch state
+The active moonshot claim is narrower and stronger:
 
-GlobalReasoner (30-layer causal transformer)
-  └─ GQA: 9 heads / 3 KV heads
-  └─ SwiGLU FFN (1536 intermediate)
-  └─ RoPE positional encoding
-  └─ Activation checkpointing (5.5 GB peak VRAM)
+**Can a 121M byte-native judge use retrieved evidence to produce a large,
+control-resistant benchmark lift that cannot be explained by retrieval alone?**
 
-ByteDecoder (4-layer causal decoder)
-  └─ Cross-attention to nearby patch states
-  └─ Autoregressively predicts 4 bytes per patch
-  └─ Shift-by-one: hidden[i] predicts bytes of patch i+1
-```
+## Key Results So Far
 
-### Data
+| Result | Status | Meaning |
+|--------|--------|---------|
+| Byte-marginal KD improved byte prediction but not downstream judgment | Failed as mainline | Better compression did not become better reasoning. |
+| Brainseed v0 scorers all lost to codec-only | Dead | Coordinate extraction did not produce useful frozen judgment. |
+| Chain-init compatibility probe showed weak positive signal | Baseline | Coordinate inheritance may help, but it is not the moonshot. |
+| Evidence-native v0 prototype failed all gates | On life support | The first implementation did not beat no-evidence, shuffled evidence, or dumb retrieval baselines. |
+| Strong evidence-native test | Open | Needs a real judge architecture, external evidence controls, geometry probes, and repeated seeds. |
 
-Three admitted Common Pile subsets (Public Domain / CC0 only):
-- `arxiv_abstracts` — scientific text
-- `caselaw_access_project` — legal text
-- `biodiversity_heritage_library` — natural history
+## Active Tracks
 
-565 shards x 256 MiB = 141 GiB total. 50K training steps at batch 64 covers
-~0.09 epochs.
+| Track | Status | Role |
+|-------|--------|------|
+| Evidence-Native Retrieval-Born Sutra | Alive but on life support | Moonshot candidate only if the next stronger test shows control-resistant learned judgment. |
+| Chain-init | Strong baseline/fallback | Establish inherited-coordinate performance to beat. |
+| Codec | Infrastructure | Provide byte-native addressability and diagnostics. |
+| Brainseed v0 | Dead | Preserved as negative-result science and diagnostic history. |
+| S0/E1/E2 byte-KD stack | Historical infrastructure | Useful code and baselines, no longer the mainline claim. |
 
-## Build Order
+## Current Research Map
 
-```
-D0: Data admission (source/license filtering)        ✅ Complete
-S0: Byte/patch scout (121.7M, fixed compute)          ⏳ Training (step ~10K/50K)
-E1: Single-teacher byte-level KD (anchor teacher → S0)   📐 Ready for GPU
-E2: Multi-teacher KD (4 teachers → S0)                📐 Infrastructure built
-T0: Teacher feasibility profiling (parallel)           ◻ After S0
-G0: Gap mapping on real student traces                 ◻ After S0 trained
-P0: Packet compilation for observed gaps               ◻ After G0
-G1: Integrated runtime (350-500M, all 7 interfaces)   ◻ After P0
-O0: Ownership/credit/efficiency gates                  ◻ After G1
-```
+- [Vision](research/VISION.md) - mission and stakes.
+- [Status](research/STATUS.md) - live source of truth for active/dead tracks.
+- [Deep Rethink](research/DEEP_RETHINK.md) - full research history and pivot trail.
+- [Supervisor Check-in 4](research/dual_loop_supervisor_checkin_4.md) - formal Brainseed death and evidence-native pivot.
+- [Supervisor Check-in 5](research/dual_loop_supervisor_checkin_5.md) - Evidence-Native v0 post-mortem.
+- [Experiments](experiments/EXPERIMENTS.md) - experiment ledger index.
 
-## Design Documents
+## Success Standard
 
-- [Vision](research/VISION.md) — what Sutra and Eklavya are, claims and non-claims
-- [SE1 Canonical Spec](research/SE1_CANONICAL_SPEC.md) — frozen build spec,
-  produced through multi-round adversarial deliberation (R1-R12)
-- [Eklavya E1 Protocol](research/EKLAVYA_E1_PROTOCOL.md) — byte-level KD design
-  (single-teacher, 3-phase schedule, sparse caching)
-- [Eklavya E2 Protocol](research/EKLAVYA_E2_PROTOCOL.md) — multi-teacher KD design
-  (5-teacher roster, PL router, purifier, gradient budget, 16 ablations)
-- [E2 Teacher Feasibility](research/EKLAVYA_E2_TEACHER_FEASIBILITY.md) — per-teacher
-  admission checklist (6 checks, admit/drop rules)
-- [E2 Ablation Plan](research/EKLAVYA_E2_ABLATION_PLAN.md) — E2.5 ownership tests
-  (A0-A9c + A5a/b/c + BLD, two-phase strategy, decision rules)
-- [Eklavya Doctrine](research/EKLAVYA_DOCTRINE.md) — learning protocol design
-- [Ground-Up Future Design](research/GROUND_UP_FUTURE_DESIGN.md) — first-principles
-  architecture (unconstrained by prior assumptions)
-- [W0 Registries](research/W0_REGISTRIES.md) — materialized interface, lesson,
-  measurement, and threshold registries for G1
-- [Data Admission](research/DATA_ADMISSION.md) — admitted/held/rejected sources,
-  license posture, shard preparation
+Evidence-native Sutra survives only if it beats the boring explanations:
 
-## Quick Start (CPU-only validation)
+- same-retriever dumb baselines,
+- shuffled evidence,
+- wrong-topic evidence,
+- nearest-neighbor label shortcuts,
+- no-evidence-trained controls,
+- corpus leakage,
+- length and formatting artifacts,
+- chain-init when that baseline is ready.
 
-```bash
-pip install torch numpy transformers pytest
-cd code
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest test_overfit.py test_eklavya.py test_eklavya_e2.py test_burnin_verdict.py test_export_log_csv.py test_utilities.py test_compare_ablations.py test_vram_profile.py test_monitor_inspect.py test_option_c.py test_benchmark_harness.py -v
-```
-
-All 857 tests run on CPU without any data, models, or GPU. They validate
-the S0 architecture (config presets, loss shape, LR schedule, causality),
-the full E1/E2 infrastructure (binary record I/O, router, purifier, losses,
-gradient budget, cache builder, position manifest, teacher records, training
-config), the E2 monitor anomaly detection (route entropy collapse,
-gradient budget suppression, zero teacher signal, disagreement routing),
-the burn-in verdict system (hard fail detection, soft concerns, trajectory
-analysis), log export (train/eval CSV with teacher losses and route stats),
-operational security (opsec pattern scanning, OneDrive path guards,
-CLI smoke tests against GPU launch checklist),
-ablation comparison analysis (log parsing, phase metrics, decision rules,
-CSV export), VRAM estimation (S0 memory budget, E2 overhead), training
-monitor (log parsing, mode detection, display, anomaly reporting),
-checkpoint inspector (NaN/Inf/empty detection, optimizer state, metadata),
-and config presets (all S0 variants, dimension/head validation).
-
-## Hardware
-
-Single NVIDIA RTX 5090 Laptop (24 GB VRAM). S0 fits comfortably at 5.5 GB peak
-with activation checkpointing (batch=4, seq=4096).
-
-## Philosophy
-
-Intelligence = Geometry, not Scale. Mathematical structure beats brute-force
-parameters. If the theory is right, you don't need a data center.
+The project is still aiming for a stop-scrolling result. The claim is now
+strictly evidence-bounded: small models do not need to memorize the world only if
+they can learn a cheap geometry for judging what they find.

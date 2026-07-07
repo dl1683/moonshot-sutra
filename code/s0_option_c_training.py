@@ -78,6 +78,7 @@ class OptionCConfig:
     eps: float = 1e-8
 
     resume_from: Optional[str] = None
+    max_seqs_per_shard: Optional[int] = None
 
     ce_only_no_go_steps: int = 20
 
@@ -249,9 +250,13 @@ def train_option_c(cfg: OptionCConfig, model_cfg: Optional[S0Config] = None):
         print(f"Data split: {train_range[1]} train shards, {n_eval} eval shards")
 
     train_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len_bytes,
-                                    model_cfg.patch_size, shard_range=train_range)
+                                    model_cfg.patch_size, shard_range=train_range,
+                                    max_seqs_per_shard=cfg.max_seqs_per_shard)
     eval_dataset = EklavyaDataset(cfg.data_dir, cfg.seq_len_bytes,
                                    model_cfg.patch_size, shard_range=eval_range)
+    if cfg.max_seqs_per_shard is not None:
+        print(f"Capped to {cfg.max_seqs_per_shard} seqs/shard "
+              f"({len(train_dataset)} train, {len(eval_dataset)} eval)")
     sampler_gen = torch.Generator()
     sampler_gen.manual_seed(42)
     sampler_gen_state = sampler_gen.get_state()
@@ -568,6 +573,8 @@ def main():
     parser.add_argument("--warmup-steps", type=int, default=1500)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--eval-hold-shards", type=int, default=5)
+    parser.add_argument("--max-seqs-per-shard", type=int, default=None,
+                        help="Cap sequences per shard (restrict to cached subset)")
     parser.add_argument("--log-file", default=None)
     args = parser.parse_args()
 
@@ -584,6 +591,7 @@ def main():
         log_file=log_file,
         resume_from=args.resume,
         eval_hold_shards=args.eval_hold_shards,
+        max_seqs_per_shard=args.max_seqs_per_shard,
     )
 
     train_option_c(cfg)

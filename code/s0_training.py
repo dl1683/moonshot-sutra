@@ -228,7 +228,7 @@ def evaluate(model: SutraS0, eval_loader: DataLoader, device: torch.device, cfg:
                 out = model(byte_ids, return_aux=False)
                 losses = compute_loss(out, byte_ids, P)
             predicted_bytes = B * (T - P)
-            total_loss += losses["byte_ce"].item() * predicted_bytes
+            total_loss += losses["byte_ce"] * predicted_bytes
             total_tokens += predicted_bytes
 
             targets = byte_ids.reshape(B, N, P)[:, 1:]

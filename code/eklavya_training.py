@@ -39,8 +39,10 @@ from eklavya_cache import load_cache, AlignRecord, ByteKLRecord
 
 class EklavyaDataset(ByteShardDataset):
     def __init__(self, data_dir: str, seq_len: int, patch_size: int = 4,
-                 shard_range: tuple[int, int] | None = None):
-        super().__init__(data_dir, seq_len, patch_size, shard_range)
+                 shard_range: tuple[int, int] | None = None,
+                 max_seqs_per_shard: int | None = None):
+        super().__init__(data_dir, seq_len, patch_size, shard_range,
+                         max_seqs_per_shard=max_seqs_per_shard)
         self._shard_offset = shard_range[0] if shard_range is not None else 0
 
     def __getitem__(self, idx):

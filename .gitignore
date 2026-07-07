@@ -67,6 +67,10 @@ research/archive/
 # GPU launch checklist (contains operational teacher identities)
 research/GPU_LAUNCH_CHECKLIST.md
 
+# Deep rethink and research notes (contain model names, strategic analysis, competitor data)
+research/DEEP_RETHINK.md
+research/RESEARCH_NOTES.md
+
 # Private teacher identity config (real HF model IDs)
 config/teacher_config.json
 config/teacher_config.*.json
@@ -90,3 +94,47 @@ _codex_pytest_writable/
 *.bak
 *.txt
 !requirements*.txt
+
+# Large model and dataset artifacts
+*.pth
+*.pth.tar
+*.safetensors
+*.onnx
+*.arrow
+*.parquet
+*.sqlite
+*.sqlite3
+*.db
+*.tar
+*.tar.gz
+*.zip
+*.7z
+
+# Keep the curated experiment ledger despite the global JSONL ignore
+!experiments/ledger.jsonl
+
+# Fast scratch mirrors and accidental local copies
+sutra_fast/
+sutra_fast_*/
+*_sutra_fast*/
+C:/sutra_fast/
+
+# OneDrive and editor transient files
+~$*
+.~*
+*.partial
+*.crdownload
+*.download
+*.upload
+*.tmp~
+*.bak~
+
+# Local temporary experiment and review outputs
+tmp/
+tmp_*/
+review_tmp*/
+r*_review_tmp/
+.codex_tmp*/
+.pytest_cache/
+pytest-cache-files-*/
+pytest_run_*/

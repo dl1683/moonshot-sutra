@@ -90,6 +90,8 @@ def inspect_checkpoint(path: str):
         print(f"\n  Projection ports: {len(ports_state)} tensors, "
               f"{n_port_params:,} params")
 
+    if "eval_bpb" in ckpt:
+        print(f"  Eval BPB: {ckpt['eval_bpb']:.4f}")
     if "best_eval_bpb" in ckpt:
         print(f"  Best eval BPB: {ckpt['best_eval_bpb']:.4f}")
 

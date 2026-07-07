@@ -428,3 +428,53 @@ class TestExportEvalCSV:
         finally:
             os.unlink(log)
             os.unlink(out)
+
+
+class TestOptionCExport:
+    def test_option_c_fields(self):
+        log = _write_jsonl([
+            {"step": 10, "bpb": 7.5, "kl": 0.3, "lambda_kd": 0.05,
+             "teacher_grad_budget": 0.35, "gb_scale": 0.8,
+             "gb_ce_norm": 1.2, "gb_teacher_norm": 0.4,
+             "kl_records_used": 320, "kl_seq_coverage": 4,
+             "lr": 0.0001, "grad_norm": 0.5,
+             "tok_per_sec": 50000, "elapsed_s": 12.5},
+        ])
+        out = _tmp_csv()
+        try:
+            export_train_csv(log, out)
+            rows, fields = _read_csv(out)
+            assert len(rows) == 1
+            r = rows[0]
+            assert float(r["lambda_kd"]) == pytest.approx(0.05)
+            assert float(r["teacher_grad_budget"]) == pytest.approx(0.35)
+            assert float(r["kl_loss"]) == pytest.approx(0.3)
+            assert r["kl_records_used"] == "320"
+            assert r["kl_seq_coverage"] == "4"
+            assert float(r["gb_scale"]) == pytest.approx(0.8)
+            assert float(r["elapsed_s"]) == pytest.approx(12.5)
+            assert r["tok_per_sec"] == "50000"
+        finally:
+            os.unlink(log)
+            os.unlink(out)
+
+    def test_elapsed_s_key_compat(self):
+        """Option C uses 'elapsed_s' key, E1/E2 use 'elapsed'."""
+        log_old = _write_jsonl([
+            {"step": 10, "bpb": 7.0, "elapsed": 5.0},
+        ])
+        log_new = _write_jsonl([
+            {"step": 10, "bpb": 7.0, "elapsed_s": 5.0},
+        ])
+        out_old = _tmp_csv()
+        out_new = _tmp_csv()
+        try:
+            export_train_csv(log_old, out_old)
+            export_train_csv(log_new, out_new)
+            rows_old, _ = _read_csv(out_old)
+            rows_new, _ = _read_csv(out_new)
+            assert float(rows_old[0]["elapsed_s"]) == pytest.approx(5.0)
+            assert float(rows_new[0]["elapsed_s"]) == pytest.approx(5.0)
+        finally:
+            for f in [log_old, log_new, out_old, out_new]:
+                os.unlink(f)

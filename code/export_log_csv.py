@@ -45,7 +45,8 @@ def export_train_csv(log_path: str, output_path: str):
                 "ce_bpb": round(ce_bpb, 6),
                 "lr": entry.get("lr", ""),
                 "grad_norm": round(entry["grad_norm"], 6) if "grad_norm" in entry else "",
-                "elapsed_s": round(entry["elapsed"], 2) if "elapsed" in entry else "",
+                "elapsed_s": round(entry.get("elapsed", entry.get("elapsed_s", 0)), 2) if ("elapsed" in entry or "elapsed_s" in entry) else "",
+                "tok_per_sec": entry.get("tok_per_sec", ""),
             }
 
             if "align" in entry:
