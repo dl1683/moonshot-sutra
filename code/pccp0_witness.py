@@ -1007,6 +1007,12 @@ def run_one(m: int) -> Row:
 
 
 def verdict(rows: Sequence[Row]) -> str:
+    """Return the earned finite after-frame witness token.
+
+    This witness demonstrates a narrow finite PCCP-A separation, not the full
+    precommit STRONG_PCCP claim that would require synthesis/neural-tool
+    baselines, local repair, and scaling curves.
+    """
     pccp_constant = len({row.pccp_length for row in rows}) == 1
     recon_grows = rows[-1].recon_length > rows[0].recon_length
     pccp_passes = all(row.pccp_hidden == 1.0 for row in rows)
@@ -1015,7 +1021,7 @@ def verdict(rows: Sequence[Row]) -> str:
     if not pccp_passes:
         return "KILL_PCCP"
     if pccp_constant and recon_grows and proxy_recon_fails and control_passes:
-        return "STRONG_PCCP"
+        return "FINITE_PCCP_A_SEPARATION"
     if pccp_constant and recon_grows:
         return "PCCP_SIGNAL"
     return "VOID"
@@ -1150,8 +1156,8 @@ if __name__ == "__main__":
 # NARRATIVE GATE
 #
 # 1. Earned verdict tokens:
-#    The original after-frame witness can still earn STRONG_PCCP for the narrow
-#    finite PCCP-A length-gap result. The FDM-0 extension earns
+#    The original after-frame witness can earn FINITE_PCCP_A_SEPARATION for the
+#    narrow finite PCCP-A length-gap result. The FDM-0 extension earns
 #    DISCOVERY_ABSORBED on the precommitted B22 discovery tokens when exhaustive
 #    single-field invariance checking catches P_bad under the same information.
 #    If a future run breaks that condition, print_fdm_report reports the changed

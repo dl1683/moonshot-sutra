@@ -1,130 +1,103 @@
 # Project Status
 
 **Last updated:** 2026-07-07
-**Current loop state:** Vision reset and alignment cleanup
-**Live moonshot candidate:** None
+**Current state:** PCCP-H absorption ladder complete, packaging for pivot
 **Fixed points:** The five sacred outcomes in `research/VISION.md`
 
-This file is the current source of truth. Older research files remain as
-provenance and should not be deleted, but they are historical records unless
-they are explicitly re-admitted through the new vision.
+## Completed Absorption Ladder
 
-## Executive Summary
+| Level | Description | Status | Evidence |
+|---|---|---|---|
+| B0 | Prior art (CEGIS/ILP/DreamCoder overlap) | Absorbed | Theorem Part 3 |
+| B1 | Single-field invariance (FDM-0) | **ABSORBED** | `code/pccp0_witness.py` FDM section |
+| B2 | Metamorphic relations (Relation Miner v0) | **ABSORBED** | `code/pccp0_b2_relations.py` |
+| B3 | Decomposition discovery | **ABSORBED** | `code/pccp0_b3_decomposition.py` |
+| B3.5 | Decomposition synthesis value | **Real but novelty absorbed** | Same as B3 (107x-276x reduction) |
+| B4 | Transformation grammar discovery | Open | Not tested |
+| B5 | Universal frame formation | Impossible | Theoretical |
 
-The project is no longer committed to any specific neural architecture, KD
-protocol, byte-level substrate, coordinate-inheritance story, evidence-native
-implementation, CTI law, benchmark target, or build order.
+Every testable discovery level from B1 through B3 has been absorbed by exhaustive
+baselines with equal information. The absorption was predicted by the Q-Loop before
+confirmed by the W-Loop.
 
-The current mission is broader:
+## What Was Produced
 
-> Find the structure that makes intelligence cheap.
+### Concrete Results
 
-The five sacred outcomes are the only non-negotiables:
+1. **After-frame separation theorem** (`research/PCCP_THEOREM_DRAFT.md`):
+   - Part 1: Observational equivalence impossibility — proved
+   - Part 2: Nuisance-entropy rate-distortion gap Omega(m) — proved
+   - Part 3: Restricted verifier discovery for monotone conjunctions — proved
 
-1. Genuine intelligence
-2. Improvability
-3. Democratized development
-4. Data efficiency
-5. Inference efficiency
+2. **Finite PCCP-A witness** (`code/pccp0_witness.py`):
+   - Constant-length causal rule vs growing reconstruction proxy
+   - Hidden-family transfer passes, proxy baseline fails
+   - Verdict: `FINITE_PCCP_A_SEPARATION` (narrower than full STRONG_PCCP)
 
-Neural networks remain a possible substrate, but they are not the default
-answer. Symbolic, algebraic, program-synthesis, verifier-first, energy/search,
-physics-inspired, hybrid, or unknown substrates are all open.
+3. **B1-B3 absorption suites** (three self-contained Python scripts):
+   - Each includes role permutation, smuggling audits, equal-information baselines
+   - Each honestly reports absorption as the primary result
 
-## What The Kill History Means Now
+4. **B3 synthesis value**: decomposed search reduces synthesis cost 107x-276x
+   in the toy Boolean world, but the decomposition boundary itself is absorbed
 
-The prior kill sequence is not a trail of isolated implementation mistakes. The
-pattern is more important:
+### Methodology Contributions
 
-- KD improved byte prediction without producing downstream judgment.
-- Brainseed and coordinate inheritance produced surface or NLL signal without
-  reliable function.
-- Evidence-native variants exposed retrieval/proxy shortcuts rather than robust
-  reasoning.
-- CTI-style smooth laws tracked proxy behavior while failing function.
-- Several variants optimized measured quantities while the actual capability did
-  not move, or moved in the wrong direction.
+1. Absorption ladder: B0-B5 hierarchy with precommit verdict tokens
+2. Smuggling audits: DSL, verifier, transformation, label leakage checks
+3. Role permutation controls: discovery must work role-blind
+4. Equal-information baselines: exhaustive gets same budget and data
+5. Hidden-family transfer: clauses frozen before evaluation
+6. Honest absorption reporting: negative results as primary evidence
 
-The correct interpretation is that the neural-training frame itself has not
-earned default status. Ten killed approaches inside that frame are evidence that
-"train the neural model harder or more cleverly" may be the wrong level of
-analysis.
+### What Was NOT Produced
 
-## Alive, Dead, Historical
+1. A non-absorbed discovery mechanism above B3
+2. Evidence that PCCP-H beats neural-tool agents or generic synthesis
+3. A practical tool beyond toy Boolean worlds
+4. A moonshot that makes intelligence cheap
 
-| Track | Status | Current role |
-|-------|--------|--------------|
-| Five sacred outcomes | **ACTIVE** | Only fixed points |
-| `research/VISION.md` | **ACTIVE** | Governing doctrine |
-| Substrate-open intelligence search | **ACTIVE** | Current research frame |
-| CPU-first formalization and toy tests | **ACTIVE** | Operating discipline |
-| Neural networks | Candidate substrate | Must earn their place against alternatives |
-| Sutra as fixed byte-native NN | Historical | Name may survive; architecture is not doctrine |
-| Eklavya as multi-teacher KD | Historical | Aspiration to learn from sources must be rebuilt from first principles |
-| Byte-level modeling | Historical candidate | Useful only if rejustified by function |
-| Coordinate inheritance / Brainseed / evidence-native / CTI | Killed or historical | Evidence about proxy-function divergence |
-| Work loop and question loop batch files | Historical record | Do not delete; mine for evidence only |
+## Current Position
 
-## Current Research Questions
+PCCP-H is an audit/verification methodology, not a discovery paradigm.
+The absorption ladder is the project's strongest contribution — publishable
+as methodology if positioned honestly. The project must pivot to a new
+moonshot direction that directly attacks the manifesto.
 
-1. What is intelligence as a mathematical structure, not as a training recipe?
-2. What invariants make a system genuinely capable, repairable, data-efficient,
-   inference-efficient, and democratically buildable?
-3. What measurements are function-aligned rather than proxy-aligned?
-4. Which substrates can expose explicit repair operations and cheap
-   falsification tests?
-5. What is the smallest toy world that can distinguish real intelligence
-   geometry from proxy optimization?
+## Adversarial Review Result
+
+Fresh-eyes hostile review (`research/adversarial_review_final.md`):
+- Verdict: OVERCLAIMED narrowly (STRONG_PCCP token too strong — now fixed)
+- Honesty: 8/10, Rigor: 7/10, Novelty: 5/10, Moonshot: 3/10
+- Publishability: 6/10, Code: 8/10, Methodology: 8/10
 
 ## Operating Rules
 
-- Start from `research/VISION.md`.
-- Treat every mechanism as replaceable.
-- Do not assume neural networks, KD, bytes, retrieval, chain-init, CTI, or any
-  previous track is the answer.
-- Think first, formalize first, test small.
-- Use CPU-first experiments unless the user explicitly authorizes a larger run.
-- Before any experiment, state the function being created and why the
-  measurement is aligned with that function.
-- Negative results are valuable when they remove a real assumption.
+- Start from `research/VISION.md`
+- Treat every mechanism as replaceable
+- Think first, formalize first, test small
+- CPU-first experiments unless user explicitly authorizes larger runs
+- Negative results are valuable when they remove a real assumption
 
 ## Artifact Index
 
 ### Active Canon
 
-- `research/VISION.md` - first-principles vision and five sacred outcomes.
-- `research/STATUS.md` - current state and live interpretation.
-- `research/DEEP_RETHINK.md` - historical kill log plus current paradigm-level
-  interpretation.
-- `research/alignment_cleanup_summary.md` - record of this alignment pass.
+- `research/VISION.md` - first-principles vision and five sacred outcomes
+- `research/STATUS.md` - current state (this file)
+- `research/PCCP_PRECOMMIT_SPEC.md` - PCCP-H specification
+- `research/PCCP_THEOREM_DRAFT.md` - three-part theorem
+- `research/adversarial_review_final.md` - hostile fresh-eyes review
+- `research/DEEP_RETHINK.md` - historical kill log
+
+### Executable Evidence
+
+- `code/pccp0_witness.py` - after-frame witness + FDM-0 B1 absorption
+- `code/pccp0_b2_relations.py` - B2 metamorphic relation absorption
+- `code/pccp0_b3_decomposition.py` - B3 decomposition absorption + synthesis value
 
 ### Historical Record
 
-- `research/work_loop_batch*.md`
-- `research/question_loop_batch*.md`
-- `research/dual_loop_supervisor_checkin_*.md`
-- Past code under `code/`
-- Past experiment ledger entries under `experiments/`
-
-These files preserve evidence. They do not define the live doctrine.
-
-## Wording Rules For Fresh Readers
-
-Use:
-
-- "The project is in a substrate-open vision reset."
-- "The five sacred outcomes are fixed; all mechanisms are replaceable."
-- "The kill history is evidence of proxy-function divergence and possible
-  neural-paradigm mismatch."
-- "Neural networks are candidates, not doctrine."
-- "CPU-first means think first, formalize first, test small."
-
-Avoid:
-
-- "Coordinate inheritance is the mainline."
-- "Evidence-native is the live moonshot."
-- "Eklavya/multi-teacher KD is the mission."
-- "Byte-level modeling is the core."
-- "The next step is a bigger training run."
-- "Intelligence = Geometry" as a neural-geometry slogan. It means the
-  mathematical structure of intelligence itself.
+- `research/work_loop_batch*.md` - W-Loop iterations
+- `research/question_loop_batch*.md` - Q-Loop iterations
+- `research/dual_loop_supervisor_checkin_*.md` - supervisor assessments

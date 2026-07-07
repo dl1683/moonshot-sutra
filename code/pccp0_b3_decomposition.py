@@ -1027,6 +1027,8 @@ def print_report(multi: Sequence[B3Run], single: Sequence[B3Run], synthesis: Syn
     print("  6. Does synthesis value use the same DSL? Yes. Joint and decomposed search both use Var, Const, Not, and Bin(AND/OR/XOR/EQ).")
 
     final = verdict(multi, single, synthesis)
+    discovery_token = "B3_DISCOVERY_ABSORBED" if exhaustive_absorbs(multi) else "B3_DISCOVERY_NOT_ABSORBED"
+    synthesis_token = "B3_SYNTHESIS_VALUE" if synthesis_reduction(synthesis) else "B3_SYNTHESIS_NOT_DEMONSTRATED"
     print()
     print("Narrative gate:")
     print(f"  Earned verdict token: {final}")
@@ -1038,6 +1040,8 @@ def print_report(multi: Sequence[B3Run], single: Sequence[B3Run], synthesis: Syn
         print("  Is exhaustive interaction testing sufficient? No on this run.")
     print(f"  Does decomposition provide synthesis value? {synthesis_reduction(synthesis)}")
     print("  Honest PCCP-H narrative: B1 and B2 are absorbed; B3 clause discovery is absorbed here too, but decomposition still gives a concrete synthesis-search reduction. The discovery moonshot now points at B4 transformation grammar discovery or a repositioned verifier/compiler/audit layer.")
+    print(f"B3_DISCOVERY_TOKEN: {discovery_token}")
+    print(f"B3_SYNTHESIS_TOKEN: {synthesis_token}")
     print(f"B3_VERDICT_TOKEN: {final}")
 
 
