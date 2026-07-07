@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import random
 import time
+from collections import Counter
 from dataclasses import dataclass
 from itertools import product
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -194,10 +195,14 @@ class World:
         return cases
 
 
-def make_world(m: int) -> World:
+def make_world_with_seed(m: int, seed: int) -> World:
     perm = list(range(2 + m + 1))
-    random.Random(1729 + m).shuffle(perm)
+    random.Random(seed).shuffle(perm)
     return World(m, tuple(perm))
+
+
+def make_world(m: int) -> World:
+    return make_world_with_seed(m, 1729 + m)
 
 
 def variable_names(m: int, n_obs: int) -> List[str]:
@@ -503,6 +508,425 @@ def random_program_baseline(world: World, length: int, seen: Verifier, hidden: V
         "seen_pass_rate": passes_seen / samples,
     }
 
+# ----------------------------- FDM-0 discovery ------------------------------
+
+BINARY_DOMAIN = (0, 1)
+
+
+@dataclass(frozen=True)
+class InvarianceClause:
+    field_index: int
+    stable_score: float
+    shortcut_score: float
+    support: int
+    mdl_score: float
+    candidate_kind: str
+    def label(self) -> str:
+        return f"invariant_to(x{self.field_index})"
+
+
+@dataclass(frozen=True)
+class FieldEffect:
+    field_index: int
+    stable_score: float
+    shortcut_score: float
+    support: int
+    changed: int
+    mdl_score: float
+
+
+@dataclass(frozen=True)
+class RandomClauseStats:
+    trials: int
+    query_pairs_per_trial: int
+    success_rate: float
+    hit_spurious_rate: float
+    mean_unique_clauses: float
+
+
+@dataclass
+class FDMRun:
+    seed: int
+    m: int
+    world_id: str
+    role_to_obs: Dict[str, int]
+    v0_cases: int
+    hidden_s_cases: int
+    query_pairs: int
+    fdm_effects: List[FieldEffect]
+    fdm_clauses: List[InvarianceClause]
+    exhaustive_clauses: List[InvarianceClause]
+    random_stats: RandomClauseStats
+    v0_accepts_p_bad: bool
+    v0_accepts_true: bool
+    hidden_s_acc_p_bad: float
+    fdm_rejects_p_bad: bool
+    fdm_accepts_true: bool
+    exhaustive_rejects_p_bad: bool
+    exhaustive_accepts_true: bool
+    no_discovery_rejects_p_bad: bool
+    fdm_found_spurious: bool
+    p_bad_program: str
+    true_program: str
+
+
+def decode_latent(world: World, obs: BitTuple) -> BitTuple:
+    latent = [0] * world.n_obs
+    for obs_pos, latent_idx in enumerate(world.permutation):
+        latent[latent_idx] = int(obs[obs_pos])
+    return tuple(latent)
+
+
+def target_oracle_for_obs(world: World, case: Case, obs: BitTuple) -> int:
+    """Grounding oracle for FDM paired traces.
+
+    The caller supplies only a perturbed observation tuple. The oracle evaluates
+    the target function for that tuple and the case's existing intervention
+    descriptor. FDM-0 gets the returned label, not the latent role mapping used
+    internally to generate it.
+    """
+    latent = decode_latent(world, obs)
+    c0, c1 = latent[0], latent[1]
+    i = case.intervention
+    eff_c0 = c0 if i.c0 is None else int(i.c0)
+    eff_c1 = c1 if i.c1 is None else int(i.c1)
+    return eff_c0 ^ eff_c1
+
+
+def replace_observed_field(obs: BitTuple, field_index: int, value: int) -> BitTuple:
+    updated = list(obs)
+    updated[field_index] = int(value)
+    return tuple(updated)
+
+
+def fdm_v0_cases(world: World) -> List[Case]:
+    """Partial verifier V0: examples, id, and do(C:=c') only."""
+    cases: List[Case] = []
+    for c, n in world.factual_states():
+        cases.append(world.make_case("fdm_v0", "id", c, n))
+        for value in BINARY_DOMAIN:
+            cases.append(world.make_case("fdm_v0", "do_c0_seen", c, n, c0=value))
+            cases.append(world.make_case("fdm_v0", "do_c1_seen", c, n, c1=value))
+    return cases
+
+
+def fdm_hidden_s_cases(world: World) -> List[Case]:
+    cases: List[Case] = []
+    for c, n in world.factual_states():
+        for s_value in BINARY_DOMAIN:
+            cases.append(world.make_case("fdm_hidden", "do_s_hidden", c, n, s_surface=s_value))
+    return cases
+
+
+def true_causal_program(world: World) -> Expr:
+    c0_pos = world.role_to_obs["C0"]
+    c1_pos = world.role_to_obs["C1"]
+    c0 = If(Var("has_c0"), Var("val_c0"), Var(f"x{c0_pos}"))
+    c1 = If(Var("has_c1"), Var("val_c1"), Var(f"x{c1_pos}"))
+    return Bin("XOR", c0, c1)
+
+
+def spurious_shortcut_program(world: World) -> Expr:
+    """Bad shortcut: treat S as the factual target and patch seen C overrides."""
+    s_pos = world.role_to_obs["S"]
+    c0_pos = world.role_to_obs["C0"]
+    c1_pos = world.role_to_obs["C1"]
+    s = Var(f"x{s_pos}")
+    c0 = Var(f"x{c0_pos}")
+    c1 = Var(f"x{c1_pos}")
+    both_overridden = Bin("XOR", Var("val_c0"), Var("val_c1"))
+    c0_overridden = Bin("XOR", Bin("XOR", s, c0), Var("val_c0"))
+    c1_overridden = Bin("XOR", Bin("XOR", s, c1), Var("val_c1"))
+    c1_branch = If(Var("has_c1"), c1_overridden, s)
+    c0_branch = If(Var("has_c1"), both_overridden, c0_overridden)
+    return If(Var("has_c0"), c0_branch, c1_branch)
+
+
+def mutual_information(pairs: Sequence[Tuple[int, int]]) -> float:
+    total = len(pairs)
+    if total == 0:
+        return 0.0
+    joint = Counter(pairs)
+    xs = Counter(x for x, _ in pairs)
+    ys = Counter(y for _, y in pairs)
+    mi = 0.0
+    for (x, y), count in joint.items():
+        pxy = count / total
+        px = xs[x] / total
+        py = ys[y] / total
+        mi += pxy * math.log2(pxy / (px * py))
+    return mi
+
+
+def field_effect_score(world: World, cases: Sequence[Case], field_index: int) -> FieldEffect:
+    stable = 0
+    total = 0
+    for case in cases:
+        y = target_oracle_for_obs(world, case, case.obs)
+        for value in BINARY_DOMAIN:
+            if value == case.obs[field_index]:
+                continue
+            obs_prime = replace_observed_field(case.obs, field_index, value)
+            y_prime = target_oracle_for_obs(world, case, obs_prime)
+            stable += int(y_prime == y)
+            total += 1
+    id_pairs = [(case.obs[field_index], case.target) for case in cases if case.intervention.family == "id"]
+    shortcut = mutual_information(id_pairs)
+    stable_score = stable / total if total else 1.0
+    clause_bits = 1 + math.ceil(math.log2(max(2, world.n_obs)))
+    mdl_score = stable_score * total + shortcut * max(1, len(id_pairs)) - clause_bits
+    return FieldEffect(field_index, stable_score, shortcut, total, total - stable, mdl_score)
+
+
+def fdm0_discover(world: World, cases: Sequence[Case], stable_threshold: float = 0.999,
+                  shortcut_threshold: float = 0.50) -> Tuple[List[FieldEffect], List[InvarianceClause]]:
+    effects = [field_effect_score(world, cases, j) for j in range(world.n_obs)]
+    clauses: List[InvarianceClause] = []
+    for effect in effects:
+        if effect.stable_score >= stable_threshold:
+            kind = "spurious_candidate" if effect.shortcut_score >= shortcut_threshold else "stable_invariant"
+            clauses.append(InvarianceClause(effect.field_index, effect.stable_score,
+                                            effect.shortcut_score, effect.support,
+                                            effect.mdl_score, kind))
+    clauses.sort(key=lambda clause: (-clause.mdl_score, clause.field_index))
+    return effects, clauses
+
+
+def exhaustive_single_field_clauses(effects: Sequence[FieldEffect],
+                                    stable_threshold: float = 0.999) -> List[InvarianceClause]:
+    clauses = [
+        InvarianceClause(effect.field_index, effect.stable_score, effect.shortcut_score,
+                         effect.support, effect.mdl_score, "exhaustive_stable")
+        for effect in effects
+        if effect.stable_score >= stable_threshold
+    ]
+    clauses.sort(key=lambda clause: (-clause.stable_score, clause.field_index))
+    return clauses
+
+
+def compile_invariance_verifier(world: World, base_cases: Sequence[Case],
+                                clauses: Sequence[InvarianceClause], name: str) -> Verifier:
+    compiled = list(base_cases)
+    for clause in clauses:
+        field_index = clause.field_index
+        for case in base_cases:
+            for value in BINARY_DOMAIN:
+                if value == case.obs[field_index]:
+                    continue
+                obs_prime = replace_observed_field(case.obs, field_index, value)
+                compiled.append(Case(case.world_id, obs_prime, case.query,
+                                     case.intervention, case.target, "discovered"))
+    return Verifier(world, compiled, name)
+
+
+def random_clause_search_baseline(world: World, base_cases: Sequence[Case],
+                                  effects: Sequence[FieldEffect], p_bad: Expr,
+                                  true_program: Expr, trials: int, seed: int,
+                                  stable_threshold: float = 0.999) -> RandomClauseStats:
+    rng = random.Random(seed)
+    successes = 0
+    hit_spurious = 0
+    unique_counts: List[int] = []
+    spurious_field = world.role_to_obs["S"]
+    for _ in range(trials):
+        selected: List[int] = []
+        for _scan in range(world.n_obs):
+            field_index = rng.randrange(world.n_obs)
+            effect = effects[field_index]
+            if effect.stable_score >= stable_threshold and field_index not in selected:
+                selected.append(field_index)
+        clauses = [
+            InvarianceClause(effects[j].field_index, effects[j].stable_score,
+                             effects[j].shortcut_score, effects[j].support,
+                             effects[j].mdl_score, "random_stable")
+            for j in selected
+        ]
+        verifier = compile_invariance_verifier(world, base_cases, clauses, "random_clause_v1")
+        rejects_p_bad = not verifier.verify(p_bad)[0]
+        accepts_true = verifier.verify(true_program)[0]
+        successes += int(rejects_p_bad and accepts_true)
+        hit_spurious += int(spurious_field in selected)
+        unique_counts.append(len(selected))
+    query_pairs = world.n_obs * len(base_cases)
+    return RandomClauseStats(
+        trials=trials,
+        query_pairs_per_trial=query_pairs,
+        success_rate=successes / trials if trials else 0.0,
+        hit_spurious_rate=hit_spurious / trials if trials else 0.0,
+        mean_unique_clauses=sum(unique_counts) / trials if trials else 0.0,
+    )
+
+
+def run_fdm0_one(m: int, seed: int, random_trials: int = 96) -> FDMRun:
+    world = make_world_with_seed(m, seed)
+    v0_cases = fdm_v0_cases(world)
+    for case in v0_cases:
+        expected = target_oracle_for_obs(world, case, case.obs)
+        if expected != case.target:
+            raise AssertionError("FDM target oracle disagrees with V0 case label")
+    v0 = Verifier(world, v0_cases, "FDM_V0")
+    hidden_s = Verifier(world, fdm_hidden_s_cases(world), "FDM_hidden_do_s")
+    p_bad = spurious_shortcut_program(world)
+    true_program = true_causal_program(world)
+
+    v0_accepts_p_bad = v0.verify(p_bad)[0]
+    v0_accepts_true = v0.verify(true_program)[0]
+    hidden_s_acc_p_bad = hidden_s.accuracy_expr(p_bad)
+
+    effects, fdm_clauses = fdm0_discover(world, v0_cases)
+    fdm_v1 = compile_invariance_verifier(world, v0_cases, fdm_clauses, "FDM_V1")
+    fdm_rejects_p_bad = not fdm_v1.verify(p_bad)[0]
+    fdm_accepts_true = fdm_v1.verify(true_program)[0]
+
+    exhaustive_clauses = exhaustive_single_field_clauses(effects)
+    exhaustive_v1 = compile_invariance_verifier(world, v0_cases, exhaustive_clauses,
+                                                "exhaustive_single_field_v1")
+    exhaustive_rejects_p_bad = not exhaustive_v1.verify(p_bad)[0]
+    exhaustive_accepts_true = exhaustive_v1.verify(true_program)[0]
+
+    random_stats = random_clause_search_baseline(world, v0_cases, effects, p_bad,
+                                                 true_program, random_trials,
+                                                 seed + 100_000)
+    spurious_field = world.role_to_obs["S"]
+    fdm_found_spurious = any(clause.field_index == spurious_field and
+                             clause.candidate_kind == "spurious_candidate"
+                             for clause in fdm_clauses)
+    query_pairs = world.n_obs * len(v0_cases)
+    return FDMRun(
+        seed=seed,
+        m=m,
+        world_id=world.world_id,
+        role_to_obs=world.role_to_obs,
+        v0_cases=len(v0_cases),
+        hidden_s_cases=len(hidden_s.cases),
+        query_pairs=query_pairs,
+        fdm_effects=effects,
+        fdm_clauses=fdm_clauses,
+        exhaustive_clauses=exhaustive_clauses,
+        random_stats=random_stats,
+        v0_accepts_p_bad=v0_accepts_p_bad,
+        v0_accepts_true=v0_accepts_true,
+        hidden_s_acc_p_bad=hidden_s_acc_p_bad,
+        fdm_rejects_p_bad=fdm_rejects_p_bad,
+        fdm_accepts_true=fdm_accepts_true,
+        exhaustive_rejects_p_bad=exhaustive_rejects_p_bad,
+        exhaustive_accepts_true=exhaustive_accepts_true,
+        no_discovery_rejects_p_bad=not v0_accepts_p_bad,
+        fdm_found_spurious=fdm_found_spurious,
+        p_bad_program=str(p_bad),
+        true_program=str(true_program),
+    )
+
+
+def run_fdm0_experiment(m: int = 4, permutations: int = 8) -> List[FDMRun]:
+    runs: List[FDMRun] = []
+    seen_perms = set()
+    seed = 73_001
+    while len(runs) < permutations:
+        world = make_world_with_seed(m, seed)
+        if world.permutation not in seen_perms:
+            seen_perms.add(world.permutation)
+            runs.append(run_fdm0_one(m, seed))
+        seed += 37
+    return runs
+
+
+def fdm_frame_signal(runs: Sequence[FDMRun]) -> bool:
+    return all(
+        run.v0_accepts_p_bad and
+        run.v0_accepts_true and
+        run.hidden_s_acc_p_bad < 1.0 and
+        run.fdm_rejects_p_bad and
+        run.fdm_accepts_true and
+        run.fdm_found_spurious
+        for run in runs
+    )
+
+
+def fdm_absorbed_by_exhaustive(runs: Sequence[FDMRun]) -> bool:
+    return all(run.exhaustive_rejects_p_bad and run.exhaustive_accepts_true for run in runs)
+
+
+def fdm_role_permutation_ok(runs: Sequence[FDMRun]) -> bool:
+    s_positions = {run.role_to_obs["S"] for run in runs}
+    permutations = {tuple(sorted(run.role_to_obs.items())) for run in runs}
+    return len(s_positions) > 1 and len(permutations) == len(runs)
+
+
+def fdm_verdict(runs: Sequence[FDMRun]) -> str:
+    if not runs or not fdm_role_permutation_ok(runs) or not fdm_frame_signal(runs):
+        return "VOID"
+    if fdm_absorbed_by_exhaustive(runs):
+        return "DISCOVERY_ABSORBED"
+    return "FRAME_SIGNAL"
+
+
+def role_by_obs_index(role_to_obs: Dict[str, int]) -> Dict[int, str]:
+    return {obs_index: role for role, obs_index in role_to_obs.items()}
+
+
+def print_fdm_report(runs: Sequence[FDMRun]) -> None:
+    print()
+    print("FDM-0 frame discovery experiment")
+    print("=" * 78)
+    print("V0: id examples plus do(C0:=v) and do(C1:=v); no S/N invariance clauses.")
+    print("P_bad: spurious shortcut using S as factual target, with patches for seen C overrides.")
+    print("FDM input fields are only x0..xN; role maps below are post-hoc audit data.")
+    print("Perturbation grammar: generic single observed-field binary replacement.")
+    if runs:
+        print(f"Per-run FDM query budget: {runs[0].query_pairs} paired perturbations "
+              f"({runs[0].query_pairs * 2} target-label calls if base labels are recounted).")
+        print(f"Random clause baseline gets {runs[0].random_stats.query_pairs_per_trial} paired "
+              "perturbations per trial over the same V0 cases.")
+    print()
+    header = ("seed   S@  FDM_spurious  FDM_invariants        V0_Pbad  hiddenS  "
+              "V1_Pbad  V1_true  exhaustive  random_success")
+    print(header)
+    print("-" * len(header))
+    for run in runs:
+        spurious = [f"x{clause.field_index}" for clause in run.fdm_clauses
+                    if clause.candidate_kind == "spurious_candidate"]
+        invariants = [f"x{clause.field_index}" for clause in run.fdm_clauses]
+        print(f"{run.seed:<6} {run.role_to_obs['S']:>2}  "
+              f"{','.join(spurious) or '-':<13} "
+              f"{','.join(invariants):<21} "
+              f"{'PASS' if run.v0_accepts_p_bad else 'REJECT':<8} "
+              f"{run.hidden_s_acc_p_bad:>7.3f}  "
+              f"{'REJECT' if run.fdm_rejects_p_bad else 'PASS':<7} "
+              f"{'PASS' if run.fdm_accepts_true else 'REJECT':<7} "
+              f"{'REJECT' if run.exhaustive_rejects_p_bad else 'PASS':<10} "
+              f"{run.random_stats.success_rate:>6.3f}")
+    print()
+    print("Role permutation audit:")
+    for run in runs:
+        print(f"  seed={run.seed}: role_to_obs={run.role_to_obs}")
+    print()
+    if runs:
+        first = runs[0]
+        audit_roles = role_by_obs_index(first.role_to_obs)
+        print("First permutation field scores (roles shown only after discovery for audit):")
+        for effect in first.fdm_effects:
+            role = audit_roles.get(effect.field_index, "?")
+            print(f"  x{effect.field_index}: role={role:<2} stable={effect.stable_score:.3f} "
+                  f"shortcut_MI={effect.shortcut_score:.3f} changed={effect.changed}/{effect.support} "
+                  f"mdl={effect.mdl_score:.2f}")
+        print()
+        print(f"Example P_bad: {first.p_bad_program}")
+        print(f"Example true causal program: {first.true_program}")
+        print()
+    frame_signal = fdm_frame_signal(runs)
+    exhaustive_absorbs = fdm_absorbed_by_exhaustive(runs)
+    print(f"FRAME_SIGNAL_CONDITION: {frame_signal}")
+    print(f"EXHAUSTIVE_SINGLE_FIELD_ABSORBS: {exhaustive_absorbs}")
+    print(f"ROLE_PERMUTATION_CONTROL: {fdm_role_permutation_ok(runs)}")
+    print(f"FDM_VERDICT_TOKEN: {fdm_verdict(runs)}")
+    print("FDM_GOSSIP_SUMMARY: The shortcut wore a fake badge, and field-toggling found the badge did not change the job.")
+    print("FDM_SCOPE_LIMITS: This is B1 role discovery under a given finite field-replacement grammar and an exact target oracle; it does not prove transformation-grammar discovery, open-world verifier discovery, or novelty over spec mining.")
+    if exhaustive_absorbs:
+        print("EXHAUSTIVE_SUFFICIENCY: Yes. Exhaustive single-field invariance checking gets the same catch here, so FDM-0 is absorbed on this smallest demo.")
+    else:
+        print("EXHAUSTIVE_SUFFICIENCY: No on this run; exhaustive single-field checking did not match FDM-0.")
+
 # ----------------------------- experiment -----------------------------------
 
 @dataclass
@@ -649,6 +1073,8 @@ def print_report(rows: Sequence[Row]) -> None:
 def main() -> None:
     rows = [run_one(m) for m in range(0, 9)]
     print_report(rows)
+    fdm_runs = run_fdm0_experiment()
+    print_fdm_report(fdm_runs)
 
 
 if __name__ == "__main__":
@@ -695,21 +1121,55 @@ if __name__ == "__main__":
 #    correct functional decoder passes hidden, but its length grows with m while
 #    PCCP length remains constant.
 #
+# 6. Does FDM-0 see role labels?
+#    No during discovery. FDM-0 iterates over observed indices x0..xN and uses a
+#    generic binary replacement grammar. role_to_obs is used to construct the
+#    deliberately bad shortcut program, the true causal control program, and the
+#    post-hoc audit printout. It is not used by fdm0_discover or by the random
+#    and exhaustive discovery baselines to select clauses.
+#
+# 7. Is the perturbation grammar target-specific?
+#    It is generic at the field level: replace every observed field by every
+#    value in its finite domain. It is still human-supplied and narrow. This is
+#    a B1 role-discovery demo, not discovery of the transformation grammar.
+#
+# 8. Does the discovery baseline get equal information?
+#    Yes for the implemented baselines. FDM-0, random clause search, and
+#    exhaustive single-field checking receive the same V0 cases, exact target
+#    oracle over paired perturbations, binary field-replacement grammar, and
+#    paired-query budget. Exhaustive checking gets the same result, which is
+#    reported as absorption rather than hidden.
+#
+# 9. Is the clause grammar too narrow or too wide?
+#    It is deliberately narrow: invariant_to(single observed field). That is
+#    enough to catch the B22 spurious shortcut but too weak for composite
+#    metamorphic relations, covariance, precondition boundaries, or open-world
+#    frame formation. The narrowness makes the positive result interpretable and
+#    also makes exhaustive single-field checking sufficient here.
+#
 # NARRATIVE GATE
 #
-# 1. Earned verdict token:
-#    STRONG_PCCP for the narrow finite PCCP-A length-gap witness if the run shows
-#    constant PCCP length, growing reconstruction length, hidden verifier pass
-#    for PCCP, proxy reconstruction failure, and verifier-aware reconstruction
-#    pass. It is not MOONSHOT_PCCP or a full PCCP-H result.
+# 1. Earned verdict tokens:
+#    The original after-frame witness can still earn STRONG_PCCP for the narrow
+#    finite PCCP-A length-gap result. The FDM-0 extension earns
+#    DISCOVERY_ABSORBED on the precommitted B22 discovery tokens when exhaustive
+#    single-field invariance checking catches P_bad under the same information.
+#    If a future run breaks that condition, print_fdm_report reports the changed
+#    token directly.
 #
 # 2. Gossip-magazine summary:
-#    The wallpaper memorizer dragged every irrelevant bit along; the tiny causal
-#    rule kept only the switch and survived the hidden rewiring.
+#    The shortcut wore a fake badge, and field-toggling found the badge did not
+#    change the job.
 #
 # 3. What this does NOT prove:
-#    It does not prove verifier discovery, open-world frame formation, novelty
-#    over CEGIS/SyGuS/ILP/DreamCoder/spec mining, neural-tool-agent superiority,
-#    scaling beyond tiny finite Boolean worlds, or that reconstruction always
-#    discards causal information.
-
+#    It does not prove open-world verifier discovery, transformation-grammar
+#    discovery, composite metamorphic relation discovery, novelty over Daikon /
+#    metamorphic/spec-mining tools, neural-tool-agent superiority, scaling beyond
+#    tiny finite Boolean worlds, or that learned verifiers are automatically
+#    aligned. It proves only that a bounded active perturbation routine can add a
+#    missing single-field invariance obligation in this toy world.
+#
+# 4. Is exhaustive single-field check sufficient?
+#    Yes for this smallest B22 demo. Exhaustive single-field checking uses the
+#    same perturbation oracle and finite field grammar, proposes the same S
+#    invariance needed to reject P_bad, and therefore absorbs FDM-0 at this level.
