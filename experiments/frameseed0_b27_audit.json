@@ -1,0 +1,534 @@
+{
+  "elapsed_s": 5.728,
+  "findings": [
+    {
+      "check_id": "MANIFEST_FROZEN_BEFORE_HIDDEN",
+      "details": {
+        "frozen_before_hidden": true,
+        "hidden_results_opened": false
+      },
+      "message": "manifest declares code frozen before hidden results",
+      "passed": true
+    },
+    {
+      "check_id": "MANIFEST_BASELINES_DECLARED",
+      "details": {
+        "missing_baselines": []
+      },
+      "message": "manifest declares every baseline adapter version",
+      "passed": true
+    },
+    {
+      "check_id": "MANIFEST_NO_POST_HIDDEN_EDITS",
+      "details": {
+        "post_hidden_changes": []
+      },
+      "message": "manifest has no post-hidden edits",
+      "passed": true
+    },
+    {
+      "check_id": "WORLD_DECISIVE_INTERVENTION",
+      "details": {
+        "d": 20,
+        "family_class": "audit_gate",
+        "kernel_id": "K0010",
+        "m": 16,
+        "schema_hash": "18a847d13a0cd5cb",
+        "world_id": "87fccf9083c93c86f7fe"
+      },
+      "message": "world has a decisive public intervention",
+      "passed": true
+    },
+    {
+      "check_id": "WORLD_NAME_NO_ROLE_WORDS",
+      "details": {
+        "leaked_terms": []
+      },
+      "message": "surface names contain no banned role words",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_BITS_RECOMPUTED",
+      "details": {
+        "declared_bits": 20496,
+        "recomputed_bits": 20496
+      },
+      "message": "declared packet bits match canonical serializer recomputation",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_EXECUTABLE_TERMS_CLEAN",
+      "details": {
+        "banned_hits": []
+      },
+      "message": "executable packet fields contain no banned role or hidden metadata terms",
+      "passed": true
+    },
+    {
+      "check_id": "CONSTRUCTOR_BLIND_MODE",
+      "details": {
+        "constructor_mode": "blind"
+      },
+      "message": "packet constructor declares blind mode",
+      "passed": true
+    },
+    {
+      "check_id": "CONSTRUCTOR_PROVENANCE_PRESENT",
+      "details": {
+        "empty_entry_indices": [],
+        "unknown_refs": []
+      },
+      "message": "every packet entry cites allowed public transcript facts",
+      "passed": true
+    },
+    {
+      "check_id": "CONSTRUCTOR_SUPPORT_FROM_PROVENANCE",
+      "details": {
+        "unsupported_slots": []
+      },
+      "message": "representation-patch support slots are justified by label-changing public facts",
+      "passed": true
+    },
+    {
+      "check_id": "BUDGET_PACKET_BITS_MATCH",
+      "details": {
+        "ledger_packet_bits": 20496,
+        "recomputed_packet_bits": 20496
+      },
+      "message": "budget ledger packet bits match canonical packet serializer",
+      "passed": true
+    },
+    {
+      "check_id": "BUDGET_ALL_CATEGORIES_PRESENT",
+      "details": {
+        "missing_fields": []
+      },
+      "message": "budget ledger includes all charged categories",
+      "passed": true
+    },
+    {
+      "check_id": "BASELINE_ALL_PRESENT",
+      "details": {
+        "missing": []
+      },
+      "message": "all declared baselines have a packet view",
+      "passed": true
+    },
+    {
+      "check_id": "BASELINE_PACKET_HASH_PARITY",
+      "details": {
+        "denied_fields": {},
+        "packet_hashes": [
+          "eb7d48aae13024befbbfcb458149b624"
+        ]
+      },
+      "message": "all baselines receive the same lossless executable packet bytes",
+      "passed": true
+    },
+    {
+      "check_id": "BASELINE_BUDGET_PARITY",
+      "details": {
+        "packet_bits": [
+          20496
+        ],
+        "query_budgets": [
+          168
+        ],
+        "task_hashes": [
+          "57c63b1b97fbeca8d1806fffe75e0141"
+        ]
+      },
+      "message": "all baselines receive matched bits, task bundle, and query budget",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_REVERSE_SAME_FACT_MULTISET",
+      "details": {},
+      "message": "reversing packet order preserves entry multiset hash",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_ROTATE_SAME_BITS",
+      "details": {
+        "original_bits": 20496,
+        "rotated_bits": 20496
+      },
+      "message": "rotating packet order preserves canonical bit length",
+      "passed": true
+    },
+    {
+      "check_id": "SABOTAGE_SUPPORT_SWAP_DETECTED",
+      "details": {
+        "findings": [
+          {
+            "check_id": "CONSTRUCTOR_BLIND_MODE",
+            "details": {
+              "constructor_mode": "blind"
+            },
+            "message": "packet constructor declares blind mode",
+            "passed": true
+          },
+          {
+            "check_id": "CONSTRUCTOR_PROVENANCE_PRESENT",
+            "details": {
+              "empty_entry_indices": [],
+              "unknown_refs": []
+            },
+            "message": "every packet entry cites allowed public transcript facts",
+            "passed": true
+          },
+          {
+            "check_id": "CONSTRUCTOR_SUPPORT_FROM_PROVENANCE",
+            "details": {
+              "unsupported_slots": [
+                0,
+                1
+              ]
+            },
+            "message": "representation-patch support slots are justified by label-changing public facts",
+            "passed": false
+          }
+        ],
+        "metrics": {
+          "packet_entries": 10,
+          "transcript_id": "transcript:6b17a4e1977196e4484139cc"
+        },
+        "name": "constructor_provenance_audit",
+        "passed": false
+      },
+      "message": "swapping support slots to inert slots is rejected",
+      "passed": true
+    },
+    {
+      "check_id": "GENERATOR_MI_BELOW_THRESHOLD",
+      "details": {
+        "threshold": 0.05,
+        "worst_metric": 0.004915049666568067
+      },
+      "message": "dry-run role/name/slot/orientation/sibling MI metrics are below threshold",
+      "passed": true
+    },
+    {
+      "check_id": "GENERATOR_RNG_STREAMS_SPLIT",
+      "details": {
+        "observed_purposes": [
+          "ablations",
+          "baseline_tie_breaks",
+          "hidden_queries",
+          "learner_tie_breaks",
+          "names",
+          "orientations",
+          "packet_construction",
+          "world_structure"
+        ]
+      },
+      "message": "world generator uses all required split RNG streams",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_SMUGGLING_PRECEDENCE",
+      "details": {
+        "expected": "FRAMESEED_T3_VOID_SMUGGLED_FRAME",
+        "observed": "FRAMESEED_T3_VOID_SMUGGLED_FRAME"
+      },
+      "message": "golden control emits FRAMESEED_T3_VOID_SMUGGLED_FRAME",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_BOOLEAN_TRAP_PRECEDENCE",
+      "details": {
+        "expected": "FRAMESEED_T3_BOOLEAN_TRAP",
+        "observed": "FRAMESEED_T3_BOOLEAN_TRAP"
+      },
+      "message": "golden control emits FRAMESEED_T3_BOOLEAN_TRAP",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_REPRESENTATION_PRIOR",
+      "details": {
+        "expected": "FRAMESEED_T3_ABSORBED_BY_REPRESENTATION_PRIOR",
+        "observed": "FRAMESEED_T3_ABSORBED_BY_REPRESENTATION_PRIOR"
+      },
+      "message": "golden control emits FRAMESEED_T3_ABSORBED_BY_REPRESENTATION_PRIOR",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_GOLDEN_NEGATIVE_LOW_L3",
+      "details": {
+        "expected": "FRAMESEED_T3_NEGATIVE",
+        "observed": "FRAMESEED_T3_NEGATIVE"
+      },
+      "message": "golden control emits FRAMESEED_T3_NEGATIVE",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_TEACHING_DIMENSION_ABSORPTION",
+      "details": {
+        "expected": "FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION",
+        "observed": "FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION"
+      },
+      "message": "golden control emits FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_LIBRARY_LEARNING_ABSORPTION",
+      "details": {
+        "expected": "FRAMESEED_T3_ABSORBED_BY_LIBRARY_LEARNING",
+        "observed": "FRAMESEED_T3_ABSORBED_BY_LIBRARY_LEARNING"
+      },
+      "message": "golden control emits FRAMESEED_T3_ABSORBED_BY_LIBRARY_LEARNING",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_NUISANCE_ORACLE_ABSORPTION",
+      "details": {
+        "expected": "FRAMESEED_T3_ABSORBED_BY_NUISANCE_ORACLE",
+        "observed": "FRAMESEED_T3_ABSORBED_BY_NUISANCE_ORACLE"
+      },
+      "message": "golden control emits FRAMESEED_T3_ABSORBED_BY_NUISANCE_ORACLE",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_CEGIS_BEFORE_ACTIVE_AND_RAG",
+      "details": {
+        "expected": "FRAMESEED_T3_ABSORBED_BY_CEGIS",
+        "observed": "FRAMESEED_T3_ABSORBED_BY_CEGIS"
+      },
+      "message": "golden control emits FRAMESEED_T3_ABSORBED_BY_CEGIS",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_CLEAN_SIGNAL_SHAPE",
+      "details": {
+        "expected": "FRAMESEED_T3R_SIGNAL",
+        "observed": "FRAMESEED_T3R_SIGNAL"
+      },
+      "message": "golden control emits FRAMESEED_T3R_SIGNAL",
+      "passed": true
+    }
+  ],
+  "metrics": {
+    "baseline_parity_audit": {
+      "views": [
+        {
+          "baseline_name": "l3_full",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "td_h0",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "l0_rotenn",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "l1_active",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "l2_cegis",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "rag",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "nuisance_oracle",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        },
+        {
+          "baseline_name": "library_learning",
+          "executable_packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "ignored_fields": [],
+          "packet_bits": 20496,
+          "packet_hash": "eb7d48aae13024befbbfcb458149b624",
+          "query_budget": 168,
+          "task_bundle_hash": "57c63b1b97fbeca8d1806fffe75e0141"
+        }
+      ]
+    },
+    "budget_recomputation_audit": {
+      "failed_query_bits": 0,
+      "final_program_bits": 0,
+      "learned_library_bits": 0,
+      "oracle_answer_bits": 0,
+      "oracle_query_bits": 0,
+      "packet_bits": 20496,
+      "residual_sibling_teaching_bits": 0,
+      "total_bits": 20496,
+      "verifier_expansion_bits": 0
+    },
+    "constructor_provenance_audit": {
+      "packet_entries": 10,
+      "transcript_id": "transcript:6b17a4e1977196e4484139cc"
+    },
+    "generator_mi_audit": {
+      "metrics_by_m": {
+        "16": {
+          "role_kernel_id_nmi": -6.949406405076093e-17,
+          "role_name_prefix_nmi": 0.0002536217240318226,
+          "role_orientation_nmi": 3.159461518622339e-05,
+          "role_slot_index_nmi": 0.0004510725289303725,
+          "sibling_id_target_role_map_nmi": 0.0
+        },
+        "256": {
+          "role_kernel_id_nmi": -7.512257241105109e-16,
+          "role_name_prefix_nmi": 0.000373559553333526,
+          "role_orientation_nmi": 4.328782156317695e-05,
+          "role_slot_index_nmi": 0.004915049666568067,
+          "sibling_id_target_role_map_nmi": 0.0
+        },
+        "4": {
+          "role_kernel_id_nmi": 0.0,
+          "role_name_prefix_nmi": 0.0006407746539457589,
+          "role_orientation_nmi": 5.9562152978878036e-05,
+          "role_slot_index_nmi": 0.00040250099881537906,
+          "sibling_id_target_role_map_nmi": 0.0
+        },
+        "64": {
+          "role_kernel_id_nmi": 0.0,
+          "role_name_prefix_nmi": 0.0003563978921223065,
+          "role_orientation_nmi": 3.118425529084672e-05,
+          "role_slot_index_nmi": 0.0015383867689281567,
+          "sibling_id_target_role_map_nmi": 0.0
+        }
+      },
+      "per_m": 2500,
+      "sample_count": 10000,
+      "threshold": 0.05,
+      "worst_metric": 0.004915049666568067
+    },
+    "golden_token_controls": {
+      "boolean_trap_precedence": "FRAMESEED_T3_BOOLEAN_TRAP",
+      "cegis_before_active_and_rag": "FRAMESEED_T3_ABSORBED_BY_CEGIS",
+      "clean_signal_shape": "FRAMESEED_T3R_SIGNAL",
+      "golden_negative_low_l3": "FRAMESEED_T3_NEGATIVE",
+      "library_learning_absorption": "FRAMESEED_T3_ABSORBED_BY_LIBRARY_LEARNING",
+      "nuisance_oracle_absorption": "FRAMESEED_T3_ABSORBED_BY_NUISANCE_ORACLE",
+      "representation_prior": "FRAMESEED_T3_ABSORBED_BY_REPRESENTATION_PRIOR",
+      "smuggling_precedence": "FRAMESEED_T3_VOID_SMUGGLED_FRAME",
+      "teaching_dimension_absorption": "FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION"
+    },
+    "hidden_hfa_reported": false,
+    "manifest_audit": {
+      "baseline_versions": {
+        "l0_rotenn": "l0_rotenn-adapter-v1",
+        "l1_active": "l1_active-adapter-v1",
+        "l2_cegis": "l2_cegis-adapter-v1",
+        "l3_full": "l3_full-adapter-v1",
+        "library_learning": "library_learning-adapter-v1",
+        "nuisance_oracle": "nuisance_oracle-adapter-v1",
+        "rag": "rag-adapter-v1",
+        "td_h0": "td_h0-adapter-v1"
+      },
+      "constructor_id": "blind-public-transcript-effect-support-v1",
+      "frozen_before_hidden": true,
+      "hidden_results_opened": false,
+      "hidden_seed_rule": "sha256(public_seed|hidden|unopened-until-freeze)",
+      "oracle_api": "public_transcript_only_no_hidden_labels",
+      "post_hidden_changes": [],
+      "public_seed": "FRAMESEED0_B27_PUBLIC_SEED",
+      "scorer_id": "frameseed0-token-scorer-v1",
+      "serializer_id": "canonical-json-bytes-v1",
+      "timeouts": {
+        "l0_rotenn": 0,
+        "l1_active": 0,
+        "l2_cegis": 0,
+        "l3_full": 0,
+        "library_learning": 0,
+        "nuisance_oracle": 0,
+        "rag": 0,
+        "td_h0": 0
+      }
+    },
+    "no_performance_runs": true,
+    "packet_order_control": {},
+    "packet_serialization_audit": {
+      "atoms": {
+        "opcodes": [
+          "counterexample",
+          "example",
+          "intervention_example",
+          "intervention_generator",
+          "invariant",
+          "output_unchanged",
+          "paired_edit_effect_support_v1",
+          "representation_patch",
+          "set_any",
+          "set_complement",
+          "truth_table2",
+          "verifier_clause"
+        ],
+        "slot_ids": [
+          0,
+          1,
+          9,
+          16,
+          20
+        ]
+      },
+      "entry_count": 10,
+      "packet_bits": 20496,
+      "packet_hash": "eb7d48aae13024befbbfcb458149b624"
+    },
+    "sabotage_control": {
+      "sabotaged_packet_hash": "bcd5a1146b7f4af2d83fecc5d6be2039"
+    },
+    "sibling_count": 2,
+    "target_world": {
+      "d": 20,
+      "family_class": "audit_gate",
+      "kernel_id": "K0010",
+      "m": 16,
+      "schema_hash": "18a847d13a0cd5cb",
+      "world_id": "87fccf9083c93c86f7fe"
+    },
+    "world_audit": {
+      "d": 20,
+      "family_class": "audit_gate",
+      "kernel_id": "K0010",
+      "m": 16,
+      "schema_hash": "18a847d13a0cd5cb",
+      "world_id": "87fccf9083c93c86f7fe"
+    }
+  },
+  "name": "frameseed0_preimplementation_audit",
+  "passed": true
+}
