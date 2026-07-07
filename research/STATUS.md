@@ -1,139 +1,133 @@
 # Project Status
 
-**Last updated:** 2026-07-07
-**Current loop state:** W-Loop B6 completed, Q-Loop B8 completed, supervisor check-in 5 written
-**Live moonshot candidate:** Evidence-Native Retrieval-Born Sutra, on life support after v0 failure
+**Last updated:** 2026-07-07 (post-check-in #7)
+**Current loop state:** W-Loop B9 running, Q-Loop B12 running
+**Live moonshot candidate:** Coordinate-Inheritance Sutra v1 (v0 KILLED at Stage 1, repairs in progress)
 
 This file is the current source of truth. Older research files remain as
 provenance, but this page governs the live interpretation of the project.
 
 ## Executive Summary
 
-Brainseed v0 is confirmed dead as a birth artifact after 50 work-loop iterations
-and 42 question-loop iterations. All tested downstream scorers lose to codec-only
-scoring. The codec remains useful infrastructure, but it is not the moonshot.
+Coordinate-inheritance v0 ran a full 1000-sequence Stage 1 preflight and produced
+MASSIVE signal: +6.13 nats/token copied-vs-random advantage (3x threshold), 99.3%
+gap closure at token-end, and 0% adapter share of NLL lift. The adapter-does-the-work
+story is killed by the data.
 
-Evidence-Native Retrieval-Born Sutra became the replacement moonshot candidate,
-but the first v0 prototype failed all precommitted gates. Retrieved evidence did
-not beat no-evidence, shuffled evidence, or the best same-retriever dumb
-baseline. The broader direction is not dead because v0 was a small frozen-codec
-pooled classifier, not the full 121M judge claim. The burden of proof has shifted
-hard: the next run must show that evidence training changes judgment geometry,
-not merely that retrieval adds text to the prompt.
+However, v0 FAILED two precommitted Stage 1 controls:
+1. Patch-boundary frozen-core gain = 66.3% (need >=70%)
+2. Token-end rotation no-inverse retention = 33% (need <=30%)
 
-The refined thesis remains:
+Both are borderline. v0 is killed before benchmark training per the gate chain. v1
+repairs are in progress (readout-conditioned adapter, stronger disruption controls,
+layer depth curve, generic pretrained control).
 
-**Intelligence = reasoning geometry, which should be cheap and transferable, plus
-factual knowledge, which should be retrieved from evidence.**
+The surviving thesis:
+
+**A small byte-native runtime may need to inherit reasoning geometry discovered by
+large-scale token models, then compress and expose it through bytes. The geometry
+itself — not just pretrained initialization — is load-bearing. The v0 Stage 1 data
+strongly supports this, pending two control repairs.**
 
 ## Alive, Dead, In Progress
 
 | Track | Status | Current role | Notes |
 |-------|--------|--------------|-------|
-| Evidence-Native Retrieval-Born Sutra | Alive but on life support | Moonshot candidate under strict survival gates | v0 failed all gates; next version must prove learned judgment over controls. |
-| Chain-init | Alive as baseline | Strong fallback and benchmark to beat | Weak compatibility signal observed; not treated as the moonshot. |
-| Codec | Alive as infrastructure | Byte-to-token addressability, diagnostics, possible bridge | Useful, but not the final claim. |
-| Brainseed v0 | Dead | Negative-result science and diagnostic history | All learned scorers tested worse than codec-only. |
-| Byte-marginal KD / old E1-Option-C direction | Dead as mainline | Historical baseline | Improved byte prediction without meaningful downstream judgment transfer. |
-| S0 training stack | Infrastructure | Baseline and reusable code | Do not delete; still useful for baselines and evidence-native substrate work. |
-| E1/E2 training stack | Infrastructure/historical | Useful controls and lessons | Not the current research claim. |
+| Coordinate-Inheritance v1 | **MAINLINE** | Sole moonshot candidate | v0 Stage 1 massive signal but 2 borderline gate failures; v1 repairs in W-Loop B9 |
+| Coordinate-Inheritance v0 | **KILLED** | Precursor | Stage 1 failed; signal preserved, controls insufficient |
+| Chain-init | Alive as baseline | Engineering fallback | Subsumed by coordinate-inheritance |
+| Codec | Alive as infrastructure | Byte-to-token bridge | Phase 1.5: 37.89% patch top-1 |
+| Evidence-Native direction | **PERMANENTLY DEAD** | Falsified | 2 architectures, 2 corpora, 2 scales |
+| Brainseed v0 | **DEAD** | Negative-result science | All scorers worse than codec-only |
 
 ## Current Dual-Loop State
 
 | Loop | Batch | Status | Artifact |
 |------|-------|--------|----------|
-| Work Loop | B6 | Completed | `research/work_loop_batch6.md` - Evidence-Native v0 prototype run; failed gates. |
-| Question Loop | B8 | Completed | `research/question_loop_batch8.md` - adversarial survival conditions and kill criteria. |
-| Supervisor | Check-in 5 | Completed | `research/dual_loop_supervisor_checkin_5.md` - Evidence-Native v0 post-mortem. |
-
-Do not edit loop batch or supervisor files during concurrent runs. In this pass,
-no `research/work_loop_batch*.md`, `research/question_loop_batch*.md`, or
-`research/dual_loop_supervisor_checkin_*.md` files were modified.
+| Work Loop | B9 (iter 81-90) | **Running** | v1 repairs + Stage 1 re-run; Stage 2 if passes |
+| Work Loop | B8 (iter 71-80) | Completed | v0 Stage 1 preflight — KILLED (check-in #7) |
+| Question Loop | B12 (iter 78-84) | **Running** | Attack v1 repairs + Stage 1 interpretation |
+| Question Loop | B11 (iter 71-77) | Completed | Adapter attribution framework, 5 story classifications |
+| Supervisor | Check-in 7 | Completed | v0 Stage 1 assessment, v1 repair orders |
 
 ## Key Findings
 
-1. Brainseed v0 extraction is dead.
-   - Ridge, MLP, bilinear, and learned-cosine scorers all lose to codec-only.
-   - Zero-cost chart rescues do not recover the mainline.
-   - Status: `BRAINSEED_DEAD_AS_BIRTH_ARTIFACT`.
+1. **Coordinate-inheritance v0 Stage 1: massive signal, borderline failures.**
+   - Copied advantage: 6.13 nats/token (3x threshold)
+   - Gap closure: 99.3% at token-end
+   - Adapter attribution: 0% adapter share (adapter+random = baseline)
+   - Layer geometry matters: shuffled collapses, rotation with inverse recovers perfectly
+   - Failed: patch frozen-core 66.3% (70%), token rotation 33% (30%)
 
-2. Chain-init has weak positive signal.
-   - Copied inherited-coordinate layers are more compatible with codec-derived
-     inputs than random layers in the probe.
-   - The signal is not benchmark-capable yet.
-   - Status: baseline/fallback, not the moonshot.
+2. **Adapter-does-the-work story: KILLED.**
+   - Same adapter + random core = 18.18 NLL
+   - Same adapter + copied core = 12.05 NLL
+   - 6.13 nat gap is entirely core geometry, not adapter learning
 
-3. Evidence-native v0 failed.
-   - The learned judge did not benefit from retrieved evidence under the
-     precommitted gates.
-   - Shuffled and no-evidence conditions were not cleanly beaten.
-   - A same-retriever dumb baseline beat the learned judge.
-   - Status: v0 dead; broader direction on life support.
+3. **Missing controls (needed for v1):**
+   - Generic pretrained control (non-Qwen layers)
+   - Readout-conditioned adapter (separate for token-end vs patch-boundary)
+   - Stronger disruption (beyond input-gauge rotation)
 
-4. The codec is infrastructure.
-   - It helps expose byte-to-token addressability and failure modes.
-   - It should not be described as the breakthrough by itself.
+4. **CBD remains the competitor:** 42.65% HellaSwag at 138M via chain KD.
+
+## Coordinate-Inheritance Gate System (from Q-Loop B10)
+
+| Stage | Gate | Status |
+|-------|------|--------|
+| 0 | Artifact requirements (3 seeds, paired stats) | Pending |
+| 1 | Codec/gauge preflight (>=2 nats, >=60% closure, frozen-core >=70%, rotation collapses) | **v0 FAILED (2 borderline); v1 in progress** |
+| 2 | Uncompressed benchmark (>=35% HellaSwag, >=+8pp over Wide7) | Blocked by Stage 1 |
+| 3 | 121M compression (>=35% HellaSwag at 121M active) | Pending |
+| 4 | Byte-native story (robustness/cross-tokenizer advantages) | Pending |
+| 5 | Moonshot promotion (beat SmolLM2-135M targets) | Pending |
+
+## v0 Stage 1 Results (1000 sequences, for reference)
+
+| Gate | Token-End | Patch-Boundary | Required | Overall |
+|------|-----------|----------------|----------|---------|
+| Copied advantage | 6.13 nats | 4.70 nats | >=2.0 | PASS |
+| Gap closure | 99.3% | 87.7% | >=60% | PASS |
+| Gap to true NLL | 0.042 nats | 0.66 nats | <=1.5/2.0 | PASS |
+| Frozen core gain | 72.3% | 66.3% | >=70% | FAIL |
+| Rotation no-inverse | 33% retained | 30% retained | <=30% | FAIL |
+| Rotation inverse | 100% | 100% | >=80% | PASS |
+| Adapter params | 263K | - | <=2M | PASS |
 
 ## Artifact Index
 
 ### Pivot and Supervisory Documents
 
-- `research/dual_loop_supervisor_checkin_5.md` - Evidence-Native v0 post-mortem; direction on life support.
-- `research/dual_loop_supervisor_checkin_4.md` - formal pivot: Brainseed dead, evidence-native mainline candidate, chain-init baseline.
-- `research/dual_loop_supervisor_checkin_3.md` - Brainseed near-death and one-final-batch decision.
-- `research/dual_loop_supervisor_checkin_2.md` - earlier Brainseed pressure test.
-- `research/dual_loop_supervisor_checkin_1.md` - original Brainseed direction.
+- `research/dual_loop_supervisor_checkin_7.md` - v0 Stage 1 assessment, v1 repair orders
+- `research/dual_loop_supervisor_checkin_6.md` - Evidence-native DEAD, coordinate-inheritance formal mainline
+- `research/dual_loop_supervisor_checkin_5.md` - Evidence-native v0 post-mortem
+- `research/dual_loop_supervisor_checkin_4.md` - Brainseed dead, evidence-native mainline candidate
 
 ### Loop Batches
 
-- Work loop: `research/work_loop_batch1.md` through `research/work_loop_batch6.md`.
-- Question loop: root `question_loop_batch1.md`, then `research/question_loop_batch2.md` through `research/question_loop_batch8.md`.
+- Work loop: B1-B7 (historical), B8 (v0 Stage 1, completed), B9 (v1 repairs, running)
+- Question loop: B1-B10 (historical), B11 (adapter attribution, completed), B12 (v1 attacks, running)
 
-### Current Status and History
+### Coordinate-Inheritance Artifacts
 
-- `README.md` - public-facing current state.
-- `research/STATUS.md` - this source-of-truth status file.
-- `research/DEEP_RETHINK.md` - full historical research log; current pivot addendum updated on 2026-07-07.
-- `research/INDEPENDENT_ANALYSIS.md` - still relevant as a pre-pivot first-principles analysis of the byte-KD failure, but superseded for mainline direction by supervisor check-ins 4 and 5.
-- `experiments/EXPERIMENTS.md` - human experiment ledger index.
-- `experiments/ledger.jsonl` - append-only machine-readable experiment ledger.
+- `code/coordinate_inheritance.py` - Full implementation (preflight + benchmark modes)
+- `tmp_coordinate_inheritance_full/preflight_metrics.json` - v0 Stage 1 raw data
+- `tmp_coordinate_inheritance_full/calibration_adapter.pt` - v0 calibration adapter (263K params)
 
-## Current Milestones
+### Evidence-Native v1 Artifacts (archival)
 
-1. Evidence-native survival gate.
-   - Replace v0's weak pooled classifier test with a stronger judge architecture.
-   - Use external-only or explicitly partitioned evidence conditions.
-   - Compare evidence-trained and no-evidence-trained controls directly.
-   - Run geometry probes, not just benchmark scores.
-
-2. Chain-init baseline gate.
-   - Turn weak compatibility into a realistic baseline, or demote it.
-   - Evidence-native must beat this path eventually, not just closed-book baselines.
-
-3. Kill/defer gate.
-   - If stronger evidence training still fails to beat controls, demote
-     evidence-native to application-layer retrieval/reranking.
-   - Mainline then returns to chain-init, inherited coordinates, or a larger
-     Sutra-family anchor.
-
-4. Repo hygiene gate.
-   - Keep active loop artifacts isolated.
-   - Keep temp outputs ignored.
-   - Keep experiment results summarized in `experiments/` rather than scattered across scratch directories.
+- `code/evidence_native_v1.py` - v1 implementation
+- `tmp_evidence_native_v1_full2/` - v1 results (2 of 3 seeds completed)
 
 ## Wording Rules For Fresh Readers
 
 Use:
-
-- "Brainseed v0 is dead as a mainline birth artifact."
-- "The codec is infrastructure, not the moonshot."
-- "Chain-init is the strong baseline/fallback, not the moonshot."
-- "Evidence-native v0 failed; the broader direction is on life support."
+- "v0 Stage 1 produced massive signal but failed two borderline controls — v1 repairs in progress."
+- "The adapter-does-the-work story is killed: same adapter + random core = baseline."
+- "CBD at 42.65% HellaSwag is the number to beat."
+- "No benchmark-level evidence yet — Stage 2 blocked by Stage 1."
 
 Avoid:
-
-- "Brainseed is promising" without historical context.
-- "The codec proves semantic intelligence."
-- "Chain-init is the current moonshot."
-- "Evidence-native works" before controlled prototype results exist.
-- "Evidence-native is dead" without specifying v0 versus the stronger 121M claim.
+- "Coordinate-inheritance works" — v0 failed Stage 1; v1 untested.
+- "The geometry proof is complete" — two controls failed.
+- "We're close to benchmarks" — Stage 2 is gated on clean Stage 1 pass.
