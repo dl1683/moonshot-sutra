@@ -1,8 +1,8 @@
-﻿# PCCP Precommit Specification v0
+# PCCP-H Precommit Specification v1
 
 **Date: 2026-07-07**
 **Status: DRAFT - design-gate document; no implementation, no training, no experiments**
-**Origin: Q-Loop B24 + Supervisor Check-in #15 + W-Loop B18**
+**Origin: Q-Loop B24 + Supervisor Check-in #15 + W-Loop B18 + Q-Loop B25 + Supervisor Check-in #16 + W-Loop B19**
 
 ---
 
@@ -10,22 +10,35 @@
 
 PCCP means **Proof-Carrying Causal Programs**.
 
+PCCP-H means **hybrid verifier-centered executable intelligence**: a stack in
+which neural, symbolic, search, retrieval, or other front-ends may propose
+features, symbols, parses, programs, obligations, or repairs, while the durable
+knowledge claim must compile into an executable PCCP artifact with public
+proof/test obligations, hidden-intervention evaluation, and local repair traces.
+
+PCCP-H is now the mainline candidate. Pure PCCP/PCCP-A, meaning synthesis under
+a human-given verifier with no learned or neural proposal layer, remains a
+clean formal gate and an important ablation. It is not the standalone moonshot
+claim.
+
 Working thesis:
 
 ```text
-Intelligence is the shortest executable structure that preserves the target
-function under admissible transformations, interventions, and counterexamples,
-and that carries enough verifier/proof/test machinery to localize and repair
-its own failures.
+Cheap intelligence should leave behind compact executable structure that
+preserves the target function under admissible transformations, interventions,
+and counterexamples; carries verifier/proof/test obligations; exposes local
+repair handles; and uses whatever substrate best serves those outcomes.
 ```
 
-This document defines the object and benchmark before any PCCP experiment is
-allowed to begin. It is deliberately hostile to the direction. PCCP is killed if
-it wins because the humans hid the answer in the DSL, verifier, generator, or
-baseline setup.
+This document defines the object and benchmark before any PCCP-H experiment is
+allowed to begin. It is deliberately hostile to the direction. PCCP-H is killed
+as a moonshot candidate if it wins because the humans hid the answer in the DSL,
+verifier, generator, decomposition, or baseline setup, or if a prior-art or
+neural-tool baseline achieves the same outcomes under equal information.
 
-PCCP is not CTI, not Eklavya, not byte-level modeling, and not a new neural loss.
-Those are historical unless re-derived from `research/VISION.md`.
+PCCP-H is not CTI, not Eklavya, not byte-level modeling, not a new neural loss,
+and not a claim that non-neural systems are virtuous by default. Those are
+historical unless re-derived from `research/VISION.md`.
 
 The five fixed outcomes are genuine intelligence, improvability, democratized
 development, data efficiency, and inference efficiency. The substrate is open:
@@ -35,9 +48,14 @@ they match a preferred ideology.
 
 ---
 
-## 1. Definition: What Is A PCCP Artifact?
+## 1. Definition: What Is A PCCP-H Artifact?
 
 ### 1.1 Formal Object
+
+A PCCP-H artifact keeps the PCCP artifact contract. The hybrid part describes
+how the artifact may be proposed or refined; it does not weaken the requirement
+that the final knowledge object be executable, inspectable, and independently
+checkable.
 
 A PCCP artifact is a tuple:
 
@@ -250,8 +268,8 @@ Function alignment by construction means:
    changes.
 
 This does not solve specification error. If the target function is the wrong
-function, PCCP can be exactly wrong. That risk is tracked under verifier
-smuggling and PCCP-B verifier discovery.
+function, PCCP-H can be exactly wrong. That risk is tracked under verifier
+smuggling, decomposition smuggling, and the verifier-discovery gates.
 
 ---
 
@@ -386,6 +404,64 @@ Minimum PCCP-0 requirements:
 
 The toy theorem in Section 9 may use only 2-3 variables. The benchmark must be
 harder than the theorem construction.
+
+### 3.9 Decomposition Gate: Messy Partial Specifications
+
+The benchmark must include at least one decomposition gate that is not a clean
+formal puzzle.
+
+Setup:
+
+- The system receives a partially specified problem with some known verifier
+  properties, some examples, some counterexample traces, and explicit uncertainty
+  about which properties are complete.
+- The system must propose partial verifiers, candidate invariants, uncertainty
+  boundaries, residual assumptions, and confidence flags before solving.
+- The proposed decomposition is frozen before hidden-family evaluation.
+- Human-written decompositions, if supplied, are logged as baselines and counted
+  in the human-labor ledger.
+
+Success condition:
+
+```text
+The system-proposed decomposition catches hidden failures, localizes repairs, or
+improves hidden-family accuracy better than direct solving with no decomposition.
+```
+
+Failure condition:
+
+```text
+The decomposition is trivial, merely restates the given verifier, hides the
+answer in human-authored boundaries, or adds no value over direct solving or a
+neural-tool agent.
+```
+
+This gate exists because "decompose open-world problems into verifier-rich
+subproblems" is not an algorithm until the system demonstrates it on a messy
+case.
+
+### 3.10 Scaling Gates
+
+A PCCP-H benchmark report must vary the following axes rather than reporting a
+single toy point:
+
+| Axis | Required levels |
+|---|---|
+| Causal variables | `2 -> 8 -> 16` |
+| DSL primitive count | `10 -> 30 -> 100` |
+| Intervention family count | `3 -> 10 -> 30` |
+| Rule interaction density | independent -> pairwise -> higher-order |
+
+For each axis, report hidden-family accuracy, artifact length, synthesis cost,
+verifier calls, repair locality, human-authored structure, and inference cost.
+The report must answer:
+
+```text
+How does PCCP-H performance degrade, and is there a qualitative transition where
+local repair, search, or verifier coverage collapses?
+```
+
+No moonshot claim is allowed from the easiest scale tier alone.
 
 ---
 
@@ -602,9 +678,10 @@ variables were leaked.
 Counterexample-guided inductive synthesis over the same DSL and public seen
 verifier.
 
-This is the most important prior-art baseline for PCCP-A. If generic CEGIS
-matches PCCP in length, sample efficiency, hidden accuracy, and repair locality,
-then PCCP-A has no novelty.
+This is the most important prior-art baseline for pure PCCP/PCCP-A. If generic
+CEGIS matches PCCP-H in length, sample efficiency, hidden accuracy, proof
+coverage, and repair locality under equal information, then the PCCP-H artifact
+contract has no demonstrated novelty beyond CEGIS plus packaging.
 
 ### 6.4 ILP
 
@@ -676,6 +753,63 @@ This estimates how much of PCCP's success is simply the DSL prior plus brute
 force. If random sampling finds passing compact programs at nontrivial rate, the
 benchmark is too easy.
 
+### 6.11 Neural-Tool Agent Baseline
+
+A strong boring baseline is a tool-using neural agent. It may use a neural core
+or neural proposal model and may invoke ordinary tests, public verifiers,
+debuggers, trace analyzers, repair tools, CEGIS/ILP/DreamCoder-style helpers,
+SAT/SMT solvers, and proof assistants under the same CPU and interface budget as
+PCCP-H.
+
+Information parity rule:
+
+```text
+The neural-tool agent receives the same task, same examples, same public DSL or
+an equivalent tool-facing representation, same public verifier interface, same
+counterexample interface, same visible traces, and same hidden-family ignorance
+as PCCP-H.
+```
+
+The neural-tool agent wins the head-to-head if it achieves equal or better:
+
+- hidden-family accuracy;
+- repair locality;
+- inference cost after any allowed compilation or caching.
+
+If it also requires less human-authored DSL/verifier/decomposition labor, the
+PCCP-H result is demoted even if the compiled artifact is prettier. PCCP-H is
+not allowed to win by giving the neural agent worse tools, weaker verifier
+access, fewer traces, or no repair loop.
+
+---
+
+## 6A. Hybrid Evaluation: Substrate Shootout
+
+Every report must score three configurations on the five sacred outcomes:
+
+1. **Pure PCCP/PCCP-A:** non-neural synthesis core under a given verifier.
+2. **PCCP-H:** neural or other perception/proposal front-end plus PCCP reasoning,
+   verifier, proof/test obligations, executable artifact, and repair core.
+3. **Neural-tool agent:** neural core with access to tools, tests, verifiers,
+   debuggers, solvers, and repair loops.
+
+Score each configuration from 1 to 5 on genuine intelligence, improvability,
+democratized development, data efficiency, and inference efficiency. The winner
+is whichever configuration best serves the outcomes, regardless of substrate.
+
+Required table:
+
+| Configuration | Genuine intelligence | Improvability | Democratized development | Data efficiency | Inference efficiency | Outcome winner? | Failure diagnosis |
+|---|---:|---:|---:|---:|---:|---|---|
+| Pure PCCP/PCCP-A | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| PCCP-H | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Neural-tool agent | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+
+A PCCP-H claim is only meaningful if the PCCP core contributes measurable value
+over neural + ordinary tools and over existing synthesis systems with comparable
+proposal guidance. If the neural-tool agent or prior-art hybrid wins, report that
+as the result.
+
 ---
 
 ## 7. Smuggling Controls Checklist
@@ -689,11 +823,14 @@ Every PCCP report must include this checklist.
 | Generator smuggling | Does the generator expose causal structure directly? | Public/private generator split; no role labels; seed holdout | Invalidate benchmark |
 | Transformation smuggling | Are interventions only cosmetic? | At least 3 structurally different hidden intervention families | VOID or redesign |
 | Baseline handicapping | Do baselines get worse information than PCCP? | Information parity table for every baseline | KILL_PCCP if uncorrected |
-| Human labor | Did humans design the rule, DSL, invariants, or patch? | Human-labor ledger; separate given/discovered structure | Downgrade or kill depending on severity |
+| Human labor | Did humans design the rule, DSL, invariants, decomposition, or patch? | Human-labor ledger; separate given/discovered structure | Downgrade or kill depending on severity |
 | Prior-art absorption | Is the best system just CEGIS/ILP/DreamCoder? | Strong synthesis baselines with same access | KILL_PCCP if PCCP does not beat or add something real |
+| Neural-tool absorption | Does a neural-tool agent match or beat PCCP-H with the same interfaces? | Section 6.11 head-to-head; same verifier/tool access | KILL_PCCP if uncorrected |
+| Decomposition smuggling | Did humans choose the useful subproblem boundaries? | Decomposition gate; labor ledger; human baseline | Downgrade or kill depending on severity |
 | Toy triviality | Is the domain too small or linearly separable? | Minimum complexity gates; random-program baseline | VOID |
+| Scaling collapse | Does performance disappear as variables, DSL, interventions, or interaction density grow? | Scaling gates and degradation report | VOID or demote to toy formal tool |
 | Spec incompleteness | Does the verifier miss important failures? | Hidden interventions and adversarial counterexamples | VOID or KILL depending on claim |
-| Neural loophole | Did the core claim become gradient representation learning? | Criterion (f) substrate-balance score | KILL_PCCP for core drift |
+| Neural loophole | Did the core claim become gradient representation learning with a program wrapper? | Criterion (f) substrate-balance score and neural-tool baseline | KILL_PCCP for core drift |
 
 Human-labor accounting must classify every design choice:
 
@@ -877,6 +1014,10 @@ while discarding the small causal bit that matters for the function.
 
 ## 10. Verdict Tokens (Precommitted)
 
+Token names are retained for continuity. Unless a run is explicitly labeled
+pure PCCP/PCCP-A, the verdict tokens evaluate PCCP-H against prior-art synthesis
+and neural-tool baselines under equal information.
+
 ### 10.1 PCCP_SIGNAL
 
 Award only if all conditions hold:
@@ -884,11 +1025,13 @@ Award only if all conditions hold:
 - CPU-only result.
 - Hidden-family accuracy >= 0.95, preferably exact verifier pass.
 - Compact executable artifact beats memorization, reconstruction, decision tree,
-  tiny neural, random program, and at least one strong synthesis baseline.
+  tiny neural, neural-tool agent, random program, and at least one strong
+  synthesis baseline.
 - Artifact is at least 10x shorter than exact lookup table.
-- DSL/verifier/generator/baseline smuggling controls pass.
+- DSL/verifier/generator/decomposition/baseline smuggling controls pass.
 - Explanation quality >= 2.
-- Core claim does not depend on gradient-trained representations.
+- Any gradient-trained component is isolated, measured, and shown not to be the
+  whole source of the claimed proof-carrying executable advantage.
 
 ### 10.2 STRONG_PCCP
 
@@ -899,8 +1042,11 @@ Award only if PCCP_SIGNAL holds plus:
   global.
 - A finite theorem or exact characterization explains why proxy or
   reconstruction compression fails.
-- PCCP beats or materially extends generic CEGIS/ILP/SAT/SMT/symbolic regression
-  under equal information.
+- Scaling curves report degradation across causal-variable count, DSL primitive
+  count, intervention family count, and rule interaction density.
+- PCCP-H beats or materially extends generic CEGIS/ILP/SAT/SMT/symbolic
+  regression, DreamCoder-style systems, and the neural-tool agent under equal
+  information.
 
 ### 10.3 MOONSHOT_PCCP
 
@@ -908,11 +1054,15 @@ Award only if STRONG_PCCP holds plus:
 
 - The system helps construct, refine, or select correctness obligations rather
   than merely satisfying human-given obligations.
-- Verifier/spec discovery is tested on held-out families.
-- Human-labor accounting shows the system discovered nontrivial obligations or
-  invariants.
+- Verifier/spec discovery is tested on held-out families and compared against
+  invariant/spec-mining baselines.
+- The system proposes useful partial verifiers, uncertainty boundaries, or
+  decompositions for at least one messy partially specified task.
+- Human-labor accounting shows the system discovered nontrivial obligations,
+  invariants, or decompositions.
 
-This is PCCP-B. It is not required for PCCP-0, but it is the moonshot extension.
+This is the PCCP-B extension inside PCCP-H. It is no longer allowed to remain a
+vague future promise; PCCP-0 includes a restricted mini-gate.
 
 ### 10.4 KILL_PCCP
 
@@ -922,12 +1072,15 @@ Assign KILL_PCCP if any of the following occur:
   selector, or causal-role oracle.
 - The verifier exposes hidden answers during synthesis.
 - The generator exposes causal structure directly.
-- The best baseline is an existing synthesis system and PCCP does not beat it or
-  add proof/repair/composition value.
-- PCCP collapses back into gradient-trained representation learning as the core
-  mechanism.
-- Baselines are materially handicapped relative to PCCP.
-- Human-authored invariants or patches do the work claimed as system discovery.
+- The best baseline is an existing synthesis system and PCCP-H does not beat it
+  or add proof/repair/composition/decomposition value.
+- The neural-tool agent achieves equal or better hidden-family accuracy, repair
+  locality, and inference cost under equal information.
+- PCCP-H collapses back into gradient-trained representation learning as the
+  core mechanism with a proof/program wrapper.
+- Baselines are materially handicapped relative to PCCP-H.
+- Human-authored invariants, decompositions, or patches do the work claimed as
+  system discovery.
 
 ### 10.5 VOID
 
@@ -963,9 +1116,9 @@ Rules:
 - Do not favor non-neural components merely for being non-neural.
 - Always report: "If neural parts are removed, what claim remains?"
 - A tiny neural baseline may beat PCCP. If it does, report that honestly.
-- PCCP-2 may use neural perception adapters, but PCCP-0 and PCCP-1 must establish
-  the executable/verifiable core without relying on gradient-trained
-  representations.
+- PCCP-H may use neural perception or proposal adapters, but PCCP-0 and PCCP-1
+  must still establish what the executable/verifiable core contributes when the
+  neural parts are removed or replaced.
 
 ---
 
@@ -985,14 +1138,29 @@ Required before running:
 - generator contract;
 - DSL primitive inventory;
 - verifier contract;
-- baseline information-parity table;
+- baseline information-parity table including the neural-tool agent;
 - smuggling checklist;
 - hidden split manifest;
 - verdict-token thresholds.
 
+Restricted verifier-discovery mini-gate required in PCCP-0:
+
+- The system is given examples, counterexample traces, and a partial verifier
+  that is missing at least one important property.
+- The system must propose at least one additional property, invariant,
+  metamorphic relation, or obligation from the traces.
+- The proposed property is frozen and tested on hidden families.
+- Compare against Daikon-style dynamic invariant detection, ICE/Horn-ICE
+  invariant learning where applicable, and random property generation.
+- Success means the proposed property catches hidden failures or localizes repair
+  better than the partial verifier alone and better than the listed baselines.
+- Failure means the property is superficial, overfits seen traces, duplicates
+  the given verifier, or becomes another proxy that hidden tests defeat.
+
 Gate to PCCP-1:
 
 - PCCP_SIGNAL or a clear VOID with redesign path.
+- Verifier-discovery mini-gate result reported, even if negative.
 - No KILL_PCCP condition.
 
 ### 12.2 PCCP-1: Richer Worlds
@@ -1018,25 +1186,30 @@ Gate to PCCP-2:
 - Explanation quality >= 3.
 - Prior-art absorption risk addressed directly.
 
-### 12.3 PCCP-2: Perception Bridge
+### 12.3 PCCP-2 / PCCP-H: Perception And Proposal Bridge
 
 Goal:
 
 - Convert raw observations into typed terms.
-- Allow neural adapters if they improve perception, compression, or usability.
+- Allow neural or other adapters if they improve perception, proposal diversity,
+  compression, or usability.
 - Keep the PCCP core verifier-first and executable.
+- Compare PCCP-H directly against the neural-tool baseline.
 
 Neural adapters may be used for perception, embedding-to-symbol proposals,
-candidate feature extraction, and noisy observation parsing. They may not replace
-the target verifier, proof obligations, executable causal program, or
-hidden-family intervention test.
+candidate feature extraction, noisy observation parsing, program proposals, and
+repair suggestions. They may not replace the target verifier, proof obligations,
+executable causal program, hidden-family intervention test, or human-labor
+ledger.
 
 Gate to PCCP-B:
 
-- Removing the neural adapter degrades perception but leaves the typed PCCP core
-  claim intact.
+- Removing the neural adapter degrades perception or proposal quality but leaves
+  a measurable typed PCCP core claim intact.
 - Adapter errors are separately measured and not confused with core reasoning
   failures.
+- PCCP-H beats neural + ordinary tools/tests on at least one precommitted
+  outcome-relevant axis, or the result is reported as neural-tool absorption.
 
 ### 12.4 PCCP-B: Verifier Discovery
 
@@ -1056,31 +1229,65 @@ Gate for MOONSHOT_PCCP:
 - obligations transfer to held-out families;
 - human-labor accounting shows nontrivial verifier work was system-discovered.
 
+### 12.5 Cross-Cutting Gates: Decomposition And Scaling
+
+The decomposition gate in Section 3.9 and scaling gates in Section 3.10 are not
+optional narrative decorations. They are required evidence for any claim broader
+than a verifier-rich toy world.
+
+- A pure formal-core result may proceed without passing the decomposition gate,
+  but it must be labeled narrow PCCP/PCCP-A.
+- A PCCP-H mainline claim requires the decomposition gate to add value over no
+  decomposition and over the neural-tool agent.
+- A scaling claim requires reported degradation curves and a stated transition
+  point if search, repair, verifier coverage, or human labor collapses.
+
 ---
 
-## 13. Prior-Art Absorption Test
+## 13. Prior-Art Absorption And Novelty Declaration
 
-PCCP is close to existing work:
+PCCP-H is close to existing work. The spec explicitly does **not** claim novelty
+for:
 
-- CEGIS;
-- ILP;
-- DreamCoder/library learning;
-- symbolic regression;
-- SAT/SMT synthesis;
-- causal discovery plus formal verification;
-- property-based testing;
-- proof-carrying code.
+- CEGIS or OGIS counterexample loops;
+- ILP rule induction, predicate invention, or relational background knowledge;
+- DreamCoder-style abstraction and library learning;
+- symbolic regression or compact expression search;
+- SAT/SMT/SyGuS-style bounded synthesis and formal verification;
+- causal discovery, structural causal models, interventions, or causal
+  abstraction;
+- proof-carrying code;
+- property-based testing, metamorphic testing, dynamic invariant detection,
+  specification mining, Daikon-style invariant mining, or ICE/Horn-ICE invariant
+  learning;
+- neural tool use, neural proposal guidance, or learned search heuristics.
 
-The precommitted novelty claim is not that these fields do not exist. The claim
-must be one of:
+The only possible novelty claim is the combined artifact contract applied to
+intelligence:
 
-1. PCCP integrates executable causal compression, proof obligations, hidden
-   interventions, and local repair in a way existing baselines do not match.
-2. PCCP produces shorter or more repairable artifacts under equal information.
-3. PCCP-B discovers verifier obligations, not merely programs.
+```text
+function-aligned executable compression + proof/test obligations +
+hidden-intervention survival + local repair + human-labor accounting
+```
 
-If none of these is true, PCCP-A is formal-tools support, not a moonshot
-direction.
+This contract must be evaluated as a discipline, not as a claim that each organ
+is new. Existing prior-art systems may be used as implementation substrates if
+they produce the required artifact and win the outcome tests.
+
+What remains to be proven:
+
+1. The combined contract beats each relevant prior-art baseline under equal
+   information, not merely weak neural baselines.
+2. PCCP-H adds measurable value over a neural-tool agent with the same verifier,
+   tests, repair tools, and traces.
+3. The verifier-discovery and decomposition gates discover useful structure
+   rather than smuggling human judgment or learning another proxy.
+4. Scaling degradation is acceptable in the structured-world regimes where the
+   claim is made.
+
+If none of these is true, PCCP-H is good formal-tools engineering discipline,
+not a moonshot direction. In that case the honest move is to adopt whichever
+prior-art or neural-tool substrate wins.
 
 ---
 
@@ -1091,39 +1298,49 @@ direction.
 Given only this specification:
 
 ```text
-We are precommitting a hostile test for an AI that learns a checkable rulebook
-instead of memorizing the answer key, and that must fix the broken rule when a
-counterexample catches it.
+A laptop-scale hybrid AI has to learn the rulebook, prove what it knows, survive
+hidden interventions, and fix broken rules without retraining; the surprise only
+counts if it beats both ordinary neural tool use and ordinary program synthesis.
 ```
 
-### 14.2 Does It Survive "Isn't That Obvious?"
+### 14.2 Does It Survive "That's Just CEGIS With A Verifier"?
 
-Conditional.
+Conditional, and the burden is on PCCP-H.
 
-"Programs and proofs are checkable" is obvious. The non-obvious part is the
-hostile separation: proxy/reconstruction systems can be made to compress the
-wrong thing, while a compact executable causal program preserves the function
-under hidden interventions.
+It does **not** survive if the result is merely a candidate generator, a verifier,
+and counterexamples over a hand-authored DSL. That is CEGIS/SyGuS-shaped prior
+art and should be named as such.
 
-If the DSL or verifier hands over the answer, the story dies.
+It survives only if the final artifact contract adds measured value that generic
+CEGIS, ILP, DreamCoder-style search, symbolic regression, SAT/SMT synthesis, and
+spec-mining baselines do not match under equal information: hidden-intervention
+survival, proof/test obligations, shorter executable artifacts, local repair,
+useful decomposition, verifier discovery, or lower deployed inference cost.
 
-### 14.3 Does It Survive "So What?"
+### 14.3 Does It Survive "The Neural-Tool Agent Already Does This"?
 
-Conditional.
+Conditional, and this is the strongest boring objection.
 
-It survives only if PCCP beats memorization, reconstruction, neural comparison,
-and strong synthesis baselines under equal information. Then the point is not
-"symbolic AI works on toys"; the point is that function-aligned executable
-compression can defeat proxy compression in a precommitted setting.
+It does **not** survive if a neural agent with the same verifier interface,
+tests, debuggers, solvers, traces, and repair loop reaches equal or better
+hidden-family accuracy, repair locality, and inference cost. In that case the
+PCCP-H mainline is absorbed by neural-tool engineering.
+
+It survives only if the PCCP core contributes something the neural-tool agent
+lacks: a more compact compiled artifact, cleaner proof/test obligations, better
+counterexample-localized repair, better hidden-intervention transfer, lower
+repeat inference cost, or less human-authored structure for the same outcome.
 
 ### 14.4 Honest Narrative Verdict
 
 The specification alone is not a result. It is not yet a moonshot.
 
-The honest story is alive but fragile:
+The honest story is alive but harder:
 
 ```text
-If the benchmark is hostile and PCCP still wins, the direction has a real
-paradigm-level signal. If the benchmark is easy, smuggled, or absorbed by CEGIS,
-the story is boring and PCCP should be killed or demoted.
+If PCCP-H beats weak neural baselines on a tiny formal puzzle, demote it. If it
+beats strong prior-art synthesis and neural-tool agents under hidden
+interventions, with smuggling audits, scaling curves, local repair, and at least
+one useful discovered verifier or decomposition, then the direction has a real
+paradigm-level signal. If not, kill the acronym and keep the winning tools.
 ```
