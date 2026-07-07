@@ -1,0 +1,987 @@
+{
+  "elapsed_s": 21.463,
+  "findings": [
+    {
+      "check_id": "MANIFEST_FROZEN_BEFORE_HIDDEN",
+      "details": {
+        "frozen_before_hidden": true,
+        "hidden_results_opened": false
+      },
+      "message": "manifest freezes before hidden opening",
+      "passed": true
+    },
+    {
+      "check_id": "MANIFEST_BASELINES_DECLARED",
+      "details": {
+        "missing_baselines": []
+      },
+      "message": "manifest declares every baseline",
+      "passed": true
+    },
+    {
+      "check_id": "MANIFEST_NO_POST_HIDDEN_EDITS",
+      "details": {
+        "post_hidden_changes": []
+      },
+      "message": "manifest has no post-hidden edits",
+      "passed": true
+    },
+    {
+      "check_id": "WORLD_COLUMN_NAMES_OPAQUE",
+      "details": {
+        "leaked_terms": []
+      },
+      "message": "table and column ids contain no semantic role fragments",
+      "passed": true
+    },
+    {
+      "check_id": "WORLD_SAME_TYPE_DECOYS",
+      "details": {
+        "minimum_candidates": 6,
+        "weak_roles": {}
+      },
+      "message": "critical roles have same-type candidates",
+      "passed": true
+    },
+    {
+      "check_id": "WORLD_NON_BOOLEAN_OUTPUT_FLOOR",
+      "details": {
+        "fraction": 0.6666666666666666
+      },
+      "message": "at least half of output forms are non-Boolean typed outputs",
+      "passed": true
+    },
+    {
+      "check_id": "WORLD_COMPOSED_GOAL_PRESENT",
+      "details": {
+        "obligations": [
+          "abstain_on_ambiguous_binding",
+          "join_normalize_guard",
+          "normalize_quantity",
+          "preserve_identity",
+          "reject_invalid_action"
+        ]
+      },
+      "message": "world contains join-normalize-guard obligation",
+      "passed": true
+    },
+    {
+      "check_id": "GOAL_OBLIGATIONS_COMPLETE",
+      "details": {
+        "missing": []
+      },
+      "message": "goal is finite verifier obligations",
+      "passed": true
+    },
+    {
+      "check_id": "GOAL_OUTPUT_CANONICAL",
+      "details": {
+        "output_forms": [
+          "StableID",
+          "UnitValue(Rational,Unit)",
+          "CanonicalRecord",
+          "CanonicalRowMultiset",
+          "ActionAccepted(canonical_effect)",
+          "ActionRejected(canonical_reason_code)"
+        ]
+      },
+      "message": "output forms are canonical typed variants",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_BITS_RECOMPUTED",
+      "details": {
+        "declared_bits": 20800,
+        "recomputed_bits": 20800
+      },
+      "message": "declared bits match canonical recomputation",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_EXECUTABLE_TERMS_CLEAN",
+      "details": {
+        "banned_hits": []
+      },
+      "message": "packet fields contain no banned hidden metadata",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_REQUIRED_ENTRY_TYPES",
+      "details": {
+        "missing": []
+      },
+      "message": "packet contains required executable categories",
+      "passed": true
+    },
+    {
+      "check_id": "CONSTRUCTOR_BLIND_MODE",
+      "details": {
+        "constructor_mode": "blind"
+      },
+      "message": "constructor declares blind mode",
+      "passed": true
+    },
+    {
+      "check_id": "CONSTRUCTOR_PROVENANCE_PRESENT",
+      "details": {
+        "empty_entry_indices": [],
+        "unknown_refs": []
+      },
+      "message": "entries cite allowed public facts",
+      "passed": true
+    },
+    {
+      "check_id": "BUDGET_PACKET_BITS_MATCH",
+      "details": {
+        "baseline_adapter_bits": 0,
+        "binding_bits": 2360,
+        "binding_ratio": 0.28864970645792565,
+        "examples_bits": 4048,
+        "failed_query_bits": 0,
+        "final_program_bits": 0,
+        "frame_bits": 5816,
+        "human_labor_bits": 0,
+        "learned_library_bits": 0,
+        "packet_bits": 20800,
+        "parser_bits": 0,
+        "program_bits": 2328,
+        "program_ratio": 0.22162985529322163,
+        "residual_sibling_teaching_bits": 0,
+        "total_bits": 38480,
+        "verifier_bits": 3128
+      },
+      "message": "ledger packet bits match serializer",
+      "passed": true
+    },
+    {
+      "check_id": "BUDGET_ALL_CATEGORIES_PRESENT",
+      "details": {
+        "missing_fields": []
+      },
+      "message": "ledger includes all charged categories",
+      "passed": true
+    },
+    {
+      "check_id": "BUDGET_CATEGORY_SUM_BOUNDED",
+      "details": {
+        "baseline_adapter_bits": 0,
+        "binding_bits": 2360,
+        "binding_ratio": 0.28864970645792565,
+        "examples_bits": 4048,
+        "failed_query_bits": 0,
+        "final_program_bits": 0,
+        "frame_bits": 5816,
+        "human_labor_bits": 0,
+        "learned_library_bits": 0,
+        "packet_bits": 20800,
+        "parser_bits": 0,
+        "program_bits": 2328,
+        "program_ratio": 0.22162985529322163,
+        "residual_sibling_teaching_bits": 0,
+        "total_bits": 38480,
+        "verifier_bits": 3128
+      },
+      "message": "classified entry bits do not exceed packet bits",
+      "passed": true
+    },
+    {
+      "check_id": "COST_FRAME_BITS_PRESENT",
+      "details": {
+        "frame_bits": 5816
+      },
+      "message": "frame bits separately counted",
+      "passed": true
+    },
+    {
+      "check_id": "COST_BINDING_BITS_SEPARATE",
+      "details": {
+        "binding_ratio": 0.28864970645792565
+      },
+      "message": "binding bits are separate",
+      "passed": true
+    },
+    {
+      "check_id": "COST_PROGRAM_BITS_SEPARATE",
+      "details": {
+        "program_ratio": 0.22162985529322163
+      },
+      "message": "program bits are separate",
+      "passed": true
+    },
+    {
+      "check_id": "LEDGER_PUBLIC_SUBSTRATE_DECLARED",
+      "details": {
+        "missing_public": []
+      },
+      "message": "public parser/type substrate is declared",
+      "passed": true
+    },
+    {
+      "check_id": "LEDGER_PACKET_DESIGN_DECLARED",
+      "details": {
+        "missing_packet": []
+      },
+      "message": "packet-design labor is declared",
+      "passed": true
+    },
+    {
+      "check_id": "LEDGER_HIDDEN_SURFACES_SEPARATE",
+      "details": {
+        "hidden_mentions_in_public": []
+      },
+      "message": "hidden surfaces are separate",
+      "passed": true
+    },
+    {
+      "check_id": "BASELINE_ALL_PRESENT",
+      "details": {
+        "missing": []
+      },
+      "message": "all declared baselines have packet view",
+      "passed": true
+    },
+    {
+      "check_id": "BASELINE_PACKET_HASH_PARITY",
+      "details": {
+        "denied_fields": {},
+        "packet_hashes": [
+          "15db3e86d1cad3e5589812b5e35e4f4d"
+        ]
+      },
+      "message": "all baselines receive same executable packet bytes",
+      "passed": true
+    },
+    {
+      "check_id": "BASELINE_BUDGET_PARITY",
+      "details": {
+        "packet_bits": [
+          20800
+        ],
+        "query_budgets": [
+          5
+        ],
+        "task_hashes": [
+          "928de7258397f4f0db9c0b69e1b1cc99"
+        ]
+      },
+      "message": "baselines receive matched bits, task bundle, and query budget",
+      "passed": true
+    },
+    {
+      "check_id": "DOMAIN_BASELINE_ROSTER_COMPLETE",
+      "details": {
+        "missing": []
+      },
+      "message": "Q37 domain absorber roster is declared",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_REVERSE_SAME_FACT_MULTISET",
+      "details": {},
+      "message": "reversing packet order preserves entry multiset",
+      "passed": true
+    },
+    {
+      "check_id": "PACKET_ROTATE_SAME_BITS",
+      "details": {
+        "original_bits": 20800,
+        "rotated_bits": 20800
+      },
+      "message": "rotating packet order preserves bit length",
+      "passed": true
+    },
+    {
+      "check_id": "ENUMERABILITY_METRICS_PRESENT",
+      "details": {
+        "N_action_policies": 24,
+        "N_constraint_sets": 4096,
+        "N_join_candidates": 132,
+        "N_schema_bindings": 792,
+        "N_unit_transform_candidates": 66,
+        "minimum_distinguishing_counterexamples": 18,
+        "public_example_version_space": 209088,
+        "typed_pruning_factor": 0.006732
+      },
+      "message": "typed search metrics are reported",
+      "passed": true
+    },
+    {
+      "check_id": "ENUMERABILITY_NOT_SINGLETON",
+      "details": {
+        "N_action_policies": 24,
+        "N_constraint_sets": 4096,
+        "N_join_candidates": 132,
+        "N_schema_bindings": 792,
+        "N_unit_transform_candidates": 66,
+        "minimum_distinguishing_counterexamples": 18,
+        "public_example_version_space": 209088,
+        "typed_pruning_factor": 0.006732
+      },
+      "message": "public types do not reduce search to singleton",
+      "passed": true
+    },
+    {
+      "check_id": "GENERATOR_LEAKAGE_BELOW_THRESHOLD",
+      "details": {
+        "threshold": 0.08,
+        "worst_metric": 0.014158279193434313
+      },
+      "message": "schema/value statistics do not predict critical bindings above threshold",
+      "passed": true
+    },
+    {
+      "check_id": "GENERATOR_RNG_STREAMS_SPLIT",
+      "details": {
+        "observed_purposes": [
+          "ablations",
+          "baseline_tie_breaks",
+          "constraints",
+          "display_names",
+          "hidden_queries",
+          "learner_tie_breaks",
+          "packet_construction",
+          "row_order",
+          "schema_names",
+          "unit_choices",
+          "world_structure"
+        ]
+      },
+      "message": "generator uses required split RNG streams",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_SMUGGLING",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_VOID_SMUGGLED_SCHEMA",
+        "observed": "FRAMESEED_SHEETS0_VOID_SMUGGLED_SCHEMA"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_VOID_SMUGGLED_SCHEMA",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_TYPED_BOOLEAN",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_TYPED_BOOLEAN_TRAP",
+        "observed": "FRAMESEED_SHEETS0_TYPED_BOOLEAN_TRAP"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_TYPED_BOOLEAN_TRAP",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_PARSER",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_ABSORBED_BY_PARSER_PRIOR",
+        "observed": "FRAMESEED_SHEETS0_ABSORBED_BY_PARSER_PRIOR"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_ABSORBED_BY_PARSER_PRIOR",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_REPRESENTATION",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_ABSORBED_BY_REPRESENTATION_PRIOR",
+        "observed": "FRAMESEED_SHEETS0_ABSORBED_BY_REPRESENTATION_PRIOR"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_ABSORBED_BY_REPRESENTATION_PRIOR",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_RELATIONAL_BEFORE_NEGATIVE",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_ABSORBED_BY_RELATIONAL_ALGEBRA",
+        "observed": "FRAMESEED_SHEETS0_ABSORBED_BY_RELATIONAL_ALGEBRA"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_ABSORBED_BY_RELATIONAL_ALGEBRA",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_TYPED_CEGIS_BEFORE_LIBRARY",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_ABSORBED_BY_TYPED_CEGIS",
+        "observed": "FRAMESEED_SHEETS0_ABSORBED_BY_TYPED_CEGIS"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_ABSORBED_BY_TYPED_CEGIS",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_NEGATIVE_LOW_L3",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_NEGATIVE",
+        "observed": "FRAMESEED_SHEETS0_NEGATIVE"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_NEGATIVE",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_TEACHING_DIMENSION",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_ABSORBED_BY_TEACHING_DIMENSION",
+        "observed": "FRAMESEED_SHEETS0_ABSORBED_BY_TEACHING_DIMENSION"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_ABSORBED_BY_TEACHING_DIMENSION",
+      "passed": true
+    },
+    {
+      "check_id": "GOLDEN_TOKEN_CLEAN_SIGNAL",
+      "details": {
+        "expected": "FRAMESEED_SHEETS0_SIGNAL",
+        "observed": "FRAMESEED_SHEETS0_SIGNAL"
+      },
+      "message": "golden control emits FRAMESEED_SHEETS0_SIGNAL",
+      "passed": true
+    }
+  ],
+  "metrics": {
+    "baseline_parity_audit": {
+      "views": [
+        {
+          "baseline_name": "l3_full",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "td_h0",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "l0_rotenn",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "l1_active",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "l2_typed_cegis",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "rag",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "nuisance_oracle",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "library_learning",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "relational_algebra",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "unit_system",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "exact_key_matching",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "entity_resolution",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "schema_matching",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "pbe_prose",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "data_wrangling",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "constraint_solver",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "data_repair",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "typed_cegis_exact",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "typed_cegis_beam",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "typed_mdl_library",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "operation_verifier_search",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "goal_conditioned_cegis",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "active_goal_disambiguation",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "obligation_template_library",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        },
+        {
+          "baseline_name": "abstention_validator",
+          "executable_packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "ignored_fields": [],
+          "packet_bits": 20800,
+          "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d",
+          "query_budget": 5,
+          "task_bundle_hash": "928de7258397f4f0db9c0b69e1b1cc99"
+        }
+      ]
+    },
+    "budget_recomputation_audit": {
+      "baseline_adapter_bits": 0,
+      "binding_bits": 2360,
+      "binding_ratio": 0.28864970645792565,
+      "examples_bits": 4048,
+      "failed_query_bits": 0,
+      "final_program_bits": 0,
+      "frame_bits": 5816,
+      "human_labor_bits": 0,
+      "learned_library_bits": 0,
+      "packet_bits": 20800,
+      "parser_bits": 0,
+      "program_bits": 2328,
+      "program_ratio": 0.22162985529322163,
+      "residual_sibling_teaching_bits": 0,
+      "total_bits": 38480,
+      "verifier_bits": 3128
+    },
+    "constructor_provenance_audit": {
+      "packet_entries": 7,
+      "transcript_id": "transcript:9b41fbc790da3156f67ebfc9"
+    },
+    "domain_baseline_roster_audit": {
+      "baseline_names": [
+        "l3_full",
+        "td_h0",
+        "l0_rotenn",
+        "l1_active",
+        "l2_typed_cegis",
+        "rag",
+        "nuisance_oracle",
+        "library_learning",
+        "relational_algebra",
+        "unit_system",
+        "exact_key_matching",
+        "entity_resolution",
+        "schema_matching",
+        "pbe_prose",
+        "data_wrangling",
+        "constraint_solver",
+        "data_repair",
+        "typed_cegis_exact",
+        "typed_cegis_beam",
+        "typed_mdl_library",
+        "operation_verifier_search",
+        "goal_conditioned_cegis",
+        "active_goal_disambiguation",
+        "obligation_template_library",
+        "abstention_validator"
+      ]
+    },
+    "frame_binding_program_cost_split_audit": {
+      "baseline_adapter_bits": 0,
+      "binding_bits": 2360,
+      "binding_ratio": 0.28864970645792565,
+      "examples_bits": 4048,
+      "failed_query_bits": 0,
+      "final_program_bits": 0,
+      "frame_bits": 5816,
+      "human_labor_bits": 0,
+      "learned_library_bits": 0,
+      "packet_bits": 20800,
+      "parser_bits": 0,
+      "program_bits": 2328,
+      "program_ratio": 0.22162985529322163,
+      "residual_sibling_teaching_bits": 0,
+      "total_bits": 38480,
+      "verifier_bits": 3128
+    },
+    "goal_obligation_contract_audit": {
+      "obligations": [
+        "abstain_on_ambiguous_binding",
+        "join_normalize_guard",
+        "normalize_quantity",
+        "preserve_identity",
+        "reject_invalid_action"
+      ]
+    },
+    "golden_token_controls": {
+      "clean_signal": "FRAMESEED_SHEETS0_SIGNAL",
+      "negative_low_l3": "FRAMESEED_SHEETS0_NEGATIVE",
+      "parser": "FRAMESEED_SHEETS0_ABSORBED_BY_PARSER_PRIOR",
+      "relational_before_negative": "FRAMESEED_SHEETS0_ABSORBED_BY_RELATIONAL_ALGEBRA",
+      "representation": "FRAMESEED_SHEETS0_ABSORBED_BY_REPRESENTATION_PRIOR",
+      "smuggling": "FRAMESEED_SHEETS0_VOID_SMUGGLED_SCHEMA",
+      "teaching_dimension": "FRAMESEED_SHEETS0_ABSORBED_BY_TEACHING_DIMENSION",
+      "typed_boolean": "FRAMESEED_SHEETS0_TYPED_BOOLEAN_TRAP",
+      "typed_cegis_before_library": "FRAMESEED_SHEETS0_ABSORBED_BY_TYPED_CEGIS"
+    },
+    "harness_version": "frameseed-sheets0-audit-harness-v1",
+    "hidden_hfa_reported": false,
+    "manifest_audit": {
+      "baseline_versions": {
+        "abstention_validator": "abstention_validator-adapter-v1",
+        "active_goal_disambiguation": "active_goal_disambiguation-adapter-v1",
+        "constraint_solver": "constraint_solver-adapter-v1",
+        "data_repair": "data_repair-adapter-v1",
+        "data_wrangling": "data_wrangling-adapter-v1",
+        "entity_resolution": "entity_resolution-adapter-v1",
+        "exact_key_matching": "exact_key_matching-adapter-v1",
+        "goal_conditioned_cegis": "goal_conditioned_cegis-adapter-v1",
+        "l0_rotenn": "l0_rotenn-adapter-v1",
+        "l1_active": "l1_active-adapter-v1",
+        "l2_typed_cegis": "l2_typed_cegis-adapter-v1",
+        "l3_full": "l3_full-adapter-v1",
+        "library_learning": "library_learning-adapter-v1",
+        "nuisance_oracle": "nuisance_oracle-adapter-v1",
+        "obligation_template_library": "obligation_template_library-adapter-v1",
+        "operation_verifier_search": "operation_verifier_search-adapter-v1",
+        "pbe_prose": "pbe_prose-adapter-v1",
+        "rag": "rag-adapter-v1",
+        "relational_algebra": "relational_algebra-adapter-v1",
+        "schema_matching": "schema_matching-adapter-v1",
+        "td_h0": "td_h0-adapter-v1",
+        "typed_cegis_beam": "typed_cegis_beam-adapter-v1",
+        "typed_cegis_exact": "typed_cegis_exact-adapter-v1",
+        "typed_mdl_library": "typed_mdl_library-adapter-v1",
+        "unit_system": "unit_system-adapter-v1"
+      },
+      "constructor_id": "blind-public-sheets0-obligation-packet-v1",
+      "frozen_before_hidden": true,
+      "hidden_results_opened": false,
+      "hidden_seed_rule": "sha256(public_seed|sheets0-hidden|manifest_hash|unopened-until-freeze)",
+      "parser_ledger_hash": "eb860e41f2b348dfefbab7b1",
+      "post_hidden_changes": [],
+      "public_seed": "FRAMESEED_SHEETS0_B30_PUBLIC_SEED",
+      "scorer_id": "frameseed-sheets0-token-scorer-v1",
+      "serializer_id": "canonical-json-bytes-v1",
+      "timeouts": {
+        "abstention_validator": 0,
+        "active_goal_disambiguation": 0,
+        "constraint_solver": 0,
+        "data_repair": 0,
+        "data_wrangling": 0,
+        "entity_resolution": 0,
+        "exact_key_matching": 0,
+        "goal_conditioned_cegis": 0,
+        "l0_rotenn": 0,
+        "l1_active": 0,
+        "l2_typed_cegis": 0,
+        "l3_full": 0,
+        "library_learning": 0,
+        "nuisance_oracle": 0,
+        "obligation_template_library": 0,
+        "operation_verifier_search": 0,
+        "pbe_prose": 0,
+        "rag": 0,
+        "relational_algebra": 0,
+        "schema_matching": 0,
+        "td_h0": 0,
+        "typed_cegis_beam": 0,
+        "typed_cegis_exact": 0,
+        "typed_mdl_library": 0,
+        "unit_system": 0
+      }
+    },
+    "no_performance_runs": true,
+    "packet_order_control": {},
+    "packet_serialization_audit": {
+      "entry_count": 7,
+      "packet_bits": 20800,
+      "packet_hash": "15db3e86d1cad3e5589812b5e35e4f4d"
+    },
+    "parser_human_labor_ledger_audit": {
+      "charged_human_bits": 0,
+      "charged_parser_bits": 0,
+      "claim_ceiling": "controlled evidence for typed amortized frame-teaching separation",
+      "frozen_before_hidden": [
+        "spec_hash",
+        "harness_version",
+        "baseline_roster",
+        "token_precedence",
+        "seed_rule"
+      ],
+      "hidden_eval_only": [
+        "hidden_seed",
+        "hidden_family_labels",
+        "hidden_query_labels",
+        "canonical_scorer_outputs"
+      ],
+      "packet_design": [
+        "frame_patch_templates",
+        "verifier_obligation_templates",
+        "binding_cost_rules"
+      ],
+      "public_substrate": [
+        "opaque_table_schema",
+        "rational_parser",
+        "date_parser_stub",
+        "unit_registry",
+        "typed_action_api"
+      ]
+    },
+    "sheets_world_audit": {
+      "family_class": "audit_gate",
+      "m": 16,
+      "non_boolean_output_fraction": 0.6666666666666666,
+      "same_type_candidate_counts": {
+        "entity_constraint": 6,
+        "entity_stable_key": 6,
+        "event_constraint": 6,
+        "event_foreign_key": 6,
+        "event_unit": 6,
+        "event_value": 6
+      },
+      "schema_hash": "7997157388c78c4f559c32f0",
+      "table_count": 2,
+      "world_id": "237b9befc3354d65a0059cc6"
+    },
+    "sibling_count": 3,
+    "target_world": {
+      "family_class": "audit_gate",
+      "m": 16,
+      "non_boolean_output_fraction": 0.6666666666666666,
+      "same_type_candidate_counts": {
+        "entity_constraint": 6,
+        "entity_stable_key": 6,
+        "event_constraint": 6,
+        "event_foreign_key": 6,
+        "event_unit": 6,
+        "event_value": 6
+      },
+      "schema_hash": "7997157388c78c4f559c32f0",
+      "table_count": 2,
+      "world_id": "237b9befc3354d65a0059cc6"
+    },
+    "typed_enumerability_audit": {
+      "N_action_policies": 24,
+      "N_constraint_sets": 4096,
+      "N_join_candidates": 132,
+      "N_schema_bindings": 792,
+      "N_unit_transform_candidates": 66,
+      "minimum_distinguishing_counterexamples": 18,
+      "public_example_version_space": 209088,
+      "typed_pruning_factor": 0.006732
+    },
+    "typed_generator_leakage_audit": {
+      "metrics_by_m": {
+        "16": {
+          "constraint_flag_index_bucket_target_nmi": 0.0029101071174929835,
+          "constraint_flag_missingness_target_nmi": 0.0,
+          "constraint_flag_name_prefix_target_nmi": 0.00746013845788354,
+          "constraint_flag_value_shape_target_nmi": 0.002262729287116454,
+          "id_like_index_bucket_target_nmi": 0.001386521862300722,
+          "id_like_missingness_target_nmi": 0.0,
+          "id_like_name_prefix_target_nmi": 0.006898091340942904,
+          "id_like_value_shape_target_nmi": 0.0,
+          "rational_index_bucket_target_nmi": 0.0036172164837520214,
+          "rational_missingness_target_nmi": 0.0,
+          "rational_name_prefix_target_nmi": 0.008471737423071134,
+          "rational_value_shape_target_nmi": 0.010228304635661661,
+          "sibling_index_target_signature_nmi": 0.0,
+          "unit_symbol_index_bucket_target_nmi": 0.008361914670597503,
+          "unit_symbol_missingness_target_nmi": 0.0,
+          "unit_symbol_name_prefix_target_nmi": 0.014158279193434313,
+          "unit_symbol_value_shape_target_nmi": 0.001224919958313535
+        },
+        "256": {
+          "constraint_flag_index_bucket_target_nmi": 0.0018955875062608629,
+          "constraint_flag_missingness_target_nmi": 0.0,
+          "constraint_flag_name_prefix_target_nmi": 0.007605835230867263,
+          "constraint_flag_value_shape_target_nmi": 0.002041202543799334,
+          "id_like_index_bucket_target_nmi": 0.0022794404027525863,
+          "id_like_missingness_target_nmi": 0.0,
+          "id_like_name_prefix_target_nmi": 0.008635048378723052,
+          "id_like_value_shape_target_nmi": 0.0,
+          "rational_index_bucket_target_nmi": 0.005765773570232169,
+          "rational_missingness_target_nmi": 0.0,
+          "rational_name_prefix_target_nmi": 0.009092860247038884,
+          "rational_value_shape_target_nmi": 0.0037469321153627186,
+          "sibling_index_target_signature_nmi": 0.0,
+          "unit_symbol_index_bucket_target_nmi": 0.0038990359401791805,
+          "unit_symbol_missingness_target_nmi": 0.0,
+          "unit_symbol_name_prefix_target_nmi": 0.009408791884514711,
+          "unit_symbol_value_shape_target_nmi": 0.0012691365670084729
+        },
+        "4": {
+          "constraint_flag_index_bucket_target_nmi": 0.0035233556943931477,
+          "constraint_flag_missingness_target_nmi": 0.0,
+          "constraint_flag_name_prefix_target_nmi": 0.011319677205711679,
+          "constraint_flag_value_shape_target_nmi": 0.0020309949538605022,
+          "id_like_index_bucket_target_nmi": 0.0006146828768857218,
+          "id_like_missingness_target_nmi": 0.0,
+          "id_like_name_prefix_target_nmi": 0.007562327429157941,
+          "id_like_value_shape_target_nmi": 0.0,
+          "rational_index_bucket_target_nmi": 0.002201453625576531,
+          "rational_missingness_target_nmi": 0.0,
+          "rational_name_prefix_target_nmi": 0.008321699097620941,
+          "rational_value_shape_target_nmi": 0.006689201141611272,
+          "sibling_index_target_signature_nmi": 0.0,
+          "unit_symbol_index_bucket_target_nmi": 0.007608929507369509,
+          "unit_symbol_missingness_target_nmi": 0.0,
+          "unit_symbol_name_prefix_target_nmi": 0.012671734441624788,
+          "unit_symbol_value_shape_target_nmi": 0.000622204194247782
+        },
+        "64": {
+          "constraint_flag_index_bucket_target_nmi": 0.0017130395109457221,
+          "constraint_flag_missingness_target_nmi": 0.0,
+          "constraint_flag_name_prefix_target_nmi": 0.005133430511353495,
+          "constraint_flag_value_shape_target_nmi": 0.0033866078088879478,
+          "id_like_index_bucket_target_nmi": 0.003390951263217528,
+          "id_like_missingness_target_nmi": 0.0,
+          "id_like_name_prefix_target_nmi": 0.002970823183625741,
+          "id_like_value_shape_target_nmi": 0.0,
+          "rational_index_bucket_target_nmi": 0.006296576258123599,
+          "rational_missingness_target_nmi": 0.0,
+          "rational_name_prefix_target_nmi": 0.006292047612599504,
+          "rational_value_shape_target_nmi": 0.005698910521564115,
+          "sibling_index_target_signature_nmi": 0.0,
+          "unit_symbol_index_bucket_target_nmi": 0.00521953904720089,
+          "unit_symbol_missingness_target_nmi": 0.0,
+          "unit_symbol_name_prefix_target_nmi": 0.006116808192297721,
+          "unit_symbol_value_shape_target_nmi": 2.0830501249659782e-05
+        }
+      },
+      "per_m": 250,
+      "sample_count": 1000,
+      "threshold": 0.08,
+      "worst_metric": 0.014158279193434313
+    }
+  },
+  "name": "frameseed_sheets0_preimplementation_audit",
+  "passed": true
+}
