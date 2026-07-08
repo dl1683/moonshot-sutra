@@ -1,0 +1,5017 @@
+{
+  "precommit": {
+    "direction": "E3 Functional Teacher Tomography toy v0",
+    "claim": "source-specific teacher measurements can be inverted into compact counterfactual ranking lessons that transfer to a hidden transform better than raw teacher outputs and ordinary absorbers",
+    "signal_token": "E3_TOY_SIGNAL_SOURCE_SPECIFIC_COUNTERFACTUAL_LESSON",
+    "kill_tokens": [
+      "E3_TOY_ABSORBED_BY_CE_ONLY",
+      "E3_TOY_ABSORBED_BY_SINGLE_TEACHER",
+      "E3_TOY_ABSORBED_BY_TEACHER_AVERAGE_OR_WEIGHTED_VOTE",
+      "E3_TOY_ABSORBED_BY_ACTIVE_LEARNING",
+      "E3_TOY_ABSORBED_BY_AUGMENTATION",
+      "E3_TOY_SHUFFLED_SENSORS_MATCH_REAL",
+      "E3_TOY_NEGATIVE"
+    ],
+    "void_tokens": [
+      "E3_TOY_VOID_NONFINITE",
+      "E3_TOY_VOID_EMPTY_SPLIT",
+      "E3_TOY_VOID_EXACT_TOOL_GRANTED"
+    ],
+    "continuation_gate": {
+      "beat_best_ordinary_by_pp": 5.0,
+      "beat_active_by_pp": 3.0,
+      "beat_best_single_by_pp": 3.0,
+      "beat_shuffled_by_pp": 6.0
+    }
+  },
+  "summary_metrics": {
+    "B0_CE_only_same_student": {
+      "mean_hidden_acc": 0.49375,
+      "std_hidden_acc": 0.05229125165837973,
+      "min_hidden_acc": 0.34375,
+      "max_hidden_acc": 0.578125
+    },
+    "B10_counterfactual_augmentation_no_tomography": {
+      "mean_hidden_acc": 0.359375,
+      "std_hidden_acc": 0.06702378309227255,
+      "min_hidden_acc": 0.21875,
+      "max_hidden_acc": 0.546875
+    },
+    "B4_single_semantic_z0": {
+      "mean_hidden_acc": 0.5015625,
+      "std_hidden_acc": 0.047315637280396006,
+      "min_hidden_acc": 0.390625,
+      "max_hidden_acc": 0.671875
+    },
+    "B4_single_surface_lexical": {
+      "mean_hidden_acc": 0.4903125,
+      "std_hidden_acc": 0.048803056064656444,
+      "min_hidden_acc": 0.359375,
+      "max_hidden_acc": 0.625
+    },
+    "B4_single_verifier_z1": {
+      "mean_hidden_acc": 0.5021875,
+      "std_hidden_acc": 0.04729086361285867,
+      "min_hidden_acc": 0.359375,
+      "max_hidden_acc": 0.578125
+    },
+    "B5_naive_teacher_average": {
+      "mean_hidden_acc": 0.501875,
+      "std_hidden_acc": 0.05035421407389852,
+      "min_hidden_acc": 0.40625,
+      "max_hidden_acc": 0.625
+    },
+    "B6_weighted_vote_calibrated": {
+      "mean_hidden_acc": 0.4921875,
+      "std_hidden_acc": 0.05268661031277302,
+      "min_hidden_acc": 0.375,
+      "max_hidden_acc": 0.59375
+    },
+    "B7_shuffled_teacher_measurements": {
+      "mean_hidden_acc": 0.4909375,
+      "std_hidden_acc": 0.07680700753349266,
+      "min_hidden_acc": 0.34375,
+      "max_hidden_acc": 0.671875
+    },
+    "B8_shuffled_teacher_identity": {
+      "mean_hidden_acc": 0.5034375,
+      "std_hidden_acc": 0.059563024656660954,
+      "min_hidden_acc": 0.375,
+      "max_hidden_acc": 0.625
+    },
+    "B9_active_hard_examples_average_label": {
+      "mean_hidden_acc": 0.4915625,
+      "std_hidden_acc": 0.04377343122545913,
+      "min_hidden_acc": 0.40625,
+      "max_hidden_acc": 0.578125
+    },
+    "E3_source_specific_lesson_packets": {
+      "mean_hidden_acc": 0.85875,
+      "std_hidden_acc": 0.04418975418578384,
+      "min_hidden_acc": 0.75,
+      "max_hidden_acc": 0.96875
+    }
+  },
+  "margins": {
+    "e3_minus_best_ordinary_pp": 35.53125,
+    "e3_minus_ce_pp": 36.5,
+    "e3_minus_best_single_pp": 35.65625,
+    "e3_minus_avg_or_weighted_pp": 35.68750000000001,
+    "e3_minus_active_pp": 36.71875,
+    "e3_minus_shuffled_pp": 35.53125,
+    "e3_minus_augmentation_pp": 49.9375
+  },
+  "packet_value_forecast": {
+    "mean_prior": 0.44125,
+    "mean_realized_vs_best_baseline": 0.2815625,
+    "forecast_ok": true
+  },
+  "terminal_token": "E3_TOY_SIGNAL_SOURCE_SPECIFIC_COUNTERFACTUAL_LESSON",
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49
+  ],
+  "epochs": 450,
+  "packet_limit": 128,
+  "smoke": false,
+  "per_seed": [
+    {
+      "seed": 0,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.59375,
+          "verifier_z1": 0.4375
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.40625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.40625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.453125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.46875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.328125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.890625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.40625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.251953125,
+          "semantic_z0": 0.740234375,
+          "verifier_z1": 0.0078125
+        }
+      }
+    },
+    {
+      "seed": 1,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.46875,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.421875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9416058394160584,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 2,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.34375,
+          "semantic_z0": 0.59375,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.40625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.40625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.515625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.515625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.59375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.328125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.828125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.40625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.0078125,
+          "semantic_z0": 0.740234375,
+          "verifier_z1": 0.251953125
+        }
+      }
+    },
+    {
+      "seed": 3,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.46875,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.578125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.546875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.671875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.40625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.9416058394160584,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 4,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.53125,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.53125
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.515625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.828125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.53125
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 5,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5625,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.578125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.796875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9694656488549618,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 6,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.6875,
+          "semantic_z0": 0.40625,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.5625,
+        "packet_value_prior": 0.3125,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.3125
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.421875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.28125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.828125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.3125
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.989501312335958,
+          "semantic_z0": 0.005249343832020997,
+          "verifier_z1": 0.005249343832020997
+        }
+      }
+    },
+    {
+      "seed": 7,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.453125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.8125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.015267175572519083,
+          "semantic_z0": 0.9694656488549618,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 8,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.4375,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.671875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.4375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.40625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.3125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.90625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.9416058394160584
+        }
+      }
+    },
+    {
+      "seed": 9,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.4375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.296875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.90625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.49236641221374045,
+          "semantic_z0": 0.49236641221374045,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 10,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.578125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.640625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.421875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.328125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.90625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.9416058394160584,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 11,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.34375,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.4375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.359375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.46875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.3125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9416058394160584,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 12,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.5625
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.453125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.421875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.34375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.015267175572519083,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.9694656488549618
+        }
+      }
+    },
+    {
+      "seed": 13,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.375
+        },
+        "calibration_avg_acc": 0.34375,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.578125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.390625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.5625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.359375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.9416058394160584,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 14,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.34375
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.34375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.515625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.015267175572519083,
+          "semantic_z0": 0.9694656488549618,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 15,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.578125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.296875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.9416058394160584,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 16,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.5,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.46875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.578125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.34375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.9416058394160584
+        }
+      }
+    },
+    {
+      "seed": 17,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.59375,
+        "packet_value_prior": 0.40625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.40625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.4375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.59375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.25,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.9375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.40625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.251953125,
+          "semantic_z0": 0.49609375,
+          "verifier_z1": 0.251953125
+        }
+      }
+    },
+    {
+      "seed": 18,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.4375,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.34375
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.515625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.609375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.015267175572519083,
+          "semantic_z0": 0.9694656488549618,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 19,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.53125,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.53125
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.46875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.546875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.578125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.234375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.90625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.53125
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 20,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.6875,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.59375,
+        "packet_value_prior": 0.3125,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.3125
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.4375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.34375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.8125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.3125
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.7450592885375494,
+          "semantic_z0": 0.2509881422924901,
+          "verifier_z1": 0.003952569169960474
+        }
+      }
+    },
+    {
+      "seed": 21,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5625,
+          "semantic_z0": 0.46875,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.546875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.21875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.96875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9694656488549618,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 22,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5625,
+          "semantic_z0": 0.46875,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.65625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9694656488549618,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 23,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.4375,
+          "semantic_z0": 0.59375,
+          "verifier_z1": 0.625
+        },
+        "calibration_avg_acc": 0.5625,
+        "packet_value_prior": 0.375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.4375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.390625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.46875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.578125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.34375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.90625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.004509582863585118,
+          "semantic_z0": 0.42728297632469,
+          "verifier_z1": 0.5682074408117249
+        }
+      }
+    },
+    {
+      "seed": 24,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.34375,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.453125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.40625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.75,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9416058394160584,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 25,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.4375,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.625
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.59375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.5,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.3125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.890625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.005249343832020997,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.6614173228346457
+        }
+      }
+    },
+    {
+      "seed": 26,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.5,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.4375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.9416058394160584
+        }
+      }
+    },
+    {
+      "seed": 27,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5625,
+          "semantic_z0": 0.34375,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.5625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.296875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9694656488549618,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 28,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.515625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.5625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.359375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.9416058394160584,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 29,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5625,
+          "semantic_z0": 0.46875,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.328125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.890625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.6563307493540051,
+          "semantic_z0": 0.0103359173126615,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 30,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.59375
+        },
+        "calibration_avg_acc": 0.59375,
+        "packet_value_prior": 0.40625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.40625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.421875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.59375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.5,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.40625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.006279434850863423,
+          "semantic_z0": 0.3987441130298273,
+          "verifier_z1": 0.5949764521193093
+        }
+      }
+    },
+    {
+      "seed": 31,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.484375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.5,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.296875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.921875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.251953125,
+          "semantic_z0": 0.49609375,
+          "verifier_z1": 0.251953125
+        }
+      }
+    },
+    {
+      "seed": 32,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.59375,
+          "semantic_z0": 0.40625,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.46875,
+        "packet_value_prior": 0.40625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.40625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.46875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.359375,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.5,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.828125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.40625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.979328165374677,
+          "semantic_z0": 0.0103359173126615,
+          "verifier_z1": 0.0103359173126615
+        }
+      }
+    },
+    {
+      "seed": 33,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.59375
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.40625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.40625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.40625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.40625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.890625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.40625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.0103359173126615,
+          "semantic_z0": 0.0103359173126615,
+          "verifier_z1": 0.979328165374677
+        }
+      }
+    },
+    {
+      "seed": 34,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.5,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.5,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.5
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.59375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.546875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.328125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.890625,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.5
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 35,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.5,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.5
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.453125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.40625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.28125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.5
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 36,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.34375,
+          "verifier_z1": 0.625
+        },
+        "calibration_avg_acc": 0.46875,
+        "packet_value_prior": 0.375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.453125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.578125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.578125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.359375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.78125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.0078125,
+          "semantic_z0": 0.0078125,
+          "verifier_z1": 0.984375
+        }
+      }
+    },
+    {
+      "seed": 37,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.40625
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.515625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.65625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.59375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.796875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.015267175572519083,
+          "semantic_z0": 0.9694656488549618,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 38,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.46875,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.484375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.4375,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.421875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.8125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.029197080291970802,
+          "semantic_z0": 0.9416058394160584,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 39,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.4375
+        },
+        "calibration_avg_acc": 0.4375,
+        "packet_value_prior": 0.5625,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.5625
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.421875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.4375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.4375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.875,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.5625
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 40,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.65625,
+          "semantic_z0": 0.53125,
+          "verifier_z1": 0.4375
+        },
+        "calibration_avg_acc": 0.5625,
+        "packet_value_prior": 0.34375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.34375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.46875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.46875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.453125,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.578125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.34375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.8254593175853018,
+          "semantic_z0": 0.16929133858267717,
+          "verifier_z1": 0.005249343832020997
+        }
+      }
+    },
+    {
+      "seed": 41,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.53125,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.375,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.59375,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.453125,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.359375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.015267175572519083,
+          "semantic_z0": 0.9694656488549618,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 42,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.46875,
+          "semantic_z0": 0.5,
+          "verifier_z1": 0.375
+        },
+        "calibration_avg_acc": 0.375,
+        "packet_value_prior": 0.5,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.5
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.40625,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.5
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 43,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.4375,
+          "verifier_z1": 0.6875
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.3125,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.3125
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.484375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.390625,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.421875,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.75,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.3125
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.005249343832020997,
+          "semantic_z0": 0.005249343832020997,
+          "verifier_z1": 0.989501312335958
+        }
+      }
+    },
+    {
+      "seed": 44,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.5,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.546875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.5625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.859375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9416058394160584,
+          "semantic_z0": 0.029197080291970802,
+          "verifier_z1": 0.029197080291970802
+        }
+      }
+    },
+    {
+      "seed": 45,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.40625,
+          "semantic_z0": 0.40625,
+          "verifier_z1": 0.34375
+        },
+        "calibration_avg_acc": 0.3125,
+        "packet_value_prior": 0.59375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.59375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.484375,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.4375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.515625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.59375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.3333333333333333,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "seed": 46,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.375,
+          "semantic_z0": 0.65625,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.40625,
+        "packet_value_prior": 0.34375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.34375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.578125,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.515625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.484375,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.828125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.34375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.006279434850863423,
+          "semantic_z0": 0.9874411302982732,
+          "verifier_z1": 0.006279434850863423
+        }
+      }
+    },
+    {
+      "seed": 47,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.5625,
+          "semantic_z0": 0.46875,
+          "verifier_z1": 0.5
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.421875,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.40625,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.421875,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.546875,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.46875,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.5,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.375,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.3125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.828125,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.9694656488549618,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.015267175572519083
+        }
+      }
+    },
+    {
+      "seed": 48,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.5625,
+          "verifier_z1": 0.46875
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.4375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.4375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5625,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.625,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.53125,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.515625,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.4375,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.421875,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.3125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.84375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.4375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.3333333333333333,
+          "semantic_z0": 0.6563307493540051,
+          "verifier_z1": 0.0103359173126615
+        }
+      }
+    },
+    {
+      "seed": 49,
+      "hidden_count": 64,
+      "calibration_count": 32,
+      "source_pool_count": 96,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.53125,
+          "semantic_z0": 0.5,
+          "verifier_z1": 0.53125
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.46875,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 128,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 384,
+        "packet_value_prior": 0.46875
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.53125,
+          "train_size": 32
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.453125,
+          "train_size": 128
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5625,
+          "train_size": 128
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.5,
+          "train_size": 128
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.515625,
+          "train_size": 74
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.625,
+          "train_size": 160
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.53125,
+          "train_size": 160
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.3125,
+          "train_size": 160
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.9375,
+          "train_size": 160,
+          "n_packet_examples": 128,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 384,
+          "packet_value_prior": 0.46875
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 42,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.49236641221374045,
+          "semantic_z0": 0.015267175572519083,
+          "verifier_z1": 0.49236641221374045
+        }
+      }
+    }
+  ]
+}
