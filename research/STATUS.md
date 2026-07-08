@@ -1,12 +1,19 @@
 # Project Status
 
-**Last updated:** 2026-07-07
-**Current state:** Writing methodology paper — "The Absorption Ladder" is the moonshot deliverable.
+**Last updated:** 2026-07-08
+**Current state:** Terminal gate passed — "The Absorption Ladder" accepted at current claim ceiling.
 **Fixed points:** The five sacred outcomes in `research/VISION.md`.
 
 ## Current Verdict
 
-**WGD killed (13th kill). Methodology paper is the moonshot deliverable.**
+**Terminal gate passed. Adversary won over.**
+
+Token: `Q_LOOP_B49_ADVERSARY_WON_OVER_ACCEPT_AT_CURRENT_CLAIM_CEILING`
+
+The methodology paper (`research/methodology_paper.md`, 259 lines) passed a
+fresh-eyes adversarial gate after two revision cycles. The paper is a
+roster-relative methodology proposal with internal negative case evidence
+and an absorbed positive-control attempt.
 
 The absorption ladder — the evaluation methodology that produced 13 honest kills
 across two moonshot arcs — is the publishable contribution. Paper in progress:
