@@ -1,242 +1,160 @@
-# Q-Loop Batch 52: Attack the E3 Toy Signal - RETRY
+# Q-Loop Batch 52: Attack the E3 Toy Signal
 
-Batch token: `Q_LOOP_B52_E3_SIGNAL_REAL_BUT_TOY_AND_EXPENSIVE_NATURAL_PATH_UNSPECIFIED`
+**Date:** 2026-07-08
+**Role:** adversarial question loop
+**Iterations:** I463-I469
+**Status:** E3 toy signal downgraded to positive-control evidence; hostile supplied-geometry gate required
 
-## Premise
+## Grounding
 
-The current E3 toy result is a real signal but not yet a paradigm claim. Source-specific lesson packets reach 0.8588 mean hidden accuracy across 50 seeds, while the best ordinary absorber sits at 0.5034 and other baselines remain near chance. Shuffled controls destroy the advantage, which argues against a generic capacity or evaluation artifact. But the toy also gives E3 hand-authored transformations and explicit teacher sensor roles. The hardest question is whether the experiment has shown teacher tomography, or whether it has shown that researcher-paid counterfactual labels beat learners that were not given equivalent supervision.
+Read before writing: `research/VISION.md`, `research/STATUS.md`, `research/question_loop_batch51.md`, `research/work_loop_batch43.md`, `research/dual_loop_supervisor_checkin_41.md`, `code/e3_teacher_tomography.py`, and `experiments/e3_teacher_tomography_result_50seed.json`.
 
----
+The fixed mission is unchanged: swing for the home run, and stop only when a hostile adversary is won over. The current evidence is a 50-seed friendly toy signal: E3 source-specific lesson packets score 0.8588 hidden accuracy while the best ordinary absorber is 0.5034. The terminal token in the result file is `E3_TOY_SIGNAL_SOURCE_SPECIFIC_COUNTERFACTUAL_LESSON`.
 
-## I463 - Is the 35pp gap testing E3, or hand-authored XOR labels?
+This batch attacks whether that signal is teacher tomography or a supplied geometry artifact.
 
-Pre-committed token: `I463_E3_TOY_NOT_PARADIGM_SHIFT`
+External competitive check used for this batch:
 
-### Steelman
+- Query-by-committee active learning and disagreement acquisition: https://arxiv.org/abs/2211.10013
+- Data programming and weak-supervision source modeling: https://arxiv.org/abs/1605.07723
+- Snorkel weak supervision: https://arxiv.org/abs/1711.10160
+- Dataset cartography and example-level training dynamics: https://arxiv.org/abs/2009.10795
+- Reinforced multi-teacher selection for KD: https://arxiv.org/abs/2012.06048
+- Adaptive multi-teacher KD with meta-learning: https://arxiv.org/abs/2306.06634
+- Disagreement-modulated policy self-distillation: https://arxiv.org/abs/2607.02502
+- Multi-view learning surveys: https://arxiv.org/abs/1304.5634 and https://arxiv.org/abs/1610.01206
 
-The E3 toy is valuable because the source-specific packets transfer hidden structure that ordinary absorption misses. The 35pp gap is not marginal. A near-chance absorber and a near-86% source-specific learner imply that the signal is not merely more data, more training, or a lucky inductive bias. The shuffled controls matter: when source specificity is destroyed, the advantage disappears. That is exactly what one would expect if the teacher packets encode actionable information about latent structure rather than surface frequency.
+## Executive Verdict
 
-The best version of the claim is modest: this is not evidence that E3 solves natural domains, but it is evidence that counterfactual teacher-specific lessons can expose hidden variables that standard ingestion fails to recover.
+E3 is not killed by the toy. It is also not meaningfully validated by the toy.
 
-### Hostile attack
+Final token:
 
-The 35pp gap is suspiciously large precisely because the toy may be testing a trivial asymmetry. E3 receives hand-authored source-specific transformations and explicit teacher sensor roles. The absorber receives ordinary examples. If the hidden rule is effectively XOR-like or requires a latent decomposition, then E3 may have been handed the decomposition while the absorber was denied it.
+```text
+Q_LOOP_B52_E3_TOY_SIGNAL_DOWNGRADED_TO_POSITIVE_CONTROL_HOSTILE_GEOMETRY_GATE_REQUIRED
+```
 
-The result could be: labeled counterfactual structure beats unlabeled samples. That is not a new learning principle. It is supervised feature engineering.
+What survived:
 
-The augmentation baseline strengthens the suspicion, not the defense. Augmentation without tomography performs badly at 0.3594, but if the augmentation is not organized by the right source roles, then the experiment has only shown that mislabeled or semantically ungrounded augmentation is harmful. It has not shown that E3 extracts teacher structure cheaply.
+- Source identity matters in the friendly toy: shuffled measurements and shuffled identity collapse near chance.
+- The student is teacher-free at inference.
+- E3 beats the implemented CE-only, single-teacher, averaging, weighted-vote, active-hard-example, shuffled, and weak augmentation baselines by large margins.
 
-### New hardest objection
+What did not survive:
 
-The toy may have encoded the answer in the lesson schema. The performance gap may be a measure of how much researcher knowledge was injected into E3, not how much teacher tomography was discovered by the learner.
+- The 35pp gap cannot be interpreted as a paradigm signal yet.
+- The implementation gives E3 explicit sensor roles, hand-authored transformations, and a compositional packet rule.
+- The exact domain tool diagnostic reaches 1.0 and is merely not admitted.
+- The implemented augmentation baseline is too weak to answer the FrameSeed/WGD supplied-geometry objection.
 
-### What survived
+The current toy is a positive control proving that the intended mechanism can work when the world is friendly. The next test must ask whether any residual E3 value remains after geometry parity.
 
-The signal survives as a counterfactual-labeling result: structured source-specific intervention packets are powerful when the intervention family is correct. What does not survive is the stronger claim that E3 has demonstrated a cheap or general path to latent teacher reconstruction. The next experiment must equalize access to labeled transformation structure or show that E3 can infer it rather than receive it.
+## I463: Attack The Size Of The Gap
 
----
+### Pre-committed tokens
 
-## I464 - Is a counterfactual just a label if the researcher pays for the geometry?
-
-Pre-committed token: `I464_COUNTERFACTUAL_IS_JUST_LABEL_IF_RESEARCHER_PAYS`
-
-### Steelman
-
-The counterfactual packet is not merely another label. It encodes how a teacher response changes under controlled perturbation, and that relational information can be richer than a static target. In E3, the key object is not "this input has this class" but "this teacher sees this axis and changes under this transformation." That is closer to tomography than ordinary annotation because it attempts to recover the sensor geometry of multiple sources.
-
-The toy demonstrates that a learner can use this geometry to separate hidden teacher roles and generalize better than an absorber that sees examples without source-resolved counterfactual structure.
-
-### Hostile attack
-
-This defense hides the central cost. Who built the transformation family? Who decided which teacher roles exist? Who made the interventions semantically aligned with the hidden variable? If the researcher constructed the geometry, then the "counterfactual" is a high-level label in disguise.
-
-In natural domains, the expensive part is often not labeling the final answer. It is inventing the right ontology of perturbations. A counterfactual packet only becomes cheap if the transformation family is cheap, reusable, and not hand-tailored to the hidden answer.
-
-If E3 needs the researcher to know the teacher's latent sensor basis before training, then it is not teacher tomography. It is researcher tomography of the task, exported into a training file.
-
-### New hardest objection
-
-E3 has not separated three budgets: label budget, transformation-design budget, and teacher-role-design budget. The toy charges only the first budget to competitors while hiding the latter two inside E3 setup.
-
-### What survived
-
-The counterfactual object remains promising, but only under an accounting discipline. E3 must report the cost of designing interventions and source roles as part of the method. The unkillable residue is: if a reusable intervention family can be generated cheaply across tasks, then E3 may still create leverage. But the current toy does not prove that condition.
-
----
-
-## I465 - Where do natural heterogeneous teachers come from?
-
-Pre-committed token: `I465_NATURAL_DOMAIN_TEACHERS_UNSPECIFIED`
+```text
+B52_I463_SURVIVE_AS_POSITIVE_CONTROL_IF_SHUFFLES_FAIL_AND_E3_WINS
+B52_I463_KILL_AS_LABEL_ORACLE_ADVANTAGE_IF_PACKET_RULE_IS_GRANTED_TRUE_FUNCTION
+B52_I463_VOID_IF_RESULT_SUMMARY_MISMATCHES_JSON
+```
 
 ### Steelman
 
-E3's bet is that the world already contains heterogeneous teachers: models, experts, tools, simulators, sensors, retrieval systems, graders, and partial heuristics. The method does not require one omniscient oracle. It asks whether disagreement among imperfect sources can be organized into useful lessons. That is aligned with practical AI work, where cheap weak signals are abundant but poorly calibrated.
+The result is not a small noisy bump. Across 50 seeds, E3 gets 0.8588 hidden accuracy while CE-only, best single teacher, teacher averaging, weighted vote, active hard-example mining, and both shuffled controls sit around chance. The packet-value forecast is positive. If the only thing happening were extra labels, teacher average, or hard-example selection, those baselines should have moved.
 
-The toy's explicit teacher roles are a controlled stand-in for this future setting. You start with a clean toy to prove that source-specific counterfactuals can matter before moving into messy domains.
+The strongest pro-E3 reading is: the useful signal is not teacher correctness; it is the source-specific pattern of complementary teacher measurements.
 
-### Hostile attack
+### Attack
 
-The stand-in may be too clean. Natural domains do not hand you teacher roles like "sensor A sees feature X" and "sensor B sees feature Y." Cheap heterogeneous teachers are usually correlated, contaminated by common pretraining data, aligned to the same public benchmarks, or wrong for the same reason. Their disagreements may reflect style, calibration, abstention behavior, or prompt sensitivity rather than complementary access to latent truth.
+The gap is suspiciously large because the toy is binary, closed-form, and hand-authored. `code/e3_teacher_tomography.py` names `semantic_z0` and `verifier_z1`, then uses those roles to construct packet labels. E3 is not merely reading disagreement; it is allowed to compose two privileged latent sensors.
 
-Multi-source availability is not enough. E3 needs teachers with conditionally independent errors or complementary latent access. That is a strong assumption. Without a recipe for finding those teachers, the method depends on rare domains where the world conveniently provides a sensor array.
+The ordinary baselines are intentionally bad in this world. A single teacher sees one latent bit. Averaging a latent-bit teacher with another latent-bit teacher does not compute XOR. Active disagreement over teacher probabilities does not discover the XOR composition. Shuffled controls break the only good composition. Therefore the 35pp gap may say only: XOR composition beats non-XOR baselines on an XOR world.
 
-### New hardest objection
+That is a positive control, not tomography.
 
-E3 currently lacks a teacher-discovery story. It assumes heterogeneous teachers with useful latent diversity but has not specified how to identify, validate, price, or reject candidate teachers in natural domains.
+### New Hardest Objection
 
-### What survived
+E3 may be the only method in the experiment that is handed the true sufficient factorization: semantic source gives z0, verifier source gives z1, compose them with XOR.
 
-The toy survives as a proof that source specificity can be useful when teacher diversity is real. What remains unproven is the supply chain. E3 needs a natural-domain teacher procurement protocol: where teachers come from, how their diversity is measured, how contamination is detected, and when a teacher is too redundant to include.
+If so, the large gap is not impressive. It is exactly what should happen when one method receives the correct latent interface and every baseline receives misaligned labels.
 
----
+### Reconstruct What Survived
 
-## I466 - Is active learning the missing honest absorber?
+The signal survives only as source-specific composition can matter when teachers expose complementary factors and the student needs the composed factor at inference.
 
-Pre-committed token: `I466_ACTIVE_LEARNING_NOT_HONEST_ABSORBER_YET`
+It does not yet survive as teacher tomography discovers functional geometry.
 
-### Steelman
+### Iteration Verdict
 
-The current baselines are meaningful because ordinary absorption, shuffled controls, and naive augmentation do not recover the hidden structure. The exact domain tool gets 1.0 but is not admitted because it has direct access to the rule. E3 occupies the interesting middle: it does not receive the exact tool, yet it extracts much more than an ordinary learner.
+Chosen token:
 
-The fact that augmentation without tomography underperforms also shows that simply adding more examples or perturbations is not enough. The structure of the lesson matters.
+```text
+B52_I463_SURVIVE_AS_POSITIVE_CONTROL_IF_SHUFFLES_FAIL_AND_E3_WINS
+```
 
-### Hostile attack
+But the claim ceiling is strict: this is a positive control with label-oracle risk.
 
-The honest competitor is not a passive absorber. It is active learning or query-by-committee under the same budget and candidate pool. Seung, Opper, and Sompolinsky already taught the core lesson: disagreement can guide informative queries. If E3 is allowed to choose or receive high-value counterfactual packets, the baseline should be allowed to query examples, teachers, or transformations from the same pool.
+## I464: Attack The Supplied Geometry
 
-Right now, E3 may be compared against learners that do not get to ask questions. That is a weak absorber. The fair test is not "E3 packets versus ordinary training." It is "E3 packets versus active selection of equally priced teacher responses and candidate counterfactuals."
+### Pre-committed tokens
 
-### New hardest objection
-
-The strongest absorber has not been admitted: active learning over the same source pool with the same query budget, candidate transformations, and stopping rules.
-
-### What survived
-
-E3 still has a plausible advantage if its packets encode more than uncertainty sampling can discover. But the current result cannot claim that. The next version must pit E3 against query-by-committee, disagreement sampling, expected information gain, and active weak-supervision selection under matched budgets.
-
----
-
-## I467 - Is the geophysical analogy aesthetic rather than technical?
-
-Pre-committed token: `I467_GEOPHYSICAL_ANALOGY_MISLEADING`
+```text
+B52_I464_SURVIVE_IF_E3_BEATS_GEOMETRY_PARITY_ABSORBERS
+B52_I464_KILL_IF_NUISANCE_ORACLE_OR_ENHANCED_AUGMENTATION_MATCHES
+B52_I464_VOID_IF_HIDDEN_CONSTRUCTOR_LEAKS_UNFAIRLY
+```
 
 ### Steelman
 
-The geophysical analogy is useful because E3 is not trying to read truth directly. It infers hidden structure from multiple partial views. In seismic imaging, no single sensor reveals the subsurface; structured source-receiver measurements allow reconstruction. Likewise, multiple teachers may expose different projections of the latent task.
+The toy already includes several anti-triviality checks. Shuffling teacher measurements destroys the result. Shuffling teacher identity destroys the result. E3 is not using the exact hidden labels at inference. It trains a small student and removes teachers. The fact that teacher identity matters is exactly what B51 demanded.
 
-As a narrative, this is a strong way to explain why source-specific disagreement is signal rather than noise.
+### Attack
 
-### Hostile attack
+The FrameSeed/WGD pattern is not "signals disappear when anything is shuffled." The pattern is: signals disappear when boring baselines get the same geometry the proposed method was quietly granted.
 
-The analogy may be doing too much work. Physics has forward equations. Seismic measurements are constrained by wave propagation, geometry, conservation laws, and calibrated sensors. E3 teachers are opaque black boxes. Their outputs are not guaranteed to be projections of a shared latent object. They may be artifacts of training data, benchmark overfitting, prompt format, sampling temperature, refusal policy, or correlated blind spots.
+The E3 toy has at least five granted geometry objects:
 
-Calling this "tomography" risks importing credibility from an inverse-problem domain without paying for the corresponding structure. Without a forward model, identifiability conditions, or calibration assumptions, E3 may only be a metaphor for organized prompting.
+1. The teacher roster is explicitly role-labeled.
+2. The useful teacher pair is hard-coded.
+3. The composition family is hard-coded as the packet rule.
+4. The transform variants are hand-authored.
+5. The hidden split is a specific nuisance regime.
 
-### New hardest objection
+The implemented B10 is not the decisive augmentation absorber. It augments with the same transformed examples but uses teacher-average labels. A hostile baseline should instead get the same transformation generator and either labels propagated from calibration under the known transform law, a small rule search over teacher-output Boolean compositions, a nuisance oracle naming the invariance/counterfactual axes, an exact symbolic solver over the public input bits, or the same role map without teacher-specific packet machinery.
 
-E3 has no equivalent of a forward equation. Without one, the tomography analogy cannot justify recoverability or uniqueness of the inferred teacher geometry.
+### New Hardest Objection
 
-### What survived
+The right B15 is not shuffled identity. The right B15 is: same transformations, same role ontology, same candidate pool, no source-specific tomography.
 
-The analogy survives as exposition, not evidence. It can motivate the intuition that multiple views matter, but the technical claim must be rebuilt in machine-learning terms: assumptions about teacher diversity, intervention validity, identifiability, and error correlation. The word "tomography" should be earned by tests, not used as borrowed authority.
+If that baseline wins, E3 adds no value beyond authored geometry.
 
----
+### Reconstruct What Survived
 
-## I468 - What is new beyond sensor fusion, multi-view learning, and disagreement-based learning?
+The next hostile toy must separate three quantities:
 
-Pre-committed token: `I468_SENSOR_FUSION_LITERATURE_GAP`
+```text
+value(authored_transform_geometry)
+value(source_specific_teacher_measurements)
+value(student_training_with_extra_pseudolabels)
+```
 
-### Steelman
+E3 survives only in the residual:
 
-E3 is not merely averaging sensors. It uses source-specific counterfactual lesson packets to teach a learner how each teacher responds to controlled changes. That is more structured than voting, ensembling, or generic distillation. The novelty candidate is the combination of teacher-specific counterfactuals, lesson-packet training, and hidden-task transfer where ordinary absorption fails.
+```text
+E3_residual = hidden_transfer(E3) - max(hidden_transfer(geometry_parity_absorbers))
+```
 
-If validated, E3 could be positioned as a practical recipe for converting heterogeneous teacher disagreement into compact training data.
+### Iteration Verdict
 
-### Hostile attack
+Chosen token:
 
-The surrounding literature is dense. Sensor fusion, multi-view learning, co-training, weak supervision, active learning, query-by-committee, ensemble disagreement, model soups, product-of-experts, and multi-teacher knowledge distillation all exploit multiple imperfect sources. Disagreement-modulated distillation already treats teacher disagreement as a learning signal. Query-by-committee already uses disagreement to decide what information to buy.
+```text
+B52_I464_SURVIVE_IF_E3_BEATS_GEOMETRY_PARITY_ABSORBERS
+```
 
-E3 may be a recombination, not a new principle. Recombination can be useful, but then the claim must become engineering-specific: what exact object is new, which baseline families fail, and what regime does E3 uniquely occupy?
+The token is conditional. The current result does not yet meet it.
 
-### New hardest objection
-
-The current narrative does not isolate the literature gap. "Teacher tomography" may rename known multi-view or disagreement learning unless it defines a distinct training object and wins against the closest variants.
-
-### What survived
-
-The strongest surviving novelty is not "use disagreement." It is: train on source-indexed counterfactual response functions as lesson objects, then test hidden transfer against active and multi-teacher distillation baselines. That is narrow enough to defend. The paper should concede ancestry aggressively and make the contribution operational.
-
----
-
-## I469 - Does E3 pass the mission gate?
-
-Pre-committed token: `I469_MISSION_GATE_E3_NOT_PASSED`
-
-### Steelman
-
-The mission is to make intelligence cheap and accessible. E3 could serve that mission if it turns messy teacher ecosystems into high-value lessons, reducing dependence on expensive expert labels or giant end-to-end training runs. The toy result supports the idea that the right lesson structure can unlock hidden generalization from weak sources.
-
-Even a narrow E3 method could matter if it gives small teams a way to extract more value from public models, cheap tools, simulators, or domain heuristics.
-
-### Hostile attack
-
-The loop may have drifted into methodology. A 35pp toy gap is exciting, but the method currently appears to require hand-authored transformations, explicit teacher roles, and careful experimental design. That is not obviously cheap or accessible. It may shift cost from labels to researchers.
-
-If the natural path requires expert-designed counterfactual geometry for each domain, E3 becomes a boutique methodology for well-funded teams, not a democratizing technology. The mission gate asks: can a non-expert or small team use this to reduce cost on a real task next month? The current evidence does not answer yes.
-
-### New hardest objection
-
-E3 has not shown a cost-collapse mechanism. It has shown a performance jump under expensive toy scaffolding, but the mission requires reusable, cheap, natural-domain scaffolding.
-
-### What survived
-
-E3 survives as a candidate, not a mission pass. The version worth protecting is: a protocol that automatically discovers cheap heterogeneous teachers, generates reusable counterfactual probes, prices them against active-learning baselines, and produces compact lessons that improve small models. Anything less may be intellectually interesting but mission-secondary.
-
----
-
-## NARRATIVE ATTACK
-
-### Obvious dismissal
-
-"You hand-authored the teacher roles and transformations, then celebrated that the model using those labels beat a model without them."
-
-This dismissal is too coarse because the shuffled controls and bad augmentation baseline show that the structure is not arbitrary. But it is dangerous because it attacks the exact unpriced asset in the toy: the researcher-provided geometry.
-
-### Trivial dismissal
-
-"This is just active learning, query-by-committee, or multi-teacher distillation with new branding."
-
-This is not fully fair unless those baselines are implemented with source-indexed counterfactual lesson packets. But it becomes fair if E3 does not run against active disagreement baselines under matched budgets.
-
-### Mission test
-
-Can E3 make a weak learner better on a real domain using cheap, naturally available teachers without a researcher hand-authoring the hidden sensor basis?
-
-If no, then E3 is methodology drift. If yes, the toy becomes a seed of a cost-reducing protocol.
-
-### Unkillable version
-
-The unkillable E3 claim is narrow:
-
-When a domain has cheap heterogeneous teachers and a reusable intervention family, source-specific counterfactual response packets can expose latent structure that passive absorption and naive augmentation miss. The method is not proven general, not yet mission-complete, and not separable from active-learning literature until matched baselines are run.
-
----
-
-## NEXT DIRECTIONS
-
-1. Build the honest active-learning absorber. Give query-by-committee, uncertainty sampling, and expected-information-gain baselines the same teacher pool, candidate counterfactual pool, and query budget as E3. E3 only survives if it beats active selection, not passive absorption.
-
-2. Price the hidden scaffolding. Add an accounting table that separates final labels, transformation-family design, teacher-role design, teacher calls, candidate generation, and selection compute. The 13-kill pattern says the attack will keep finding unpriced researcher labor until the method reports it explicitly.
-
-3. Run a natural-teacher pilot. Pick a domain with genuinely cheap heterogeneous sources: public LLMs, retrieval heuristics, symbolic tools, small specialists, or noisy simulators. Do not hand-author teacher sensor roles. Measure teacher diversity, contamination, redundancy, and disagreement usefulness before training.
-
-4. Remove privileged geometry stepwise. Compare four conditions: hand-authored roles, inferred roles, random roles, and no roles. If E3 only wins with hand-authored roles, the toy is not yet a path to cheap intelligence.
-
-5. Reframe the literature claim. Write E3 as a specific training object inside the lineage of active learning, sensor fusion, multi-view learning, weak supervision, and multi-teacher distillation. The novelty should be operational, not rhetorical.
-
-6. Define the mission gate before the next experiment. A pass requires lower total cost or higher accuracy at matched cost on a real task, using teachers and transformations that a small team can plausibly obtain.
-
-7. Preserve the toy as a diagnostic, not proof. The current result is real enough to guide design, but the 13-kill pattern says every strong toy advantage must be attacked for hidden labels, hidden tools, hidden researcher geometry, and weak absorbers before it becomes a doctrine.
 ## I465: Attack The Natural-Domain Path
 
 ### Pre-committed tokens
@@ -396,3 +314,264 @@ B52_I467_SURVIVE_IF_E3_MEASURES_FUNCTION_NOT_TEACHER_SURFACE
 ```
 
 Again this is conditional. The current toy is not enough.
+
+## I468: Attack Mission Alignment
+
+### Pre-committed tokens
+
+```text
+B52_I468_SURVIVE_IF_PACKETS_AMORTIZE_TEACHER_COST_AND_USE_OPEN_CHEAP_SOURCES
+B52_I468_KILL_IF_E3_DEMOCRATIZES_DEPENDENCE_ON_EXPENSIVE_TEACHERS
+B52_I468_VOID_IF_COST_LEDGER_OMITS_HUMAN_COMPILER_BITS
+```
+
+### Steelman
+
+E3 has a mission-shaped story: instead of renting big models forever, use them or other sources to produce compact lessons that cheap local students retain. If the packet can be shared, audited, edited, and reused, it serves democratized development, data efficiency, and inference efficiency.
+
+### Attack
+
+That story can invert into a trap. If every useful packet requires expensive teacher calls, hand-authored probes, hidden ontologies, and researcher-written compilers, then E3 does not make intelligence cheap. It turns scarce expert infrastructure into a new bottleneck.
+
+The poorest person on the street does not benefit from paying three proprietary teachers to generate bespoke lessons for every task. They benefit only if open cheap sources generate reusable packets that many small models can absorb.
+
+### New Hardest Objection
+
+E3 may democratize a dependency chain, not intelligence. A shareable lesson packet is mission-aligned only if the packet's all-in creation cost amortizes over many users and models.
+
+### Reconstruct What Survived
+
+Mission-aligned E3 must report:
+
+```text
+teacher_calls_per_packet
+human_compiler_bits
+probe_authoring_bits
+student_training_cost
+teacher_free_inference_cost
+reuse_count_needed_to_break_even
+packet_editability
+open_source_reproducibility
+```
+
+The first natural-domain E3 result should be rejected if a cheap exact tool, retrieval pipeline, or weak-supervision label model gives the same utility at lower all-in cost.
+
+### Iteration Verdict
+
+Chosen token:
+
+```text
+B52_I468_SURVIVE_IF_PACKETS_AMORTIZE_TEACHER_COST_AND_USE_OPEN_CHEAP_SOURCES
+```
+
+E3 is mission-aligned only as amortized public lesson infrastructure.
+
+## I469: Attack The Decision Not To Kill E3 Now
+
+### Pre-committed tokens
+
+```text
+B52_I469_CONTINUE_IF_TOY_IS_POSITIVE_CONTROL_AND_HOSTILE_GATE_IS_CLEAR
+B52_I469_KILL_IF_CURRENT_TOY_ALREADY_IMPLIES_SUPPLIED_GEOMETRY_ONLY
+B52_I469_PIVOT_IF_HOSTILE_GEOMETRY_PARITY_ABSORBS_E3
+```
+
+### Steelman
+
+The project has 13 kills. The first positive signal should not be murdered by purity reflex. The toy did exactly what a positive control should do: prove that the proposed mechanism can win in a world where its assumptions are true. The right move is not immediate kill. The right move is hostile escalation.
+
+### Attack
+
+Positive control can become a loophole. FrameSeed and WGD also had friendly worlds where the intended object looked real. The project only learned when it gave baselines the same structure and watched the signal collapse.
+
+If B44 gives ordinary baselines the same transformations, role ontology, and composition search space, and those baselines match E3, then E3 should be killed in current form immediately.
+
+The forbidden continuation would be: try a more natural domain because the hostile toy is embarrassing.
+
+If the hostile toy kills E3, the lesson is not scale it. The lesson is that teacher tomography was still supplied geometry.
+
+### New Hardest Objection
+
+If E3 only works when the researcher names the teacher roles and the packet compiler, then the true missing invention is role and geometry discovery before teacher distillation.
+
+Not better KD. Not more teachers. Not larger toys.
+
+### Reconstruct What Survived
+
+E3 survives this batch as a constrained live hypothesis:
+
+```text
+Source-specific teacher measurements may add residual value after authored geometry, exact tools, weak-supervision denoising, active learning, and teacher-selection KD get first refusal.
+```
+
+If that residual is zero, kill the current E3 mechanism and pivot to hypotheses that learn from the failure:
+
+1. **Role-discovery hypothesis:** useful structure is not teacher disagreement but unsupervised discovery of teacher axes and refusal regions.
+2. **Invariant-compression hypothesis:** the valuable object is a minimal explicit invariant/counterfactual rule, regardless of whether it comes from teachers.
+3. **Source-ecology audit hypothesis:** teacher disagreement is useful for deciding which exact tool, verifier, or data source to use, not for training a student directly.
+
+### Iteration Verdict
+
+Chosen token:
+
+```text
+B52_I469_CONTINUE_IF_TOY_IS_POSITIVE_CONTROL_AND_HOSTILE_GATE_IS_CLEAR
+```
+
+Final batch token:
+
+```text
+Q_LOOP_B52_E3_TOY_SIGNAL_DOWNGRADED_TO_POSITIVE_CONTROL_HOSTILE_GEOMETRY_GATE_REQUIRED
+```
+
+## Failure Synthesis Check
+
+The 13-kill pattern says every killed arc confused a measurement surface with functional geometry.
+
+At current toy level, E3 does **not** yet escape that pattern. It shows a possible escape route:
+
+```text
+teacher measurements -> inferred counterfactual lesson -> teacher-free hidden transfer
+```
+
+But the current implementation makes the hostile objection too strong:
+
+```text
+teacher measurements + named roles + authored transforms + hard-coded composition -> correct pseudolabels
+```
+
+E3 escapes only if the next test proves all of the following:
+
+1. Teacher identity remains necessary after baselines receive the same transform generator and candidate pool.
+2. A rule-search or nuisance-oracle baseline cannot match the packet.
+3. Exact tools either solve cheaper, killing the claim for that domain, or fail under the same all-in cost ledger.
+4. The packet is an explicit reusable invariant/counterfactual object, not just a pseudolabeled example set.
+5. Packet value is forecast before training and transfers after teacher removal.
+
+Otherwise E3 falls into the 13-kill pattern as measurement-surface #14.
+
+## NARRATIVE ATTACK
+
+### 1. Strongest "that's obvious" dismissal
+
+```text
+Of course E3 wins. You built a binary XOR world, named the two latent sensors, and let E3 compose them. The other baselines were never given the operation that solves the task.
+```
+
+Answer:
+
+```text
+Correct as an attack on the current claim ceiling. The toy is only a positive control. It becomes non-obvious only if a geometry-parity absorber with the same transform generator, role ontology, and composition search space still fails.
+```
+
+### 2. Strongest "that's trivial" dismissal
+
+```text
+This is weak supervision or multi-teacher KD with a more dramatic name.
+```
+
+Answer:
+
+```text
+Correct unless E3 produces a reusable counterfactual lesson object whose hidden transfer is forecast before training and retained after teacher removal.
+```
+
+The anti-triviality clause is:
+
+```text
+source identity changes the inferred lesson type, shuffled identity kills the gain, active learning and weak-supervision denoising fail at matched cost, and the packet remains useful across students.
+```
+
+### 3. Mission test: does E3 serve making intelligence cheap/accessible?
+
+Not yet. The friendly toy serves the mission only as a cheap falsifier and positive control.
+
+E3 becomes mission-aligned if packets are cheap to create from open or low-cost teacher sources, inspectable and shareable, amortized across many students and users, and teacher-free at inference. E3 fails the mission if it requires bespoke proprietary teacher calls and hand-authored compilers for every domain.
+
+### 4. What would the result need to BE for the narrative to be unkillable?
+
+The unkillable result is:
+
+```text
+Given a failing small student and heterogeneous cheap teachers with no supplied role names, E3 infers the teacher axes, discovers a compact counterfactual ranking lesson, forecasts its value before training, trains the student, removes all teacher artifacts, and wins on hidden transformations while CE-only, extra data, best single teacher, teacher averages, Dawid-Skene/Snorkel-style source denoising, active learning, enhanced augmentation, role-oracle baselines, exact tools, retrieval, and chain-init fail at comparable all-in cost.
+```
+
+That result would make the public story legitimate:
+
+```text
+Instead of copying big AI answers, a tiny AI learns why the big AIs disagree.
+```
+
+## NEXT DIRECTIONS
+
+### 1. Hostile supplied-geometry absorber test
+
+Implement W-Loop B44 as the decisive toy escalation.
+
+Required absorbers:
+
+- **B13 exact domain tool:** admit the hidden constructor and record 1.0 as an absorber where applicable.
+- **B15 nuisance oracle:** give baselines the transform axes and hidden nuisance structure without teacher tomography.
+- **B10+ enhanced augmentation:** same transformed examples, same transform generator, and labels propagated by the granted transform law.
+- **Boolean composition search:** search small formulas over teacher hard labels on the calibration set, then train on generated packet examples.
+- **Role-map oracle:** give baselines the useful teacher pair without the E3 packet compiler.
+
+Continuation token:
+
+```text
+E3_HOSTILE_TOY_SIGNAL_RESIDUAL_SOURCE_ECOLOGY
+```
+
+Kill token:
+
+```text
+E3_ABSORBED_BY_SUPPLIED_GEOMETRY_PARITY
+```
+
+### 2. Role-discovery ablation
+
+Remove teacher role names. Randomly permute teacher identities, add decoy teachers, and require E3 to infer which teachers measure latent factors, which teachers are surface shortcuts, which teachers are redundant, which teacher pair composes into the target relation, and which signals should be refused.
+
+If role discovery fails, the missing invention is not distillation; it is sensor calibration and source-axis discovery.
+
+### 3. First natural weak-supervision domain
+
+Use a small relation-extraction or slot-filling slice where cheap teachers are not rule-perfect:
+
+- regex or dictionary source;
+- entity-linker source;
+- small local classifier;
+- retrieval source;
+- negation/temporal heuristic;
+- optional verifier where available.
+
+Hidden transformations should include entity swaps, negation flips, temporal shifts, and distractor-preserving paraphrases. Snorkel/data-programming source denoising must be a baseline, not an inspiration-only citation.
+
+### 4. Code-diagnostics domain
+
+Test a tiny code repair or bug-classification slice where teachers are unit tests, type checker, linter, static analyzer, small repair model, and retrieval over examples.
+
+Exact tools get first refusal. E3 only survives if it produces a reusable lesson about failure mode and repair conditions that a small model retains after tool removal.
+
+### 5. Packet reuse and amortization test
+
+A lesson packet is not mission-aligned unless it amortizes.
+
+Train at least three small students or student initializations from the same packet. Compare against extra labels, KD, active learning, exact tools, and retrieval. Report:
+
+```text
+reuse_count_needed_to_break_even
+teacher_calls_per_successful_student
+packet_edit_success_rate
+hidden_transfer_after_teacher_removal
+```
+
+### Kill-contingent pivots
+
+If hostile B44 kills E3, do not publish the kill as the deliverable. Pivot to:
+
+1. **Unsupervised source-axis discovery:** infer teacher roles and refusal regions before any lesson compilation.
+2. **Invariant-first packet discovery:** search directly for minimal counterfactual invariants, using teachers only as noisy probes.
+3. **Source ecology as routing infrastructure:** use disagreement to choose between exact tools, retrieval, verifiers, and human data collection, rather than to train a student.
+
+Kills are data. A supplied-geometry kill would teach that the missing home-run object is geometry discovery, not teacher disagreement.
