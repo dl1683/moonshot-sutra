@@ -1,10 +1,10 @@
-"""B40 positive-control measurement for the absorption ladder paper.
+"""B40 residual-risk demonstration for the absorption ladder paper.
 
-This is a deliberately small CPU-only control. It does not try to prove a field
-claim. It checks that the roster-relative terminal-token machinery can emit a
-bounded SIGNAL when a planted causal interaction survives the declared absorber
-roster, while also recording the omitted full-class PBE absorber as residual
-risk.
+This is a deliberately small CPU-only control. It began as a positive-control
+attempt: a planted three-feature interaction was meant to survive a declared
+absorber roster. B41 adds the missing full target-class PBE absorber over all
+1320 candidates. That absorber is the same target-class search as the claimed
+learner, so the attempt is absorbed and demoted to residual-risk evidence.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-MEASUREMENT_VERSION = "b40-positive-control-v1"
+MEASUREMENT_VERSION = "b41-positive-control-full-pbe-v2"
 PUBLIC_SEED = "B40_POSITIVE_CONTROL_PUBLIC_SEED"
 SMOKE_SEED = "B40_POSITIVE_CONTROL_SMOKE_SEED"
 INPUT_BITS = 12
@@ -26,6 +26,7 @@ TRAIN_EXAMPLES = 192
 HIDDEN_CASES = 512
 BUDGETED_PBE_CANDIDATES = 128
 THRESHOLD = 0.98
+ABSORPTION_COST_RATIO = 4.0
 SYSTEMS = (
     "claimed_interaction_learner",
     "majority_label",
@@ -33,6 +34,7 @@ SYSTEMS = (
     "pair_conjunction_prior",
     "lookup_memorizer",
     "budgeted_pbe_probe",
+    "full_target_class_pbe",
     "random_interaction_probe",
 )
 
@@ -178,6 +180,7 @@ def measurement_manifest(public_seed: str, smoke_seed: str) -> dict[str, Any]:
         "train_examples": TRAIN_EXAMPLES,
         "hidden_cases": HIDDEN_CASES,
         "budgeted_pbe_candidates": BUDGETED_PBE_CANDIDATES,
+        "full_target_class_candidates": "all three-feature interaction candidates",
         "threshold": THRESHOLD,
         "absorber_roster": [
             "majority_label",
@@ -185,10 +188,11 @@ def measurement_manifest(public_seed: str, smoke_seed: str) -> dict[str, Any]:
             "pair_conjunction_prior",
             "lookup_memorizer",
             "budgeted_pbe_probe",
+            "full_target_class_pbe",
             "random_interaction_probe",
         ],
-        "omitted_residual_risk": [
-            "full target-class PBE over all three-feature interaction candidates would recover the planted rule and absorb the control"
+        "residual_risk_demonstrated": [
+            "the B40 positive-control attempt is absorbed once full target-class PBE is included"
         ],
         "frozen_before_hidden": True,
         "post_hidden_code_changes": [],
@@ -213,6 +217,7 @@ def run(public_seed: str, smoke_seed: str) -> dict[str, Any]:
     claimed = learn_best_candidate(train, candidates)
     budgeted_candidates = candidates[:BUDGETED_PBE_CANDIDATES]
     budgeted = learn_best_candidate(train, budgeted_candidates)
+    full_pbe = learn_best_candidate(train, candidates)
     random_probe = candidates[seed_int(hidden_seed, "random-probe") % len(candidates)]
     shuffled = randomized_label_control(train, candidates, hidden_seed)
     single_pred, single_meta = single_bit_model(train, INPUT_BITS)
@@ -227,6 +232,7 @@ def run(public_seed: str, smoke_seed: str) -> dict[str, Any]:
         "pair_conjunction_prior": pair_pred,
         "lookup_memorizer": lookup_pred,
         "budgeted_pbe_probe": budgeted.predict,
+        "full_target_class_pbe": full_pbe.predict,
         "random_interaction_probe": random_probe.predict,
     }
     system_summary = {
@@ -237,8 +243,6 @@ def run(public_seed: str, smoke_seed: str) -> dict[str, Any]:
         }
         for name, pred in predictors.items()
     }
-    absorber_names = [name for name in SYSTEMS if name != "claimed_interaction_learner"]
-    absorbers_fail = all(not system_summary[name]["passes_threshold"] for name in absorber_names)
     component_erasure_hfa = accuracy(hidden, claimed.erased_interaction_predict)
     randomized_label_hfa = accuracy(hidden, shuffled.predict)
 
@@ -254,16 +258,25 @@ def run(public_seed: str, smoke_seed: str) -> dict[str, Any]:
         "pair_conjunction_prior": {"G": 768, "P_i": bits_for_payload(pair_meta), "E_i": TRAIN_EXAMPLES * (INPUT_BITS + 1)},
         "lookup_memorizer": {"G": 512, "P_i": bits_for_payload(lookup_meta), "E_i": TRAIN_EXAMPLES * (INPUT_BITS + 1), "table_bits": TRAIN_EXAMPLES * (INPUT_BITS + 1)},
         "budgeted_pbe_probe": {"G": 1536, "P_i": bits_for_payload(budgeted.to_dict()), "E_i": TRAIN_EXAMPLES * (INPUT_BITS + 1), "candidate_attempt_bits": BUDGETED_PBE_CANDIDATES * 8},
+        "full_target_class_pbe": {"G": 1536, "P_i": bits_for_payload(full_pbe.to_dict()), "E_i": TRAIN_EXAMPLES * (INPUT_BITS + 1), "candidate_attempt_bits": len(candidates) * 8},
         "random_interaction_probe": {"G": 256, "P_i": bits_for_payload(random_probe.to_dict()), "E_i": TRAIN_EXAMPLES * (INPUT_BITS + 1)},
     }
     for row in cost_ledger.values():
         row["total_bits"] = sum(int(v) for v in row.values())
 
-    terminal_token = (
-        "B40_POSITIVE_CONTROL_SIGNAL_ROSTER_RELATIVE"
-        if system_summary["claimed_interaction_learner"]["passes_threshold"] and absorbers_fail and component_erasure_hfa < 0.9
-        else "B40_POSITIVE_CONTROL_INCONCLUSIVE_OR_ABSORBED"
+    absorber_names = [name for name in SYSTEMS if name != "claimed_interaction_learner"]
+    declared_absorbers_fail = all(not system_summary[name]["passes_threshold"] for name in absorber_names)
+    claimed_cost = max(1, cost_ledger["claimed_interaction_learner"]["total_bits"])
+    full_pbe_cost_ratio = cost_ledger["full_target_class_pbe"]["total_bits"] / claimed_cost
+    full_pbe_absorbs = bool(
+        system_summary["full_target_class_pbe"]["passes_threshold"]
+        and full_pbe_cost_ratio <= ABSORPTION_COST_RATIO
     )
+
+    if full_pbe_absorbs:
+        terminal_token = "B40_POSITIVE_CONTROL_ABSORBED_BY_FULL_TARGET_CLASS_PBE"
+    else:
+        terminal_token = "B40_POSITIVE_CONTROL_INCONCLUSIVE"
 
     return {
         "name": "b40_positive_control_measurement",
@@ -284,6 +297,7 @@ def run(public_seed: str, smoke_seed: str) -> dict[str, Any]:
             "pair_conjunction_prior": pair_meta,
             "lookup_memorizer": lookup_meta,
             "budgeted_pbe_probe": budgeted.to_dict(),
+            "full_target_class_pbe": full_pbe.to_dict(),
             "random_interaction_probe": random_probe.to_dict(),
             "randomized_label_control": shuffled.to_dict(),
         },
@@ -294,18 +308,28 @@ def run(public_seed: str, smoke_seed: str) -> dict[str, Any]:
             "randomized_label_hidden_hfa": randomized_label_hfa,
         },
         "cost_ledger_by_system": cost_ledger,
+        "cost_ratios_vs_claimed": {
+            "full_target_class_pbe": full_pbe_cost_ratio,
+            "budgeted_pbe_probe": cost_ledger["budgeted_pbe_probe"]["total_bits"] / claimed_cost,
+        },
         "token_evidence": {
             "claimed_system_passes": system_summary["claimed_interaction_learner"]["passes_threshold"],
-            "declared_absorbers_fail": absorbers_fail,
+            "declared_absorbers_fail": declared_absorbers_fail,
             "component_erasure_damages": component_erasure_hfa < 0.9,
             "randomized_label_control_fails": randomized_label_hfa < 0.75,
             "hidden_open_discipline": True,
             "post_hidden_code_changes": False,
-            "residual_risk_high": True,
-            "omitted_full_target_class_pbe_would_absorb": True,
+            "full_target_class_pbe_run": True,
+            "full_target_class_pbe_absorbs": full_pbe_absorbs,
+            "full_target_class_pbe_hfa": system_summary["full_target_class_pbe"]["hidden_hfa"],
+            "full_target_class_pbe_cost_ratio_vs_claimed": full_pbe_cost_ratio,
+            "absorption_cost_ratio_boundary": ABSORPTION_COST_RATIO,
+            "positive_control_attempt_absorbed": full_pbe_absorbs,
+            "residual_risk_high": False,
+            "omitted_full_target_class_pbe_would_absorb": False,
         },
         "terminal_token": terminal_token,
-        "claim_ceiling": "Narrow positive-control signal only relative to the declared absorber roster; not evidence that all ordinary explanations failed.",
+        "claim_ceiling": "Residual-risk demonstration: the planted interaction is absorbed once full target-class PBE is included, so this is not a positive discovery signal.",
         "elapsed_s": round(time.time() - started, 6),
     }
 
@@ -324,6 +348,8 @@ def main() -> None:
         "terminal_token": result["terminal_token"],
         "claimed_hidden_hfa": result["system_summary"]["claimed_interaction_learner"]["hidden_hfa"],
         "best_absorber_hidden_hfa": max(v["hidden_hfa"] for k, v in result["system_summary"].items() if k != "claimed_interaction_learner"),
+        "full_target_class_pbe_hidden_hfa": result["system_summary"]["full_target_class_pbe"]["hidden_hfa"],
+        "full_target_class_pbe_cost_ratio_vs_claimed": result["cost_ratios_vs_claimed"]["full_target_class_pbe"],
         "component_erasure_drop_pp": result["causal_controls"]["component_erasure_drop_pp"],
         "output": str(out),
     }, indent=2, sort_keys=True))
