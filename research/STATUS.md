@@ -1,17 +1,22 @@
 # Project Status
 
 **Last updated:** 2026-07-07
-**Current state:** FrameSeed current form absorbed. No active mainline mechanism.
+**Current state:** Writing methodology paper — "The Absorption Ladder" is the moonshot deliverable.
 **Fixed points:** The five sacred outcomes in `research/VISION.md`.
 
 ## Current Verdict
 
-FrameSeed as supplied compact frame-packet transmission is closed as the active
-moonshot direction.
+**WGD killed (13th kill). Methodology paper is the moonshot deliverable.**
+
+The absorption ladder — the evaluation methodology that produced 13 honest kills
+across two moonshot arcs — is the publishable contribution. Paper in progress:
+`research/methodology_paper.md`.
 
 ```text
-FRAMESEED_CURRENT_FORM_ABSORBED_METHODOLOGY_PRESERVED_REDIRECT_TO_FRAME_DISCOVERY
+WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY (hard domain, 64 rules, 2^64 space)
 ```
+
+### FrameSeed Arc (Kills #12)
 
 Two domains were tested and both absorbed:
 
@@ -59,6 +64,7 @@ CTI and FrameSeed, and #12 is the final FrameSeed gate.
 | 10 | CTI smooth compute law | `research/work_loop_batch16.md`, `research/work_loop_batch17.md`, supervisor #14 | `PROXY_ONLY_LAW` / dead | Smooth `D(C)` law was beaten by trivial forecasters and proxy/function divergence |
 | 11 | PCCP-H as discovery paradigm | `research/adversarial_review_final.md`, current PCCP status | Discovery absorbed; methodology retained | B1-B3 discovery absorbed by exhaustive baselines; finite after-frame witness was real but not a paradigm |
 | 12 | FrameSeed / Intelligence Vaccines | `research/work_loop_batch28.md`, `research/work_loop_batch31.md`, B32/B40 | `FRAMESEED_CURRENT_FORM_ABSORBED` | Supplied frames collapsed into teaching sets, bindings, and typed synthesis substrate |
+| 13 | World Grammar Discovery (WGD) | `code/wgd0_measurement.py`, `code/wgd0_b38_hard_domain.py`, B35-B38 | `WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY` | Grammar discovery absorbed by schema/binding (toy) and GF(2) constraint solving (hard domain) |
 
 Side demotions not counted as numbered kills:
 
@@ -84,21 +90,19 @@ Side demotions not counted as numbered kills:
    design, equal-information baselines, hidden-open discipline, cost ledgers,
    ablations, audits, and strict claim ceilings.
 
-## Current Direction Prep
+## Current Direction: Methodology Paper
 
-Do not run another FrameSeed supplied-packet domain unless it first states a new
-non-absorption claim that Boolean FRAMESEED-0 and SHEETS-0 did not already test.
+The absorption ladder methodology IS the deliverable. Paper draft:
+`research/methodology_paper.md`.
 
-The next dual-loop arc should return to direction finding. Leading candidates:
+Four case studies:
+1. Boolean FrameSeed-0 → absorbed by teaching dimension
+2. Typed SHEETS-0 → absorbed by schema/binding discovery
+3. WGD toy (16 rules) → absorbed by schema/binding (even toy baselines)
+4. WGD hard (64 rules, 2^64 space) → absorbed by GF(2) constraint discovery
 
-1. Self-discovered typed transformation grammars.
-2. Binding/goal discovery under ambiguity with active disambiguation,
-   abstention, and local repair.
-3. A theorem-first AFTD separation with exact lower-bound absorbers.
-
-The leading candidate must not begin by handing the system a named
-transformation grammar, exact bindings, or public ontology that already contains
-the result. That would recreate the same absorption.
+Key progression: domain difficulty escalated across all 4 (brute search finally
+failed at case 4), but structured constraint methods still absorbed.
 
 ## Reusable Methodology
 
@@ -174,6 +178,23 @@ FrameSeed harnesses that should be reused as patterns, not as active claims:
 - `code/pccp0_witness.py` - after-frame witness and B1 absorption.
 - `code/pccp0_b2_relations.py` - B2 relation absorption.
 - `code/pccp0_b3_decomposition.py` - B3 decomposition absorption.
+
+### WGD Specs, Reports, And Evidence
+
+- `research/wgd_0_precommit_spec.md` - WGD-0 hardened precommit.
+- `research/question_loop_batch41.md` - direction-finding that proposed WGD.
+- `research/question_loop_batch46.md` - methodology paper outline.
+- `research/dual_loop_supervisor_checkin_33.md` - WGD approval gate.
+- `research/dual_loop_supervisor_checkin_36.md` - WGD kill and paper pivot.
+- `code/wgd0_harness.py` - WGD-0 audit harness with 20 native absorbers.
+- `code/wgd0_measurement.py` - WGD-0 hidden measurement runner.
+- `code/wgd0_b38_hard_domain.py` - hard domain (64 rules) measurement.
+- `experiments/wgd0_b37_hidden_measurement.json` - toy domain hidden result.
+- `experiments/wgd0_b38_hidden_measurement.json` - hard domain hidden result.
+
+### Methodology Paper
+
+- `research/methodology_paper.md` - full draft (in progress).
 
 ### Historical Logs
 
