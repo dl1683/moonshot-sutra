@@ -1,0 +1,841 @@
+{
+  "absorber_cost_ratios_vs_wgd": {
+    "pbe_cegis": 0.10745794529999544,
+    "schema_binding": 0.08818090438181429
+  },
+  "absorber_summary": {
+    "native_absorbers_fail_or_pay_4x": false,
+    "pbe_cegis_absorbs": true,
+    "pbe_cegis_hfa": 1.0,
+    "schema_binding_absorbs": true,
+    "schema_binding_hfa": 1.0
+  },
+  "by_case_kind": {
+    "accepted_quantity": {
+      "majority_feedback": {
+        "correct": 14,
+        "hfa": 0.109375,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "decoy_accept": {
+      "majority_feedback": {
+        "correct": 14,
+        "hfa": 0.109375,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "guard_accept": {
+      "majority_feedback": {
+        "correct": 14,
+        "hfa": 0.109375,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "guard_ambiguous": {
+      "majority_feedback": {
+        "correct": 114,
+        "hfa": 0.890625,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "locked_decoy_reject": {
+      "majority_feedback": {
+        "correct": 0,
+        "hfa": 0.0,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "locked_quantity_reject": {
+      "majority_feedback": {
+        "correct": 0,
+        "hfa": 0.0,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "low_quantity_accept": {
+      "majority_feedback": {
+        "correct": 14,
+        "hfa": 0.109375,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "status_accept": {
+      "majority_feedback": {
+        "correct": 14,
+        "hfa": 0.109375,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "status_ambiguous": {
+      "majority_feedback": {
+        "correct": 114,
+        "hfa": 0.890625,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "unsafe_quantity": {
+      "majority_feedback": {
+        "correct": 0,
+        "hfa": 0.0,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "wrong_field": {
+      "majority_feedback": {
+        "correct": 0,
+        "hfa": 0.0,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    },
+    "wrong_object": {
+      "majority_feedback": {
+        "correct": 0,
+        "hfa": 0.0,
+        "total": 128
+      },
+      "pbe_cegis": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "schema_binding": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      },
+      "wgd_grammar": {
+        "correct": 128,
+        "hfa": 1.0,
+        "total": 128
+      }
+    }
+  },
+  "by_hidden_family": {
+    "H1_surface_invariance": {
+      "majority_feedback": {
+        "correct": 76,
+        "hfa": 0.19791666666666666,
+        "total": 384
+      },
+      "pbe_cegis": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "schema_binding": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "wgd_grammar": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      }
+    },
+    "H2_typed_measurement": {
+      "majority_feedback": {
+        "correct": 73,
+        "hfa": 0.19010416666666666,
+        "total": 384
+      },
+      "pbe_cegis": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "schema_binding": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "wgd_grammar": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      }
+    },
+    "H3_safety_invalidity": {
+      "majority_feedback": {
+        "correct": 67,
+        "hfa": 0.17447916666666666,
+        "total": 384
+      },
+      "pbe_cegis": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "schema_binding": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "wgd_grammar": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      }
+    },
+    "H4_repair_abstention_composition": {
+      "majority_feedback": {
+        "correct": 82,
+        "hfa": 0.21354166666666666,
+        "total": 384
+      },
+      "pbe_cegis": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "schema_binding": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      },
+      "wgd_grammar": {
+        "correct": 384,
+        "hfa": 1.0,
+        "total": 384
+      }
+    }
+  },
+  "code_changes_after_hidden_open": false,
+  "config": {
+    "cases_per_world": 12,
+    "dry_run_worlds": 2000,
+    "field_counts": [
+      12,
+      16,
+      20,
+      24
+    ],
+    "leakage_threshold": 0.12,
+    "worlds_per_family": 32
+  },
+  "counts": {
+    "hidden_cases": 1536,
+    "hidden_worlds": 128,
+    "scored_predictions": 6144
+  },
+  "elapsed_s": 3.317,
+  "functional_gate_summary": {
+    "functional_gates_passed": true,
+    "repair_abstention_composition_claim": "not separably credited because higher-precedence schema/PBE absorption fired",
+    "wgd_min_family_hfa": 1.0,
+    "wgd_target_hfa": 1.0
+  },
+  "hidden_seed_hash": "6661dae8b2ceff0caac1c80c25c8797a3a449915213e6e16a92ca651a769aa8b",
+  "hidden_seed_opened": true,
+  "hidden_seed_rule": "sha256(public_seed|public_smoke_seed|manifest_hash|hidden|unopened_until_freeze)",
+  "manifest": {
+    "absorbing_systems": [
+      "schema_binding",
+      "pbe_cegis"
+    ],
+    "case_kinds": [
+      "accepted_quantity",
+      "unsafe_quantity",
+      "locked_quantity_reject",
+      "guard_ambiguous",
+      "status_ambiguous",
+      "guard_accept",
+      "status_accept",
+      "wrong_field",
+      "wrong_object",
+      "decoy_accept",
+      "locked_decoy_reject",
+      "low_quantity_accept"
+    ],
+    "config": {
+      "cases_per_world": 12,
+      "dry_run_worlds": 2000,
+      "field_counts": [
+        12,
+        16,
+        20,
+        24
+      ],
+      "leakage_threshold": 0.12,
+      "worlds_per_family": 32
+    },
+    "frozen_before_hidden": true,
+    "hidden_families": [
+      "H1_surface_invariance",
+      "H2_typed_measurement",
+      "H3_safety_invalidity",
+      "H4_repair_abstention_composition"
+    ],
+    "hidden_seed_rule": "sha256(public_seed|public_smoke_seed|manifest_hash|hidden|unopened_until_freeze)",
+    "implementation_hashes": {
+      "code/test_wgd0_harness.py": "f5df2477ba3f592115998c397fc7b1875cebbbbce8ec520b7f5762a24bc01cd8",
+      "code/wgd0_harness.py": "2e36033ba75c79f87ada54dddf7b8b13257d2c76cdb9c8e7d86253889087865e",
+      "code/wgd0_measurement.py": "c87b4a631253b88463a9016a04fa9b6a5d0afd2e26b79736d45f4dd98725d318",
+      "research/question_loop_batch43.md": "2143da5b1e5a31c311efc2c66636c7eab752070e48da6af8c2dd04a30fbf51c6",
+      "research/question_loop_batch44.md": "ba2d80e82d6b77629c957a7a1f3c9881ddf201d63ca2d433d512dfe37135dda6",
+      "research/wgd_0_precommit_spec.md": "7fc8448d5beba40e222063f753068e9c9920a2fd0128163e0a4fe8c1113107ed"
+    },
+    "measurement_version": "wgd0-b37-hidden-measurement-v1",
+    "post_hidden_code_changes": [],
+    "public_seed": "WGD0_B37_PUBLIC_SEED",
+    "public_smoke_seed": "WGD0_B37_PUBLIC_SMOKE_SEED",
+    "scorer": "wgd0-feedback-hfa-v1",
+    "systems": [
+      "wgd_grammar",
+      "schema_binding",
+      "pbe_cegis",
+      "majority_feedback"
+    ],
+    "token_precedence": [
+      "operation_ontology",
+      "verifier_template",
+      "obligation_label",
+      "hand_substrate",
+      "representation_prior",
+      "schema_binding",
+      "entity_resolution",
+      "pbe",
+      "pbe_cegis",
+      "cegis",
+      "active_cegis",
+      "mdl_library",
+      "active_learning",
+      "causal_invariant",
+      "constraint_discovery",
+      "constraint_learning",
+      "anomaly_solver",
+      "nuisance_oracle",
+      "language_prior",
+      "sibling_library",
+      "generator_leakage",
+      "generator_family",
+      "generator_reuse",
+      "posthoc_compression"
+    ]
+  },
+  "manifest_hash": "1e7fb9be866f72aba74f5be022afb6a9",
+  "mean_cost_bits": {
+    "majority_feedback": 191.125,
+    "pbe_cegis": 3835.1875,
+    "schema_binding": 3147.1875,
+    "wgd_grammar": 35690.125
+  },
+  "measurement_version": "wgd0-b37-hidden-measurement-v1",
+  "name": "wgd0_b37_hidden_measurement",
+  "passed": true,
+  "prehidden_audit_summary": {
+    "absorber_count": 20,
+    "audit_manifest_hash": "4a4feff1655fc6e03d16b23619798e97",
+    "failed_findings": [],
+    "finding_count": 74,
+    "hidden_seed_opened": false,
+    "passed": true,
+    "sibling_nonduplicate_count": 3,
+    "wgd_signal_measured": false,
+    "worst_leakage": 0.11868583898798497
+  },
+  "public_seed": "WGD0_B37_PUBLIC_SEED",
+  "public_smoke_seed": "WGD0_B37_PUBLIC_SMOKE_SEED",
+  "sample_hidden_cases": [
+    {
+      "case_id": "e6b95dceed3ce15a2b79a353",
+      "delta_hash": "fc927bde558378f14b16",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "accepted_quantity",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "fcd7c68eb23f9488cbfd8445",
+      "delta_hash": "e628bd47705baef64575",
+      "expected": "UNSAFE",
+      "family": "H1_surface_invariance",
+      "kind": "unsafe_quantity",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "00e850a34a83969e591d5b8f",
+      "delta_hash": "738ee0ab2c841812419e",
+      "expected": "REJECTED",
+      "family": "H1_surface_invariance",
+      "kind": "locked_quantity_reject",
+      "state_hash": "dc0fc5f83a9606b221f4",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "25fd28e67f869e9cb4f83038",
+      "delta_hash": "64589e2701f7f36ba70c",
+      "expected": "AMBIGUOUS",
+      "family": "H1_surface_invariance",
+      "kind": "guard_ambiguous",
+      "state_hash": "f9da02c68fa9ebf67302",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "12a63bbbce1ca2ab5d234ce5",
+      "delta_hash": "50546628119ceafc2768",
+      "expected": "AMBIGUOUS",
+      "family": "H1_surface_invariance",
+      "kind": "status_ambiguous",
+      "state_hash": "13969ed367f564bcad9a",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "eaf81b60c2e079ffbe61444e",
+      "delta_hash": "5b681d41e0f218ed5844",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "guard_accept",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "a2e690c37ffc669ad0778025",
+      "delta_hash": "50779a1dd8d470eb84e9",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "status_accept",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "e9053cfdd7648cb8fffec0c8",
+      "delta_hash": "206372eecc36625a0e71",
+      "expected": "WRONG",
+      "family": "H1_surface_invariance",
+      "kind": "wrong_field",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "ae3346441490bb2a242a4cd5",
+      "delta_hash": "75201b082f51e5be4b9f",
+      "expected": "WRONG",
+      "family": "H1_surface_invariance",
+      "kind": "wrong_object",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "00a0b16b54b2c5dda1f78fb3",
+      "delta_hash": "58882077755808abe3fe",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "decoy_accept",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "fe8af274a35a9ab32ec86b33",
+      "delta_hash": "579cf2e77b7cc6d85f1c",
+      "expected": "REJECTED",
+      "family": "H1_surface_invariance",
+      "kind": "locked_decoy_reject",
+      "state_hash": "8f42cb5275bb709651b1",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "9d9b0b9bdc1785fd61c8ba90",
+      "delta_hash": "1d3c19cd2b91562dac55",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "low_quantity_accept",
+      "state_hash": "0fd3f4f734c3a25e1f57",
+      "world_id": "b013454cd66018d87611cbdf"
+    },
+    {
+      "case_id": "d8b1de99c3635ae3a97e8962",
+      "delta_hash": "ededec349d4077c71d9f",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "accepted_quantity",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "e64379fdf8edf0554f30794d",
+      "delta_hash": "5117112cebc15e159b89",
+      "expected": "UNSAFE",
+      "family": "H1_surface_invariance",
+      "kind": "unsafe_quantity",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "bc0330aad2e698037de1f9c7",
+      "delta_hash": "99a5018735bd802a2edf",
+      "expected": "REJECTED",
+      "family": "H1_surface_invariance",
+      "kind": "locked_quantity_reject",
+      "state_hash": "360d91c46fe55d5f3833",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "24267cd33c575c58e6426980",
+      "delta_hash": "da1bf5a35bb98b0ef828",
+      "expected": "AMBIGUOUS",
+      "family": "H1_surface_invariance",
+      "kind": "guard_ambiguous",
+      "state_hash": "653aa964ef0301750b84",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "a16e070fb49413720a0e7bbc",
+      "delta_hash": "767e9165dc5540f2876b",
+      "expected": "AMBIGUOUS",
+      "family": "H1_surface_invariance",
+      "kind": "status_ambiguous",
+      "state_hash": "65ad5dd4b896b7ec2674",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "07e14fb45053a8ba3013c282",
+      "delta_hash": "ffcb17933205392fa0ad",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "guard_accept",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "b18d0218f0af0c6f7a0f3fc2",
+      "delta_hash": "cce30963ec1f311a0240",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "status_accept",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "ba0715f5d99550847139d119",
+      "delta_hash": "bb3f80dbffced809b6db",
+      "expected": "WRONG",
+      "family": "H1_surface_invariance",
+      "kind": "wrong_field",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "5aecd65c72a5bbc403d0d325",
+      "delta_hash": "f3eb87aff7af60d17451",
+      "expected": "WRONG",
+      "family": "H1_surface_invariance",
+      "kind": "wrong_object",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "57a386b82f33f5661c6c0b36",
+      "delta_hash": "fb9bac705f1103556f4d",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "decoy_accept",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "3da16aa2dd689f323e494ed0",
+      "delta_hash": "e697603308d732c41aa5",
+      "expected": "REJECTED",
+      "family": "H1_surface_invariance",
+      "kind": "locked_decoy_reject",
+      "state_hash": "73ea092bc611d979ba1b",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "cdc8fb7c4b320aa93814d6c8",
+      "delta_hash": "308a0a96e0c0b3f96e1c",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "low_quantity_accept",
+      "state_hash": "88b7ca2171d68870035a",
+      "world_id": "c89d43230eb4deb63411c5cc"
+    },
+    {
+      "case_id": "5e98b52e4fa8857419d18fd2",
+      "delta_hash": "c198c241f778044a0c30",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "accepted_quantity",
+      "state_hash": "604fc817d43b738944c9",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "82032ed48a5468d3380083a3",
+      "delta_hash": "0a1ea21aab428df07991",
+      "expected": "UNSAFE",
+      "family": "H1_surface_invariance",
+      "kind": "unsafe_quantity",
+      "state_hash": "604fc817d43b738944c9",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "8902c076d31f3c8b4a53e04d",
+      "delta_hash": "b5a09d1ab8f2d60de4fb",
+      "expected": "REJECTED",
+      "family": "H1_surface_invariance",
+      "kind": "locked_quantity_reject",
+      "state_hash": "135eb5147163bb6d6cb7",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "731b2e6896369e1fc7507ed4",
+      "delta_hash": "e6b10f3a46eaea8879b8",
+      "expected": "AMBIGUOUS",
+      "family": "H1_surface_invariance",
+      "kind": "guard_ambiguous",
+      "state_hash": "f24d0fa239d0de25c56f",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "199247301e2c709de257bf87",
+      "delta_hash": "06ccd9dd7b8e32a41e30",
+      "expected": "AMBIGUOUS",
+      "family": "H1_surface_invariance",
+      "kind": "status_ambiguous",
+      "state_hash": "922e2c54a12c160467fe",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "08e8a89470f46d557e4c5ec0",
+      "delta_hash": "c7ef5b7b4752cdb01007",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "guard_accept",
+      "state_hash": "604fc817d43b738944c9",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "080991e7e176c4f152899e4c",
+      "delta_hash": "33db5c8aead6d5ef669c",
+      "expected": "ACCEPTED",
+      "family": "H1_surface_invariance",
+      "kind": "status_accept",
+      "state_hash": "604fc817d43b738944c9",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    },
+    {
+      "case_id": "c91934fea3386efa9f439c14",
+      "delta_hash": "0570be3edd8843eed61c",
+      "expected": "WRONG",
+      "family": "H1_surface_invariance",
+      "kind": "wrong_field",
+      "state_hash": "604fc817d43b738944c9",
+      "world_id": "b81a7952c5ad09104d9a1f4a"
+    }
+  ],
+  "system_summary": {
+    "majority_feedback": {
+      "correct": 298,
+      "hfa": 0.19401041666666666,
+      "total": 1536
+    },
+    "pbe_cegis": {
+      "correct": 1536,
+      "hfa": 1.0,
+      "total": 1536
+    },
+    "schema_binding": {
+      "correct": 1536,
+      "hfa": 1.0,
+      "total": 1536
+    },
+    "wgd_grammar": {
+      "correct": 1536,
+      "hfa": 1.0,
+      "total": 1536
+    }
+  },
+  "terminal_token": "WGD_ABSORBED_BY_SCHEMA_OR_BINDING_DISCOVERY",
+  "token_evidence": {
+    "absorptions": {
+      "cegis": true,
+      "pbe": true,
+      "schema_binding": true
+    },
+    "baseline_not_native": false,
+    "baseline_parity_failure": false,
+    "claim_ceiling_honored": true,
+    "cost_ledger_failure": false,
+    "cost_ledgers_passed": true,
+    "functional_gates_passed": true,
+    "generator_leakage": false,
+    "native_absorbers_fail_or_pay_4x": false,
+    "post_hidden_mutation": false,
+    "protocol_leakage": false,
+    "subjective_hidden_semantics": false,
+    "substrate_asymmetry": false,
+    "trap_lookup_or_tiny_dsl": false,
+    "trap_near_duplicate_siblings": false,
+    "unidentifiable_grammar": false
+  },
+  "token_interpretation": "schema/binding baseline matches hidden feedback HFA at <=4x all-in cost"
+}
