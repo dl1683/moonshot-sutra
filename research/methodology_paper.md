@@ -1,3205 +1,462 @@
-# The Absorption Ladder: How to Honestly Test AI Discovery Claims
+# The Absorption Ladder: Roster-Relative Tests for AI Discovery Claims
 
 Draft date: 2026-07-08.
-Status: W-Loop B39 full methodology paper.
-Core claim: an AI discovery claim is not credible until its strongest boring explanations have been made executable and have failed under equal information and all-in cost.
-Claim ceiling: this paper does not prove that AI discovery is impossible and does not claim that any tested discovery mechanism works.
+Status: W-Loop B40 revision after Q-Loop B47.
+Core claim: an AI discovery claim is credible only relative to a predeclared absorber roster, equal-information affordance map, all-in cost rule, hidden-open manifest, and explicit residual-risk statement.
+Claim ceiling: this paper does not certify that all ordinary explanations have failed; it gives a decision procedure for documenting which ordinary explanations were made executable, which won, which failed, and which remain untested.
 
 ## Abstract
 
-AI systems are often said to discover rules, frames, grammars, strategies, circuits, or world models when they score well on hidden tasks.
-High hidden accuracy is not enough.
+High hidden accuracy is not enough to claim that an AI system discovered a rule, frame, grammar, strategy, circuit, or world model.
 A compact artifact is not enough.
 An interpretable artifact is not enough.
-The central evaluation question is whether the apparent discovery survives absorption by ordinary explanations.
-Those explanations include supplied representation, parser priors, teaching sets, active queries, program synthesis, schema binding, domain tools, library learning, nuisance oracles, generator fingerprints, human-authored substrate, and post-hoc compression.
-This paper introduces the absorption ladder, a methodology that gives those ordinary explanations first refusal before allowing a positive discovery claim.
-The method precommits terminal tokens, freezes hidden-open boundaries, requires equal-information baselines, charges all-in costs, runs causal artifact tests, and treats absorbed or negative outcomes as primary results.
-Across four case studies in this project, the ladder prevented false positives.
-Boolean FrameSeed reached perfect hidden HFA, but exact finite teaching and search reached the same score.
-Typed SHEETS-0 reached perfect typed HFA, but charged schema bindings and typed table pipelines solved without the packet.
-A WGD toy grammar reached perfect HFA, but schema/binding and PBE/CEGIS baselines matched at roughly 8.8 percent and 10.7 percent of WGD cost.
-A 64-rule WGD hard domain defeated brute enumerators over a 2^64 subset space, but a GF(2) constraint solver matched perfect HFA at about 96.7 percent of WGD cost.
-The contribution is not a new discovery mechanism.
-The contribution is an adversarial measurement immune system for deciding when a discovery claim has survived the best non-discovery explanations.
+The missing question is whether the discovery explanation survives first refusal by ordinary executable explanations under equal information and all-in accounting.
+Those ordinary explanations include representation priors, parser and substrate priors, finite teaching, active queries, program synthesis, schema binding, domain tools, library learning, nuisance oracles, generator fingerprints, human-authored substrate, and post-hoc compression.
+
+This paper presents the absorption ladder: a roster-relative protocol for predeclaring those explanations, making them executable, assigning terminal tokens after one hidden opening, and bounding the public claim to the evidence actually tested.
+The contribution is not proof that the strongest possible boring explanations have failed.
+That universal quantifier is not operational.
+The contribution is a procedure for turning discovery language into an auditable statement: claim, roster, equal-information map, cost rule, hidden-open manifest, result token, and residual absorber risk.
+
+The project record contains four absorbed internal case studies and one small positive control.
+FrameSeed Boolean reached perfect hidden HFA, but exact teaching/search also reached 1.0.
+FrameSeed SHEETS-0 reached perfect typed HFA, but schema binding, typed CEGIS/PBE, data wrangling, active disambiguation, nuisance, and library routes solved the task and packet erasure had zero-point drop.
+WGD-0 toy grammar reached perfect HFA, but schema/binding and PBE/CEGIS matched it at 8.8 percent and 10.7 percent of WGD cost.
+WGD-0 hard domain defeated flat enumerators over a 2^64 candidate space on the measured slice, but a GF(2) constraint solver matched perfect HFA at 96.7 percent of WGD cost.
+A B40 positive control then produced a narrow roster-relative signal: a planted three-feature interaction learner reached 1.0 hidden HFA, the best declared absorber reached 0.71875, component erasure dropped 28.125 points, and the token was `B40_POSITIVE_CONTROL_SIGNAL_ROSTER_RELATIVE`.
+That control is deliberately claim-limited because a full target-class PBE absorber was omitted and recorded as residual risk.
+
+The ladder is therefore not a rejection machine.
+It can emit signal.
+But the strongest version of the method is also the narrowest: signal always means signal relative to the declared roster and residual-risk statement, not universal discovery.
 
 ## Source Map
 
 | Source | Role |
 |---|---|
-| research/dual_loop_supervisor_checkin_36.md | directive |
-| research/question_loop_batch46.md | outline |
-| research/frameseed_milestone_report.md | FrameSeed case-study source |
-| research/dual_loop_supervisor_checkin_35.md | WGD toy arc context |
-| research/dual_loop_supervisor_checkin_32.md | FrameSeed arc context |
-| research/METHODOLOGY_TEMPLATE.md | reusable framework |
+| `research/dual_loop_supervisor_checkin_37.md` | B40 revision directive and B47 priority list |
+| `research/question_loop_batch47.md` | adversarial attacks addressed here |
+| `research/dual_loop_supervisor_checkin_36.md` | prior methodology-paper framing and B38 context |
+| `research/METHODOLOGY_TEMPLATE.md` | reusable token, ladder, cost, and hidden-open vocabulary |
+| `experiments/frameseed0_b28_hidden_hfa.json` | FrameSeed Boolean hidden artifact |
+| `experiments/frameseed_sheets0_b31_hidden_hfa.json` | FrameSeed SHEETS-0 hidden artifact |
+| `experiments/wgd0_b37_hidden_measurement.json` | WGD-0 toy grammar hidden artifact |
+| `experiments/wgd0_b38_hidden_measurement.json` | WGD-0 hard-domain hidden artifact |
+| `experiments/b40_positive_control_measurement.json` | B40 CPU-only positive-control artifact |
+| `code/b40_positive_control.py` | B40 positive-control runner |
 
-| Case | Hidden artifact | Measurement code | Terminal token |
-|---|---|---|---|
-| FrameSeed Boolean | experiments/frameseed0_b28_hidden_hfa.json | code/frameseed0_measurement.py | FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION |
-| FrameSeed SHEETS-0 | experiments/frameseed_sheets0_b31_hidden_hfa.json | code/frameseed_sheets0_measurement.py | FRAMESEED_SHEETS0_ABSORBED_BY_SCHEMA_BINDING |
-| WGD-0 Toy Grammar | experiments/wgd0_b37_hidden_measurement.json | code/wgd0_measurement.py | WGD_ABSORBED_BY_SCHEMA_OR_BINDING_DISCOVERY |
-| WGD-0 Hard Domain | experiments/wgd0_b38_hidden_measurement.json | code/wgd0_b38_hard_domain.py | WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY |
+## 1. The Claim Being Made
 
-## 1. Introduction
+The old draft used an over-absolute standard: it implied that a finite paper could exhaust the strongest ordinary explanations.
+That was too absolute.
+A finite protocol cannot know every possible ordinary explanation, and a self-authored study cannot certify its own completeness by assertion.
+The revised claim is roster-relative:
 
-Discovery language is attractive because it compresses success into a human story.
-A system predicts a hidden label, emits a compact rule, repairs an invalid object, or composes a held-out transformation.
-The tempting story is that the system discovered reusable structure.
-But the same behavior can arise from cheaper mechanisms.
-The public representation may already contain the answer.
-The parser may have supplied the ontology.
-The hidden family may be small enough for finite teaching.
-The task may be solved by active disambiguation.
-A program may be synthesized from examples.
-A schema matcher may bind the roles.
-A domain tool may solve the instance.
-A learned library may compress sibling tasks.
-A nuisance oracle may remove hard-looking variation.
-A generator classifier may identify the synthetic family.
-A human-authored substrate may have done the real work.
-A post-hoc artifact may merely summarize behavior after success.
-The absorption ladder rejects the habit of treating hidden accuracy as decisive.
-It makes the strongest boring explanation executable before the result is known.
-It changes the review question from `Did the model score well?` to `Which explanation for the score survived first refusal?`.
+```text
+An AI discovery claim is credible only relative to a predeclared absorber roster,
+the equal-information affordance map for that roster, the all-in cost rule, the
+hidden-open manifest, and an explicit residual-risk statement for omitted or
+proxy absorbers.
+```
 
-## 2. Definitions
+This is a sharper claim, not a weaker method.
+It removes the impossible universal quantifier and replaces it with an auditable burden.
+A reviewer can now ask concrete questions:
 
-Signal means the claimed system passes functional gates and no declared absorber matches threshold within the precommitted cost boundary.
-Absorption means an ordinary explanation matches the functional threshold at matched or allowed all-in cost.
-Void means the protocol failed through leakage, post-hidden mutation, subjective hidden semantics, baseline denial, or uncharged substrate.
-Trap means the domain is degenerate, tiny, leaked, or not a real test of the intended function.
-Negative means the claimed system misses its own functional threshold.
-Inconclusive means a required absorber or metric is missing.
-A terminal token is the exact precommitted label emitted for one hidden opening.
-A native absorber is a baseline that genuinely operates in the task's natural representation.
-A capability-mode absorber is only a capability witness and cannot be narrated as native execution.
-A claim ceiling is the strongest public statement allowed after the terminal token fires.
+1. What exact discovery surface was claimed?
+2. Which ordinary explanations were declared before hidden opening?
+3. Which were native executable, proxy, formal lower bound, capability-only, or untested?
+4. Which executable affordances did the claimed system receive, and were those shared or charged?
+5. What all-in cost rule decided absorption?
+6. Which terminal token fired?
+7. Which omitted absorber risks lower the claim ceiling?
 
-## 3. Terminal Token Precedence
+A positive result does not mean discovery in the abstract.
+It means no declared absorber matched the threshold inside the frozen information and cost boundary.
+A negative or absorbed result is not a failed paper.
+It is the method doing its job.
 
-Token precedence prevents post-hoc optimism.
-Leakage and post-hidden mutation outrank every positive result.
-Domain degeneracy outranks every positive result.
-Representation, parser, substrate, binding, and domain-tool priors outrank claimed-system success.
-Any ordinary absorber that reaches threshold within the cost boundary outranks signal.
-A missed functional gate emits negative.
-Only after all of those checks can signal fire.
+## 2. Terminal Tokens
+
+A hidden opening emits exactly one token.
+The token is a decision rule, not a narrative mood.
+
+| Token class | Meaning | Public claim ceiling |
+|---|---|---|
+| `VOID` | leakage, hidden mutation, subjective semantics, or baseline asymmetry broke the protocol | no scientific claim from that opening except that the protocol failed |
+| `TRAP` | the domain was degenerate, tiny, leaked by representation, or not a real test of the target function | the domain did not test the intended claim |
+| `ABSORBED_BY_X` | ordinary explanation X matched threshold within the cost rule | the apparent discovery is carried by X at the tested scale |
+| `NEGATIVE` | the claimed system missed its functional gate | the claimed system failed its own test |
+| `INCONCLUSIVE` | required metric, absorber, or cost field is missing | the claim remains unproven |
+| `SIGNAL` | claimed system passed and declared absorbers failed under the manifest | narrow signal relative to roster, scale, cost rule, and residual risk |
+
+Token precedence is intentionally conservative:
+
+1. Void conditions outrank everything.
+2. Trap conditions outrank functional success.
+3. Representation, parser, substrate, binding, and domain-tool priors outrank model success.
+4. Any declared ordinary absorber that reaches threshold within the cost boundary outranks signal.
+5. A missed functional gate emits negative.
+6. Signal can fire only after the above have failed or been bounded.
+
 Mixed evidence cannot be narrated upward.
-The token is a decision rule, not an impressionistic summary.
+A result with a missing dangerous native absorber is not signal; it is inconclusive or a lower-ceiling result.
 
-## 4. The Absorption Ladder
+## 3. Absorber Completeness Stopping Rule
 
-The ladder is a first-refusal stack.
-Each rung names an ordinary explanation that must be made dangerous before discovery language is allowed.
-The ladder is not the same for every domain.
-A compact-packet claim should face teaching dimension early.
-A spreadsheet claim should face schema binding and typed table tools early.
-A grammar claim should face binding, synthesis, library learning, active learning, and constraint discovery early.
-A compositional claim must face methods that exploit compositionality.
-The aim is not to defeat the weakest straw baseline.
-The aim is to find the strongest boring explanation still alive.
+The ladder is open-ended, so it needs an operational stopping rule.
+A run may stop and emit a bounded token only when the report contains all four items below.
 
-## 5. Equal-Information Baseline Contract
+| Requirement | Stop condition | If missing |
+|---|---|---|
+| Claim surface | functional surface, scale, threshold, and artifact role are written before hidden opening | `INCONCLUSIVE` or `VOID` if changed after hidden opening |
+| Roster rationale | each included absorber is tied to a domain-native ordinary explanation | lower claim ceiling; no broad signal language |
+| Status ledger | every dangerous rung is `native_executable`, `proxy_absorber`, `capability_mode_scored`, `formal_lower_bound`, `non_native_omitted`, or `untested_roster_entry` | `INCONCLUSIVE` for positive claims; absorption still stands if an earlier native absorber wins |
+| Residual-risk statement | omitted absorbers are named and assigned low, medium, or high residual risk | signal cannot be narrated beyond the tested roster |
 
-Equal bytes are not equal information.
-A claimed system may receive a parser, typed object model, canonicalizer, verifier, operation grammar, repair API, or task bindings in executable form.
-If a baseline receives only raw prose while the claimed system receives executable affordances, the comparison is asymmetric.
-Every executable affordance must be shared, losslessly translated, or charged.
-Adapter costs must be declared before hidden opening.
-Canonicalizers must be shared or charged.
-Query channels must be shared or charged.
-Verifier semantics must be shared or charged.
-Human-authored substrate must be shared or charged.
+Residual-risk bands:
 
-## 6. All-In Accounting
+| Band | Definition | Claim effect |
+|---|---|---|
+| Low | omitted absorber is non-native, dominated by an executed native absorber, or irrelevant to the claim surface | no extra demotion beyond roster-relative wording |
+| Medium | plausible absorber exists but is proxy-only, budget-limited, or not fully native | signal becomes preliminary; absorption claims stay narrow |
+| High | plausible native absorber was not run and could match the claimed system | no strong positive claim; at most a positive control or protocol proposal |
 
-Discovery claims become slippery when only the attractive artifact is counted.
-A tiny frame with massive task bindings is not a frame-transfer signal.
-A compact grammar with a hand-authored parser and verifier is not necessarily grammar discovery.
-A reusable library with large per-task residual programs may be ordinary synthesis.
-The all-in ledger forces the expensive parts of the story into the open.
-A crude symmetric ledger is better than a polished story with uncharged substrate.
-The terminal token names the explanation that carries the claim.
+This rule also handles B47's infinite-regress objection.
+A reviewer can always propose another absorber.
+The paper does not pretend otherwise.
+The protocol says exactly how that proposal affects the claim ceiling: add it to the roster next time, or mark residual risk now.
 
-## 7. Hidden-Open Discipline
+## 4. Method In One Page
 
-Hidden-open discipline is the procedural backbone of the ladder.
-A hidden seed should not become part of iterative development.
-Public smoke seeds are allowed and necessary.
-Hidden seeds are opened once.
-The manifest should hash code, specs, seeds, token policy, thresholds, baselines, and cost rules.
-No constructor, scorer, baseline, timeout, parser, token policy, or audit change is allowed after hidden opening under the same seed.
+1. Define the discovery claim as a function, not as vibes around an artifact.
+2. Precommit terminal tokens and token precedence.
+3. Build a roster of native ordinary explanations for the domain.
+4. Map equal information: parser, type system, examples, counterexamples, query channel, verifier, canonicalizer, operation grammar, bindings, and human substrate.
+5. Freeze the all-in cost rule before hidden opening.
+6. Freeze manifest hashes, public/smoke seeds, hidden seed rule, thresholds, baselines, and scorer.
+7. Open hidden once and forbid post-hidden constructor, scorer, baseline, timeout, parser, token, or audit changes under that seed.
+8. Emit a token, a filled absorber ledger, cost sensitivity, and residual-risk statement.
 
-## 8. Causal Artifact Tests
+The method's novelty is not one component in isolation.
+Preregistration, hidden tests, ablations, MDL, program synthesis, fair baselines, causal interventions, and red-team review all already exist.
+The delta is binding them into a terminal-token decision procedure where ordinary explanations receive first refusal under equal executable affordances and all-in cost, and where every public claim is bounded by the roster and residual risk.
 
-A discovery artifact must be causal, not decorative.
-If removing the artifact does not hurt performance, the artifact is not the active ingredient.
-If randomizing labels does not hurt performance, the scorer may be leaked or degenerate.
-If a generator-family classifier predicts hidden structure, the artifact may exploit synthetic fingerprints.
-If a post-hoc grammar is not frozen before held-out scoring, interpretability is not evidence of discovery.
+## 5. Positive Control: A Small Domain Where Signal Fires
 
-## 9. Transfer Without Clone Accounting
+B47 correctly attacked the old paper for only showing absorptions.
+A method that can only say no is a rejection machine.
+B40 adds a CPU-only positive control, not as field evidence for AI discovery, but as a sanity check that the terminal-token machinery can emit a bounded yes.
 
-Reusable-structure claims require transfer accounting.
-Sibling tasks are necessary but not sufficient.
-Siblings must be nonduplicate.
-Residual bindings, programs, queries, and library bits must be charged.
-If bindings or programs explain the transfer, the token should say so.
+Artifact: `experiments/b40_positive_control_measurement.json`.
+Runner: `code/b40_positive_control.py`.
+Token: `B40_POSITIVE_CONTROL_SIGNAL_ROSTER_RELATIVE`.
+Runtime: 0.064 seconds on the recorded run.
 
-## 10. Case Studies
+Domain:
 
-The case studies are absorptions, not positive discovery claims.
-Each case is useful because a tempting success metric was insufficient.
-The numbers below come from saved hidden measurement artifacts in the current checkout.
+- 12-bit inputs.
+- Public training examples: 192.
+- Hidden cases: 512, disjoint from training rows.
+- Hypothesis class: 1320 three-feature interaction candidates.
+- Target form: `(x_i AND x_j) XOR x_k XOR bias`.
+- Threshold: 0.98 hidden HFA.
+
+Declared absorber roster:
+
+| Absorber | Hidden HFA | Status | Claim effect |
+|---|---:|---|---|
+| `majority_label` | 0.51171875 | native simple prior | failed |
+| `single_bit_prior` | 0.71875 | native representation prior | failed |
+| `pair_conjunction_prior` | 0.646484375 | native low-order prior | failed |
+| `lookup_memorizer` | 0.51171875 | native memorization control | failed despite 1.0 train HFA |
+| `budgeted_pbe_probe` | 0.712890625 | native but budget-limited PBE probe over first 128 candidates | failed |
+| `random_interaction_probe` | 0.541015625 | negative control | failed |
+| `claimed_interaction_learner` | 1.0 | claimed causal artifact | passed |
+
+Causal controls:
+
+| Control | Value | Effect |
+|---|---:|---|
+| component erasure hidden HFA | 0.71875 | interaction term is causal |
+| component-erasure drop | 28.125 percentage points | artifact removal damages performance |
+| randomized-label hidden HFA | 0.505859375 | learned artifact does not survive label randomization |
+
+Cost snapshot:
+
+| System | Total bits | Hidden HFA |
+|---|---:|---:|
+| `claimed_interaction_learner` | 5224 | 1.0 |
+| `budgeted_pbe_probe` | 5280 | 0.712890625 |
+| `lookup_memorizer` | 5720 | 0.51171875 |
+| `single_bit_prior` | 3384 | 0.71875 |
+| `pair_conjunction_prior` | 3696 | 0.646484375 |
+
+Claim ceiling:
+
+```text
+The control shows that the ladder can emit a narrow SIGNAL when a planted causal
+interaction survives the declared roster. It does not show that all ordinary
+explanations failed, because a full target-class PBE over all 1320 candidates
+was deliberately omitted and recorded as high residual risk.
+```
+
+This is exactly the revised core claim in miniature.
+The ladder can say yes, but only by saying what the yes is relative to.
+
+## 6. Case Study Summary
+
+| Case | Artifact | Claimed success | Winning token | What the paper may claim |
+|---|---|---|---|---|
+| C1 FrameSeed Boolean | `experiments/frameseed0_b28_hidden_hfa.json` | L3 hidden HFA 1.0 | `FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION` | hidden success was absorbed by finite teaching/search |
+| C2 FrameSeed SHEETS-0 | `experiments/frameseed_sheets0_b31_hidden_hfa.json` | L3 typed hidden HFA 1.0 | `FRAMESEED_SHEETS0_ABSORBED_BY_SCHEMA_BINDING` | typed packet advantage was absorbed by schema/binding and typed pipelines |
+| C3 WGD-0 Toy Grammar | `experiments/wgd0_b37_hidden_measurement.json` | WGD HFA 1.0 | `WGD_ABSORBED_BY_SCHEMA_OR_BINDING_DISCOVERY` | grammar success was absorbed by schema/binding and PBE/CEGIS |
+| C4 WGD-0 Hard Domain | `experiments/wgd0_b38_hidden_measurement.json` | WGD HFA 1.0; flat enumerators 0.25 | `WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY` | brute enumeration failed, but GF(2) constraint discovery absorbed |
+| PC B40 Positive Control | `experiments/b40_positive_control_measurement.json` | claimed HFA 1.0 | `B40_POSITIVE_CONTROL_SIGNAL_ROSTER_RELATIVE` | signal only relative to a declared, incomplete roster |
+
+The four project case studies are not methodology validation by themselves.
+They are evidence that the method prevented this project from overclaiming its own mechanisms.
+The positive control validates a different property: the token rule is not hard-coded to reject.
+External validation remains future work.
+
+## 7. Filled Absorber-Status Ledgers
 
 ### C1. FrameSeed Boolean
 
-Artifact: `experiments/frameseed0_b28_hidden_hfa.json`.
-Measurement runner: `code/frameseed0_measurement.py`.
-Terminal token: `FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION`.
-Absorber: teaching dimension and exact finite teaching/search.
-Perfect hidden HFA did not establish frame transmission because finite teaching and search reached the same hidden accuracy.
-
-| Metric | Value |
-|---|---|
-| target bundles | 10240 |
-| hidden queries per system | 15728640 |
-| L3 mean HFA | 1.0 |
-| L3 min HFA | 1.0 |
-| TD-H0 min HFA | 1.0 |
-| L1 active min HFA | 1.0 |
-| L2 CEGIS min HFA | 1.0 |
-| RAG min HFA | 1.0 |
-| nuisance oracle min HFA | 1.0 |
-| library-learning min HFA | 1.0 |
-| packet growth alpha | 0.0028930015823335495 |
-| role max HFA std | 0.0 |
-| audit failures | 0 |
+| Rung | Status | Evidence | Cost note | Claim-ceiling effect |
+|---|---|---|---|---|
+| Hidden-open discipline | native executable | audit failures 0; manifest frozen; no post-hidden edits in artifact | manifest and code hashes recorded | protocol opening usable |
+| Representation prior | native executable | `representation_prior_absorbed=false`; role max HFA std 0.0 | charged in token evidence as counted bits | not the winning absorber |
+| Teaching dimension/search | native executable | TD-H0 min HFA 1.0 against L3 min HFA 1.0 | finite teaching/search counted | winning absorption |
+| Active learning | native executable | L1 active min HFA 1.0 | same hidden query surface | additional absorption, no signal |
+| CEGIS/synthesis | native executable | L2 CEGIS min HFA 1.0 | same examples and scorer | additional absorption, no signal |
+| Nuisance/RAG/library | native executable controls | nuisance, RAG, and library-learning min HFA all 1.0 | same public transcript and scorer | no frame-transmission claim |
+| Residual risk | low for positive claims because no positive claim is made | earlier absorbers already win | later omitted stronger absorbers cannot rescue the original claim | absorption token is stable |
 
 ### C2. FrameSeed SHEETS-0
 
-Artifact: `experiments/frameseed_sheets0_b31_hidden_hfa.json`.
-Measurement runner: `code/frameseed_sheets0_measurement.py`.
-Terminal token: `FRAMESEED_SHEETS0_ABSORBED_BY_SCHEMA_BINDING`.
-Absorber: schema binding plus typed table pipelines.
-The typed packet was not the active ingredient because charged bindings alone preserved perfect HFA and packet erasure produced a zero-point drop.
-
-| Metric | Value |
-|---|---|
-| target bundles | 15360 |
-| hidden queries per system | 15728640 |
-| L3 mean HFA | 1.0 |
-| L3 min HFA | 1.0 |
-| binding-only HFA | 1.0 |
-| packet-erasure drop pp | 0.0 |
-| PBE/PROSE min HFA | 1.0 |
-| data-wrangling min HFA | 1.0 |
-| typed CEGIS exact min HFA | 1.0 |
-| typed MDL library min HFA | 1.0 |
-| active goal disambiguation min HFA | 1.0 |
-| non-Boolean output fraction | 0.8001302083333334 |
-| binding growth alpha | 0.0 |
-| AFTD all-in passed | false |
-| composition gate passed | false |
-| audit failures | 0 |
+| Rung | Status | Evidence | Cost note | Claim-ceiling effect |
+|---|---|---|---|---|
+| Hidden-open discipline | native executable | audit failures 0; domain roster audit missing `[]`; role stability passed | cost split passed; bits counted | protocol opening usable |
+| Parser/representation prior | native executable | parser and representation prior not absorbed in token evidence | parser/human labor ledger present | not the winning absorber |
+| Schema/binding | native executable | binding-only HFA 1.0; packet-erasure drop 0.0 pp | charged task bindings | winning absorption |
+| Typed CEGIS/PBE | native executable | typed CEGIS exact min HFA 1.0; PBE/PROSE min HFA 1.0 | same typed action API | independent absorption route |
+| Data wrangling/domain tools | native executable | data-wrangling min HFA 1.0 | typed table substrate shared or charged | domain-tool absorption route |
+| Library/active/nuisance | native executable | typed MDL library, active goal disambiguation, and nuisance oracle min HFA 1.0 | same examples and public substrate | no typed-frame signal |
+| Residual risk | low for the negative conclusion | many native routes already solve | unrun stronger variants only make discovery claim harder | absorption token is stable |
 
 ### C3. WGD-0 Toy Grammar
 
-Artifact: `experiments/wgd0_b37_hidden_measurement.json`.
-Measurement runner: `code/wgd0_measurement.py`.
-Terminal token: `WGD_ABSORBED_BY_SCHEMA_OR_BINDING_DISCOVERY`.
-Absorber: schema/binding discovery and PBE/CEGIS.
-The grammar candidate solved, but cheaper role-binding and feedback-program induction solved the same hidden cases.
-
-| Metric | Value |
-|---|---|
-| hidden worlds | 128 |
-| hidden cases | 1536 |
-| scored predictions | 6144 |
-| WGD HFA | 1.0 |
-| WGD min-family HFA | 1.0 |
-| schema-binding HFA | 1.0 |
-| PBE/CEGIS HFA | 1.0 |
-| majority HFA | 0.19401041666666666 |
-| WGD mean cost bits | 35690.125 |
-| schema mean cost bits | 3147.1875 |
-| PBE mean cost bits | 3835.1875 |
-| schema cost ratio | 0.08818090438181429 |
-| PBE cost ratio | 0.10745794529999544 |
-| pre-hidden audit passed | true |
-| post-hidden code changes | false |
+| Rung | Status | Evidence | Cost note | Claim-ceiling effect |
+|---|---|---|---|---|
+| Hidden-open discipline | native executable | pre-hidden audit passed; 74 findings; hidden seed opened once; post-hidden code changes false | manifest hash recorded | protocol opening usable |
+| Majority/simple prior | native executable | majority HFA 0.19401041666666666 | 191.125 mean bits | failed; domain not solved by majority |
+| Schema/binding | native executable | schema-binding HFA 1.0 | 3147.1875 mean bits; ratio 0.08818090438181429 | winning absorption |
+| PBE/CEGIS | native executable | PBE/CEGIS HFA 1.0 | 3835.1875 mean bits; ratio 0.10745794529999544 | independent winning absorption |
+| WGD grammar | claimed system | WGD HFA 1.0; min-family HFA 1.0 | 35690.125 mean bits | functional success but not discovery signal |
+| Later rungs | stopped after earlier native absorptions | constraint, active, and library risks remain relevant for future positive claims | not needed to kill this claim | no upward claim allowed |
+| Residual risk | low for absorption; medium for any broader methodology-validation story | internal synthetic case only | no external-stakes validation | supports case report, not universal method validation |
 
 ### C4. WGD-0 Hard Domain
 
-Artifact: `experiments/wgd0_b38_hidden_measurement.json`.
-Measurement runner: `code/wgd0_b38_hard_domain.py`.
-Terminal token: `WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Absorber: GF(2) constraint discovery.
-The domain finally beat brute enumeration, yet the learnable structure was exactly what a GF(2) constraint solver exploits.
+| Rung | Status | Evidence | Cost note | Claim-ceiling effect |
+|---|---|---|---|---|
+| Hidden-open discipline | native executable | pre-hidden audit passed; hidden seed opened once; post-hidden code changes false | manifest hash recorded | protocol opening usable |
+| Flat enumerators | native executable but weak | lexicographic, size-first, random, and meet-in-middle truncated HFA all 0.25 overall | ratios 6.72 to 6.78 vs WGD; 8000 candidates per case | brute enumeration genuinely failed on measured slice |
+| WGD basis grammar | claimed system | HFA 1.0; composition 1.0; repair 1.0; abstention recall 1.0 | 704640 total bits; 88080 mean bits per world | functional success |
+| GF(2) constraint discovery | native executable | constraint solver HFA 1.0 | 681664 total bits; ratio 0.9673932788374205 | winning absorption |
+| PBE/active/CEGIS variants | not winning in this artifact | token evidence lists PBE, CEGIS, active CEGIS as false absorptions | constraint solver already wins | no positive claim depends on them |
+| Sampling-validity boundary | explicit limitation | 8 worlds, 256 cases, 1536 scored predictions | candidate-space log2 64 is search-space hardness, not evaluation-scale proof | claim limited to measured slice |
+| Residual risk | low for absorption; high for broad field generalization | synthetic CPU-only domain | external cases absent | do not title this as proof about all AI discovery |
 
-| Metric | Value |
+## 8. Cost Robustness
+
+The old draft leaned too hard on exact bit ratios.
+All-in accounting is necessary, but local serialization choices can move a marginal ratio.
+The revised rule is to report sensitivity bands and separate terminal stability from rhetorical strength.
+
+| Case | Nominal ratio or cost fact | Sensitivity conclusion | Allowed wording |
+|---|---|---|---|
+| C1 FrameSeed Boolean | multiple absorbers match HFA 1.0 | terminal does not depend on small bit perturbations because functional equality already kills the frame claim | absorbed by teaching/search and related controls |
+| C2 SHEETS-0 | binding-only HFA 1.0; packet-erasure drop 0.0 | terminal does not depend on exact bit price of the packet because removing it causes no loss | absorbed by schema/binding and typed pipelines |
+| C3 WGD toy schema | schema ratio 0.08818 | even absorber x2 and WGD x0.5 gives about 0.353 | robustly cheaper under broad perturbation |
+| C3 WGD toy PBE | PBE ratio 0.10746 | even absorber x2 and WGD x0.5 gives about 0.430 | robustly cheaper under broad perturbation |
+| C4 WGD hard constraint | constraint ratio 0.96739 | absorber x1.1 and WGD x0.9 gives about 1.18; exact cheapness is fragile | comparable-cost native constraint absorption, not a strong cheapness claim |
+| B40 positive control | claimed 5224 bits; best declared passing absorber absent; budgeted PBE 5280 bits but HFA 0.71289 | token is functionally stable to cost perturbation among declared absorbers; omitted full PBE is high residual risk | narrow roster-relative signal only |
+
+A cost ratio near 1.0 should not be sold as a dramatic efficiency result.
+For C4, the honest claim is that the constraint solver is a native ordinary explanation at comparable all-in cost under the recorded ledger.
+The result would remain an absorption under the template's <=4x rule, but the phrase "cheaper" should be avoided unless a sensitivity band supports it.
+
+The minimum cost-reporting standard is now:
+
+1. exact serialization rule;
+2. shared substrate separated from system-specific structure;
+3. examples, counterexamples, bindings, programs, library bits, human substrate, and runtime/query side metrics when material;
+4. nominal ratio;
+5. at least one punitive perturbation band;
+6. terminal-token stability under the perturbation.
+
+## 9. Scope And Self-Audit Limits
+
+This paper is self-audited.
+The same project built the claims, domains, absorbers, cost ledgers, and adversarial reviews.
+That is not independent validation of an anti-self-deception method.
+It is an internally documented attempt to avoid self-deception.
+
+Allowed claim:
+
+```text
+In this project record, the ladder prevented this project from narrating four
+internal synthetic successes upward into discovery claims, and the B40 positive
+control shows the token rule can emit a bounded signal when the declared roster
+fails.
+```
+
+Banned claim:
+
+```text
+The methodology has been independently validated as a field-level standard for
+all AI discovery claims.
+```
+
+The missing validation steps are concrete:
+
+- third-party rerun of at least one manifest;
+- blinded absorber selection by someone outside the work loop;
+- external adversarial review before hidden opening;
+- reanalysis of a public AI discovery claim with before/after claim ceilings;
+- deterministic reproduction of token assignment from frozen artifacts.
+
+Until at least one of those exists, the paper is a protocol with internal evidence and a positive-control sanity check, not a completed community validation.
+
+## 10. Related-Work Delta
+
+The ladder is built from familiar scientific tools.
+Its claim to novelty is procedural composition, not isolated invention.
+
+| Existing practice | What it already gives | What the ladder adds |
+|---|---|---|
+| Preregistration | predeclared hypotheses and analysis plans | terminal-token precedence with absorber first refusal |
+| Hidden-test benchmarks | holdout protection | hidden-open manifest plus post-hidden mutation voiding |
+| Fair baseline design | comparison discipline | equal executable affordance map, not just equal bytes |
+| Ablations | component importance | causal artifact tests tied to token ceilings |
+| MDL and compression | cost-aware explanation | all-in accounting across frames, bindings, programs, libraries, human substrate, and residual teaching |
+| Program synthesis and CEGIS | ordinary constructive alternatives | mandatory native absorbers when the claim is executable rule discovery |
+| Red-team review | adversarial critique | roster ledger where critique changes the claim ceiling |
+| No-free-lunch baseline skepticism | warns against weak baselines | operational stopping rule and residual-risk bands |
+
+The paper's method is therefore not "use good baselines" in new terminology.
+It is a refusal protocol: before discovery language is allowed, the ordinary explanations most native to the claim surface must either win, fail, or be recorded as residual risk that lowers the claim.
+
+## 11. Domain Onboarding Recipe
+
+Use this eight-step workflow for a new evaluator.
+
+1. Define the discovery surface: function, scale, metric, threshold, and artifact role.
+2. Classify the substrate: representation, parser, type system, verifier, action grammar, query channel, and human-authored tools.
+3. Choose mandatory rungs by claim type: teaching/search for compact packets, schema/binding for typed worlds, PBE/CEGIS for executable rules, constraint/domain tools for algebraic tasks, library learning for transfer, generator probes for synthetic domains.
+4. Justify omissions before hidden opening: non-native, dominated, out of scope, or high residual risk.
+5. Predeclare cost and query budgets: bits, runtime, examples, counterexamples, adapters, bindings, substrate, and residual programs.
+6. Assign each absorber a status: native executable, proxy, capability-mode, formal bound, omitted non-native, or untested roster entry.
+7. Run the hidden-open protocol: freeze manifest, smoke on public seed, open hidden once, forbid post-hidden edits.
+8. Emit token, filled ledger, sensitivity band, residual-risk statement, and public claim ceiling.
+
+Mini-examples:
+
+| Claim | Mandatory first rungs | Likely claim ceiling if missing |
+|---|---|---|
+| game agent discovered a world model | representation priors, simulator-state leakage, model-free policy baseline, planner/domain tool, intervention erasure, generator classifier | inconclusive for world-model claim |
+| theorem prover discovered lemmas | premise-selection baseline, proof-search budget, library retrieval, statement-template generator, verifier-substrate accounting | at most search-engineering claim |
+| LLM generated scientific hypotheses | literature retrieval, template recombination, citation leakage, domain-tool baseline, randomized-topic control, human-substrate accounting | protocol proposal or ideation claim, not discovery |
+
+## 12. What The Absorptions Show
+
+The absorptions show an escalation pattern inside this project.
+Simple Boolean frame transmission was absorbed by finite teaching/search.
+Typed frame transfer was absorbed by schema binding and typed pipelines.
+Toy grammar discovery was absorbed by schema/binding and PBE/CEGIS.
+Hard grammar discovery beat flat enumeration but was absorbed by native GF(2) constraint discovery.
+
+That pattern matters because it changes what the next honest experiment must beat.
+It does not prove that discovery is impossible.
+It does not prove that larger systems cannot separate.
+It does not prove the tested mechanisms are useless engineering.
+It says only that the public discovery claim did not survive the declared ordinary explanation that won.
+
+The hard-domain wording must be especially careful.
+The `2^64` candidate space establishes why flat enumeration was a weak route on this domain.
+It does not make 8 worlds and 256 hidden cases a field-scale evaluation.
+The measured result is narrower: on this slice, flat enumerators failed, WGD succeeded, and the constraint solver also succeeded at comparable all-in cost.
+
+## 13. Appendices Compressed Into Evidence
+
+The previous Appendix F, G, and H material was mostly generated checklist volume.
+It has been removed from the paper body.
+The useful content is now compressed into three evidence objects:
+
+1. the one-page onboarding recipe above;
+2. the filled case ledgers in Section 7;
+3. the compact rung and token cards below.
+
+### A. Rung Cards
+
+| Rung | Native question | Typical absorber | Failure consequence |
+|---|---|---|---|
+| Representation prior | do public features expose the answer? | feature parser, type tags, names, ontology | absorb, trap, or lower ceiling |
+| Parser/substrate prior | does the parser, verifier, DSL, action space, or canonicalizer do the work? | shared-or-charged substrate baseline | absorb or void for asymmetry |
+| Teaching dimension | is the packet just a small teaching set? | exact or bounded teaching/search | absorb |
+| Active learning | do queries isolate the target cheaply? | query planner, group tests, active CEGIS | absorb or charge query bits |
+| PBE/CEGIS | can a program be synthesized from the same evidence? | PBE, PROSE, SyGuS, ILP, CEGIS | absorb |
+| Library learning | do reusable macros explain transfer? | MDL library, DreamCoder-style library, e-graphs | absorb or lower transfer claim |
+| Schema/binding | do role bindings solve the task? | schema matcher, binding fingerprints, entity resolver | absorb |
+| Domain tool | is this native to a known solver? | SQL, spreadsheet tools, SAT/SMT/ILP/ASP/CSP | absorb |
+| Nuisance oracle | does difficulty vanish when nuisance is removed? | relevant-feature or invariant oracle | absorb or lower ceiling |
+| Constraint discovery | is the artifact a constraint theory? | rank solver, SAT/SMT encoding, table constraints | absorb |
+| Generator family | do public statistics identify the synthetic family? | template classifier, compression classifier, graph probe | trap, absorb, or lower ceiling |
+| Post-hoc compression | does the artifact merely summarize behavior after success? | frozen-before-score compression control | no artifact-causality claim |
+
+### B. Cost Fields
+
+| Field | Meaning |
 |---|---|
-| worlds | 8 |
-| cases | 256 |
-| scored predictions | 1536 |
-| rule count | 64 |
-| state bits | 128 |
-| candidate space | 18446744073709551616 |
-| candidate-space log2 | 64 |
-| ordered-composition-space log2 | 144.0 |
-| enumeration budget per case | 8000 |
-| enumeration fraction per case | 4.336808689942018e-16 |
-| WGD HFA | 1.0 |
-| constraint HFA | 1.0 |
-| lexicographic HFA | 0.25 |
-| size-first HFA | 0.25 |
-| random HFA | 0.25 |
-| meet-in-middle truncated HFA | 0.25 |
-| composition HFA | 1.0 |
-| repair success | 1.0 |
-| abstention recall | 1.0 |
-| WGD mean cost bits per world | 88080.0 |
-| constraint mean cost bits per world | 85208.0 |
-| constraint cost ratio | 0.9673932788374205 |
-| constraint absorbs | true |
-| pre-hidden audit passed | true |
-| post-hidden code changes | false |
-
-## 11. What the Four Absorptions Show
-
-The four cases form an escalation sequence.
-The Boolean world was absorbed by exact finite teaching/search.
-The typed world was absorbed by schema binding and typed pipelines.
-The toy grammar world was absorbed by schema/binding and PBE/CEGIS.
-The hard grammar world was absorbed by constraint discovery.
-The domain became harder and the absorber became more sophisticated.
-That is exactly what an honest ladder should do.
-B38 is the strongest negative because brute enumeration finally failed.
-It still was not signal because the native algebraic absorber matched.
-
-## 12. Native Absorber Theater
-
-Absorber theater happens when a paper lists strong baselines without making them genuinely dangerous.
-A baseline can be theatrical because it is not executable.
-A baseline can be theatrical because it is denied the substrate used by the claimed system.
-A baseline can be theatrical because it is only capability-mode scored but later narrated as native.
-The ladder addresses this by forcing every absorber to declare its status before hidden opening.
-The status categories are native_executable, proxy_absorber, capability_mode_scored, formal_lower_bound, and untested_roster_entry.
-A proxy can lower the claim ceiling.
-A weak absorber that wins can still kill a claim in the narrow sense that even weak ordinary routes were enough.
-A weak absorber that loses cannot support signal.
-
-## 13. Negative Results as the Result
-
-FrameSeed did not survive.
-WGD did not survive.
-The methodology did survive.
-A project that cannot say no to its own favorite mechanisms cannot be trusted when it says yes.
-The absorption ladder makes no a first-class output.
-An absorption names what must be beaten next.
-Do not claim frame transmission until teaching dimension and binding-only ablations fail.
-Do not claim typed frame transfer until schema binding, typed PBE, CEGIS, data tools, and library learning fail.
-Do not claim grammar discovery until binding, synthesis, active learning, library learning, constraint discovery, and substrate accounting fail.
-Do not claim hard-domain discovery merely because brute enumeration fails.
-
-## 14. What Would Count as a Positive Result
-
-The ladder is not designed to make signal impossible.
-It is designed to make signal expensive to fake.
-A positive result would need a frozen claim, functional gates, hidden-open discipline, equal-information absorbers, all-in ledgers, causal artifact tests, and claim ceilings.
-The claimed system would need to pass functional gates.
-Native absorbers would need to fail or pay the precommitted penalty.
-Component erasure would need to show that the claimed artifact is causal.
-Leakage classifiers would need to stay below thresholds.
-Transfer siblings would need to be nonduplicate and reduced after residual costs.
-The allowed claim would still be bounded to the tested claim, absorbers, and scale.
-
-## 15. What Scale or Domain Might Separate
-
-The case studies do not prove that discovery cannot separate at larger scale.
-They suggest why small CPU-only synthetic worlds are hostile to positive discovery evidence.
-If the world is simple, brute search, teaching sets, or small synthesis can solve it.
-If the world is typed and practical, domain tools and schema binding can solve it.
-If the world is compositional, library learning and constraint solvers may exploit the composition.
-If the world is synthetic, generator fingerprints may leak.
-If the world is made unstructured enough to defeat all absorbers, it may also defeat the claimed system.
-A real separation may require domains where ordinary solvers are strong but still miss a reusable structure that the claimed system finds cheaply.
-
-## 16. Limitations
-
-The absorption ladder cannot enumerate every possible boring explanation.
-It cannot make bit accounting perfectly objective.
-It cannot make a proxy baseline native by naming it.
-It cannot prove that future larger systems will fail.
-It cannot replace domain expertise.
-It can be misused to dismiss useful engineering.
-An absorbed method may still be useful.
-The token only says which explanation carries the claim.
-The answer is not trust.
-The answer is auditability.
-
-## 17. Conclusion
-
-The absorption ladder reframes AI discovery evaluation.
-The question is not whether a system can produce a good hidden score.
-The question is whether the discovery explanation survives first refusal by the strongest ordinary mechanisms.
-Perfect hidden HFA was absorbed.
-Typed outputs were absorbed.
-Interpretable grammar was absorbed.
-Exponential brute-search hardness was absorbed.
-Before asking the world to believe that an AI discovered something, make every ordinary explanation dangerous.
-If one wins, publish the absorption honestly.
-If none wins, the signal will be stronger because it was forced to survive.
-
-## Appendix A: Rung Cards
-
-### A.1. Representation prior
-
-Question: does public features expose the answer?
-Typical absorber: feature parser, type tags, names, ontology.
-Token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.2. Parser or substrate prior
-
-Question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Typical absorber: shared-or-charged substrate baseline.
-Token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.3. Teaching dimension
-
-Question: does the packet is a small teaching set?
-Typical absorber: finite teaching-set solver or version-space search.
-Token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.4. Active learning
-
-Question: does questions isolate the target cheaply?
-Typical absorber: query planner, group tests, active counterexample search.
-Token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.5. PBE or CEGIS
-
-Question: does a program can be synthesized from the same evidence?
-Typical absorber: PBE, CEGIS, SyGuS, ILP, relational rule search.
-Token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.6. Library learning
-
-Question: does reusable macros explain transfer?
-Typical absorber: MDL library, DreamCoder-style library, e-graph composition.
-Token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.7. Schema or binding
-
-Question: does role bindings solve the task?
-Typical absorber: schema matcher, binding fingerprint, entity resolver.
-Token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.8. Domain tool
-
-Question: does the task is native to a known local tool?
-Typical absorber: SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP.
-Token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.9. Nuisance oracle
-
-Question: does difficulty vanishes when nuisance is removed?
-Typical absorber: relevant-feature oracle or invariant oracle.
-Token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.10. Constraint discovery
-
-Question: does the artifact is a constraint theory?
-Typical absorber: rank solver, SAT/SMT encoding, table-constraint learner.
-Token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.11. Generator family
-
-Question: does public statistics identify the synthetic generator?
-Typical absorber: template classifier, compression classifier, graph-kernel probe.
-Token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-### A.12. Post-hoc compression
-
-Question: does the artifact summarizes behavior after success?
-Typical absorber: frozen-before-score compression control.
-Token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Inputs received: same public transcript, same substrate where applicable, same examples, same counterexamples, and same scorer.
-Costs charged: adapter bits, executable program bits, query answers, human substrate, residual bindings, and runtime where material.
-Failure mode: the rung is inconclusive if it is not implemented natively enough for the domain.
-
-## Appendix B: Cost Ledger
-
-| Symbol | Meaning |
-|---|---|
-| F | reusable frame, rule, grammar, verifier, representation, or method bits |
-| B_i | task-specific binding bits |
-| P_i | executable per-task program or policy bits |
-| E_i | examples and labels |
-| C_i | counterexamples and active-query answers |
-| V_i | verifier obligations or proof/test clauses |
-| R_i | residual teaching bits after reusable structure is installed |
-| A_i | abstention policy bits and abstention labels |
-| L | learned library or macro bits |
-| H | human-authored parser, substrate, design, verifier, and adapter work |
-| O | operation ontology or typed action-space supply |
-| N | nuisance-removal, invariant, or oracle information |
-
-### B.F
-
-Definition: reusable frame, rule, grammar, verifier, representation, or method bits.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.B_i
-
-Definition: task-specific binding bits.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.P_i
-
-Definition: executable per-task program or policy bits.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.E_i
-
-Definition: examples and labels.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.C_i
-
-Definition: counterexamples and active-query answers.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.V_i
-
-Definition: verifier obligations or proof/test clauses.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.R_i
-
-Definition: residual teaching bits after reusable structure is installed.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.A_i
-
-Definition: abstention policy bits and abstention labels.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.L
-
-Definition: learned library or macro bits.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.H
-
-Definition: human-authored parser, substrate, design, verifier, and adapter work.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.O
-
-Definition: operation ontology or typed action-space supply.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-### B.N
-
-Definition: nuisance-removal, invariant, or oracle information.
-Reviewer question: was this field shared, charged, or silently granted to the claimed system?
-Reviewer question: does a baseline receive an equivalent affordance or only a text description?
-Failure consequence: lower the claim ceiling or emit the most specific absorber token.
-
-## Appendix C: Case-Study Fact Ledgers
-
-### C.C1. FrameSeed Boolean
-
-Artifact: `experiments/frameseed0_b28_hidden_hfa.json`.
-Code: `code/frameseed0_measurement.py`.
-Token: `FRAMESEED_T3_ABSORBED_BY_TEACHING_DIMENSION`.
-Lesson: Perfect hidden HFA did not establish frame transmission because finite teaching and search reached the same hidden accuracy.
-
-- target bundles: 10240
-- hidden queries per system: 15728640
-- L3 mean HFA: 1.0
-- L3 min HFA: 1.0
-- TD-H0 min HFA: 1.0
-- L1 active min HFA: 1.0
-- L2 CEGIS min HFA: 1.0
-- RAG min HFA: 1.0
-- nuisance oracle min HFA: 1.0
-- library-learning min HFA: 1.0
-- packet growth alpha: 0.0028930015823335495
-- role max HFA std: 0.0
-- audit failures: 0
-
-### C.C2. FrameSeed SHEETS-0
-
-Artifact: `experiments/frameseed_sheets0_b31_hidden_hfa.json`.
-Code: `code/frameseed_sheets0_measurement.py`.
-Token: `FRAMESEED_SHEETS0_ABSORBED_BY_SCHEMA_BINDING`.
-Lesson: The typed packet was not the active ingredient because charged bindings alone preserved perfect HFA and packet erasure produced a zero-point drop.
-
-- target bundles: 15360
-- hidden queries per system: 15728640
-- L3 mean HFA: 1.0
-- L3 min HFA: 1.0
-- binding-only HFA: 1.0
-- packet-erasure drop pp: 0.0
-- PBE/PROSE min HFA: 1.0
-- data-wrangling min HFA: 1.0
-- typed CEGIS exact min HFA: 1.0
-- typed MDL library min HFA: 1.0
-- active goal disambiguation min HFA: 1.0
-- non-Boolean output fraction: 0.8001302083333334
-- binding growth alpha: 0.0
-- AFTD all-in passed: false
-- composition gate passed: false
-- audit failures: 0
-
-### C.C3. WGD-0 Toy Grammar
-
-Artifact: `experiments/wgd0_b37_hidden_measurement.json`.
-Code: `code/wgd0_measurement.py`.
-Token: `WGD_ABSORBED_BY_SCHEMA_OR_BINDING_DISCOVERY`.
-Lesson: The grammar candidate solved, but cheaper role-binding and feedback-program induction solved the same hidden cases.
-
-- hidden worlds: 128
-- hidden cases: 1536
-- scored predictions: 6144
-- WGD HFA: 1.0
-- WGD min-family HFA: 1.0
-- schema-binding HFA: 1.0
-- PBE/CEGIS HFA: 1.0
-- majority HFA: 0.19401041666666666
-- WGD mean cost bits: 35690.125
-- schema mean cost bits: 3147.1875
-- PBE mean cost bits: 3835.1875
-- schema cost ratio: 0.08818090438181429
-- PBE cost ratio: 0.10745794529999544
-- pre-hidden audit passed: true
-- post-hidden code changes: false
-
-### C.C4. WGD-0 Hard Domain
-
-Artifact: `experiments/wgd0_b38_hidden_measurement.json`.
-Code: `code/wgd0_b38_hard_domain.py`.
-Token: `WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Lesson: The domain finally beat brute enumeration, yet the learnable structure was exactly what a GF(2) constraint solver exploits.
-
-- worlds: 8
-- cases: 256
-- scored predictions: 1536
-- rule count: 64
-- state bits: 128
-- candidate space: 18446744073709551616
-- candidate-space log2: 64
-- ordered-composition-space log2: 144.0
-- enumeration budget per case: 8000
-- enumeration fraction per case: 4.336808689942018e-16
-- WGD HFA: 1.0
-- constraint HFA: 1.0
-- lexicographic HFA: 0.25
-- size-first HFA: 0.25
-- random HFA: 0.25
-- meet-in-middle truncated HFA: 0.25
-- composition HFA: 1.0
-- repair success: 1.0
-- abstention recall: 1.0
-- WGD mean cost bits per world: 88080.0
-- constraint mean cost bits per world: 85208.0
-- constraint cost ratio: 0.9673932788374205
-- constraint absorbs: true
-- pre-hidden audit passed: true
-- post-hidden code changes: false
-
-## Appendix D: Claim Ceilings
-
-Token state: `SIGNAL`.
-Allowed claim: The tested claim survived declared absorbers under the frozen protocol and measured scale.
-Banned move: narrating mixed evidence upward into a stronger claim.
-
-Token state: `ABSORBED`.
-Allowed claim: The apparent discovery is better explained by the named ordinary route.
-Banned move: narrating mixed evidence upward into a stronger claim.
-
-Token state: `VOID`.
-Allowed claim: No scientific claim should be made from this hidden opening except that the protocol failed.
-Banned move: narrating mixed evidence upward into a stronger claim.
-
-Token state: `TRAP_DOMAIN_DEGENERATE`.
-Allowed claim: The domain did not test the intended function.
-Banned move: narrating mixed evidence upward into a stronger claim.
-
-Token state: `NEGATIVE`.
-Allowed claim: The claimed system did not meet its own functional threshold.
-Banned move: narrating mixed evidence upward into a stronger claim.
-
-Token state: `INCONCLUSIVE`.
-Allowed claim: The claim remains unproven because a required measurement or absorber is missing.
-Banned move: narrating mixed evidence upward into a stronger claim.
-
-## Appendix E: Equal-Information Failure Catalog
-
-E.1. Failure mode: inert text baseline.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.2. Failure mode: parser asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.3. Failure mode: typed-object asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.4. Failure mode: unit canonicalizer asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.5. Failure mode: row-order asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.6. Failure mode: operation grammar asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.7. Failure mode: verifier asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.8. Failure mode: query-channel asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.9. Failure mode: example-count asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.10. Failure mode: counterexample-quality asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.11. Failure mode: task-binding denial.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.12. Failure mode: public-role-name denial.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.13. Failure mode: hidden-family hint leakage.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.14. Failure mode: natural-language semantic asymmetry.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.15. Failure mode: human substrate omission.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.16. Failure mode: adapter-cost omission.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.17. Failure mode: post-hidden timeout change.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.18. Failure mode: post-hidden scorer change.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.19. Failure mode: post-hidden token change.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.20. Failure mode: post-hidden baseline selection.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.21. Failure mode: proxy absorber narrated as native.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.22. Failure mode: weak baseline roster.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.23. Failure mode: synthetic generator fingerprints.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.24. Failure mode: component erasure omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.25. Failure mode: randomized-label control omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.26. Failure mode: role permutation omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.27. Failure mode: schema permutation omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.28. Failure mode: unit permutation omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.29. Failure mode: row-order permutation omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.30. Failure mode: nuisance oracle omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.31. Failure mode: domain tool omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.32. Failure mode: constraint solver omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.33. Failure mode: library learner omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.34. Failure mode: teaching dimension omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.35. Failure mode: active learner omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.36. Failure mode: PBE omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.37. Failure mode: generator classifier omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.38. Failure mode: post-hoc grammar not frozen.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.39. Failure mode: duplicate siblings.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-E.40. Failure mode: residual binding bits omitted.
-Review action: identify which system receives the relevant affordance.
-Review action: require a shared representation or a charged adapter.
-Terminal consequence: void, absorption, trap, or inconclusive depending on severity.
-
-## Appendix F: B39 Twenty-Iteration Draft Log
-
-F.1. Iteration 1: grounding.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.2. Iteration 2: claim ceiling.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.3. Iteration 3: definition pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.4. Iteration 4: token pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.5. Iteration 5: ladder pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.6. Iteration 6: equal-information pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.7. Iteration 7: cost pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.8. Iteration 8: hidden-open pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.9. Iteration 9: causality pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.10. Iteration 10: AFTD pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.11. Iteration 11: Boolean case pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.12. Iteration 12: SHEETS case pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.13. Iteration 13: WGD toy pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.14. Iteration 14: WGD hard pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.15. Iteration 15: native absorber theater pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.16. Iteration 16: negative-result pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.17. Iteration 17: positive-result pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.18. Iteration 18: limitations pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.19. Iteration 19: checklist pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-F.20. Iteration 20: adversarial appendix pass.
-Action: deepen, extend, or attack the previous draft section.
-Adversarial question: would a hostile reviewer still be able to narrate a stronger claim than the token allows?
-Revision rule: if yes, lower the claim ceiling or add the missing absorber, cost field, or causal test.
-Status: incorporated into this draft.
-
-## Appendix G: Surface-by-Rung Audit Matrix
-
-G.1. Surface: functional accuracy.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.2. Surface: functional accuracy.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.3. Surface: functional accuracy.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.4. Surface: functional accuracy.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.5. Surface: functional accuracy.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.6. Surface: functional accuracy.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.7. Surface: functional accuracy.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.8. Surface: functional accuracy.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.9. Surface: functional accuracy.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.10. Surface: functional accuracy.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.11. Surface: functional accuracy.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.12. Surface: functional accuracy.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.13. Surface: minimum per-family accuracy.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.14. Surface: minimum per-family accuracy.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.15. Surface: minimum per-family accuracy.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.16. Surface: minimum per-family accuracy.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.17. Surface: minimum per-family accuracy.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.18. Surface: minimum per-family accuracy.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.19. Surface: minimum per-family accuracy.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.20. Surface: minimum per-family accuracy.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.21. Surface: minimum per-family accuracy.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.22. Surface: minimum per-family accuracy.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.23. Surface: minimum per-family accuracy.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.24. Surface: minimum per-family accuracy.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.25. Surface: repair success.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.26. Surface: repair success.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.27. Surface: repair success.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.28. Surface: repair success.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.29. Surface: repair success.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.30. Surface: repair success.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.31. Surface: repair success.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.32. Surface: repair success.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.33. Surface: repair success.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.34. Surface: repair success.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.35. Surface: repair success.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.36. Surface: repair success.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.37. Surface: repair locality.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.38. Surface: repair locality.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.39. Surface: repair locality.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.40. Surface: repair locality.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.41. Surface: repair locality.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.42. Surface: repair locality.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.43. Surface: repair locality.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.44. Surface: repair locality.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.45. Surface: repair locality.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.46. Surface: repair locality.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.47. Surface: repair locality.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.48. Surface: repair locality.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.49. Surface: abstention recall.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.50. Surface: abstention recall.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.51. Surface: abstention recall.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.52. Surface: abstention recall.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.53. Surface: abstention recall.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.54. Surface: abstention recall.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.55. Surface: abstention recall.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.56. Surface: abstention recall.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.57. Surface: abstention recall.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.58. Surface: abstention recall.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.59. Surface: abstention recall.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.60. Surface: abstention recall.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.61. Surface: abstention utility.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.62. Surface: abstention utility.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.63. Surface: abstention utility.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.64. Surface: abstention utility.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.65. Surface: abstention utility.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.66. Surface: abstention utility.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.67. Surface: abstention utility.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.68. Surface: abstention utility.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.69. Surface: abstention utility.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.70. Surface: abstention utility.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.71. Surface: abstention utility.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.72. Surface: abstention utility.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.73. Surface: composition accuracy.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.74. Surface: composition accuracy.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.75. Surface: composition accuracy.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.76. Surface: composition accuracy.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.77. Surface: composition accuracy.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.78. Surface: composition accuracy.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.79. Surface: composition accuracy.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.80. Surface: composition accuracy.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.81. Surface: composition accuracy.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.82. Surface: composition accuracy.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.83. Surface: composition accuracy.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.84. Surface: composition accuracy.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.85. Surface: invalidity detection.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.86. Surface: invalidity detection.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.87. Surface: invalidity detection.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.88. Surface: invalidity detection.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.89. Surface: invalidity detection.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.90. Surface: invalidity detection.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.91. Surface: invalidity detection.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.92. Surface: invalidity detection.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.93. Surface: invalidity detection.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.94. Surface: invalidity detection.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.95. Surface: invalidity detection.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.96. Surface: invalidity detection.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.97. Surface: unsafe-condition detection.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.98. Surface: unsafe-condition detection.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.99. Surface: unsafe-condition detection.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.100. Surface: unsafe-condition detection.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.101. Surface: unsafe-condition detection.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.102. Surface: unsafe-condition detection.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.103. Surface: unsafe-condition detection.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.104. Surface: unsafe-condition detection.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.105. Surface: unsafe-condition detection.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.106. Surface: unsafe-condition detection.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.107. Surface: unsafe-condition detection.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.108. Surface: unsafe-condition detection.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.109. Surface: schema stability.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.110. Surface: schema stability.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.111. Surface: schema stability.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.112. Surface: schema stability.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.113. Surface: schema stability.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.114. Surface: schema stability.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.115. Surface: schema stability.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.116. Surface: schema stability.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.117. Surface: schema stability.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.118. Surface: schema stability.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.119. Surface: schema stability.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.120. Surface: schema stability.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.121. Surface: unit stability.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.122. Surface: unit stability.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.123. Surface: unit stability.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.124. Surface: unit stability.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.125. Surface: unit stability.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.126. Surface: unit stability.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.127. Surface: unit stability.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.128. Surface: unit stability.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.129. Surface: unit stability.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.130. Surface: unit stability.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.131. Surface: unit stability.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.132. Surface: unit stability.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.133. Surface: row-order stability.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.134. Surface: row-order stability.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.135. Surface: row-order stability.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.136. Surface: row-order stability.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.137. Surface: row-order stability.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.138. Surface: row-order stability.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.139. Surface: row-order stability.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.140. Surface: row-order stability.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.141. Surface: row-order stability.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.142. Surface: row-order stability.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.143. Surface: row-order stability.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.144. Surface: row-order stability.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.145. Surface: role permutation stability.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.146. Surface: role permutation stability.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.147. Surface: role permutation stability.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.148. Surface: role permutation stability.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.149. Surface: role permutation stability.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.150. Surface: role permutation stability.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.151. Surface: role permutation stability.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.152. Surface: role permutation stability.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.153. Surface: role permutation stability.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.154. Surface: role permutation stability.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.155. Surface: role permutation stability.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.156. Surface: role permutation stability.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.157. Surface: transfer residual cost.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.158. Surface: transfer residual cost.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.159. Surface: transfer residual cost.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.160. Surface: transfer residual cost.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.161. Surface: transfer residual cost.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.162. Surface: transfer residual cost.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.163. Surface: transfer residual cost.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.164. Surface: transfer residual cost.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.165. Surface: transfer residual cost.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.166. Surface: transfer residual cost.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.167. Surface: transfer residual cost.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.168. Surface: transfer residual cost.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.169. Surface: public-feature leakage.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.170. Surface: public-feature leakage.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.171. Surface: public-feature leakage.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.172. Surface: public-feature leakage.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.173. Surface: public-feature leakage.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.174. Surface: public-feature leakage.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.175. Surface: public-feature leakage.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.176. Surface: public-feature leakage.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.177. Surface: public-feature leakage.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.178. Surface: public-feature leakage.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.179. Surface: public-feature leakage.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.180. Surface: public-feature leakage.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.181. Surface: component-erasure drop.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.182. Surface: component-erasure drop.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.183. Surface: component-erasure drop.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.184. Surface: component-erasure drop.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.185. Surface: component-erasure drop.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.186. Surface: component-erasure drop.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.187. Surface: component-erasure drop.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.188. Surface: component-erasure drop.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.189. Surface: component-erasure drop.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.190. Surface: component-erasure drop.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.191. Surface: component-erasure drop.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.192. Surface: component-erasure drop.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.193. Surface: randomized-label control.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.194. Surface: randomized-label control.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.195. Surface: randomized-label control.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.196. Surface: randomized-label control.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.197. Surface: randomized-label control.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.198. Surface: randomized-label control.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.199. Surface: randomized-label control.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.200. Surface: randomized-label control.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.201. Surface: randomized-label control.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.202. Surface: randomized-label control.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.203. Surface: randomized-label control.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.204. Surface: randomized-label control.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.205. Surface: query efficiency.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.206. Surface: query efficiency.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.207. Surface: query efficiency.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.208. Surface: query efficiency.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.209. Surface: query efficiency.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.210. Surface: query efficiency.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.211. Surface: query efficiency.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.212. Surface: query efficiency.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.213. Surface: query efficiency.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.214. Surface: query efficiency.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.215. Surface: query efficiency.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.216. Surface: query efficiency.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.217. Surface: human-substrate accounting.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.218. Surface: human-substrate accounting.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.219. Surface: human-substrate accounting.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.220. Surface: human-substrate accounting.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.221. Surface: human-substrate accounting.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.222. Surface: human-substrate accounting.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.223. Surface: human-substrate accounting.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.224. Surface: human-substrate accounting.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.225. Surface: human-substrate accounting.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.226. Surface: human-substrate accounting.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.227. Surface: human-substrate accounting.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.228. Surface: human-substrate accounting.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.229. Surface: claim-ceiling compliance.
-Rung: Representation prior.
-Audit question: does public features expose the answer?
-Required evidence: run or justify `feature parser, type tags, names, ontology` under equal information.
-Absorption token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.230. Surface: claim-ceiling compliance.
-Rung: Parser or substrate prior.
-Audit question: does the parser, verifier, DSL, action space, or canonicalizer does the work?
-Required evidence: run or justify `shared-or-charged substrate baseline` under equal information.
-Absorption token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.231. Surface: claim-ceiling compliance.
-Rung: Teaching dimension.
-Audit question: does the packet is a small teaching set?
-Required evidence: run or justify `finite teaching-set solver or version-space search` under equal information.
-Absorption token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.232. Surface: claim-ceiling compliance.
-Rung: Active learning.
-Audit question: does questions isolate the target cheaply?
-Required evidence: run or justify `query planner, group tests, active counterexample search` under equal information.
-Absorption token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.233. Surface: claim-ceiling compliance.
-Rung: PBE or CEGIS.
-Audit question: does a program can be synthesized from the same evidence?
-Required evidence: run or justify `PBE, CEGIS, SyGuS, ILP, relational rule search` under equal information.
-Absorption token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.234. Surface: claim-ceiling compliance.
-Rung: Library learning.
-Audit question: does reusable macros explain transfer?
-Required evidence: run or justify `MDL library, DreamCoder-style library, e-graph composition` under equal information.
-Absorption token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.235. Surface: claim-ceiling compliance.
-Rung: Schema or binding.
-Audit question: does role bindings solve the task?
-Required evidence: run or justify `schema matcher, binding fingerprint, entity resolver` under equal information.
-Absorption token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.236. Surface: claim-ceiling compliance.
-Rung: Domain tool.
-Audit question: does the task is native to a known local tool?
-Required evidence: run or justify `SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP` under equal information.
-Absorption token family: `ABSORBED_BY_DOMAIN_TOOL`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.237. Surface: claim-ceiling compliance.
-Rung: Nuisance oracle.
-Audit question: does difficulty vanishes when nuisance is removed?
-Required evidence: run or justify `relevant-feature oracle or invariant oracle` under equal information.
-Absorption token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.238. Surface: claim-ceiling compliance.
-Rung: Constraint discovery.
-Audit question: does the artifact is a constraint theory?
-Required evidence: run or justify `rank solver, SAT/SMT encoding, table-constraint learner` under equal information.
-Absorption token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.239. Surface: claim-ceiling compliance.
-Rung: Generator family.
-Audit question: does public statistics identify the synthetic generator?
-Required evidence: run or justify `template classifier, compression classifier, graph-kernel probe` under equal information.
-Absorption token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-G.240. Surface: claim-ceiling compliance.
-Rung: Post-hoc compression.
-Audit question: does the artifact summarizes behavior after success?
-Required evidence: run or justify `frozen-before-score compression control` under equal information.
-Absorption token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-Claim ceiling if untested: inconclusive for this surface.
-
-## Appendix H: Additional Hostile-Review Clauses
-
-H.1. Clause for functional accuracy, Representation prior, and FrameSeed Boolean.
-Question: could feature parser, type tags, names, ontology explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.2. Clause for functional accuracy, Representation prior, and FrameSeed SHEETS-0.
-Question: could feature parser, type tags, names, ontology explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.3. Clause for functional accuracy, Representation prior, and WGD-0 Toy Grammar.
-Question: could feature parser, type tags, names, ontology explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.4. Clause for functional accuracy, Representation prior, and WGD-0 Hard Domain.
-Question: could feature parser, type tags, names, ontology explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.5. Clause for functional accuracy, Parser or substrate prior, and FrameSeed Boolean.
-Question: could shared-or-charged substrate baseline explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.6. Clause for functional accuracy, Parser or substrate prior, and FrameSeed SHEETS-0.
-Question: could shared-or-charged substrate baseline explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.7. Clause for functional accuracy, Parser or substrate prior, and WGD-0 Toy Grammar.
-Question: could shared-or-charged substrate baseline explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.8. Clause for functional accuracy, Parser or substrate prior, and WGD-0 Hard Domain.
-Question: could shared-or-charged substrate baseline explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.9. Clause for functional accuracy, Teaching dimension, and FrameSeed Boolean.
-Question: could finite teaching-set solver or version-space search explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.10. Clause for functional accuracy, Teaching dimension, and FrameSeed SHEETS-0.
-Question: could finite teaching-set solver or version-space search explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.11. Clause for functional accuracy, Teaching dimension, and WGD-0 Toy Grammar.
-Question: could finite teaching-set solver or version-space search explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.12. Clause for functional accuracy, Teaching dimension, and WGD-0 Hard Domain.
-Question: could finite teaching-set solver or version-space search explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.13. Clause for functional accuracy, Active learning, and FrameSeed Boolean.
-Question: could query planner, group tests, active counterexample search explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.14. Clause for functional accuracy, Active learning, and FrameSeed SHEETS-0.
-Question: could query planner, group tests, active counterexample search explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.15. Clause for functional accuracy, Active learning, and WGD-0 Toy Grammar.
-Question: could query planner, group tests, active counterexample search explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.16. Clause for functional accuracy, Active learning, and WGD-0 Hard Domain.
-Question: could query planner, group tests, active counterexample search explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.17. Clause for functional accuracy, PBE or CEGIS, and FrameSeed Boolean.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.18. Clause for functional accuracy, PBE or CEGIS, and FrameSeed SHEETS-0.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.19. Clause for functional accuracy, PBE or CEGIS, and WGD-0 Toy Grammar.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.20. Clause for functional accuracy, PBE or CEGIS, and WGD-0 Hard Domain.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.21. Clause for functional accuracy, Library learning, and FrameSeed Boolean.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.22. Clause for functional accuracy, Library learning, and FrameSeed SHEETS-0.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.23. Clause for functional accuracy, Library learning, and WGD-0 Toy Grammar.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.24. Clause for functional accuracy, Library learning, and WGD-0 Hard Domain.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.25. Clause for functional accuracy, Schema or binding, and FrameSeed Boolean.
-Question: could schema matcher, binding fingerprint, entity resolver explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.26. Clause for functional accuracy, Schema or binding, and FrameSeed SHEETS-0.
-Question: could schema matcher, binding fingerprint, entity resolver explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.27. Clause for functional accuracy, Schema or binding, and WGD-0 Toy Grammar.
-Question: could schema matcher, binding fingerprint, entity resolver explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.28. Clause for functional accuracy, Schema or binding, and WGD-0 Hard Domain.
-Question: could schema matcher, binding fingerprint, entity resolver explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.29. Clause for functional accuracy, Domain tool, and FrameSeed Boolean.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.30. Clause for functional accuracy, Domain tool, and FrameSeed SHEETS-0.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.31. Clause for functional accuracy, Domain tool, and WGD-0 Toy Grammar.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.32. Clause for functional accuracy, Domain tool, and WGD-0 Hard Domain.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.33. Clause for functional accuracy, Nuisance oracle, and FrameSeed Boolean.
-Question: could relevant-feature oracle or invariant oracle explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-H.34. Clause for functional accuracy, Nuisance oracle, and FrameSeed SHEETS-0.
-Question: could relevant-feature oracle or invariant oracle explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-H.35. Clause for functional accuracy, Nuisance oracle, and WGD-0 Toy Grammar.
-Question: could relevant-feature oracle or invariant oracle explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-H.36. Clause for functional accuracy, Nuisance oracle, and WGD-0 Hard Domain.
-Question: could relevant-feature oracle or invariant oracle explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-H.37. Clause for functional accuracy, Constraint discovery, and FrameSeed Boolean.
-Question: could rank solver, SAT/SMT encoding, table-constraint learner explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-
-H.38. Clause for functional accuracy, Constraint discovery, and FrameSeed SHEETS-0.
-Question: could rank solver, SAT/SMT encoding, table-constraint learner explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-
-H.39. Clause for functional accuracy, Constraint discovery, and WGD-0 Toy Grammar.
-Question: could rank solver, SAT/SMT encoding, table-constraint learner explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-
-H.40. Clause for functional accuracy, Constraint discovery, and WGD-0 Hard Domain.
-Question: could rank solver, SAT/SMT encoding, table-constraint learner explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CONSTRAINT_DISCOVERY`.
-
-H.41. Clause for functional accuracy, Generator family, and FrameSeed Boolean.
-Question: could template classifier, compression classifier, graph-kernel probe explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-
-H.42. Clause for functional accuracy, Generator family, and FrameSeed SHEETS-0.
-Question: could template classifier, compression classifier, graph-kernel probe explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-
-H.43. Clause for functional accuracy, Generator family, and WGD-0 Toy Grammar.
-Question: could template classifier, compression classifier, graph-kernel probe explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-
-H.44. Clause for functional accuracy, Generator family, and WGD-0 Hard Domain.
-Question: could template classifier, compression classifier, graph-kernel probe explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_GENERATOR_FAMILY_IDENTIFICATION`.
-
-H.45. Clause for functional accuracy, Post-hoc compression, and FrameSeed Boolean.
-Question: could frozen-before-score compression control explain the functional accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-
-H.46. Clause for functional accuracy, Post-hoc compression, and FrameSeed SHEETS-0.
-Question: could frozen-before-score compression control explain the functional accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-
-H.47. Clause for functional accuracy, Post-hoc compression, and WGD-0 Toy Grammar.
-Question: could frozen-before-score compression control explain the functional accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-
-H.48. Clause for functional accuracy, Post-hoc compression, and WGD-0 Hard Domain.
-Question: could frozen-before-score compression control explain the functional accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_POST_HOC_COMPRESSION`.
-
-H.49. Clause for minimum per-family accuracy, Representation prior, and FrameSeed Boolean.
-Question: could feature parser, type tags, names, ontology explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.50. Clause for minimum per-family accuracy, Representation prior, and FrameSeed SHEETS-0.
-Question: could feature parser, type tags, names, ontology explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.51. Clause for minimum per-family accuracy, Representation prior, and WGD-0 Toy Grammar.
-Question: could feature parser, type tags, names, ontology explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.52. Clause for minimum per-family accuracy, Representation prior, and WGD-0 Hard Domain.
-Question: could feature parser, type tags, names, ontology explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_REPRESENTATION_PRIOR`.
-
-H.53. Clause for minimum per-family accuracy, Parser or substrate prior, and FrameSeed Boolean.
-Question: could shared-or-charged substrate baseline explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.54. Clause for minimum per-family accuracy, Parser or substrate prior, and FrameSeed SHEETS-0.
-Question: could shared-or-charged substrate baseline explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.55. Clause for minimum per-family accuracy, Parser or substrate prior, and WGD-0 Toy Grammar.
-Question: could shared-or-charged substrate baseline explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.56. Clause for minimum per-family accuracy, Parser or substrate prior, and WGD-0 Hard Domain.
-Question: could shared-or-charged substrate baseline explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_PARSER_OR_SUBSTRATE_PRIOR`.
-
-H.57. Clause for minimum per-family accuracy, Teaching dimension, and FrameSeed Boolean.
-Question: could finite teaching-set solver or version-space search explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.58. Clause for minimum per-family accuracy, Teaching dimension, and FrameSeed SHEETS-0.
-Question: could finite teaching-set solver or version-space search explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.59. Clause for minimum per-family accuracy, Teaching dimension, and WGD-0 Toy Grammar.
-Question: could finite teaching-set solver or version-space search explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.60. Clause for minimum per-family accuracy, Teaching dimension, and WGD-0 Hard Domain.
-Question: could finite teaching-set solver or version-space search explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_TEACHING_DIMENSION`.
-
-H.61. Clause for minimum per-family accuracy, Active learning, and FrameSeed Boolean.
-Question: could query planner, group tests, active counterexample search explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.62. Clause for minimum per-family accuracy, Active learning, and FrameSeed SHEETS-0.
-Question: could query planner, group tests, active counterexample search explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.63. Clause for minimum per-family accuracy, Active learning, and WGD-0 Toy Grammar.
-Question: could query planner, group tests, active counterexample search explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.64. Clause for minimum per-family accuracy, Active learning, and WGD-0 Hard Domain.
-Question: could query planner, group tests, active counterexample search explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_ACTIVE_LEARNING`.
-
-H.65. Clause for minimum per-family accuracy, PBE or CEGIS, and FrameSeed Boolean.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.66. Clause for minimum per-family accuracy, PBE or CEGIS, and FrameSeed SHEETS-0.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.67. Clause for minimum per-family accuracy, PBE or CEGIS, and WGD-0 Toy Grammar.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.68. Clause for minimum per-family accuracy, PBE or CEGIS, and WGD-0 Hard Domain.
-Question: could PBE, CEGIS, SyGuS, ILP, relational rule search explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_CEGIS_OR_SYNTHESIS`.
-
-H.69. Clause for minimum per-family accuracy, Library learning, and FrameSeed Boolean.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.70. Clause for minimum per-family accuracy, Library learning, and FrameSeed SHEETS-0.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.71. Clause for minimum per-family accuracy, Library learning, and WGD-0 Toy Grammar.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.72. Clause for minimum per-family accuracy, Library learning, and WGD-0 Hard Domain.
-Question: could MDL library, DreamCoder-style library, e-graph composition explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_LIBRARY_LEARNING`.
-
-H.73. Clause for minimum per-family accuracy, Schema or binding, and FrameSeed Boolean.
-Question: could schema matcher, binding fingerprint, entity resolver explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.74. Clause for minimum per-family accuracy, Schema or binding, and FrameSeed SHEETS-0.
-Question: could schema matcher, binding fingerprint, entity resolver explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.75. Clause for minimum per-family accuracy, Schema or binding, and WGD-0 Toy Grammar.
-Question: could schema matcher, binding fingerprint, entity resolver explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.76. Clause for minimum per-family accuracy, Schema or binding, and WGD-0 Hard Domain.
-Question: could schema matcher, binding fingerprint, entity resolver explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_SCHEMA_OR_BINDING`.
-
-H.77. Clause for minimum per-family accuracy, Domain tool, and FrameSeed Boolean.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.78. Clause for minimum per-family accuracy, Domain tool, and FrameSeed SHEETS-0.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.79. Clause for minimum per-family accuracy, Domain tool, and WGD-0 Toy Grammar.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.80. Clause for minimum per-family accuracy, Domain tool, and WGD-0 Hard Domain.
-Question: could SQL, spreadsheets, SAT, SMT, ILP, ASP, CSP explain the minimum per-family accuracy result in `experiments/wgd0_b38_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_DOMAIN_TOOL`.
-
-H.81. Clause for minimum per-family accuracy, Nuisance oracle, and FrameSeed Boolean.
-Question: could relevant-feature oracle or invariant oracle explain the minimum per-family accuracy result in `experiments/frameseed0_b28_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-H.82. Clause for minimum per-family accuracy, Nuisance oracle, and FrameSeed SHEETS-0.
-Question: could relevant-feature oracle or invariant oracle explain the minimum per-family accuracy result in `experiments/frameseed_sheets0_b31_hidden_hfa.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-H.83. Clause for minimum per-family accuracy, Nuisance oracle, and WGD-0 Toy Grammar.
-Question: could relevant-feature oracle or invariant oracle explain the minimum per-family accuracy result in `experiments/wgd0_b37_hidden_measurement.json`?
-Required response: cite the exact metric, equal-information map, and all-in cost entry.
-Failure response: lower the claim ceiling or mark the surface inconclusive.
-Relevant terminal token family: `ABSORBED_BY_NUISANCE_ORACLE`.
-
-
-## End Note
-
-The appendices stop on a complete hostile-review clause.
-Future reviewers should extend the matrix only when a new claim surface, absorber rung, or case-study artifact is added.
+| `F` | reusable frame, rule, grammar, verifier, representation, or method bits |
+| `G` | general system, solver, interpreter, or substrate code bits when charged separately |
+| `B_i` | task-specific bindings |
+| `P_i` | executable per-task program or policy |
+| `E_i` | examples and labels |
+| `C_i` / `Q_i` | counterexamples, active queries, or query answers |
+| `V_i` | verifier obligations or proof/test clauses |
+| `R_i` | residual teaching after reusable structure is installed |
+| `A_i` | abstention policy and abstention labels |
+| `L` | learned library or macro bits |
+| `H` | human-authored parser, substrate, design, verifier, and adapter work |
+| `O` | operation ontology or typed action-space supply |
+| `N` | nuisance-removal, invariant, or oracle information |
+
+### C. Claim-Ceiling Rules
+
+| Result | Say | Do not say |
+|---|---|---|
+| Signal | survived the declared roster under this manifest and residual-risk statement | all ordinary explanations failed |
+| Absorption | named ordinary route carries the measured success | the claimed mechanism is useless in every setting |
+| Void | the hidden opening failed procedurally | the model almost had signal |
+| Trap | the domain did not test the intended function | the model solved a meaningful discovery task |
+| Negative | the claimed system missed its own threshold | an untested variant would have worked |
+| Inconclusive | a required absorber, metric, or cost field is missing | mixed evidence supports discovery |
+
+## 14. Submission Position
+
+The paper should be pitched as a methodology proposal with internal case evidence and a positive-control sanity check.
+It should not be pitched as a completed empirical survey of AI discovery claims.
+The most honest title surface is roster-relative testing, not universal certification.
+
+The field-facing home run is still real if the protocol is adopted: discovery claims become less about attractive artifacts and more about which explanation survived first refusal.
+That changes review behavior.
+But the paper earns that ambition only by obeying its own claim ceiling.
+
+## NARRATIVE SECTION
+
+We built a rigorous roster-relative methodology for testing AI discovery claims.
+It killed four of our own discovery stories, then emitted one deliberately narrow positive-control signal when a planted causal interaction survived the declared roster.
+The method is alive because it can say both no and yes; the paper is now honest because every yes is bounded by the roster, cost rule, hidden-open manifest, and residual absorber risk.

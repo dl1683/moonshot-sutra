@@ -1,0 +1,263 @@
+{
+  "absorber_artifacts": {
+    "budgeted_pbe_probe": {
+      "bias": 1,
+      "i": 0,
+      "j": 6,
+      "k": 5
+    },
+    "lookup_memorizer": {
+      "default": 1,
+      "entries": 192
+    },
+    "pair_conjunction_prior": {
+      "bias": 1,
+      "i": 5,
+      "j": 11,
+      "train_hfa": 0.6927083333333334
+    },
+    "random_interaction_probe": {
+      "bias": 0,
+      "i": 7,
+      "j": 8,
+      "k": 4
+    },
+    "randomized_label_control": {
+      "bias": 0,
+      "i": 5,
+      "j": 6,
+      "k": 8
+    },
+    "single_bit_prior": {
+      "bias": 1,
+      "k": 5,
+      "train_hfa": 0.7604166666666666
+    }
+  },
+  "causal_controls": {
+    "component_erasure_drop_pp": 28.125,
+    "component_erasure_hidden_hfa": 0.71875,
+    "randomized_label_hidden_hfa": 0.505859375
+  },
+  "claim_ceiling": "Narrow positive-control signal only relative to the declared absorber roster; not evidence that all ordinary explanations failed.",
+  "claimed_artifact": {
+    "bias": 1,
+    "i": 0,
+    "j": 10,
+    "k": 5
+  },
+  "cost_ledger_by_system": {
+    "budgeted_pbe_probe": {
+      "E_i": 2496,
+      "G": 1536,
+      "P_i": 224,
+      "candidate_attempt_bits": 1024,
+      "total_bits": 5280
+    },
+    "claimed_interaction_learner": {
+      "E_i": 2496,
+      "F": 448,
+      "G": 2048,
+      "P_i": 232,
+      "total_bits": 5224
+    },
+    "lookup_memorizer": {
+      "E_i": 2496,
+      "G": 512,
+      "P_i": 216,
+      "table_bits": 2496,
+      "total_bits": 5720
+    },
+    "majority_label": {
+      "E_i": 192,
+      "G": 128,
+      "P_i": 1,
+      "total_bits": 321
+    },
+    "pair_conjunction_prior": {
+      "E_i": 2496,
+      "G": 768,
+      "P_i": 432,
+      "total_bits": 3696
+    },
+    "random_interaction_probe": {
+      "E_i": 2496,
+      "G": 256,
+      "P_i": 224,
+      "total_bits": 2976
+    },
+    "single_bit_prior": {
+      "E_i": 2496,
+      "G": 512,
+      "P_i": 376,
+      "total_bits": 3384
+    }
+  },
+  "counts": {
+    "hidden_cases": 512,
+    "hypothesis_class_size": 1320,
+    "train_examples": 192
+  },
+  "elapsed_s": 0.063642,
+  "hidden_seed_hash": "ce3c1bb2473e9f5cbd8b059cf042657bfd9e6f4bbe82fff9ffcee3fad87e1153",
+  "hidden_seed_opened": true,
+  "manifest": {
+    "absorber_roster": [
+      "majority_label",
+      "single_bit_prior",
+      "pair_conjunction_prior",
+      "lookup_memorizer",
+      "budgeted_pbe_probe",
+      "random_interaction_probe"
+    ],
+    "budgeted_pbe_candidates": 128,
+    "frozen_before_hidden": true,
+    "hidden_cases": 512,
+    "hidden_seed_rule": "sha256(public_seed|public_smoke_seed|manifest_hash|hidden|unopened_until_freeze)",
+    "input_bits": 12,
+    "measurement_version": "b40-positive-control-v1",
+    "omitted_residual_risk": [
+      "full target-class PBE over all three-feature interaction candidates would recover the planted rule and absorb the control"
+    ],
+    "post_hidden_code_changes": [],
+    "public_seed": "B40_POSITIVE_CONTROL_PUBLIC_SEED",
+    "public_smoke_seed": "B40_POSITIVE_CONTROL_SMOKE_SEED",
+    "systems": [
+      "claimed_interaction_learner",
+      "majority_label",
+      "single_bit_prior",
+      "pair_conjunction_prior",
+      "lookup_memorizer",
+      "budgeted_pbe_probe",
+      "random_interaction_probe"
+    ],
+    "threshold": 0.98,
+    "train_examples": 192
+  },
+  "manifest_hash": "f1d048dcee201cd4a92e011670e6db83",
+  "measurement_version": "b40-positive-control-v1",
+  "name": "b40_positive_control_measurement",
+  "public_seed": "B40_POSITIVE_CONTROL_PUBLIC_SEED",
+  "public_smoke_seed": "B40_POSITIVE_CONTROL_SMOKE_SEED",
+  "sample_hidden_cases": [
+    {
+      "x_hex": "0x67d",
+      "y": 1
+    },
+    {
+      "x_hex": "0x011",
+      "y": 1
+    },
+    {
+      "x_hex": "0x508",
+      "y": 1
+    },
+    {
+      "x_hex": "0xa5a",
+      "y": 1
+    },
+    {
+      "x_hex": "0xeb4",
+      "y": 0
+    },
+    {
+      "x_hex": "0x155",
+      "y": 1
+    },
+    {
+      "x_hex": "0xc45",
+      "y": 0
+    },
+    {
+      "x_hex": "0x6cc",
+      "y": 1
+    }
+  ],
+  "sample_public_examples": [
+    {
+      "x_hex": "0x96a",
+      "y": 0
+    },
+    {
+      "x_hex": "0xec4",
+      "y": 1
+    },
+    {
+      "x_hex": "0x32c",
+      "y": 0
+    },
+    {
+      "x_hex": "0x749",
+      "y": 0
+    },
+    {
+      "x_hex": "0x5d4",
+      "y": 1
+    },
+    {
+      "x_hex": "0xa22",
+      "y": 0
+    },
+    {
+      "x_hex": "0x90f",
+      "y": 1
+    },
+    {
+      "x_hex": "0x647",
+      "y": 0
+    }
+  ],
+  "system_summary": {
+    "budgeted_pbe_probe": {
+      "hidden_hfa": 0.712890625,
+      "passes_threshold": false,
+      "train_hfa": 0.7760416666666666
+    },
+    "claimed_interaction_learner": {
+      "hidden_hfa": 1.0,
+      "passes_threshold": true,
+      "train_hfa": 1.0
+    },
+    "lookup_memorizer": {
+      "hidden_hfa": 0.51171875,
+      "passes_threshold": false,
+      "train_hfa": 1.0
+    },
+    "majority_label": {
+      "hidden_hfa": 0.51171875,
+      "passes_threshold": false,
+      "train_hfa": 0.53125
+    },
+    "pair_conjunction_prior": {
+      "hidden_hfa": 0.646484375,
+      "passes_threshold": false,
+      "train_hfa": 0.6927083333333334
+    },
+    "random_interaction_probe": {
+      "hidden_hfa": 0.541015625,
+      "passes_threshold": false,
+      "train_hfa": 0.4791666666666667
+    },
+    "single_bit_prior": {
+      "hidden_hfa": 0.71875,
+      "passes_threshold": false,
+      "train_hfa": 0.7604166666666666
+    }
+  },
+  "target_summary": {
+    "candidate_hash": "300d8498f4f6004ab2dd118c",
+    "candidate_index": 189,
+    "input_bits": 12
+  },
+  "terminal_token": "B40_POSITIVE_CONTROL_SIGNAL_ROSTER_RELATIVE",
+  "token_evidence": {
+    "claimed_system_passes": true,
+    "component_erasure_damages": true,
+    "declared_absorbers_fail": true,
+    "hidden_open_discipline": true,
+    "omitted_full_target_class_pbe_would_absorb": true,
+    "post_hidden_code_changes": false,
+    "randomized_label_control_fails": true,
+    "residual_risk_high": true
+  }
+}
