@@ -5,6 +5,10 @@ binary candidate-ranking task with hidden counterfactual structure. Teachers are
 not label oracles: one is surface-biased, and two are complementary sensors for
 latent ranking bits. E3 must use source-specific teacher measurements to compile
 lesson packets and train a tiny teacher-free student.
+
+Batch 44 makes the toy hostile by admitting equal-geometry absorbers. B13 gets
+the exact hidden constructor, B15 gets nuisance geometry without teacher
+identity, and B10+ gets the transformation generator without teacher signals.
 """
 
 from __future__ import annotations
@@ -21,14 +25,19 @@ import numpy as np
 
 
 PRECOMMIT = {
-    "direction": "E3 Functional Teacher Tomography toy v0",
+    "direction": "E3 Functional Teacher Tomography toy v1 hostile absorbers",
     "claim": (
         "source-specific teacher measurements can be inverted into compact "
         "counterfactual ranking lessons that transfer to a hidden transform "
-        "better than raw teacher outputs and ordinary absorbers"
+        "better than raw teacher outputs and ordinary absorbers; this hostile "
+        "variant separately tests whether exact tools or supplied geometry "
+        "absorb the signal"
     ),
-    "signal_token": "E3_TOY_SIGNAL_SOURCE_SPECIFIC_COUNTERFACTUAL_LESSON",
+    "signal_token": "E3_TOY_HOSTILE_SIGNAL_SURVIVES_SUPPLIED_GEOMETRY",
     "kill_tokens": [
+        "E3_TOY_ABSORBED_BY_EXACT_DOMAIN_TOOL",
+        "E3_TOY_ABSORBED_BY_NUISANCE_ORACLE",
+        "E3_TOY_ABSORBED_BY_ENHANCED_AUGMENTATION",
         "E3_TOY_ABSORBED_BY_CE_ONLY",
         "E3_TOY_ABSORBED_BY_SINGLE_TEACHER",
         "E3_TOY_ABSORBED_BY_TEACHER_AVERAGE_OR_WEIGHTED_VOTE",
@@ -40,13 +49,32 @@ PRECOMMIT = {
     "void_tokens": [
         "E3_TOY_VOID_NONFINITE",
         "E3_TOY_VOID_EMPTY_SPLIT",
-        "E3_TOY_VOID_EXACT_TOOL_GRANTED",
+        "E3_TOY_VOID_SUPPLIED_GEOMETRY_OR_LEAKAGE",
     ],
     "continuation_gate": {
         "beat_best_ordinary_by_pp": 5.0,
         "beat_active_by_pp": 3.0,
         "beat_best_single_by_pp": 3.0,
         "beat_shuffled_by_pp": 6.0,
+        "beat_enhanced_augmentation_by_pp": 5.0,
+        "beat_nuisance_oracle_by_pp": 5.0,
+    },
+    "absorber_tests": {
+        "B13_exact_domain_tool": {
+            "confirm_token": "B44_B13_CONFIRM_EXACT_TOOL_GRANTED_AND_SCORED",
+            "kill_token": "B44_B13_KILL_E3_IF_EXACT_TOOL_HIDDEN_ACC_GE_E3",
+            "void_token": "B44_B13_VOID_IF_TOOL_USES_TEACHER_SIGNALS",
+        },
+        "B15_nuisance_oracle": {
+            "confirm_token": "B44_B15_CONFIRM_TEACHER_IDENTITY_RESIDUAL_IF_E3_BEATS_NUISANCE_ORACLE_BY_5PP",
+            "kill_token": "B44_B15_KILL_TEACHER_IDENTITY_IF_NUISANCE_ORACLE_WITHIN_5PP_OR_BEATS_E3",
+            "void_token": "B44_B15_VOID_IF_ORACLE_USES_TEACHER_ROLE_MAP_OR_HIDDEN_SET_LOOKUP",
+        },
+        "B10_plus_enhanced_augmentation": {
+            "confirm_token": "B44_B10P_CONFIRM_TEACHER_SIGNAL_RESIDUAL_IF_E3_BEATS_TRANSFORM_AUG_BY_5PP",
+            "kill_token": "B44_B10P_KILL_E3_IF_TRANSFORM_AUGMENTATION_WITHOUT_TEACHERS_WITHIN_5PP_OR_BEATS_E3",
+            "void_token": "B44_B10P_VOID_IF_AUGMENTATION_USES_TEACHER_MARGINS_OR_HIDDEN_TEST_LABELS",
+        },
     },
 }
 
@@ -253,31 +281,82 @@ def true_labels_for_x(x: np.ndarray) -> np.ndarray:
     return (z0 ^ z1).astype(np.float64)
 
 
-def transform_variants(x: np.ndarray) -> np.ndarray:
-    variants = [x.copy()]
+def transformation_batches(x: np.ndarray) -> list[tuple[str, bool, np.ndarray]]:
+    batches = [("identity", False, x.copy())]
     d_start = 4
     # Irrelevant-slot invariances.
     for j in range(d_start, x.shape[1]):
         v = x.copy()
         v[:, j] = 1.0 - v[:, j]
-        variants.append(v)
+        batches.append((f"irrelevant_slot_flip_{j}", False, v))
     # Nuisance-preserving transformations: keep latent z0/z1 fixed.
     for obs_col, nuisance_col in ((0, 2), (1, 3)):
         v = x.copy()
         v[:, obs_col] = 1.0 - v[:, obs_col]
         v[:, nuisance_col] = 1.0 - v[:, nuisance_col]
-        variants.append(v)
+        batches.append((f"nuisance_preserving_flip_{obs_col}_{nuisance_col}", False, v))
     # True counterfactual ranking flips: flip one latent factor only.
     for obs_col in (0, 1):
         v = x.copy()
         v[:, obs_col] = 1.0 - v[:, obs_col]
-        variants.append(v)
-    return np.vstack(variants)
+        batches.append((f"single_latent_counterfactual_flip_{obs_col}", True, v))
+    return batches
+
+
+def transform_variants(x: np.ndarray) -> np.ndarray:
+    return np.vstack([batch_x for _, _, batch_x in transformation_batches(x)])
 
 
 def unique_rows(x: np.ndarray) -> np.ndarray:
     _, idx = np.unique(x.astype(np.int64), axis=0, return_index=True)
     return x[np.sort(idx)]
+
+
+def unique_labeled_rows(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
+    labels_by_row: dict[tuple[int, ...], float] = {}
+    conflicts = 0
+    for row, label in zip(x.astype(np.int64), y.astype(np.float64)):
+        key = tuple(int(v) for v in row)
+        label_value = float(label)
+        if key in labels_by_row and labels_by_row[key] != label_value:
+            conflicts += 1
+            continue
+        labels_by_row.setdefault(key, label_value)
+    rows = np.array(list(labels_by_row.keys()), dtype=np.float64)
+    labels = np.array(list(labels_by_row.values()), dtype=np.float64)
+    return rows, labels, conflicts
+
+
+def build_transform_augmented_examples(
+    base_x: np.ndarray,
+    base_y: np.ndarray,
+    limit: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    xs = []
+    ys = []
+    transform_counts = {}
+    for name, flips_label, batch_x in transformation_batches(base_x):
+        xs.append(batch_x)
+        ys.append(1.0 - base_y if flips_label else base_y.copy())
+        transform_counts[name] = int(len(batch_x))
+    augmented_x, augmented_y, conflicts = unique_labeled_rows(np.vstack(xs), np.concatenate(ys))
+    if len(augmented_x) > limit:
+        keep = rng.choice(len(augmented_x), size=limit, replace=False)
+        augmented_x = augmented_x[keep]
+        augmented_y = augmented_y[keep]
+    meta = {
+        "n_augmented_examples": int(len(augmented_x)),
+        "label_source": "calibration_labels_plus_transformation_preserve_flip_semantics",
+        "uses_teacher_signals": False,
+        "transformation_conflicts": int(conflicts),
+        "transform_counts": transform_counts,
+    }
+    return augmented_x, augmented_y, meta
+
+
+def nuisance_oracle_labels(x: np.ndarray) -> np.ndarray:
+    return true_labels_for_x(x)
 
 
 def build_e3_packet_examples(
@@ -432,6 +511,29 @@ def run_one_seed(seed: int, epochs: int, packet_limit: int, smoke: bool = False)
         "B10_counterfactual_augmentation_no_tomography", tx, ty,
         hidden_x, hidden_y, seed + 701, epochs))
 
+    enhanced_aug_x, enhanced_aug_y, enhanced_aug_meta = build_transform_augmented_examples(
+        calib_x, calib_y, packet_limit, rng)
+    tx, ty = combine_supervised_and_pseudo(calib_x, calib_y, enhanced_aug_x, enhanced_aug_y)
+    b10_plus = train_and_eval(
+        "B10_plus_enhanced_counterfactual_augmentation", tx, ty,
+        hidden_x, hidden_y, seed + 751, epochs)
+    b10_plus.notes.update(enhanced_aug_meta)
+    runs.append(b10_plus)
+
+    nuisance_y = nuisance_oracle_labels(packet_x)
+    nuisance_match = float(np.mean(nuisance_y == packet_y)) if len(packet_y) else float("nan")
+    tx, ty = combine_supervised_and_pseudo(calib_x, calib_y, packet_x, nuisance_y)
+    b15 = train_and_eval(
+        "B15_nuisance_oracle_supplied_geometry", tx, ty,
+        hidden_x, hidden_y, seed + 801, epochs)
+    b15.notes.update({
+        "n_oracle_labeled_examples": int(len(packet_x)),
+        "oracle_knowledge": "n0_n1_nuisance_bits_and_transformation_rules_no_teacher_identity",
+        "uses_teacher_signals": False,
+        "matches_e3_packet_labels": nuisance_match,
+    })
+    runs.append(b15)
+
     tx, ty = combine_supervised_and_pseudo(calib_x, calib_y, packet_x, packet_y)
     e3 = train_and_eval(
         "E3_source_specific_lesson_packets", tx, ty,
@@ -440,7 +542,17 @@ def run_one_seed(seed: int, epochs: int, packet_limit: int, smoke: bool = False)
     runs.append(e3)
 
     true_oracle_acc = 1.0
-    exact_tool_label = "formal_oracle_not_admitted"
+    exact_tool_label = "admitted_hostile_absorber"
+    runs.append(TrainedRun(
+        name="B13_exact_domain_tool_hidden_constructor",
+        hidden_acc=true_oracle_acc,
+        train_size=0,
+        notes={
+            "oracle_knowledge": "hidden_constructor_n0_1_n1_0_and_true_ranking_formula",
+            "uses_teacher_signals": False,
+            "mode": "direct_reconstruction_no_student_training",
+        },
+    ))
     result = {
         "seed": seed,
         "hidden_count": int(len(hidden_idx)),
@@ -483,30 +595,100 @@ def summarize(results: list[dict]) -> dict:
         metrics["B8_shuffled_teacher_identity"]["mean_hidden_acc"],
     )
     augmentation = metrics["B10_counterfactual_augmentation_no_tomography"]["mean_hidden_acc"]
+    enhanced_augmentation = metrics["B10_plus_enhanced_counterfactual_augmentation"]["mean_hidden_acc"]
+    exact_tool = metrics["B13_exact_domain_tool_hidden_constructor"]["mean_hidden_acc"]
+    nuisance_oracle = metrics["B15_nuisance_oracle_supplied_geometry"]["mean_hidden_acc"]
     ce = metrics["B0_CE_only_same_student"]["mean_hidden_acc"]
     ordinary = max(ce, best_single, avg_or_weighted, active, shuffled, augmentation)
+    hostile_non_exact = max(ordinary, enhanced_augmentation, nuisance_oracle)
+    all_absorbers = max(hostile_non_exact, exact_tool)
 
     margins = {
         "e3_minus_best_ordinary_pp": 100.0 * (e3 - ordinary),
+        "e3_minus_best_non_exact_absorber_pp": 100.0 * (e3 - hostile_non_exact),
+        "e3_minus_best_all_absorber_pp": 100.0 * (e3 - all_absorbers),
         "e3_minus_ce_pp": 100.0 * (e3 - ce),
         "e3_minus_best_single_pp": 100.0 * (e3 - best_single),
         "e3_minus_avg_or_weighted_pp": 100.0 * (e3 - avg_or_weighted),
         "e3_minus_active_pp": 100.0 * (e3 - active),
         "e3_minus_shuffled_pp": 100.0 * (e3 - shuffled),
         "e3_minus_augmentation_pp": 100.0 * (e3 - augmentation),
+        "e3_minus_b10_plus_enhanced_augmentation_pp": 100.0 * (e3 - enhanced_augmentation),
+        "e3_minus_b13_exact_domain_tool_pp": 100.0 * (e3 - exact_tool),
+        "e3_minus_b15_nuisance_oracle_pp": 100.0 * (e3 - nuisance_oracle),
     }
 
     priors = np.array([r["packet_rule"]["packet_value_prior"] for r in results], dtype=np.float64)
-    realized = np.array([
+    non_exact_realized = np.array([
+        r["runs"]["E3_source_specific_lesson_packets"]["hidden_acc"]
+        - max(
+            v["hidden_acc"]
+            for k, v in r["runs"].items()
+            if not k.startswith("E3_") and not k.startswith("B13_exact_domain_tool")
+        )
+        for r in results
+    ])
+    all_realized = np.array([
         r["runs"]["E3_source_specific_lesson_packets"]["hidden_acc"]
         - max(v["hidden_acc"] for k, v in r["runs"].items() if not k.startswith("E3_"))
         for r in results
     ])
-    forecast_ok = bool(np.mean(priors > 0.0) >= 0.75 and np.mean(realized > 0.0) >= 0.75)
+    forecast_ok_non_exact = bool(
+        np.mean(priors > 0.0) >= 0.75 and np.mean(non_exact_realized > 0.0) >= 0.75
+    )
+    forecast_ok_all = bool(
+        np.mean(priors > 0.0) >= 0.75 and np.mean(all_realized > 0.0) >= 0.75
+    )
 
     gate = PRECOMMIT["continuation_gate"]
+    absorber_precommit = PRECOMMIT["absorber_tests"]
+    absorber_verdicts = {
+        "B13_exact_domain_tool": {
+            "token": (
+                absorber_precommit["B13_exact_domain_tool"]["kill_token"]
+                if exact_tool >= e3
+                else absorber_precommit["B13_exact_domain_tool"]["confirm_token"]
+            ),
+            "absorbed": bool(exact_tool >= e3),
+            "margin_pp": margins["e3_minus_b13_exact_domain_tool_pp"],
+        },
+        "B15_nuisance_oracle": {
+            "token": (
+                absorber_precommit["B15_nuisance_oracle"]["kill_token"]
+                if margins["e3_minus_b15_nuisance_oracle_pp"] < gate["beat_nuisance_oracle_by_pp"]
+                else absorber_precommit["B15_nuisance_oracle"]["confirm_token"]
+            ),
+            "absorbed": bool(
+                margins["e3_minus_b15_nuisance_oracle_pp"] < gate["beat_nuisance_oracle_by_pp"]
+            ),
+            "margin_pp": margins["e3_minus_b15_nuisance_oracle_pp"],
+        },
+        "B10_plus_enhanced_augmentation": {
+            "token": (
+                absorber_precommit["B10_plus_enhanced_augmentation"]["kill_token"]
+                if margins["e3_minus_b10_plus_enhanced_augmentation_pp"]
+                < gate["beat_enhanced_augmentation_by_pp"]
+                else absorber_precommit["B10_plus_enhanced_augmentation"]["confirm_token"]
+            ),
+            "absorbed": bool(
+                margins["e3_minus_b10_plus_enhanced_augmentation_pp"]
+                < gate["beat_enhanced_augmentation_by_pp"]
+            ),
+            "margin_pp": margins["e3_minus_b10_plus_enhanced_augmentation_pp"],
+        },
+    }
+
     if not all(math.isfinite(v["mean_hidden_acc"]) for v in metrics.values()):
         token = "E3_TOY_VOID_NONFINITE"
+    elif exact_tool >= e3:
+        token = "E3_TOY_ABSORBED_BY_EXACT_DOMAIN_TOOL"
+    elif margins["e3_minus_b15_nuisance_oracle_pp"] < gate["beat_nuisance_oracle_by_pp"]:
+        token = "E3_TOY_ABSORBED_BY_NUISANCE_ORACLE"
+    elif (
+        margins["e3_minus_b10_plus_enhanced_augmentation_pp"]
+        < gate["beat_enhanced_augmentation_by_pp"]
+    ):
+        token = "E3_TOY_ABSORBED_BY_ENHANCED_AUGMENTATION"
     elif margins["e3_minus_ce_pp"] < gate["beat_best_ordinary_by_pp"] and ce >= ordinary:
         token = "E3_TOY_ABSORBED_BY_CE_ONLY"
     elif margins["e3_minus_best_single_pp"] < gate["beat_best_single_by_pp"]:
@@ -519,8 +701,8 @@ def summarize(results: list[dict]) -> dict:
         token = "E3_TOY_ABSORBED_BY_AUGMENTATION"
     elif margins["e3_minus_shuffled_pp"] < gate["beat_shuffled_by_pp"]:
         token = "E3_TOY_SHUFFLED_SENSORS_MATCH_REAL"
-    elif margins["e3_minus_best_ordinary_pp"] >= gate["beat_best_ordinary_by_pp"] and forecast_ok:
-        token = "E3_TOY_SIGNAL_SOURCE_SPECIFIC_COUNTERFACTUAL_LESSON"
+    elif margins["e3_minus_best_non_exact_absorber_pp"] >= gate["beat_best_ordinary_by_pp"] and forecast_ok_non_exact:
+        token = PRECOMMIT["signal_token"]
     else:
         token = "E3_TOY_NEGATIVE"
 
@@ -528,10 +710,13 @@ def summarize(results: list[dict]) -> dict:
         "precommit": PRECOMMIT,
         "summary_metrics": metrics,
         "margins": margins,
+        "absorber_verdicts": absorber_verdicts,
         "packet_value_forecast": {
             "mean_prior": float(priors.mean()),
-            "mean_realized_vs_best_baseline": float(realized.mean()),
-            "forecast_ok": forecast_ok,
+            "mean_realized_vs_best_non_exact_absorber": float(non_exact_realized.mean()),
+            "mean_realized_vs_best_all_absorber": float(all_realized.mean()),
+            "forecast_ok_non_exact": forecast_ok_non_exact,
+            "forecast_ok_all_absorbers": forecast_ok_all,
         },
         "terminal_token": token,
     }

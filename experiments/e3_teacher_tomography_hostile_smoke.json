@@ -1,0 +1,312 @@
+{
+  "precommit": {
+    "direction": "E3 Functional Teacher Tomography toy v1 hostile absorbers",
+    "claim": "source-specific teacher measurements can be inverted into compact counterfactual ranking lessons that transfer to a hidden transform better than raw teacher outputs and ordinary absorbers; this hostile variant separately tests whether exact tools or supplied geometry absorb the signal",
+    "signal_token": "E3_TOY_HOSTILE_SIGNAL_SURVIVES_SUPPLIED_GEOMETRY",
+    "kill_tokens": [
+      "E3_TOY_ABSORBED_BY_EXACT_DOMAIN_TOOL",
+      "E3_TOY_ABSORBED_BY_NUISANCE_ORACLE",
+      "E3_TOY_ABSORBED_BY_ENHANCED_AUGMENTATION",
+      "E3_TOY_ABSORBED_BY_CE_ONLY",
+      "E3_TOY_ABSORBED_BY_SINGLE_TEACHER",
+      "E3_TOY_ABSORBED_BY_TEACHER_AVERAGE_OR_WEIGHTED_VOTE",
+      "E3_TOY_ABSORBED_BY_ACTIVE_LEARNING",
+      "E3_TOY_ABSORBED_BY_AUGMENTATION",
+      "E3_TOY_SHUFFLED_SENSORS_MATCH_REAL",
+      "E3_TOY_NEGATIVE"
+    ],
+    "void_tokens": [
+      "E3_TOY_VOID_NONFINITE",
+      "E3_TOY_VOID_EMPTY_SPLIT",
+      "E3_TOY_VOID_SUPPLIED_GEOMETRY_OR_LEAKAGE"
+    ],
+    "continuation_gate": {
+      "beat_best_ordinary_by_pp": 5.0,
+      "beat_active_by_pp": 3.0,
+      "beat_best_single_by_pp": 3.0,
+      "beat_shuffled_by_pp": 6.0,
+      "beat_enhanced_augmentation_by_pp": 5.0,
+      "beat_nuisance_oracle_by_pp": 5.0
+    },
+    "absorber_tests": {
+      "B13_exact_domain_tool": {
+        "confirm_token": "B44_B13_CONFIRM_EXACT_TOOL_GRANTED_AND_SCORED",
+        "kill_token": "B44_B13_KILL_E3_IF_EXACT_TOOL_HIDDEN_ACC_GE_E3",
+        "void_token": "B44_B13_VOID_IF_TOOL_USES_TEACHER_SIGNALS"
+      },
+      "B15_nuisance_oracle": {
+        "confirm_token": "B44_B15_CONFIRM_TEACHER_IDENTITY_RESIDUAL_IF_E3_BEATS_NUISANCE_ORACLE_BY_5PP",
+        "kill_token": "B44_B15_KILL_TEACHER_IDENTITY_IF_NUISANCE_ORACLE_WITHIN_5PP_OR_BEATS_E3",
+        "void_token": "B44_B15_VOID_IF_ORACLE_USES_TEACHER_ROLE_MAP_OR_HIDDEN_SET_LOOKUP"
+      },
+      "B10_plus_enhanced_augmentation": {
+        "confirm_token": "B44_B10P_CONFIRM_TEACHER_SIGNAL_RESIDUAL_IF_E3_BEATS_TRANSFORM_AUG_BY_5PP",
+        "kill_token": "B44_B10P_KILL_E3_IF_TRANSFORM_AUGMENTATION_WITHOUT_TEACHERS_WITHIN_5PP_OR_BEATS_E3",
+        "void_token": "B44_B10P_VOID_IF_AUGMENTATION_USES_TEACHER_MARGINS_OR_HIDDEN_TEST_LABELS"
+      }
+    }
+  },
+  "summary_metrics": {
+    "B0_CE_only_same_student": {
+      "mean_hidden_acc": 0.5625,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.5625,
+      "max_hidden_acc": 0.5625
+    },
+    "B10_counterfactual_augmentation_no_tomography": {
+      "mean_hidden_acc": 0.4375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.4375,
+      "max_hidden_acc": 0.4375
+    },
+    "B10_plus_enhanced_counterfactual_augmentation": {
+      "mean_hidden_acc": 0.5,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.5,
+      "max_hidden_acc": 0.5
+    },
+    "B13_exact_domain_tool_hidden_constructor": {
+      "mean_hidden_acc": 1.0,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 1.0,
+      "max_hidden_acc": 1.0
+    },
+    "B15_nuisance_oracle_supplied_geometry": {
+      "mean_hidden_acc": 0.59375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.59375,
+      "max_hidden_acc": 0.59375
+    },
+    "B4_single_semantic_z0": {
+      "mean_hidden_acc": 0.46875,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.46875,
+      "max_hidden_acc": 0.46875
+    },
+    "B4_single_surface_lexical": {
+      "mean_hidden_acc": 0.53125,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.53125,
+      "max_hidden_acc": 0.53125
+    },
+    "B4_single_verifier_z1": {
+      "mean_hidden_acc": 0.4375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.4375,
+      "max_hidden_acc": 0.4375
+    },
+    "B5_naive_teacher_average": {
+      "mean_hidden_acc": 0.5625,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.5625,
+      "max_hidden_acc": 0.5625
+    },
+    "B6_weighted_vote_calibrated": {
+      "mean_hidden_acc": 0.375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.375,
+      "max_hidden_acc": 0.375
+    },
+    "B7_shuffled_teacher_measurements": {
+      "mean_hidden_acc": 0.625,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.625,
+      "max_hidden_acc": 0.625
+    },
+    "B8_shuffled_teacher_identity": {
+      "mean_hidden_acc": 0.46875,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.46875,
+      "max_hidden_acc": 0.46875
+    },
+    "B9_active_hard_examples_average_label": {
+      "mean_hidden_acc": 0.53125,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.53125,
+      "max_hidden_acc": 0.53125
+    },
+    "E3_source_specific_lesson_packets": {
+      "mean_hidden_acc": 0.59375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.59375,
+      "max_hidden_acc": 0.59375
+    }
+  },
+  "margins": {
+    "e3_minus_best_ordinary_pp": -3.125,
+    "e3_minus_best_non_exact_absorber_pp": -3.125,
+    "e3_minus_best_all_absorber_pp": -40.625,
+    "e3_minus_ce_pp": 3.125,
+    "e3_minus_best_single_pp": 6.25,
+    "e3_minus_avg_or_weighted_pp": 3.125,
+    "e3_minus_active_pp": 6.25,
+    "e3_minus_shuffled_pp": -3.125,
+    "e3_minus_augmentation_pp": 15.625,
+    "e3_minus_b10_plus_enhanced_augmentation_pp": 9.375,
+    "e3_minus_b13_exact_domain_tool_pp": -40.625,
+    "e3_minus_b15_nuisance_oracle_pp": 0.0
+  },
+  "absorber_verdicts": {
+    "B13_exact_domain_tool": {
+      "token": "B44_B13_KILL_E3_IF_EXACT_TOOL_HIDDEN_ACC_GE_E3",
+      "absorbed": true,
+      "margin_pp": -40.625
+    },
+    "B15_nuisance_oracle": {
+      "token": "B44_B15_KILL_TEACHER_IDENTITY_IF_NUISANCE_ORACLE_WITHIN_5PP_OR_BEATS_E3",
+      "absorbed": true,
+      "margin_pp": 0.0
+    },
+    "B10_plus_enhanced_augmentation": {
+      "token": "B44_B10P_CONFIRM_TEACHER_SIGNAL_RESIDUAL_IF_E3_BEATS_TRANSFORM_AUG_BY_5PP",
+      "absorbed": false,
+      "margin_pp": 9.375
+    }
+  },
+  "packet_value_forecast": {
+    "mean_prior": 0.375,
+    "mean_realized_vs_best_non_exact_absorber": -0.03125,
+    "mean_realized_vs_best_all_absorber": -0.40625,
+    "forecast_ok_non_exact": false,
+    "forecast_ok_all_absorbers": false
+  },
+  "terminal_token": "E3_TOY_ABSORBED_BY_EXACT_DOMAIN_TOOL",
+  "seeds": [
+    0
+  ],
+  "epochs": 80,
+  "packet_limit": 32,
+  "smoke": true,
+  "per_seed": [
+    {
+      "seed": 0,
+      "hidden_count": 32,
+      "calibration_count": 16,
+      "source_pool_count": 32,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.4375,
+          "semantic_z0": 0.625,
+          "verifier_z1": 0.5625
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 32,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 96,
+        "packet_value_prior": 0.375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5625,
+          "train_size": 16
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.53125,
+          "train_size": 48
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 48
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.4375,
+          "train_size": 48
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5625,
+          "train_size": 48
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.375,
+          "train_size": 48
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 26
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.625,
+          "train_size": 48
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 48
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.4375,
+          "train_size": 48
+        },
+        "B10_plus_enhanced_counterfactual_augmentation": {
+          "hidden_acc": 0.5,
+          "train_size": 48,
+          "n_augmented_examples": 32,
+          "label_source": "calibration_labels_plus_transformation_preserve_flip_semantics",
+          "uses_teacher_signals": false,
+          "transformation_conflicts": 0,
+          "transform_counts": {
+            "identity": 16,
+            "irrelevant_slot_flip_4": 16,
+            "irrelevant_slot_flip_5": 16,
+            "irrelevant_slot_flip_6": 16,
+            "nuisance_preserving_flip_0_2": 16,
+            "nuisance_preserving_flip_1_3": 16,
+            "single_latent_counterfactual_flip_0": 16,
+            "single_latent_counterfactual_flip_1": 16
+          }
+        },
+        "B15_nuisance_oracle_supplied_geometry": {
+          "hidden_acc": 0.59375,
+          "train_size": 48,
+          "n_oracle_labeled_examples": 32,
+          "oracle_knowledge": "n0_n1_nuisance_bits_and_transformation_rules_no_teacher_identity",
+          "uses_teacher_signals": false,
+          "matches_e3_packet_labels": 1.0
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.59375,
+          "train_size": 48,
+          "n_packet_examples": 32,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 96,
+          "packet_value_prior": 0.375
+        },
+        "B13_exact_domain_tool_hidden_constructor": {
+          "hidden_acc": 1.0,
+          "train_size": 0,
+          "oracle_knowledge": "hidden_constructor_n0_1_n1_0_and_true_ranking_formula",
+          "uses_teacher_signals": false,
+          "mode": "direct_reconstruction_no_student_training"
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "admitted_hostile_absorber",
+        "active_query_count": 10,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.005249343832020997,
+          "semantic_z0": 0.6614173228346457,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    }
+  ]
+}
