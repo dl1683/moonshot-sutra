@@ -138,3 +138,27 @@ r*_review_tmp/
 .pytest_cache/
 pytest-cache-files-*/
 pytest_run_*/
+
+# Additional local caches and probe outputs
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pyre/
+.pytype/
+.hypothesis/
+.cache/
+torchinductor_*/
+code/codex_dir_probe/
+
+# Training outputs (models, checkpoints, logs)
+outputs/
+
+# Blackboard internal reasoning
+.blackboard/
+
+# Serialized local experiment/model products
+*.pkl
+*.pickle
+*.joblib
+*.feather
