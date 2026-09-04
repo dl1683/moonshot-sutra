@@ -1082,6 +1082,9 @@ def main_ship():
 
         running_loss += loss.item()
 
+        if step % 200 == 0:
+            gpu_thermal_guard(max_temp=85)
+
         if step % 50 == 0:
             avg = running_loss / 50
             entry = {"step": step, "loss": round(avg, 6),
