@@ -126,7 +126,6 @@ advantage over B4c. It does NOT show response deltas contain zero useful info.
   - `--mode e1` (default): 4-arm text embedding experiment
   - `--mode e1.5`: corrected 6-arm adjudication with teacher-indexed heads
   - `--mode ship`: standard KD at scale for artifact production
-- `code/experiment_e2.py` — scaled E2 with confound fixes (proj_seed, warmup, 3 teachers)
 - `code/experiment_v1.py` — 4-arm vision embedding experiment (CIFAR-100)
 - `code/experiment_a1.py` — 4-arm audio embedding experiment (ESC-50/synthetic)
 - `code/eval_mteb.py` — MTEB evaluation (handles raw checkpoints + sentence-transformers)
@@ -172,16 +171,6 @@ own precommitted criteria.
 **Two independent problems to solve before E1.5:**
 1. Loss function: break the algebraic identity (teacher identity preservation)
 2. Evaluation: 32-doc raw-student hard-negative pools, proper statistical power
-
-## Codex E2 Audit — FAILED
-
-E2 code has material deficiencies (Codex found):
-- No replicate seeds or hierarchical uncertainty analysis
-- Equal steps not equal compute (student FLOPs)
-- Missing B4 augmented-contrastive and B5 oracle-single absorber arms
-- Nomic v1.5 encoded without required search_query:/search_document: prefixes
-- Test-set leakage: winning arm selected on test set
-- Three teachers introduced during what should be 2-teacher replication first
 
 ## Codex Design Gate (2026-09-04): NO-GO → Redesign
 

@@ -152,7 +152,6 @@ claims.
 ### Active Code
 
 - `code/experiment_e1.py` - multi-mode experiment runner (e1, e1.5, ship).
-- `code/experiment_e2.py` - scaled E2 with confound fixes.
 - `code/experiment_v1.py` - vision embedding experiment.
 - `code/experiment_a1.py` - audio embedding experiment.
 - `code/embed_tomography.py` - signature extraction, probes, loss functions.
@@ -172,6 +171,9 @@ claims.
 31 dead Python files (S0, old Eklavya, E3, old runner, old utilities, and
 their tests) deleted 2026-09-04. All formed a closed import cluster with no
 active code depending on them. Preserved in git history.
+
+`code/experiment_e2.py` deleted 2026-09-04. Codex audit found 6 material
+deficiencies; ship mode superseded by `experiment_e1.py --mode ship`.
 
 ### Support Files Kept
 
