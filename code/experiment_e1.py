@@ -1413,21 +1413,24 @@ def main_ship():
     eval_pairs = all_pairs[args.n_train:args.n_train + args.n_eval]
     print(f"Data: {len(train_pairs)} train, {len(eval_pairs)} eval")
 
-    print(f"\nExtracting teacher scores ({args.teacher})...")
-    teacher = load_st_model(args.teacher, device=args.device)
     teacher_data = {}
-    for i, pair in enumerate(train_pairs):
-        identity_probe = Probe(probe_id="identity", text=pair["query"])
-        scores = extract_teacher_scores(
-            teacher, pair["query"], pair["documents"], [identity_probe],
-        )
-        teacher_data[pair["id"]] = {args.teacher: scores}
-        if (i + 1) % 500 == 0:
-            print(f"  {i+1}/{len(train_pairs)} pairs extracted")
-    del teacher
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    print(f"  Extracted {len(teacher_data)} training pairs")
+    if args.kd_weight > 0:
+        print(f"\nExtracting teacher scores ({args.teacher})...")
+        teacher = load_st_model(args.teacher, device=args.device)
+        for i, pair in enumerate(train_pairs):
+            identity_probe = Probe(probe_id="identity", text=pair["query"])
+            scores = extract_teacher_scores(
+                teacher, pair["query"], pair["documents"], [identity_probe],
+            )
+            teacher_data[pair["id"]] = {args.teacher: scores}
+            if (i + 1) % 500 == 0:
+                print(f"  {i+1}/{len(train_pairs)} pairs extracted")
+        del teacher
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print(f"  Extracted {len(teacher_data)} training pairs")
+    else:
+        print("\nNo teacher needed (kd_weight=0, pure contrastive)")
 
     print("\nInitializing student...")
     student = ModernBERTEmbedder(
@@ -1466,16 +1469,19 @@ def main_ship():
 
         optimizer.zero_grad()
 
-        kd_loss = compute_kd_loss(
-            student, pair["query"], pair["documents"],
-            teacher_data[pair["id"]][args.teacher]["identity"],
-            tau=args.tau,
-        )
         contrastive_loss = compute_contrastive_loss(
             student, pair["query"], pair["documents"],
             pair["gold_idx"], tau=args.tau,
         )
-        loss = args.kd_weight * kd_loss + (1 - args.kd_weight) * contrastive_loss
+        if args.kd_weight > 0:
+            kd_loss = compute_kd_loss(
+                student, pair["query"], pair["documents"],
+                teacher_data[pair["id"]][args.teacher]["identity"],
+                tau=args.tau,
+            )
+            loss = args.kd_weight * kd_loss + (1 - args.kd_weight) * contrastive_loss
+        else:
+            loss = contrastive_loss
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
