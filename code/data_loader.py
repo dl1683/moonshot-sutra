@@ -170,6 +170,73 @@ def load_hard_toy(n: int = 200, n_docs: int = 8, seed: int = 42) -> list[dict]:
     return pairs[:n]
 
 
+def mine_hard_negatives(
+    pairs: list[dict],
+    student_model,
+    n_docs: int = 32,
+    batch_size: int = 64,
+) -> list[dict]:
+    """Re-mine hard negatives using the raw student's embeddings.
+
+    Pools all passages across queries, encodes with the student,
+    and for each query selects the top-n_docs hardest negatives
+    (highest cosine similarity to query, excluding the gold doc).
+    """
+    import torch
+
+    all_passages = []
+    passage_to_idx = {}
+    gold_passages = {}
+
+    for pair in pairs:
+        gold_doc = pair["documents"][pair["gold_idx"]]
+        gold_passages[pair["id"]] = gold_doc
+        for doc in pair["documents"]:
+            if doc not in passage_to_idx:
+                passage_to_idx[doc] = len(all_passages)
+                all_passages.append(doc)
+
+    print(f"  Mining hard negatives: {len(all_passages)} unique passages, {len(pairs)} queries")
+
+    with torch.no_grad():
+        passage_embs = []
+        for i in range(0, len(all_passages), batch_size):
+            batch = all_passages[i : i + batch_size]
+            embs = student_model.encode(batch, convert_to_tensor=True, normalize_embeddings=True)
+            passage_embs.append(embs.cpu())
+        passage_embs = torch.cat(passage_embs, dim=0)
+
+    mined_pairs = []
+    for pair in pairs:
+        query = pair["query"]
+        gold_doc = pair["documents"][pair["gold_idx"]]
+        gold_idx_in_pool = passage_to_idx[gold_doc]
+
+        with torch.no_grad():
+            q_emb = student_model.encode([query], convert_to_tensor=True, normalize_embeddings=True).cpu()
+        sims = (q_emb @ passage_embs.T).squeeze(0)
+
+        sims[gold_idx_in_pool] = -1.0
+        topk_indices = sims.argsort(descending=True)[: n_docs - 1].tolist()
+
+        docs = [gold_doc] + [all_passages[idx] for idx in topk_indices]
+        rng = random.Random(hash(pair["id"]))
+        order = list(range(len(docs)))
+        rng.shuffle(order)
+        shuffled_docs = [docs[i] for i in order]
+        new_gold_idx = order.index(0)
+
+        mined_pairs.append({
+            "id": pair["id"],
+            "query": query,
+            "documents": shuffled_docs,
+            "gold_idx": new_gold_idx,
+        })
+
+    print(f"  Mined {n_docs} docs per query ({n_docs - 1} hard negatives + 1 gold)")
+    return mined_pairs
+
+
 def load_msmarco_pairs(n: int = 500, n_docs: int = 8, seed: int = 42, cache_dir: str | None = None) -> list[dict]:
     """Load query-passage pairs from MS MARCO with BM25 hard negatives."""
     from datasets import load_dataset

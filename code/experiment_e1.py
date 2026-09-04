@@ -1,21 +1,25 @@
-"""Eklavya Experiment E1 — Real embedding tomography vs standard KD.
+"""Eklavya Experiment E1 / E1.5 — Embedding tomography vs standard KD.
 
-Student: ModernBERT-base (149M, no embedding training)
-Teachers: all-MiniLM-L12-v2 + bge-large-en-v1.5 (heterogeneous)
-Data: Hard-negative retrieval pairs
-Eval: Held-out retrieval accuracy + teacher-probe response matching
+E1 (original): 4 arms with KL-based tomography loss.
+  Known flaw: avg(KL(P_t||Q)) = KL(avg(P_t)||Q), erasing teacher identity.
 
-Arms:
-  E1: Full tomography (multi-probe, multi-teacher KL on ranking distributions)
-  B0: Contrastive-only baseline (InfoNCE, no teacher)
-  B2: Standard single-teacher KD (identity probe only, best teacher)
-  B3: Multi-teacher average KD (average teacher scores, identity probe only)
+E1.5 (corrected adjudication): Teacher-indexed auxiliary heads.
+  Each teacher gets its own linear head over the shared encoder. This
+  genuinely breaks the algebraic identity: Q_t != Q_t' for different
+  teachers. B4c absorber is support-matched (same heads, gold targets).
+  32-doc raw-student hard negatives, 3+ seeds, paired t-test CI.
 
-The decisive question: does multi-probe tomography transfer structure that
-standard KD and averaging cannot?
+Arms (E1.5):
+  B0:   Contrastive-only (no teacher)
+  B2:   Single-teacher KD (identity probe only)
+  B3:   Calibrated multi-teacher avg KD (softmax then average)
+  E1.5: Teacher-indexed KL (multi-probe, multi-teacher, per-teacher heads)
+  E1.5id: Teacher-indexed KL (identity probe only) — ablation
+  B4c:  Matched absorber (same heads, same support, gold targets)
 
 Usage:
-  python code/experiment_e1.py --device cuda --steps 1000 --out_dir outputs/E1
+  python code/experiment_e1.py --device cuda --steps 600 --out_dir outputs/E1
+  python code/experiment_e1.py --mode e1.5 --device cuda --out_dir outputs/E1_5
 """
 from __future__ import annotations
 
@@ -45,13 +49,20 @@ from data_loader import load_hard_toy, load_msmarco_pairs
 class ModernBERTEmbedder(nn.Module):
     """Wraps ModernBERT-base as a sentence embedder with mean pooling + projection."""
 
-    def __init__(self, model_name: str = "answerdotai/ModernBERT-base", dim: int = 384):
+    def __init__(self, model_name: str = "answerdotai/ModernBERT-base", dim: int = 384,
+                 proj_seed: int | None = None):
         super().__init__()
         from transformers import AutoModel, AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.encoder = AutoModel.from_pretrained(model_name)
         hidden = self.encoder.config.hidden_size  # 768
-        self.proj = nn.Linear(hidden, dim)
+        if proj_seed is not None:
+            rng_state = torch.random.get_rng_state()
+            torch.manual_seed(proj_seed)
+            self.proj = nn.Linear(hidden, dim)
+            torch.random.set_rng_state(rng_state)
+        else:
+            self.proj = nn.Linear(hidden, dim)
         self.dim = dim
 
     def forward(self, texts: list[str]) -> torch.Tensor:
@@ -132,6 +143,218 @@ def compute_kd_loss(
     return F.kl_div(student_log_dist, target_dist, reduction="batchmean", log_target=False)
 
 
+def compute_reverse_kl_tomography_loss(
+    student: ModernBERTEmbedder,
+    query_probes: list[Probe],
+    documents: list[str],
+    teacher_scores: dict[str, dict[str, list[float]]],
+    tau: float = 0.05,
+) -> tuple[torch.Tensor, dict]:
+    """Reverse KL tomography: KL(Q_student || P_teacher) per teacher per probe.
+
+    Breaks the algebraic identity because the gradient involves log(P_t)
+    nonlinearly: avg_t(log P_t(x)) != log(avg_t(P_t(x))) by Jensen's
+    inequality. Unlike forward KL, there is no dead zone — gradient is
+    well-defined everywhere softmax outputs are positive.
+    """
+    doc_embs = student.forward(documents)
+    device = doc_embs.device
+    loss = torch.tensor(0.0, device=device)
+    n = 0
+    n_agreements = 0
+    n_disagreements = 0
+
+    teacher_names = list(teacher_scores.keys())
+
+    for probe in query_probes:
+        q_emb = student.forward([probe.text])
+        student_sims = (q_emb @ doc_embs.T).squeeze(0)
+        student_log_dist = F.log_softmax(student_sims / tau, dim=0)
+        student_dist = student_log_dist.exp()
+
+        for tname in teacher_names:
+            tsig = teacher_scores[tname]
+            if probe.probe_id not in tsig:
+                continue
+            target_sims = torch.tensor(
+                tsig[probe.probe_id], dtype=torch.float32, device=device,
+            )
+            target_log_dist = F.log_softmax(target_sims / tau, dim=0)
+
+            kl = F.kl_div(target_log_dist.detach(), student_dist,
+                          reduction="batchmean", log_target=False)
+            loss = loss + kl
+            n += 1
+
+        if len(teacher_names) >= 2:
+            probe_scores = []
+            for tname in teacher_names:
+                if probe.probe_id in teacher_scores.get(tname, {}):
+                    probe_scores.append(teacher_scores[tname][probe.probe_id])
+            if len(probe_scores) >= 2:
+                s0, s1 = probe_scores[0], probe_scores[1]
+                for i in range(len(documents)):
+                    for j in range(i + 1, len(documents)):
+                        d0 = s0[i] - s0[j]
+                        d1 = s1[i] - s1[j]
+                        if abs(d0) > 0.01 and abs(d1) > 0.01:
+                            if (d0 > 0) == (d1 > 0):
+                                n_agreements += 1
+                            else:
+                                n_disagreements += 1
+
+    diag = {
+        "n_terms": n,
+        "n_teacher_agreements": n_agreements,
+        "n_teacher_disagreements": n_disagreements,
+        "disagreement_rate": n_disagreements / max(n_agreements + n_disagreements, 1),
+    }
+    return loss / max(n, 1), diag
+
+
+def compute_b4c_pairwise_loss(
+    student: ModernBERTEmbedder,
+    query_probes: list[Probe],
+    documents: list[str],
+    gold_idx: int,
+    margin: float = 0.05,
+) -> torch.Tensor:
+    """B4c absorber for identity-preserving loss: same probes, same pairwise
+    structure, but targets are gold-label preferences (gold doc > every other)
+    instead of teacher-specific rankings. If E1.5 = B4c, then the per-teacher
+    signal is just augmentation."""
+    doc_embs = student.forward(documents)
+    device = doc_embs.device
+    loss = torch.tensor(0.0, device=device)
+    n_pairs = 0
+
+    for probe in query_probes:
+        q_emb = student.forward([probe.text])
+        student_sims = (q_emb @ doc_embs.T).squeeze(0)
+
+        for j in range(len(documents)):
+            if j == gold_idx:
+                continue
+            s_diff = student_sims[gold_idx] - student_sims[j]
+            loss = loss + F.relu(margin - s_diff)
+            n_pairs += 1
+
+    return loss / max(n_pairs, 1)
+
+
+def filter_safe_probes(probes: list[Probe]) -> list[Probe]:
+    """Exclude negation probes — gold label may not be valid for negated queries."""
+    return [p for p in probes if p.probe_id != "negation"]
+
+
+def make_teacher_heads(
+    teacher_names: list[str], dim: int, device, proj_seed: int | None = None,
+) -> nn.ModuleDict:
+    """Create per-teacher auxiliary linear heads over the shared embedding space."""
+    heads = {}
+    for tname in teacher_names:
+        key = tname.replace("/", "_").replace("-", "_")
+        if proj_seed is not None:
+            rng_state = torch.random.get_rng_state()
+            torch.manual_seed(proj_seed + hash(key) % (2**31))
+            heads[key] = nn.Linear(dim, dim)
+            torch.random.set_rng_state(rng_state)
+        else:
+            heads[key] = nn.Linear(dim, dim)
+    return nn.ModuleDict(heads).to(device)
+
+
+def _head_key(tname: str) -> str:
+    return tname.replace("/", "_").replace("-", "_")
+
+
+def compute_teacher_indexed_kl_loss(
+    student: ModernBERTEmbedder,
+    teacher_heads: nn.ModuleDict,
+    query_probes: list[Probe],
+    documents: list[str],
+    teacher_scores: dict[str, dict[str, list[float]]],
+    tau: float = 0.05,
+) -> tuple[torch.Tensor, dict]:
+    """Teacher-indexed KL: each teacher's distribution is matched through its own head.
+
+    Student embedding goes through shared encoder + proj, then through a
+    teacher-specific linear head before computing similarity and KL divergence.
+    This breaks the algebraic identity: Q_t != Q_t' for different teachers,
+    so avg_t KL(P_t || Q_t) != KL(avg(P_t) || Q_shared).
+    """
+    doc_embs_base = student.forward(documents)
+    device = doc_embs_base.device
+    loss = torch.tensor(0.0, device=device)
+    n = 0
+
+    for probe in query_probes:
+        q_emb_base = student.forward([probe.text])
+
+        for tname, tsig in teacher_scores.items():
+            if probe.probe_id not in tsig:
+                continue
+            head = teacher_heads[_head_key(tname)]
+            q_emb = F.normalize(head(q_emb_base), p=2, dim=-1)
+            doc_embs = F.normalize(head(doc_embs_base), p=2, dim=-1)
+
+            student_sims = (q_emb @ doc_embs.T).squeeze(0)
+            student_log_dist = F.log_softmax(student_sims / tau, dim=0)
+
+            target_sims = torch.tensor(
+                tsig[probe.probe_id], dtype=torch.float32, device=device,
+            )
+            target_dist = F.softmax(target_sims / tau, dim=0)
+            kl = F.kl_div(
+                student_log_dist, target_dist.detach(),
+                reduction="batchmean", log_target=False,
+            )
+            loss = loss + kl
+            n += 1
+
+    return loss / max(n, 1), {"n_terms": n}
+
+
+def compute_b4c_matched_kl_loss(
+    student: ModernBERTEmbedder,
+    teacher_heads: nn.ModuleDict,
+    query_probes: list[Probe],
+    documents: list[str],
+    gold_idx: int,
+    teacher_names: list[str],
+    tau: float = 0.05,
+) -> torch.Tensor:
+    """B4c absorber matched to teacher-indexed loss: identical architecture,
+    identical support (every teacher × every probe), but targets are gold
+    preferences (one-hot on gold doc) instead of teacher distributions.
+    If teacher-indexed E1.5 = matched B4c, teacher distributions add nothing."""
+    doc_embs_base = student.forward(documents)
+    device = doc_embs_base.device
+    loss = torch.tensor(0.0, device=device)
+    n = 0
+    target = torch.zeros(len(documents), device=device)
+    target[gold_idx] = 1.0
+
+    for probe in query_probes:
+        q_emb_base = student.forward([probe.text])
+        for tname in teacher_names:
+            head = teacher_heads[_head_key(tname)]
+            q_emb = F.normalize(head(q_emb_base), p=2, dim=-1)
+            doc_embs = F.normalize(head(doc_embs_base), p=2, dim=-1)
+
+            student_sims = (q_emb @ doc_embs.T).squeeze(0)
+            student_log_dist = F.log_softmax(student_sims / tau, dim=0)
+
+            kl = F.kl_div(
+                student_log_dist, target.detach(),
+                reduction="batchmean", log_target=False,
+            )
+            loss = loss + kl
+            n += 1
+
+    return loss / max(n, 1)
+
+
 def compute_contrastive_loss(
     student: ModernBERTEmbedder,
     query: str,
@@ -149,8 +372,11 @@ def compute_contrastive_loss(
 
 @torch.no_grad()
 def evaluate(student: ModernBERTEmbedder, pairs: list[dict]) -> dict:
+    was_training = student.training
+    student.eval()
     hits1 = hits5 = 0
     mrr_sum = 0.0
+    per_query = []
     for pair in pairs:
         q_emb = student.forward([pair["query"]])
         d_embs = student.forward(pair["documents"])
@@ -163,8 +389,11 @@ def evaluate(student: ModernBERTEmbedder, pairs: list[dict]) -> dict:
             hits5 += 1
         rank = ranked.index(gold) + 1
         mrr_sum += 1.0 / rank
+        per_query.append({"id": pair["id"], "gold_rank": rank, "rr": 1.0 / rank})
+    if was_training:
+        student.train()
     n = len(pairs)
-    return {"hit@1": hits1/n, "hit@5": hits5/n, "mrr": mrr_sum/n, "n": n}
+    return {"hit@1": hits1/n, "hit@5": hits5/n, "mrr": mrr_sum/n, "n": n, "per_query": per_query}
 
 
 def run_arm(
@@ -178,12 +407,17 @@ def run_arm(
     tau: float,
     out_dir: str,
     arm_type: str = "tomography",
+    teacher_heads: nn.ModuleDict | None = None,
+    teacher_names: list[str] | None = None,
 ):
     print(f"\n{'='*60}")
     print(f"ARM: {arm_name} ({arm_type})")
     print(f"{'='*60}")
 
-    optimizer = AdamW(student.parameters(), lr=lr, weight_decay=0.01)
+    params = list(student.parameters())
+    if teacher_heads is not None:
+        params += list(teacher_heads.parameters())
+    optimizer = AdamW(params, lr=lr, weight_decay=0.01)
     scheduler = CosineAnnealingLR(optimizer, T_max=steps, eta_min=lr * 0.1)
 
     # Baseline
@@ -209,17 +443,39 @@ def run_arm(
                 student, probes, pair["documents"],
                 teacher_data[pair["id"]], tau=tau,
             )
+        elif arm_type == "teacher_indexed":
+            probes = filter_safe_probes(generate_probes(pair["query"], seed=idx))
+            loss, _diag = compute_teacher_indexed_kl_loss(
+                student, teacher_heads, probes, pair["documents"],
+                teacher_data[pair["id"]], tau=tau,
+            )
+        elif arm_type == "teacher_indexed_id_only":
+            probes = [Probe(probe_id="identity", text=pair["query"])]
+            loss, _diag = compute_teacher_indexed_kl_loss(
+                student, teacher_heads, probes, pair["documents"],
+                teacher_data[pair["id"]], tau=tau,
+            )
+        elif arm_type == "b4c_matched":
+            probes = filter_safe_probes(generate_probes(pair["query"], seed=idx))
+            loss = compute_b4c_matched_kl_loss(
+                student, teacher_heads, probes, pair["documents"],
+                pair["gold_idx"], teacher_names, tau=tau,
+            )
         elif arm_type == "kd_single":
-            # Use best teacher's identity scores
             tid = list(teacher_data[pair["id"]].keys())[0]
             loss = compute_kd_loss(
                 student, pair["query"], pair["documents"],
                 teacher_data[pair["id"]][tid]["identity"], tau=tau,
             )
         elif arm_type == "kd_avg":
-            # Average teacher identity scores
             scores_lists = [t["identity"] for t in teacher_data[pair["id"]].values()]
-            avg_scores = [sum(s)/len(s) for s in zip(*scores_lists)]
+            device = next(student.parameters()).device
+            calibrated = []
+            for scores in scores_lists:
+                t = torch.tensor(scores, dtype=torch.float32)
+                calibrated.append(F.softmax(t / tau, dim=0))
+            avg_dist = torch.stack(calibrated).mean(dim=0)
+            avg_scores = (avg_dist.log() * tau).tolist()
             loss = compute_kd_loss(
                 student, pair["query"], pair["documents"],
                 avg_scores, tau=tau,
@@ -232,8 +488,13 @@ def run_arm(
         else:
             raise ValueError(f"Unknown arm type: {arm_type}")
 
+        if not loss.requires_grad:
+            continue
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+        all_params = list(student.parameters())
+        if teacher_heads is not None:
+            all_params += list(teacher_heads.parameters())
+        torch.nn.utils.clip_grad_norm_(all_params, 1.0)
         optimizer.step()
         scheduler.step()
 
@@ -404,5 +665,226 @@ def main():
         print("VERDICT: Tomography absorbed. Investigate why.")
 
 
+def main_e15():
+    """E1.5 — Corrected text adjudication with teacher-indexed auxiliary heads.
+
+    Fixes from Codex design gate:
+    - Teacher-indexed heads break the algebraic identity genuinely
+    - B4c matched on architecture + support (same heads, gold targets)
+    - Negation probes excluded from label-sensitive arms
+    - Eval mode in evaluate(), proper RNG seeding
+    - Paired bootstrap CI with t-distribution for small seed counts
+    - Calibrated B3 (average softmax distributions, not raw scores)
+    """
+    import random as stdlib_random
+    import numpy as np
+    from scipy import stats as sp_stats
+
+    parser = argparse.ArgumentParser(description="Eklavya E1.5 — Corrected Adjudication")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--steps", type=int, default=600)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--tau", type=float, default=0.05)
+    parser.add_argument("--n_train", type=int, default=400)
+    parser.add_argument("--n_eval", type=int, default=200)
+    parser.add_argument("--n_docs", type=int, default=32)
+    parser.add_argument("--seeds", nargs="+", type=int, default=[42, 137, 271])
+    parser.add_argument("--proj_seed", type=int, default=9999)
+    parser.add_argument("--out_dir", default="outputs/E1_5")
+    parser.add_argument("--student", default="answerdotai/ModernBERT-base")
+    parser.add_argument("--teachers", nargs="+",
+                        default=["sentence-transformers/all-MiniLM-L12-v2", "BAAI/bge-large-en-v1.5"])
+    args = parser.parse_args()
+
+    from data_loader import load_msmarco_pairs, mine_hard_negatives
+
+    ARMS = [
+        ("B0_contrastive", "contrastive"),
+        ("B2_kd_single", "kd_single"),
+        ("B3_kd_avg_cal", "kd_avg"),
+        ("E15_teacher_indexed", "teacher_indexed"),
+        ("E15_teacher_idx_id", "teacher_indexed_id_only"),
+        ("B4c_matched", "b4c_matched"),
+    ]
+
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+    all_seed_results = {}
+
+    for seed_idx, data_seed in enumerate(args.seeds):
+        print(f"\n{'#'*60}")
+        print(f"SEED {seed_idx + 1}/{len(args.seeds)}: data_seed={data_seed}")
+        print(f"{'#'*60}")
+
+        stdlib_random.seed(data_seed)
+        np.random.seed(data_seed)
+        torch.manual_seed(data_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(data_seed)
+
+        seed_dir = os.path.join(args.out_dir, f"seed_{data_seed}")
+        Path(seed_dir).mkdir(parents=True, exist_ok=True)
+
+        raw_pairs = load_msmarco_pairs(
+            n=args.n_train + args.n_eval, n_docs=10, seed=data_seed,
+        )
+        if len(raw_pairs) < args.n_train + args.n_eval:
+            print(f"Warning: only got {len(raw_pairs)} pairs")
+
+        train_raw = raw_pairs[:args.n_train]
+        eval_raw = raw_pairs[args.n_train : args.n_train + args.n_eval]
+
+        print("\nMining hard negatives with raw student...")
+        raw_student = ModernBERTEmbedder(
+            args.student, dim=384, proj_seed=args.proj_seed,
+        ).to(args.device)
+        raw_student.eval()
+
+        train_pairs = mine_hard_negatives(
+            train_raw, raw_student, n_docs=args.n_docs,
+        )
+        eval_pairs = mine_hard_negatives(
+            eval_raw, raw_student, n_docs=args.n_docs,
+        )
+        del raw_student
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        print(f"Data: {len(train_pairs)} train, {len(eval_pairs)} eval, {args.n_docs} docs/query")
+
+        print("\nExtracting teacher signatures...")
+        teachers = {}
+        for tname in args.teachers:
+            print(f"  Loading {tname}")
+            teachers[tname] = load_st_model(tname, device=args.device)
+
+        teacher_data = {}
+        for pair in train_pairs:
+            probes = generate_probes(pair["query"], seed=train_pairs.index(pair))
+            td = {}
+            for tname, tmodel in teachers.items():
+                td[tname] = extract_teacher_scores(
+                    tmodel, pair["query"], pair["documents"], probes,
+                )
+            teacher_data[pair["id"]] = td
+
+        del teachers
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        seed_results = {}
+        for arm_name, arm_type in ARMS:
+            torch.manual_seed(data_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(data_seed)
+
+            student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+
+            t_heads = None
+            if arm_type in ("teacher_indexed", "teacher_indexed_id_only", "b4c_matched"):
+                t_heads = make_teacher_heads(
+                    args.teachers, student.dim, args.device,
+                    proj_seed=args.proj_seed,
+                )
+
+            td = teacher_data if arm_type != "contrastive" else None
+            result = run_arm(
+                arm_name, student, train_pairs, eval_pairs,
+                teacher_data=td, steps=args.steps, lr=args.lr, tau=args.tau,
+                out_dir=seed_dir, arm_type=arm_type,
+                teacher_heads=t_heads, teacher_names=args.teachers,
+            )
+
+            seed_results[arm_name] = result
+            del student
+            if t_heads is not None:
+                del t_heads
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        all_seed_results[data_seed] = seed_results
+
+        with open(os.path.join(seed_dir, "summary.json"), "w") as f:
+            json.dump({k: {kk: vv for kk, vv in v.items() if kk != "per_query"}
+                       for k, v in seed_results.items()}, f, indent=2)
+
+    # --- Multi-seed summary ---
+    print(f"\n{'='*60}")
+    print("E1.5 MULTI-SEED SUMMARY")
+    print(f"{'='*60}")
+    print(f"{'Arm':<25} {'Mean MRR':>10} {'Std':>8} {'Mean Gain':>10}")
+    print("-" * 55)
+
+    arm_stats = {}
+    for arm_name, _ in ARMS:
+        mrrs = [all_seed_results[s][arm_name]["final"]["mrr"] for s in args.seeds]
+        gains = [all_seed_results[s][arm_name]["gain_mrr"] for s in args.seeds]
+        mean_mrr = np.mean(mrrs)
+        std_mrr = np.std(mrrs, ddof=1) if len(mrrs) > 1 else 0.0
+        mean_gain = np.mean(gains)
+        print(f"{arm_name:<25} {mean_mrr:>10.4f} {std_mrr:>8.4f} {mean_gain:>+10.4f}")
+        arm_stats[arm_name] = {
+            "mrrs": [float(m) for m in mrrs],
+            "gains": [float(g) for g in gains],
+            "mean_mrr": float(mean_mrr),
+            "std_mrr": float(std_mrr),
+            "mean_gain": float(mean_gain),
+        }
+
+    # Paired comparison: E15 teacher-indexed vs B4c matched absorber
+    e15 = arm_stats["E15_teacher_indexed"]
+    b4c = arm_stats["B4c_matched"]
+    n_seeds = len(args.seeds)
+    delta_mrrs = [e15["mrrs"][i] - b4c["mrrs"][i] for i in range(n_seeds)]
+    mean_delta = np.mean(delta_mrrs)
+    std_delta = np.std(delta_mrrs, ddof=1) if n_seeds > 1 else 0.0
+    se_delta = std_delta / max(n_seeds ** 0.5, 1)
+    t_crit = sp_stats.t.ppf(0.975, df=max(n_seeds - 1, 1))
+
+    print(f"\nE1.5 vs B4c (paired): mean delta = {mean_delta:+.4f}, SE = {se_delta:.4f}")
+    ci_lo = mean_delta - t_crit * se_delta
+    ci_hi = mean_delta + t_crit * se_delta
+    print(f"95% CI (t, df={n_seeds-1}): [{ci_lo:+.4f}, {ci_hi:+.4f}]")
+
+    threshold = 0.005
+    if ci_lo > threshold:
+        verdict = "Teacher-indexed tomography shows signal above B4c absorber."
+    elif ci_hi < threshold:
+        verdict = "Teacher-indexed tomography absorbed by B4c. Kill confirmed."
+    else:
+        verdict = "Inconclusive. Need more seeds or data."
+    print(f"VERDICT: {verdict}")
+
+    final_summary = {
+        "arms": arm_stats,
+        "seeds": args.seeds,
+        "config": {k: v for k, v in vars(args).items() if k != "device"},
+        "paired_test": {
+            "e15_vs_b4c_delta": [float(d) for d in delta_mrrs],
+            "mean_delta": float(mean_delta),
+            "se": float(se_delta),
+            "ci_95": [float(ci_lo), float(ci_hi)],
+            "t_crit": float(t_crit),
+            "df": n_seeds - 1,
+            "threshold": threshold,
+            "verdict": verdict,
+        },
+    }
+    with open(os.path.join(args.out_dir, "summary.json"), "w") as f:
+        json.dump(final_summary, f, indent=2)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--mode" in sys.argv:
+        idx = sys.argv.index("--mode")
+        mode = sys.argv[idx + 1]
+        sys.argv.pop(idx)
+        sys.argv.pop(idx)
+        if mode == "e1.5":
+            main_e15()
+        else:
+            main()
+    else:
+        main()
