@@ -29,6 +29,7 @@ commit messages; this public index uses generic descriptions.
 | `eklavya_embed_v2r2` | 2026-09-03 | Eklavya-Embedding | **Narrow negative** (reclassified from Kill #15) | Frozen encoder + residual head, single teacher, B4c absorber. Response-delta = B4c (+0.0000). Ceiling-saturated (baseline nDCG 0.93). Terminal criterion not executed. Corrected adjudication (E1.5) required. |
 | `eklavya_embed_e1_200` | 2026-09-04 | Eklavya-Embedding | Contradicts 500-pair E1 | 200-pair replication: single-teacher KD wins (+0.241), tomography third (+0.176). Signal is seed/split-dependent. |
 | `eklavya_vision_v1` | 2026-09-04 | Eklavya-Vision | **Inconclusive** (Codex FAIL) | 5-arm CIFAR-100 with DINOv2-small. Codex evidence gate: exploratory debugging, not valid evidence. Catastrophic forgetting masks method differences. Probe-target misalignment. Neither "tomography dead" nor "standard KD wins" established. Method question OPEN. |
+| `e1_5_corrected_adjudication` | 2026-09-04 | Eklavya-Embedding | **KILL: teacher-indexed heads** | 6-arm, 3-seed (42/137/271), frozen encoder, 400 train, 200 eval, 32 docs. B0 (contrastive) wins all seeds (mean 0.769). E15 vs B4c valid-seed delta = -0.005. B4c catastrophic on seed_271 (0.22). Mechanism dead; mission survives. |
 
 ## Experiment Notes
 
