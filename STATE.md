@@ -284,7 +284,7 @@ Full verdict: `outputs/V1_cifar100/codex_evidence_gate.txt`
 1. ~~Fix E1.5 code defects~~ DONE
 2. ~~Run corrected E1.5 text experiment~~ DONE (3/3 seeds)
 3. ~~Codex evidence gate~~ DONE (INCONCLUSIVE — narrow negative, not terminal kill)
-4. Launch ship mode: standard KD at scale (50K pairs, 10K steps, kd_weight=0.7)
+4. ~~Launch ship mode~~ RUNNING (20K pairs, 5K steps, kd_weight=0.7, unfrozen encoder)
 5. Export to sentence-transformers format
 6. MTEB quick eval — competitive targets: floor ~56 (MiniLM-L6), realistic ~62
 7. Design and run E16 Boundary Inheritance (teacher-guided mining experiment)
