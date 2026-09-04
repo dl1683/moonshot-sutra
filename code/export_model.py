@@ -31,11 +31,17 @@ def build_sentence_transformer(
     base_model: str = "answerdotai/ModernBERT-base",
     dim: int = 384,
     projection_weights: dict | None = None,
+    encoder_path: str | None = None,
 ):
-    """Build a SentenceTransformer model from components."""
+    """Build a SentenceTransformer model from components.
+
+    If encoder_path is provided, loads trained encoder weights from that
+    directory (saved via save_pretrained). Otherwise uses the base model.
+    """
     from sentence_transformers import SentenceTransformer, models
 
-    transformer = models.Transformer(base_model, max_seq_length=512)
+    model_source = encoder_path if encoder_path and os.path.isdir(encoder_path) else base_model
+    transformer = models.Transformer(model_source, max_seq_length=512)
     hidden_dim = transformer.get_word_embedding_dimension()
 
     pooling = models.Pooling(
@@ -62,12 +68,36 @@ def build_sentence_transformer(
     return model
 
 
-def load_checkpoint_weights(checkpoint_path: str, device: str = "cpu") -> dict:
-    """Load projection weights from a training checkpoint."""
+def load_checkpoint_weights(checkpoint_path: str, device: str = "cpu") -> tuple[dict | None, str | None]:
+    """Load projection weights and encoder path from a training checkpoint.
+
+    Handles two formats:
+    1. Ship mode directory: encoder/ subdir + proj.pt file
+    2. Raw state_dict .pt file: extract proj.weight/proj.bias
+
+    Returns (projection_weights_dict, encoder_path_or_None).
+    """
+    encoder_path = None
+
+    if os.path.isdir(checkpoint_path):
+        encoder_dir = os.path.join(checkpoint_path, "encoder")
+        if os.path.isdir(encoder_dir):
+            encoder_path = encoder_dir
+        proj_pt = os.path.join(checkpoint_path, "proj.pt")
+        model_pt = os.path.join(checkpoint_path, "model.pt")
+        if os.path.exists(proj_pt):
+            proj = torch.load(proj_pt, map_location=device, weights_only=True)
+            return proj, encoder_path
+        if os.path.exists(model_pt):
+            checkpoint_path = model_pt
+        else:
+            print(f"Warning: no model.pt or proj.pt found in {checkpoint_path}")
+            return None, encoder_path
+
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
     if "proj.weight" in state:
-        return {"weight": state["proj.weight"], "bias": state["proj.bias"]}
+        return {"weight": state["proj.weight"], "bias": state["proj.bias"]}, encoder_path
     if "model_state_dict" in state:
         proj_state = {
             k.replace("proj.", ""): v
@@ -75,15 +105,15 @@ def load_checkpoint_weights(checkpoint_path: str, device: str = "cpu") -> dict:
             if k.startswith("proj.")
         }
         if proj_state:
-            return proj_state
+            return proj_state, encoder_path
     for key in state:
         if "proj" in key and "weight" in key:
             bias_key = key.replace("weight", "bias")
             if bias_key in state:
-                return {"weight": state[key], "bias": state[bias_key]}
+                return {"weight": state[key], "bias": state[bias_key]}, encoder_path
 
     print("Warning: could not find projection weights in checkpoint")
-    return None
+    return None, encoder_path
 
 
 def export_model(
@@ -97,12 +127,15 @@ def export_model(
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     proj_weights = None
+    encoder_path = None
     if checkpoint_path and os.path.exists(checkpoint_path):
         print(f"Loading checkpoint: {checkpoint_path}")
-        proj_weights = load_checkpoint_weights(checkpoint_path)
+        proj_weights, encoder_path = load_checkpoint_weights(checkpoint_path)
+        if encoder_path:
+            print(f"  Trained encoder found: {encoder_path}")
 
-    print(f"Building SentenceTransformer ({base_model}, dim={dim})")
-    model = build_sentence_transformer(base_model, dim, proj_weights)
+    print(f"Building SentenceTransformer ({encoder_path or base_model}, dim={dim})")
+    model = build_sentence_transformer(base_model, dim, proj_weights, encoder_path)
 
     model.save(out_dir)
     print(f"Saved to {out_dir}")
@@ -123,22 +156,15 @@ def write_model_card(out_dir: str, base_model: str, dim: int,
     if teachers:
         teacher_lines = "\n".join(f"- {t}" for t in teachers)
         teacher_section = f"""
-## Eklavya Training
-
-This model was trained using the Eklavya method: extracting behavioral
-knowledge from multiple teacher models into a smaller student.
+## Training
 
 **Teachers used:**
 {teacher_lines}
 
 **Method:** {training_method}
 
-Each teacher contributed knowledge about different aspects of semantic
-similarity. The student model was trained to match teacher ranking
-distributions under controlled perturbations, not just copy their outputs.
-
-**Retained gain:** Teacher models are NOT used at inference time. All
-knowledge is absorbed into the student's parameters.
+Teacher models are NOT used at inference time. All knowledge is absorbed
+into the student's parameters.
 """
 
     metrics_section = ""
@@ -160,21 +186,20 @@ tags:
   - sentence-transformers
   - feature-extraction
   - sentence-similarity
-  - eklavya
   - knowledge-distillation
 ---
 
-# Eklavya Embedding Model
+# Sutra Embedding Model
 
 A {dim}-dimensional sentence embedding model based on {base_model},
-trained using the Eklavya knowledge distillation method.
+trained via knowledge distillation.
 
 ## Usage
 
 ```python
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer("iqidis/eklavya-embed-v1")
+model = SentenceTransformer("iqidis/sutra-embed-v0")
 embeddings = model.encode(["Hello world", "How are you?"])
 print(embeddings.shape)  # (2, {dim})
 ```
@@ -189,10 +214,9 @@ print(embeddings.shape)  # (2, {dim})
 
 ## Citation
 
-If you use this model, please cite the Eklavya method:
 ```
-@misc{{eklavya2026,
-  title={{Eklavya: Learning from the Masters}},
+@misc{{sutra2026,
+  title={{Sutra Embedding Models}},
   author={{Devansh}},
   year={{2026}},
   url={{https://github.com/iqidis}}

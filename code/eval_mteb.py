@@ -73,32 +73,41 @@ class ModernBERTWrapper:
 
         self.device = device
 
-        config_path = os.path.join(model_dir, "student_config.json")
+        config_path = os.path.join(model_dir, "config.json")
+        if not os.path.exists(config_path):
+            config_path = os.path.join(model_dir, "student_config.json")
         if os.path.exists(config_path):
             with open(config_path) as f:
                 config = json.load(f)
-            model_name = config.get("base_model", "answerdotai/ModernBERT-base")
+            model_name = config.get("student", config.get("base_model", "answerdotai/ModernBERT-base"))
             dim = config.get("dim", 384)
         else:
             model_name = "answerdotai/ModernBERT-base"
             dim = 384
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.encoder = AutoModel.from_pretrained(model_name).to(device).eval()
+        encoder_dir = os.path.join(model_dir, "encoder")
+        if os.path.isdir(encoder_dir):
+            self.tokenizer = AutoTokenizer.from_pretrained(encoder_dir)
+            self.encoder = AutoModel.from_pretrained(encoder_dir).to(device).eval()
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.encoder = AutoModel.from_pretrained(model_name).to(device).eval()
         hidden = self.encoder.config.hidden_size
 
         self.proj = nn.Linear(hidden, dim).to(device)
-        ckpt_path = os.path.join(model_dir, "student.pt")
-        if os.path.exists(ckpt_path):
-            state = torch.load(ckpt_path, map_location=device, weights_only=True)
-            if "proj.weight" in state:
-                self.proj.load_state_dict({"weight": state["proj.weight"], "bias": state["proj.bias"]})
-            elif "model_state_dict" in state:
-                self.proj.load_state_dict({
-                    k.replace("proj.", ""): v
-                    for k, v in state["model_state_dict"].items()
-                    if k.startswith("proj.")
-                })
+
+        proj_path = os.path.join(model_dir, "proj.pt")
+        if os.path.exists(proj_path):
+            proj_state = torch.load(proj_path, map_location=device, weights_only=True)
+            self.proj.load_state_dict(proj_state)
+        else:
+            for name in ("model.pt", "student.pt"):
+                ckpt_path = os.path.join(model_dir, name)
+                if os.path.exists(ckpt_path):
+                    state = torch.load(ckpt_path, map_location=device, weights_only=True)
+                    if "proj.weight" in state:
+                        self.proj.load_state_dict({"weight": state["proj.weight"], "bias": state["proj.bias"]})
+                    break
 
     @torch.no_grad()
     def encode(
@@ -159,8 +168,12 @@ def main():
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
 
-    if os.path.isdir(args.model) and os.path.exists(os.path.join(args.model, "student.pt")):
-        print(f"Loading Eklavya model from {args.model}")
+    is_raw_checkpoint = os.path.isdir(args.model) and any(
+        os.path.exists(os.path.join(args.model, f))
+        for f in ("model.pt", "student.pt", "proj.pt")
+    )
+    if is_raw_checkpoint:
+        print(f"Loading raw checkpoint from {args.model}")
         model = ModernBERTWrapper(args.model, device=args.device)
     else:
         try:

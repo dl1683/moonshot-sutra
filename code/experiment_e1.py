@@ -909,6 +909,196 @@ def main_e15():
         json.dump(final_summary, f, indent=2)
 
 
+def main_ship():
+    """Ship mode — train a single standard-KD model at scale for deployment.
+
+    Runs only B2-style single-teacher KD + contrastive loss on more data.
+    Saves the model in a format compatible with export_model.py.
+    """
+    parser = argparse.ArgumentParser(description="Ship — Standard KD at scale")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--steps", type=int, default=3000)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--tau", type=float, default=0.05)
+    parser.add_argument("--n_train", type=int, default=5000)
+    parser.add_argument("--n_eval", type=int, default=500)
+    parser.add_argument("--n_docs", type=int, default=10)
+    parser.add_argument("--kd_weight", type=float, default=0.5,
+                        help="Weight for KD loss; contrastive gets 1 - kd_weight")
+    parser.add_argument("--warmup_frac", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--proj_seed", type=int, default=9999)
+    parser.add_argument("--out_dir", default="outputs/ship_v0")
+    parser.add_argument("--student", default="answerdotai/ModernBERT-base")
+    parser.add_argument("--teacher", default="BAAI/bge-large-en-v1.5")
+    parser.add_argument("--eval_every", type=int, default=500)
+    parser.add_argument("--save_every", type=int, default=1000)
+    args = parser.parse_args()
+
+    import random as stdlib_random
+    import numpy as np
+
+    stdlib_random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+
+    print("=" * 60)
+    print("SHIP MODE — Standard KD at scale")
+    print(f"Student: {args.student}")
+    print(f"Teacher: {args.teacher}")
+    print(f"Data: {args.n_train} train, {args.n_eval} eval, {args.n_docs} docs/query")
+    print(f"Steps: {args.steps}, LR: {args.lr}, KD weight: {args.kd_weight}")
+    print("=" * 60)
+
+    print("\nLoading MS MARCO data...")
+    all_pairs = load_msmarco_pairs(
+        n=args.n_train + args.n_eval, n_docs=args.n_docs, seed=args.seed,
+    )
+    train_pairs = all_pairs[:args.n_train]
+    eval_pairs = all_pairs[args.n_train:args.n_train + args.n_eval]
+    print(f"Data: {len(train_pairs)} train, {len(eval_pairs)} eval")
+
+    print(f"\nExtracting teacher scores ({args.teacher})...")
+    teacher = load_st_model(args.teacher, device=args.device)
+    teacher_data = {}
+    for i, pair in enumerate(train_pairs):
+        identity_probe = Probe(probe_id="identity", text=pair["query"])
+        scores = extract_teacher_scores(
+            teacher, pair["query"], pair["documents"], [identity_probe],
+        )
+        teacher_data[pair["id"]] = {args.teacher: scores}
+        if (i + 1) % 500 == 0:
+            print(f"  {i+1}/{len(train_pairs)} pairs extracted")
+    del teacher
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print(f"  Extracted {len(teacher_data)} training pairs")
+
+    print("\nInitializing student...")
+    student = ModernBERTEmbedder(
+        args.student, dim=384, proj_seed=args.proj_seed,
+    ).to(args.device)
+
+    base = evaluate(student, eval_pairs)
+    print(f"Baseline: Hit@1={base['hit@1']:.4f}  MRR={base['mrr']:.4f}")
+
+    optimizer = AdamW(student.parameters(), lr=args.lr, weight_decay=0.01)
+
+    import math
+    warmup_steps = int(args.steps * args.warmup_frac)
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return (step + 1) / max(warmup_steps, 1)
+        progress = (step - warmup_steps) / max(args.steps - warmup_steps, 1)
+        return 0.1 + 0.9 * 0.5 * (1 + math.cos(progress * math.pi))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    log_f = open(os.path.join(args.out_dir, "log.jsonl"), "w")
+    t0 = time.time()
+    running_loss = 0.0
+    best_mrr = 0.0
+
+    config = {k: v for k, v in vars(args).items() if k != "device"}
+    config["baseline"] = {k: v for k, v in base.items() if k != "per_query"}
+    with open(os.path.join(args.out_dir, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"\nTraining ({args.steps} steps)...")
+    for step in range(1, args.steps + 1):
+        idx = (step - 1) % len(train_pairs)
+        pair = train_pairs[idx]
+
+        optimizer.zero_grad()
+
+        kd_loss = compute_kd_loss(
+            student, pair["query"], pair["documents"],
+            teacher_data[pair["id"]][args.teacher]["identity"],
+            tau=args.tau,
+        )
+        contrastive_loss = compute_contrastive_loss(
+            student, pair["query"], pair["documents"],
+            pair["gold_idx"], tau=args.tau,
+        )
+        loss = args.kd_weight * kd_loss + (1 - args.kd_weight) * contrastive_loss
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+        optimizer.step()
+        scheduler.step()
+
+        running_loss += loss.item()
+
+        if step % 50 == 0:
+            avg = running_loss / 50
+            entry = {"step": step, "loss": round(avg, 6),
+                     "elapsed_s": round(time.time() - t0, 1),
+                     "lr": scheduler.get_last_lr()[0]}
+
+            if step % args.eval_every == 0:
+                m = evaluate(student, eval_pairs)
+                entry.update({k: v for k, v in m.items() if k != "per_query"})
+                tag = ""
+                if m["mrr"] > best_mrr:
+                    best_mrr = m["mrr"]
+                    tag = " *BEST*"
+                    ckpt_dir = os.path.join(args.out_dir, "best")
+                    Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+                    torch.save(student.state_dict(), os.path.join(ckpt_dir, "model.pt"))
+                    with open(os.path.join(ckpt_dir, "config.json"), "w") as f:
+                        json.dump({"step": step, "mrr": m["mrr"], "hit1": m["hit@1"]}, f)
+                print(f"  step {step:>5d}  loss={avg:.4f}  hit@1={m['hit@1']:.4f}  mrr={m['mrr']:.4f}{tag}")
+            else:
+                print(f"  step {step:>5d}  loss={avg:.4f}")
+
+            log_f.write(json.dumps(entry) + "\n")
+            log_f.flush()
+            running_loss = 0.0
+
+        if step % args.save_every == 0:
+            ckpt_dir = os.path.join(args.out_dir, f"checkpoint-{step}")
+            Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
+            torch.save(student.state_dict(), os.path.join(ckpt_dir, "model.pt"))
+
+    final = evaluate(student, eval_pairs)
+    print(f"\nFINAL: Hit@1={final['hit@1']:.4f}  MRR={final['mrr']:.4f}")
+    print(f"  Gain: Hit@1 {final['hit@1'] - base['hit@1']:+.4f}  MRR {final['mrr'] - base['mrr']:+.4f}")
+    print(f"  Best MRR seen: {best_mrr:.4f}")
+
+    final_dir = os.path.join(args.out_dir, "final")
+    Path(final_dir).mkdir(parents=True, exist_ok=True)
+    torch.save(student.state_dict(), os.path.join(final_dir, "model.pt"))
+    student.encoder.save_pretrained(os.path.join(final_dir, "encoder"))
+    student.tokenizer.save_pretrained(os.path.join(final_dir, "encoder"))
+    torch.save(
+        {"weight": student.proj.weight.data.cpu(), "bias": student.proj.bias.data.cpu()},
+        os.path.join(final_dir, "proj.pt"),
+    )
+    with open(os.path.join(final_dir, "config.json"), "w") as f:
+        json.dump({
+            "student": args.student, "teacher": args.teacher, "dim": 384,
+            "proj_seed": args.proj_seed, "steps": args.steps, "lr": args.lr,
+        }, f, indent=2)
+
+    result = {
+        "baseline": {k: v for k, v in base.items() if k != "per_query"},
+        "final": {k: v for k, v in final.items() if k != "per_query"},
+        "best_mrr": best_mrr,
+        "gain_mrr": final["mrr"] - base["mrr"],
+        "gain_hit1": final["hit@1"] - base["hit@1"],
+        "config": config,
+    }
+    with open(os.path.join(args.out_dir, "result.json"), "w") as f:
+        json.dump(result, f, indent=2)
+
+    log_f.close()
+    print(f"\nModel saved to {final_dir}")
+    print(f"To export: python code/export_model.py --checkpoint {final_dir}")
+
+
 if __name__ == "__main__":
     import sys
     if "--mode" in sys.argv:
@@ -918,6 +1108,8 @@ if __name__ == "__main__":
         sys.argv.pop(idx)
         if mode == "e1.5":
             main_e15()
+        elif mode == "ship":
+            main_ship()
         else:
             main()
     else:
