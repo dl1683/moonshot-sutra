@@ -40,7 +40,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def gpu_thermal_guard(max_temp: int = 85, check_interval: float = 5.0):
-    """Block until GPU temperature drops below max_temp. No-op on CPU."""
+    """Block until GPU temperature drops below max_temp. No-op on CPU.
+    Times out after 120s and resumes with a warning to prevent infinite hangs."""
     if not torch.cuda.is_available():
         return
     try:
@@ -52,14 +53,19 @@ def gpu_thermal_guard(max_temp: int = 85, check_interval: float = 5.0):
         temp = int(result.stdout.strip())
         if temp >= max_temp:
             print(f"  [thermal] GPU at {temp}°C (limit {max_temp}°C), cooling...")
+            t0 = time.time()
             while temp >= max_temp - 3:
+                if time.time() - t0 > 120:
+                    print(f"  [thermal] timeout after 120s at {temp}°C, resuming anyway")
+                    break
                 time.sleep(check_interval)
                 result = subprocess.run(
                     ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
                     capture_output=True, text=True, timeout=5,
                 )
                 temp = int(result.stdout.strip())
-            print(f"  [thermal] GPU cooled to {temp}°C, resuming")
+            else:
+                print(f"  [thermal] GPU cooled to {temp}°C, resuming")
     except Exception:
         pass
 
