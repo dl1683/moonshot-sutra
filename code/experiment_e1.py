@@ -253,7 +253,7 @@ def make_teacher_heads(
     """Create per-teacher auxiliary linear heads over the shared embedding space."""
     heads = {}
     for tname in teacher_names:
-        key = tname.replace("/", "_").replace("-", "_")
+        key = tname.replace("/", "_").replace("-", "_").replace(".", "_")
         if proj_seed is not None:
             rng_state = torch.random.get_rng_state()
             torch.manual_seed(proj_seed + hash(key) % (2**31))
@@ -265,7 +265,7 @@ def make_teacher_heads(
 
 
 def _head_key(tname: str) -> str:
-    return tname.replace("/", "_").replace("-", "_")
+    return tname.replace("/", "_").replace("-", "_").replace(".", "_")
 
 
 def compute_teacher_indexed_kl_loss(
@@ -747,6 +747,20 @@ def main_e15():
         seed_dir = os.path.join(args.out_dir, f"seed_{data_seed}")
         Path(seed_dir).mkdir(parents=True, exist_ok=True)
 
+        all_done = all(
+            os.path.exists(os.path.join(seed_dir, arm_name, "result.json"))
+            for arm_name, _ in ARMS
+        )
+        if all_done:
+            print(f"\n--- Seed {data_seed}: all arms complete, loading results ---")
+            seed_results_loaded = {}
+            for arm_name, _ in ARMS:
+                seed_results_loaded[arm_name] = json.load(
+                    open(os.path.join(seed_dir, arm_name, "result.json"))
+                )
+            all_seed_results[data_seed] = seed_results_loaded
+            continue
+
         raw_pairs = load_msmarco_pairs(
             n=args.n_train + args.n_eval, n_docs=10, seed=data_seed,
         )
@@ -796,6 +810,12 @@ def main_e15():
 
         seed_results = {}
         for arm_name, arm_type in ARMS:
+            arm_result_path = os.path.join(seed_dir, arm_name, "result.json")
+            if os.path.exists(arm_result_path):
+                print(f"\n--- {arm_name}: result.json exists, resuming (skip) ---")
+                seed_results[arm_name] = json.load(open(arm_result_path))
+                continue
+
             torch.manual_seed(data_seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(data_seed)
