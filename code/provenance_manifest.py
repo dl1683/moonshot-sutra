@@ -140,12 +140,6 @@ def main():
                 print(f"  WARNING: {rpath} not found")
                 arm_results[arm_name] = {}
 
-        print("Scoring eval queries with teachers...")
-        teachers = {}
-        for tname in args.teachers:
-            print(f"  Loading {tname} on {args.device}...")
-            teachers[tname] = load_st_model(tname, device=args.device)
-
         seed_data = {
             "verified": mrr_match and hit1_match,
             "baseline_mrr_saved": saved_baseline_mrr,
@@ -154,9 +148,6 @@ def main():
         }
 
         for i, pair in enumerate(eval_pairs):
-            if (i + 1) % 50 == 0:
-                print(f"  Scoring query {i+1}/{len(eval_pairs)}...")
-
             qdata = {
                 "id": pair["id"],
                 "query": pair["query"],
@@ -166,8 +157,21 @@ def main():
                 "teacher_scores": {},
                 "student_ranks": {},
             }
+            for arm_name in arms_to_load:
+                if pair["id"] in arm_results[arm_name]:
+                    ar = arm_results[arm_name][pair["id"]]
+                    qdata["student_ranks"][arm_name] = {
+                        "gold_rank": ar["gold_rank"],
+                        "rr": ar["rr"],
+                    }
+            seed_data["queries"].append(qdata)
 
-            for tname, tmodel in teachers.items():
+        print("Scoring eval queries with teachers (one at a time to limit memory)...")
+        for tname in args.teachers:
+            print(f"  Loading {tname} on {args.device}...")
+            tmodel = load_st_model(tname, device=args.device)
+            for i, qdata in enumerate(seed_data["queries"]):
+                pair = eval_pairs[i]
                 result = score_candidates_with_teacher(tmodel, pair["query"], pair["documents"])
                 gold_position = result["ranking"].index(pair["gold_idx"]) + 1
                 qdata["teacher_scores"][tname] = {
@@ -176,18 +180,10 @@ def main():
                     "scores": result["scores"],
                     "ranking": result["ranking"],
                 }
-
-            for arm_name in arms_to_load:
-                if pair["id"] in arm_results[arm_name]:
-                    ar = arm_results[arm_name][pair["id"]]
-                    qdata["student_ranks"][arm_name] = {
-                        "gold_rank": ar["gold_rank"],
-                        "rr": ar["rr"],
-                    }
-
-            seed_data["queries"].append(qdata)
-
-        del teachers
+                if (i + 1) % 20 == 0:
+                    print(f"    {tname.split('/')[-1]}: {i+1}/{len(seed_data['queries'])} queries scored", flush=True)
+            del tmodel
+            import gc; gc.collect()
         elapsed = time.time() - t0
         print(f"  Seed {seed} complete in {elapsed:.1f}s")
 

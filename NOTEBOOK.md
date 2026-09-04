@@ -4,6 +4,28 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 16:00 -- Fade Pilot Code Hardened + Provenance Re-run
+
+**Fade pilot code improvements (experiment_e1.py):**
+- Arm metadata logged at start: frozen status, trainable param count, phase, eval_every
+- LR and phase recorded in every log entry (was missing — Codex R3 required)
+- Projection checkpoint saved at fade_step and final step (steps 200, 600)
+- Manipulation check added: post-hoc B3 vs B0 comparison at step 200 across seeds
+- MRR@10 printed alongside MRR in step-level output
+
+**Provenance manifest crashed:** First CPU run (PID 34328) loaded both teachers
+simultaneously, consumed 14K CPU seconds and 7.9GB RAM, then died silently —
+likely OOM from memory pressure with ship mode running concurrently. No output
+file written.
+
+**Re-run with fixes:** Memory-safe version loads one teacher at a time, scores all
+queries, deletes, loads next teacher. Progress printed every 20 queries. Limited
+to 4 CPU threads (OMP/MKL). Running seed 42 only for fast P2 gate answer.
+
+**Ship mode status:** Step 350/3000, loss 0.641-0.665, GPU 99%/88°C, ~3h remaining.
+
+---
+
 ## 2026-09-04 15:00 -- SANGAM-E0-TDPA Protocol Frozen + Status Check
 
 **SANGAM-E0-TDPA protocol written** (outputs/sangam_e0_tdpa_protocol.json):
