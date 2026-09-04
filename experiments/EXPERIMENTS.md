@@ -28,6 +28,7 @@ commit messages; this public index uses generic descriptions.
 | `eklavya_embed_e1` | 2026-09-03 | Eklavya-Embedding | Passes kill criterion (thin margin) | Untrained student (149M), 2 teachers, MS MARCO 500 pairs, 4 arms. Tomography MRR 0.561 > B3+0.01. Gain +0.260 vs +0.236. BUT: 200-pair replication reverses arm ordering. |
 | `eklavya_embed_v2r2` | 2026-09-03 | Eklavya-Embedding | **Narrow negative** (reclassified from Kill #15) | Frozen encoder + residual head, single teacher, B4c absorber. Response-delta = B4c (+0.0000). Ceiling-saturated (baseline nDCG 0.93). Terminal criterion not executed. Corrected adjudication (E1.5) required. |
 | `eklavya_embed_e1_200` | 2026-09-04 | Eklavya-Embedding | Contradicts 500-pair E1 | 200-pair replication: single-teacher KD wins (+0.241), tomography third (+0.176). Signal is seed/split-dependent. |
+| `eklavya_vision_v1` | 2026-09-04 | Eklavya-Vision | **Standard KD wins** | 5-arm CIFAR-100 with DINOv2-small. ALL arms catastrophically destroy pretrained features. B2 single-teacher KD (DINOv2-base) least destructive (-0.334). V1 tomography 2nd (-0.350). Per-teacher norm beats avg by 0.059. Combined with text kill, method dead across modalities. |
 
 ## Experiment Notes
 
