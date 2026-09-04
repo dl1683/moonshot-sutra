@@ -1,21 +1,24 @@
 # State
 
 **Last updated:** 2026-09-04
-**Current state:** TOMOGRAPHY METHOD DEAD across modalities. Standard single-teacher KD wins. Pivoting from method to artifact: ship small KD-trained models.
-**Blackboard:** `1d65d9fb`
+**Current state:** INCONCLUSIVE. Neither tomography kill nor standard-KD-wins is established. Codex evidence gates failed BOTH claims. Corrected E1.5 adjudication required.
+**Blackboard:** `539efcd4`
 
 ## Direction
 
-**PIVOT: the artifact IS the model, not the method.**
+**Corrected adjudication (E1.5) before any method verdict or shipping pivot.**
 
-Eklavya tomography (multi-teacher probe-based knowledge transfer) does not
-produce breakthrough results over standard KD in either text or vision:
-- Text: Kill #15 confirmed (E1 noise-level, 200-pair contradicts, Codex FAIL)
-- Vision V1: single-teacher KD from compatible architecture beats tomography
+Codex V1 evidence gate (2026-09-04): V1 is an exploratory debugging run, not
+valid evidence. Both "tomography dead" and "standard KD wins" are overclaimed:
+- Text V2-R2: ceiling-saturated, precommitted criteria not executed
+- Text E1: noise-level, 200-pair contradicts, algebraic identity flaw
+- Vision V1: catastrophic forgetting masks method differences, probe-target
+  misalignment, no seed control, no CI
 
 The Eklavya philosophy ("steal from existing models") survives. The mechanism
-is standard KD — mature, well-understood, effective. Ship small models trained
-with the best available KD recipe across modalities.
+question (tomography vs standard KD) is OPEN. E1.5 with teacher-indexed heads,
+frozen encoder, proper controls, and 3+ seeds is the required next experiment.
+Standard KD artifact track can run in parallel as engineering baseline.
 
 ## E1 Results (COMPLETE — tomography passes kill criterion)
 
@@ -226,17 +229,30 @@ Code's built-in "PASSES" verdict (V1 MRR > B4c + 0.01) is confounded by V1's
 higher random baseline (+0.035). Gain comparison is fairer and shows V1 does
 not beat B2. Codex evidence gate pending.
 
+## Codex V1 Evidence Gate (2026-09-04): FAIL
+
+Codex verdict: V1 is exploratory debugging, not valid evidence. Key findings:
+- Metrics not fairly comparable (0.059 baseline spread from random init)
+- Probe-target misalignment (4/7 KL targets see different images than student)
+- Catastrophic forgetting masks method differences
+- Neither "per-teacher norm beats avg" nor "standard KD wins" is established
+- Method-level death claim is scientifically invalid
+- Recommendation: run corrected E1.5; do not use V1 for shipping pivot
+
+Full verdict: `outputs/V1_cifar100/codex_evidence_gate.txt`
+
 ## Live threads
 
-1. **Ship standard KD models** — use B2-style single-teacher KD, ship small
-   models to HuggingFace across modalities
-2. **E1.5 teacher-indexed heads** — code ready but lower priority given V1
-   results show per-teacher normalization doesn't beat standard KD
+1. **E1.5 corrected adjudication** — HIGH PRIORITY. Teacher-indexed heads,
+   frozen encoder, proper seeds, bootstrap CI. Text first (MS MARCO). This
+   settles the tomography question before any shipping commitment.
+2. **Standard KD artifact** — parallel engineering track. Build a standard KD
+   text model (ModernBERT-base + BGE-large). Independent of method question.
+   Per artifact precedence, the model IS the deliverable.
 
 ## Next
 
-1. Design shipping pipeline: training recipe, evaluation (MTEB/MIEB), export
-2. Pick first model to ship: text embedding (ModernBERT-base + KD) or
-   vision (DINOv2-small + KD from DINOv2-base)
-3. Scale training: more data, proper hyperparameter search, frozen encoder option
-4. E1.5 can run as optional scientific interest if GPU is free
+1. Fix E1.5 code defects (seed, probe-target alignment, frozen encoder, CI)
+2. Run corrected E1.5 text experiment (3 seeds, 32-doc hard negs, paired CI)
+3. Process E1.5 verdict per precommitted interpretations
+4. In parallel: build standard KD training pipeline for text artifact

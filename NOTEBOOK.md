@@ -4,6 +4,32 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 — Codex V1 Evidence Gate: FAIL — overclaims in BOTH directions
+
+Codex verdict on V1 vision experiment: **FAIL. V1 is exploratory debugging, not
+valid evidence.** Both "tomography dead" and "standard KD wins" are overclaimed.
+
+**Key corrections:**
+1. "Per-teacher norm beats avg by 0.059" — real observation, not causal. V1 vs B3
+   simultaneously changes normalization, probe count, compute, init, and inputs.
+2. "Standard KD wins" — B2 is least-destructive gain estimate, V1 has higher final
+   MRR. Gain difference 0.0155 with no CI. Missing CLIP-only arm.
+3. "Method dead across modalities" — scientifically invalid. V2-R2 tested response
+   deltas, V1 tests probability pooling — different mechanisms. Neither adequately
+   controlled. Audio never tested.
+4. Probe-target misalignment: 4/7 probes cache one crop but student sees different
+   realization. KL targets are misaligned.
+5. Catastrophic forgetting dominates all arms. Frozen encoder would isolate method.
+
+**Codex recommendation:** run corrected E1.5 with teacher-indexed heads, frozen
+encoder, proper seeds, and bootstrap CI. Do not use V1 for shipping pivot.
+
+**Direction correction:** "TOMOGRAPHY DEAD" header in STATE.md was premature.
+Changed to "INCONCLUSIVE." E1.5 is now highest priority, not deprioritized.
+Standard KD artifact track continues in parallel as engineering baseline.
+
+---
+
 ## 2026-09-04 — V1 Vision Experiment COMPLETE: catastrophic forgetting dominates
 
 **All 5 arms catastrophically destroy DINOv2-small pretrained features.**

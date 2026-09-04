@@ -409,16 +409,31 @@ def run_arm(
     arm_type: str = "tomography",
     teacher_heads: nn.ModuleDict | None = None,
     teacher_names: list[str] | None = None,
+    frozen: bool = False,
+    warmup_frac: float = 0.0,
 ):
     print(f"\n{'='*60}")
-    print(f"ARM: {arm_name} ({arm_type})")
+    print(f"ARM: {arm_name} ({arm_type}){' [FROZEN]' if frozen else ''}")
     print(f"{'='*60}")
 
-    params = list(student.parameters())
+    if frozen:
+        for p in student.encoder.parameters():
+            p.requires_grad = False
+        params = list(student.proj.parameters())
+    else:
+        params = list(student.parameters())
     if teacher_heads is not None:
         params += list(teacher_heads.parameters())
     optimizer = AdamW(params, lr=lr, weight_decay=0.01)
-    scheduler = CosineAnnealingLR(optimizer, T_max=steps, eta_min=lr * 0.1)
+
+    import math
+    warmup_steps = int(steps * warmup_frac)
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return (step + 1) / max(warmup_steps, 1)
+        progress = (step - warmup_steps) / max(steps - warmup_steps, 1)
+        return 0.1 + 0.9 * 0.5 * (1 + math.cos(progress * math.pi))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Baseline
     base = evaluate(student, eval_pairs)
@@ -526,6 +541,10 @@ def run_arm(
     }
     print(f"\n  RESULT: Hit@1 {base['hit@1']:.4f} -> {final['hit@1']:.4f} ({result['gain_hit1']:+.4f})")
     print(f"          MRR   {base['mrr']:.4f} -> {final['mrr']:.4f} ({result['gain_mrr']:+.4f})")
+
+    if frozen:
+        for p in student.encoder.parameters():
+            p.requires_grad = True
 
     with open(os.path.join(arm_dir, "result.json"), "w") as f:
         json.dump(result, f, indent=2)
@@ -694,6 +713,10 @@ def main_e15():
     parser.add_argument("--student", default="answerdotai/ModernBERT-base")
     parser.add_argument("--teachers", nargs="+",
                         default=["sentence-transformers/all-MiniLM-L12-v2", "BAAI/bge-large-en-v1.5"])
+    parser.add_argument("--frozen", action="store_true",
+                        help="Freeze encoder, train only projection + teacher heads")
+    parser.add_argument("--warmup_frac", type=float, default=0.1,
+                        help="Fraction of steps for linear LR warmup")
     args = parser.parse_args()
 
     from data_loader import load_msmarco_pairs, mine_hard_negatives
@@ -794,6 +817,7 @@ def main_e15():
                 teacher_data=td, steps=args.steps, lr=args.lr, tau=args.tau,
                 out_dir=seed_dir, arm_type=arm_type,
                 teacher_heads=t_heads, teacher_names=args.teachers,
+                frozen=args.frozen, warmup_frac=args.warmup_frac,
             )
 
             seed_results[arm_name] = result
@@ -806,8 +830,18 @@ def main_e15():
         all_seed_results[data_seed] = seed_results
 
         with open(os.path.join(seed_dir, "summary.json"), "w") as f:
-            json.dump({k: {kk: vv for kk, vv in v.items() if kk != "per_query"}
-                       for k, v in seed_results.items()}, f, indent=2)
+            summary_clean = {}
+            for k, v in seed_results.items():
+                entry = {kk: vv for kk, vv in v.items() if kk != "per_query"}
+                entry["baseline"] = {kk: vv for kk, vv in v["baseline"].items() if kk != "per_query"}
+                entry["final"] = {kk: vv for kk, vv in v["final"].items() if kk != "per_query"}
+                summary_clean[k] = entry
+            json.dump(summary_clean, f, indent=2)
+        with open(os.path.join(seed_dir, "per_query.json"), "w") as f:
+            pq = {k: {"baseline": v["baseline"].get("per_query", []),
+                       "final": v["final"].get("per_query", [])}
+                  for k, v in seed_results.items()}
+            json.dump(pq, f, indent=2)
 
     # --- Multi-seed summary ---
     print(f"\n{'='*60}")
@@ -859,7 +893,7 @@ def main_e15():
     final_summary = {
         "arms": arm_stats,
         "seeds": args.seeds,
-        "config": {k: v for k, v in vars(args).items() if k != "device"},
+        "config": {k: v for k, v in vars(args).items() if k not in ("device",)},
         "paired_test": {
             "e15_vs_b4c_delta": [float(d) for d in delta_mrrs],
             "mean_delta": float(mean_delta),
