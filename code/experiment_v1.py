@@ -1,4 +1,4 @@
-"""Eklavya Experiment V1 — Vision embedding tomography vs standard KD.
+"""Eklavya Experiment V1 — Vision embedding tomography vs standard KD + B4c absorber.
 
 Student: DINOv2-small (21M, pretrained but not tuned for retrieval)
 Teachers: DINOv2-base (86M) + CLIP-ViT-B/32 (86M, heterogeneous objective)
@@ -10,6 +10,10 @@ Arms:
   B0: Contrastive-only baseline (InfoNCE, no teacher)
   B2: Standard single-teacher KD (identity probe only, best teacher)
   B3: Multi-teacher average KD (average teacher scores, identity probe only)
+  B4c: Augmented contrastive absorber (same probes as V1, no teacher targets)
+
+Kill criterion: V1 must beat B4c by >0.01 MRR. If V1 = B4c, teacher targets
+under probes are useless — same lesson as Kill #15 for text embeddings.
 
 Usage:
   python code/experiment_v1.py --device cuda --steps 600 --out_dir outputs/V1_cifar100
@@ -301,6 +305,34 @@ def compute_vision_contrastive_loss(
     return F.cross_entropy(sims.unsqueeze(0), target.unsqueeze(0))
 
 
+def compute_vision_aug_contrastive_loss(
+    student: VisionStudent,
+    query_img: Image.Image,
+    cand_images: list[Image.Image],
+    gold_idx: int,
+    probes: list[tuple[str, T.Compose]],
+    tau: float = 0.05,
+) -> torch.Tensor:
+    """B4c absorber: same augmentation schedule as tomography, no teacher targets.
+
+    Uses ALL probes as augmented views for contrastive learning. This isolates
+    whether the multi-probe augmentation itself provides the value vs teacher
+    ranking targets under those probes.
+    """
+    cand_embs = student.encode_images(cand_images)
+    device = cand_embs.device
+    target = torch.tensor(gold_idx, device=device)
+    loss = torch.tensor(0.0, device=device)
+
+    for probe_name, probe_tf in probes:
+        probed_img = apply_probe_to_pil(query_img, probe_tf)
+        q_emb = student.encode_images([probed_img])
+        sims = (q_emb @ cand_embs.T).squeeze(0) / tau
+        loss = loss + F.cross_entropy(sims.unsqueeze(0), target.unsqueeze(0))
+
+    return loss / len(probes)
+
+
 @torch.no_grad()
 def evaluate_vision(student: VisionStudent, dataset, pairs: list[dict]) -> dict:
     hits1 = hits5 = 0
@@ -404,6 +436,11 @@ def run_vision_arm(
             loss = compute_vision_contrastive_loss(
                 student, query_img, cand_images,
                 pair["gold_idx"], tau=tau,
+            )
+        elif arm_type == "aug_contrastive":
+            loss = compute_vision_aug_contrastive_loss(
+                student, query_img, cand_images,
+                pair["gold_idx"], probes, tau=tau,
             )
         else:
             raise ValueError(f"Unknown arm type: {arm_type}")
@@ -540,6 +577,16 @@ def main():
     del student_b3
     torch.cuda.empty_cache()
 
+    # ARM B4c: Augmented contrastive (absorber — same probes, no teacher targets)
+    student_b4c = VisionStudent(args.student, dim=256).to(args.device)
+    results["B4c_aug_contrastive"] = run_vision_arm(
+        "B4c_aug_contrastive", student_b4c, cifar, train_pairs, eval_pairs,
+        teacher_sigs=teacher_sigs, probes=probes, steps=args.steps, lr=args.lr, tau=args.tau,
+        out_dir=args.out_dir, arm_type="aug_contrastive",
+    )
+    del student_b4c
+    torch.cuda.empty_cache()
+
     # ARM V1: Full tomography
     student_v1 = VisionStudent(args.student, dim=256).to(args.device)
     results["V1_tomography"] = run_vision_arm(
@@ -564,17 +611,20 @@ def main():
         json.dump(results, f, indent=2)
 
     tomo = results["V1_tomography"]
+    b4c = results["B4c_aug_contrastive"]
     best_baseline = max(results["B0_contrastive"]["final"]["mrr"],
                         results["B2_kd_single"]["final"]["mrr"],
                         results["B3_kd_avg"]["final"]["mrr"])
     margin = tomo["final"]["mrr"] - best_baseline
+    tomo_vs_b4c = tomo["final"]["mrr"] - b4c["final"]["mrr"]
     print(f"\nTomography vs best baseline MRR margin: {margin:+.4f}")
-    if margin > 0.01:
-        print("VERDICT: Vision tomography shows signal. Proceed to V2.")
-    elif margin > -0.01:
-        print("VERDICT: Inconclusive. Need more data/harder eval.")
+    print(f"Tomography vs B4c absorber MRR margin: {tomo_vs_b4c:+.4f}")
+    if tomo_vs_b4c > 0.01:
+        print("VERDICT: Vision tomography shows signal BEYOND augmentation. Proceed to V2.")
+    elif tomo_vs_b4c > -0.005:
+        print("VERDICT: Tomography vs B4c inconclusive. Teacher targets may not add value.")
     else:
-        print("VERDICT: Vision tomography absorbed. Investigate why.")
+        print("VERDICT: Vision tomography ABSORBED by augmented contrastive. Teacher targets useless.")
     sys.stdout.flush()
 
 

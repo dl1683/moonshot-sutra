@@ -61,6 +61,7 @@ toy mechanism.
 | 12 | FrameSeed / Intelligence Vaccines | `research/work_loop_batch28.md`, `research/work_loop_batch31.md`, B32/B40 | `FRAMESEED_CURRENT_FORM_ABSORBED` | Supplied frames collapsed into teaching sets, bindings, and typed synthesis substrate |
 | 13 | World Grammar Discovery (WGD) | `research/work_loop_batch37.md`, `research/work_loop_batch38.md`, supervisor #36 | `WGD_ABSORBED_BY_CONSTRAINT_DISCOVERY` | Grammar discovery absorbed by schema/binding (toy) and GF(2) constraint solving (hard domain) |
 | 14 | Supplied-geometry E3 teacher tomography toy | `research/work_loop_batch44.md`, `research/question_loop_batch52.md`, supervisor #42 | `B44_E3_HOSTILE_NUISANCE_ORACLE_ABSORBS_REQUIRES_INFERENCE_GATE` | Teacher identity added no value once nuisance/composition geometry was granted; inference gate required |
+| 15 | Text embedding response-delta Eklavya | `outputs/eklavya_v2_r1/results.json`, Codex R2 design gate | `EKLAVYA_RESPONSE_DELTA_ABSORBED_BY_B4C` | Response-delta targets carry zero information beyond teacher example/weight selection (B4c absorber). Eklavya vs B4c = +0.0000 nDCG@10. Only ordinary KD (+0.0082) improves the frozen student. |
 
 Side demotions not counted as numbered kills:
 

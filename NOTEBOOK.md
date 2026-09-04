@@ -4,6 +4,29 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-03 20:42 — Codex evidence gate: Kill #15 CONFIRMED for text
+
+Codex (Research Integrity Auditor + Novelty Challenger) verdict on E1:
+**Mechanical threshold PASS. Scientific evidence gate NOT PASSED.**
+
+Key findings:
+- Random projection confound: init SD (0.030) is 2.3× claimed margin (0.013)
+- Compute asymmetry: E1 2.72× slower than B3 (1056s vs 389s)
+- Method confound: E1 per-teacher KL ≠ B3 avg-then-softmax (different operations)
+- Statistical: paired t ≈ 1.84, 95% CI spans zero, cannot reach significance
+- Missing B4 absorber → tested composite, not tomography alone
+- Novelty: mostly known techniques (relational KD + multi-teacher + multi-view)
+
+Verdict: "promising single-run signal; causal result inconclusive." Kill #15
+confirmed. Text embedding response-delta Eklavya is dead.
+
+V1 vision experiment (downloading CIFAR-100, ~13 min) is now the decisive test.
+V1 is better designed: includes B4c absorber arm, uses genuinely heterogeneous
+teachers (DINOv2 self-supervised vs CLIP contrastive-language-image). If V1
+tomography > B4c + 0.01, signal is real. If not, method is dead across modalities.
+
+---
+
 ## 2026-09-03 20:29 — E1 COMPLETE: tomography passes kill criterion
 
 E1 final results (100 eval MS MARCO pairs, 600 steps per arm):
