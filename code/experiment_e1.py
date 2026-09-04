@@ -1047,7 +1047,12 @@ def main_ship():
                     tag = " *BEST*"
                     ckpt_dir = os.path.join(args.out_dir, "best")
                     Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
-                    torch.save(student.state_dict(), os.path.join(ckpt_dir, "model.pt"))
+                    student.encoder.save_pretrained(os.path.join(ckpt_dir, "encoder"))
+                    student.tokenizer.save_pretrained(os.path.join(ckpt_dir, "encoder"))
+                    torch.save(
+                        {"weight": student.proj.weight.data.cpu(), "bias": student.proj.bias.data.cpu()},
+                        os.path.join(ckpt_dir, "proj.pt"),
+                    )
                     with open(os.path.join(ckpt_dir, "config.json"), "w") as f:
                         json.dump({"step": step, "mrr": m["mrr"], "hit1": m["hit@1"]}, f)
                 print(f"  step {step:>5d}  loss={avg:.4f}  hit@1={m['hit@1']:.4f}  mrr={m['mrr']:.4f}{tag}")
@@ -1061,7 +1066,12 @@ def main_ship():
         if step % args.save_every == 0:
             ckpt_dir = os.path.join(args.out_dir, f"checkpoint-{step}")
             Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
-            torch.save(student.state_dict(), os.path.join(ckpt_dir, "model.pt"))
+            student.encoder.save_pretrained(os.path.join(ckpt_dir, "encoder"))
+            student.tokenizer.save_pretrained(os.path.join(ckpt_dir, "encoder"))
+            torch.save(
+                {"weight": student.proj.weight.data.cpu(), "bias": student.proj.bias.data.cpu()},
+                os.path.join(ckpt_dir, "proj.pt"),
+            )
 
     final = evaluate(student, eval_pairs)
     print(f"\nFINAL: Hit@1={final['hit@1']:.4f}  MRR={final['mrr']:.4f}")

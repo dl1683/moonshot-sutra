@@ -30,19 +30,21 @@ Everything else is replaceable.
 
 ## Current Status
 
-The latest loop state is post-B44/B52. A friendly E3 teacher-tomography toy
-produced a strong positive-control signal, then the hostile equal-geometry test
-absorbed it: a nuisance oracle matched E3 exactly, and an exact domain tool beat
-it. The current mechanism is therefore killed at the supplied-geometry claim
-ceiling.
+**Embedding reboot** (September 2026): Building compact text embedding models
+via knowledge distillation from larger teachers. A 149M-parameter student
+(384-dim) trains on real retrieval data with contrastive and KD losses.
 
-The direction is alive only as an inference-gate question: can E3 infer the
-composition/nuisance rule from teacher behavior and calibration labels, instead
-of receiving the rule from the researcher?
+The open research question is whether teacher-indexed distillation (per-teacher
+auxiliary heads preserving teacher identity in the loss) adds signal beyond
+standard single-teacher KD. Corrected adjudication (E1.5) with paired bootstrap
+CI across multiple seeds is running. See `STATE.md` for live numbers and verdicts.
 
-The durable contribution remains the absorption-ladder methodology: precommitted
-terminal tokens, equal-information baseline parity, hidden-open discipline, cost
-ledgers, ablations, and strict claim ceilings.
+A parallel shipping pipeline trains, exports, and evaluates standard KD models
+independent of the research question — the artifact outranks the measurement.
+
+The durable methodology from the earlier 14-kill search remains: precommitted
+terminal tokens, equal-information baselines, absorption ladders, and strict
+claim ceilings.
 
 ## Substrate-Open Search
 
@@ -69,29 +71,26 @@ That kill history is evidence that the default frame may be wrong. Future work
 must ask what function is being created and why the measurement is aligned with
 that function before any experiment earns compute.
 
+## Pipeline
+
+- `code/experiment_e1.py --mode ship` — standard KD training at scale
+- `code/experiment_e1.py --mode e1.5` — corrected adjudication experiment
+- `code/export_model.py` — sentence-transformers export
+- `code/eval_mteb.py` — MTEB benchmark evaluation
+
 ## Current Research Map
 
+- [State](STATE.md) - live state, direction, and experimental verdicts.
 - [Vision](research/VISION.md) - governing first-principles doctrine.
-- [Status](research/STATUS.md) - live state, kill record, and artifact index.
-- [Methodology Template](research/METHODOLOGY_TEMPLATE.md) - reusable absorption
-  ladder, precommit-token, and harness framework for the next direction.
-- [Eklavya Doctrine](research/EKLAVYA_DOCTRINE.md) - surviving doctrine context.
-- [B42 Eklavya CPU Audit](research/work_loop_batch42.md) - E2 demotion and E3 redirect setup.
-- [B43 E3 Toy](research/work_loop_batch43.md) - friendly positive-control E3 signal.
-- [B44 Hostile E3 Toy](research/work_loop_batch44.md) - supplied-geometry absorber result.
-- [Q52 E3 Attack](research/question_loop_batch52.md) - adversarial downgrade of the toy signal.
-- [Supervisor #42](research/dual_loop_supervisor_checkin_42.md) - current steering toward the inference gate.
-- [Deep Rethink](research/DEEP_RETHINK.md) - historical kill log and paradigm interpretation.
+- [Status](research/STATUS.md) - kill record and artifact index.
 - [Experiments](experiments/EXPERIMENTS.md) - experiment ledger index.
+- [Eklavya Doctrine](research/EKLAVYA_DOCTRINE.md) - surviving doctrine context.
+- [Deep Rethink](research/DEEP_RETHINK.md) - historical kill log and paradigm interpretation.
 
 Historical work-loop, question-loop, and supervisor files are preserved as the
-research record. They are not current doctrine unless re-admitted through the
-new vision and a fresh precommit gate.
+research record.
 
 ## Operating Standard
 
-Think first. Formalize first. Test small.
-
-CPU-first is not just a resource constraint. It is the research philosophy: make
-the claim sharp, build the smallest falsification test, and only scale after the
-measurement is function-aligned.
+Think first. Formalize first. Test small. Build the smallest thing that can be
+wrong, then measure it honestly.
