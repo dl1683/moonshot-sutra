@@ -4,6 +4,22 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 — Dead code cleanup: 31 files deleted, 24,871 lines removed
+
+Dependency analysis confirmed 31 of 41 Python files in code/ were dead. All
+formed a closed import cluster — S0 architecture/training/configs (6), old
+Eklavya E1/E2 cache/training/losses/router (8), E3 experiment code (2), old
+runner pipeline (2), old utilities (6), and their tests (7). No active file
+imported any of them.
+
+Codebase reduced to 10 active Python files. test_utilities.py trimmed to keep
+only check_opsec tests. STATUS.md artifact index and STATE.md pipeline section
+updated to reflect current state.
+
+E1.5 running in background — seed 42 B0 done (MRR 0.779), B2 done (MRR 0.753).
+
+---
+
 ## 2026-09-04 — Session continuation: README update, ship checkpoint fix, scaling analysis
 
 **README:** Updated public-facing README from stale B44/B52 era to current
