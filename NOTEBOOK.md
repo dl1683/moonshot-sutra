@@ -4,6 +4,35 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 — Session continuation: README update, ship checkpoint fix, scaling analysis
+
+**README:** Updated public-facing README from stale B44/B52 era to current
+embedding reboot state. Added pipeline section, streamlined research map.
+
+**Ship mode bug fix:** Best and periodic checkpoints were saving only `model.pt`
+(full state dict) — the export pipeline expected `encoder/` directory + `proj.pt`.
+Fixed: all three save points (best, periodic, final) now consistently save
+encoder via `save_pretrained()` + `proj.pt`.
+
+**Scaling analysis for ship mode:**
+- 50K pairs is the sweet spot for KD data (vs current 5K)
+- 2-stage training (BM25 negatives → hard negative mining → train more) is the
+  biggest quality lever — implemented by BGE and E5
+- kd_weight=0.7 (trust teacher) in stage 1, 0.5 in stage 2
+- Estimated wall time: ~2 hours on RTX 5090 for 50K pairs
+- Decision: ship v0 runs with current pipeline + bigger args, 2-stage added later
+
+**MTEB competitive targets** (149M student, 384-dim):
+- Floor: beat all-MiniLM-L6-v2 (~56.3, 22M params)
+- Realistic: approach nomic-embed-v1.5 (~62, 137M params)
+- Stretch: approach bge-base-en-v1.5 (~63.5, 110M params)
+- Ceiling: teacher bge-large (~64.2, 335M params)
+
+**E1.5 status:** Running on GPU. B0_contrastive seed 42 done (MRR 0.761 at step
+600). ~17 arm-runs remaining, ~2.5 hours.
+
+---
+
 ## 2026-09-04 — Codex V1 Evidence Gate: FAIL — overclaims in BOTH directions
 
 Codex verdict on V1 vision experiment: **FAIL. V1 is exploratory debugging, not
