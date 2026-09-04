@@ -4,6 +4,38 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 19:30 -- P2 Gate PASS + Ship Mode Progress
+
+**P2 Gate Result: DECISIVE PASS (17%)**
+Provenance manifest seed 42 complete (SHA 8848c1552151b6a6). Both teachers show
+Q1 (donor-private) = 34/200 = 17%, massively exceeding the 5% threshold.
+
+Quadrant analysis (seed 42):
+- MiniLM-L12: Q1=17%, Q2=13%, Q3=53%, Q4=17%. Teacher MRR=0.819
+- BGE-large: Q1=17%, Q2=10%, Q3=56%, Q4=17%. Teacher MRR=0.828
+- B0 baseline MRR=0.779
+
+KD rescue rates on Q1 (donor-private queries):
+- B2 (standard KD): 18/34 = 53% rescued
+- B3 (calibrated avg): 13-14/34 = 38-41% rescued
+
+Key insight: standard KD already transfers 53% of donor-private signal on frozen
+encoder, despite losing aggregate MRR to B0. The fade experiment will test whether
+this transferred signal persists when KD pressure is removed.
+
+Seeds 137+271 computing on CPU for complete 3-seed manifest.
+
+**Ship mode v0 progress (unfrozen KD):**
+- Step 500: MRR=0.471, hit@1=0.264, hit@5=0.774 (+41% over baseline)
+- Step 1000: MRR=0.506, hit@1=0.296, hit@5=0.816 (+51% over baseline)
+- Loss trending: 0.728 → 0.542 (step 1000)
+- Training was stalled ~4h due to orphaned GPU processes; resumed after cleanup
+
+**Process cleanup:** Killed 5 orphaned provenance_manifest processes, 1 orphaned
+GPU mining script, 1 dead ship mode process. Freed significant CPU and GPU.
+
+---
+
 ## 2026-09-04 16:00 -- Fade Pilot Code Hardened + Provenance Re-run
 
 **Fade pilot code improvements (experiment_e1.py):**
