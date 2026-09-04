@@ -145,7 +145,13 @@ class VisionEncoder:
     def encode(self, images: list[Image.Image]) -> torch.Tensor:
         if self.mode == "clip":
             inputs = self.processor(images=images, return_tensors="pt").to(self.device)
-            embs = self.model.get_image_features(**inputs)
+            outputs = self.model.get_image_features(**inputs)
+            if isinstance(outputs, torch.Tensor):
+                embs = outputs
+            elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+                embs = outputs.pooler_output
+            else:
+                embs = outputs[1]
         else:
             inputs = self.processor(images=images, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)

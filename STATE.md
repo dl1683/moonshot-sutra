@@ -1,20 +1,21 @@
 # State
 
-**Last updated:** 2026-09-04 01:15 ET
-**Current state:** E1 numeric pass + causal FAIL. Loss is algebraically just avg-teacher KD. E1.5 absorber gate needed before any claim.
+**Last updated:** 2026-09-04
+**Current state:** TOMOGRAPHY METHOD DEAD across modalities. Standard single-teacher KD wins. Pivoting from method to artifact: ship small KD-trained models.
 **Blackboard:** `1d65d9fb`
 
 ## Direction
 
-Eklavya method applied to small modality-specific models (embeddings first,
-then vision, then audio). Simplified per Devansh directive: core philosophy
-is stealing/learning from existing models, not over-engineered probe tomography.
+**PIVOT: the artifact IS the model, not the method.**
 
-Key Codex design gate corrections adopted:
-- ModernBERT-base (149M) as student — untrained for embeddings, real room to learn
-- Calibrated pairwise margins, not just ranks
-- Avoid Kill #9 (routing) and Kill #14 (supplied geometry)
-- B4 stack-and-distill as decisive hostile absorber (deferred to E2)
+Eklavya tomography (multi-teacher probe-based knowledge transfer) does not
+produce breakthrough results over standard KD in either text or vision:
+- Text: Kill #15 confirmed (E1 noise-level, 200-pair contradicts, Codex FAIL)
+- Vision V1: single-teacher KD from compatible architecture beats tomography
+
+The Eklavya philosophy ("steal from existing models") survives. The mechanism
+is standard KD — mature, well-understood, effective. Ship small models trained
+with the best available KD recipe across modalities.
 
 ## E1 Results (COMPLETE — tomography passes kill criterion)
 
@@ -82,7 +83,7 @@ MiniLM-L6-v2 (22M) student, BGE-large (335M) + MiniLM-L12 (33M) teachers,
 **Verdict:** All teacher KD destructive for already-trained student.
 Confirms ModernBERT-base blank-slate is the correct approach.
 
-## V2-R2 Results (COMPLETED — Codex R2 prescribed experiment, KILL #15)
+## V2-R2 Results (COMPLETED — NARROW NEGATIVE, not terminal kill)
 
 Codex R2 specified: frozen MiniLM-L6-v2 encoder + trainable 384→384 residual
 projection head. Single teacher (MiniLM-L12-v2). 300 MSMARCO pairs (10 docs),
@@ -98,9 +99,19 @@ NO response-delta target.
 | **eklavya** | **0.9262** | **-0.0082** |
 
 **Eklavya vs B4c delta: +0.0000** (threshold: +0.005)
-**Verdict: DEAD.** Response-delta targets carry zero information beyond what
-teacher example/weight selection already provides. Only ordinary KD improves
-the student. Kill #15.
+
+**Codex evidence gate reclassification (2026-09-04):**
+`V2-R2 NARROW NEGATIVE — ceiling-saturated, terminal criterion not executed`
+
+The experiment validly shows this frozen-MiniLM/head config produced no Eklavya
+advantage over B4c. It does NOT show response deltas contain zero useful info.
+- Baseline nDCG 0.9344 = 37 of 45 queries already rank-1. Each nonzero gain is
+  exactly one query moving between rank 1 and rank 2. Evaluation cannot resolve
+  the precommitted +0.005 threshold.
+- Run had 10 docs, 1 domain, 1 seed, no CI. Precommit required 32 docs, 2
+  domains, 3 seeds, paired positive CI, unseen intervention template.
+- Eklavya-specific loss activation rate and sign balance were not recorded.
+- Not a terminal kill. Corrected adjudication (E1.5) required.
 
 ## Pipeline Code
 
@@ -134,21 +145,25 @@ initialization across arms.
 
 See `research/STATUS.md` for the full 14-kill record.
 
-## Kill #15 Analysis
+## V2-R2 / "Kill #15" Analysis (RECLASSIFIED)
 
-Text embedding response-delta Eklavya is dead. The decisive test (Codex R2
-B4c absorber) shows that response-delta matching provides zero information
-beyond teacher example selection + support weighting. Only ordinary KD
-(matching teacher similarity scores) improves the student.
+V2-R2 is a narrow negative, not a terminal kill. Two independent Codex evidence
+gates confirmed: the experiment was ceiling-saturated and did not execute its
+own precommitted criteria.
 
-**What this means for the program:**
-- Response-delta as a training signal is killed for text embeddings
-- Teacher tomography may still work via OTHER mechanisms (not response-delta)
-- Vision embeddings offer architecturally diverse teachers (DINOv2 = self-supervised,
-  CLIP = contrastive lang-img, SigLIP = sigmoid) — different training signals,
-  not just different weights on the same architecture
-- The question becomes: does teacher diversity at the architectural level
-  provide information that KD cannot capture?
+**What remains open:**
+- Response-delta as a training signal is NOT conclusively killed — the test
+  lacked resolution to detect small effects
+- The tomography loss has a separate fundamental flaw: algebraic identity
+  avg(KL(P_t||Q)) = KL(avg(P_t)||Q) + C (C has no student gradient), meaning
+  teacher identity is erased through averaging. This must be fixed regardless
+  of evaluation quality.
+- Corrected adjudication (E1.5) with identity-preserving loss, 32-doc hard
+  negatives, 2 domains, 3 seeds will settle the question
+
+**Two independent problems to solve before E1.5:**
+1. Loss function: break the algebraic identity (teacher identity preservation)
+2. Evaluation: 32-doc raw-student hard-negative pools, proper statistical power
 
 ## Codex E2 Audit — FAILED
 
@@ -160,16 +175,68 @@ E2 code has material deficiencies (Codex found):
 - Test-set leakage: winning arm selected on test set
 - Three teachers introduced during what should be 2-teacher replication first
 
+## Codex Design Gate (2026-09-04): NO-GO → Redesign
+
+Codex design gate reviewed the original E1.5 and issued NO-GO. Key findings:
+
+1. **Pairwise margin loss has dead zone**: when teachers disagree, gradient = 0
+   for |d| ≤ m. Verified by running dummy student.
+2. **Reverse KL ≈ forward KL at low tau**: geometric vs arithmetic mean differs
+   by ~0.007 at tau=0.5. Not a meaningful fix.
+3. **B4c was NOT support-matched**: E1.5 had 5,952 teacher constraints vs B4c
+   186 gold constraints. Not a fair comparison.
+4. **Negation probes create false labels** for B4c (gold doc may be irrelevant
+   to negated query).
+5. **Blocking bugs**: evaluate() lacked eval mode, RNG not properly seeded,
+   bootstrap absent (used 1.96 instead of t-distribution), potential grad crash.
+6. **B3 was miscalibrated**: averaged raw cosine scores instead of calibrated
+   softmax distributions.
+
+**Fix implemented**: Teacher-indexed auxiliary heads. Each teacher gets its own
+nn.Linear(dim, dim) head over the shared encoder. Student embedding goes
+through shared encoder → proj → teacher-specific head → similarity. This
+genuinely breaks the algebraic identity: Q_t ≠ Q_t' for different teachers.
+B4c absorber is now support-matched: same heads, same probe × teacher support
+structure, but gold targets instead of teacher distributions.
+
+## V1 Vision Results (COMPLETE — standard KD wins)
+
+Student: DINOv2-small (21M), 256-dim projection
+Teachers: DINOv2-base (86M, 768-dim) + CLIP-ViT-B/32 (86M, 512-dim)
+Data: CIFAR-100, 300 train / 100 eval pairs, 600 steps, lr=1e-5
+
+**ALL arms catastrophically destroy pretrained features.** End-to-end fine-tuning
+of DINOv2-small on 300 CIFAR-100 pairs wipes out pretrained knowledge.
+
+| Arm | Baseline MRR | Final MRR | **Gain** | Rank |
+|-----|-------------|-----------|----------|------|
+| B2 KD single (DINOv2-base) | 0.812 | 0.478 | **-0.334** | **1st** |
+| V1 tomography | 0.871 | 0.521 | -0.350 | 2nd |
+| B0 contrastive | 0.828 | 0.425 | -0.403 | 3rd |
+| B3 KD avg | 0.839 | 0.430 | -0.409 | 4th |
+| B4c aug_contrastive | 0.836 | 0.403 | -0.434 | 5th |
+
+**Findings (gain-based, not absolute MRR which is init-confounded):**
+1. Teacher KD regularizes against forgetting: B2/V1 are least destructive
+2. Per-teacher normalization beats averaging: V1 beats B3 by 0.059
+3. Single compatible teacher beats multi-teacher tomography: B2 beats V1 by 0.016
+4. Probe augmentations harmful: B4c is 0.031 worse than B0
+
+Code's built-in "PASSES" verdict (V1 MRR > B4c + 0.01) is confounded by V1's
+higher random baseline (+0.035). Gain comparison is fairer and shows V1 does
+not beat B2. Codex evidence gate pending.
+
 ## Live threads
 
-1. **E1.5 absorber gate** — must design before any further claims (Codex directive)
-2. **Loss function redesign** — current loss algebraically doesn't preserve teacher identity
-3. **Vision V1** — experiment code exists but shares the same broken loss
-4. **200-pair E1** — COMPLETE, does not replicate 500-pair signal
+1. **Ship standard KD models** — use B2-style single-teacher KD, ship small
+   models to HuggingFace across modalities
+2. **E1.5 teacher-indexed heads** — code ready but lower priority given V1
+   results show per-teacher normalization doesn't beat standard KD
 
 ## Next
 
-1. Design E1.5: factor Views × Targets, 7+ arms, 3 seeds, equal compute, per-query ranks
-2. Fix the loss function to actually preserve teacher identity (signal s23)
-3. Only then: run E1.5 absorber gate on GPU
-4. Vision V1 blocked until loss is fixed (would inherit same algebraic problem)
+1. Design shipping pipeline: training recipe, evaluation (MTEB/MIEB), export
+2. Pick first model to ship: text embedding (ModernBERT-base + KD) or
+   vision (DINOv2-small + KD from DINOv2-base)
+3. Scale training: more data, proper hyperparameter search, frozen encoder option
+4. E1.5 can run as optional scientific interest if GPU is free

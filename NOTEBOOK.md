@@ -4,6 +4,84 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 — V1 Vision Experiment COMPLETE: catastrophic forgetting dominates
+
+**All 5 arms catastrophically destroy DINOv2-small pretrained features.**
+End-to-end fine-tuning on 300 CIFAR-100 pairs at lr=1e-5 wipes out pretrained
+knowledge. The comparison is "which arm is least destructive," not "which
+improves the student."
+
+| Arm | Baseline MRR | Final MRR | Gain | Rank |
+|-----|-------------|-----------|------|------|
+| B2 KD single (DINOv2-base) | 0.8119 | 0.4778 | **-0.3341** | 1st |
+| V1 tomography | 0.8711 | 0.5215 | -0.3496 | 2nd |
+| B0 contrastive | 0.8279 | 0.4248 | -0.4031 | 3rd |
+| B3 KD avg | 0.8386 | 0.4296 | -0.4090 | 4th |
+| B4c aug_contrastive | 0.8363 | 0.4026 | -0.4337 | 5th |
+
+**Key findings (gain-based, not absolute MRR which is init-confounded):**
+
+1. **Teacher KD regularizes against forgetting.** B2 and V1 (both use teacher
+   distributions) are the top 2 arms, ~0.05-0.10 less destructive than no-teacher
+   arms. Teacher similarity distributions anchor the student.
+
+2. **Per-teacher normalization beats averaging.** V1 (-0.3496) beats B3 (-0.4090)
+   by 0.059. With heterogeneous teachers (DINOv2 vs CLIP), per-teacher softmax+KL
+   is far better than avg-then-softmax. This is V1's strongest finding.
+
+3. **Single compatible teacher > multi-teacher tomography.** B2 (-0.3341) beats
+   V1 (-0.3496) by 0.016. DINOv2-base alone (same architecture family) provides
+   cleaner regularization than DINOv2-base+CLIP per-teacher.
+
+4. **Probe augmentations are harmful.** B4c (probes+contrastive) is 0.031 worse
+   than B0 (contrastive, no probes). DINOv2 was already trained invariant to
+   these augmentations; retraining against them destroys features.
+
+5. **Code's "PASSES" verdict is confounded.** V1 absolute MRR (0.5215) > B4c
+   (0.4026) + 0.01 = trivially true because V1 had 0.035 higher baseline from
+   random projection init. Gain comparison is fairer.
+
+**Combined verdict across modalities:**
+- Text: Kill #15 confirmed (E1 noise-level, 200-pair doesn't replicate)
+- Vision: teacher KD helps but standard single-teacher beats tomography
+- Pattern: the "fancy" multi-teacher probe-based tomography loses to simple
+  single-teacher KD from a compatible architecture in both modalities
+
+**Direction call:** Tomography as a method does not produce breakthrough results.
+Per Devansh's directive ("the artifact IS the model, not the method"), pivot to
+shipping standard KD models. The insight about per-teacher normalization vs
+averaging is useful but doesn't justify continued tomography research.
+
+---
+
+## 2026-09-03 21:00 — Anti-tunnel re-contextualization (2-hour checkpoint)
+
+**Tunnel-vision risk:** Narrowly focused on V1 as "the decisive test." Five
+alternatives that could reframe the program:
+
+1. Kill #15 is narrow — killed *response-delta*, not per-teacher KL ranking
+   transfer. These are different mechanisms. V1 tests the latter.
+2. CIFAR-100 at 32×32 may compress probe signal — all images are blurry when
+   upscaled to 224×224. ImageNet subset would be a stronger test surface.
+3. Per-teacher normalization (softmax per teacher, then avg KL) vs B3's
+   avg-then-softmax may be the real gain — missing control is identity-only
+   per-teacher KL (no probes, same normalization).
+4. Ship standard KD regardless — Sutra's value is the artifact (small model),
+   not the training method. Multi-teacher KD is mature and works.
+5. Model merging (SLERP/DARE) might beat distillation entirely — simpler,
+   no training, compose existing models directly.
+
+**What still holds:** V1 IS the right next experiment because it tests
+tomography in the strongest possible setting (genuinely heterogeneous teachers
+with different training objectives). AND it includes B4c absorber that was
+missing from E1. If V1 fails, alternatives 4/5 are the pivot.
+
+**Ship prep:** eval_mteb.py and export_model.py are text-only — need vision
+variants if V1 pivots to shipping. 4 specific code changes identified for
+seed-controlled V1 replication if signal is real.
+
+---
+
 ## 2026-09-03 20:42 — Codex evidence gate: Kill #15 CONFIRMED for text
 
 Codex (Research Integrity Auditor + Novelty Challenger) verdict on E1:
