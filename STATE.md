@@ -128,9 +128,7 @@ advantage over B4c. It does NOT show response deltas contain zero useful info.
 - `code/eval_mteb.py` — MTEB evaluation (handles raw checkpoints + sentence-transformers)
 - `code/export_model.py` — sentence-transformers export (loads trained encoder + projection)
 - `code/embed_tomography.py` — signature extraction, probes, loss functions
-- `code/train_student.py` — student training loop (tomography-coupled)
 - `code/data_loader.py` — hard toy data, MS MARCO loader, hard negative mining
-- `code/run.py` — canonical single-command runner (original pipeline)
 
 ## Known confound
 

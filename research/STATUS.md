@@ -130,7 +130,7 @@ claims.
 - Start from `research/VISION.md`.
 - Treat every mechanism as replaceable.
 - Think first, formalize first, test small.
-- CPU-first experiments unless explicitly authorized otherwise.
+- Use available GPU compute; profile before long runs.
 - Give ordinary baselines first refusal.
 - Distinguish native execution, proxy absorber, capability-mode scoring, and
   formal proof/lower bound.
@@ -149,61 +149,29 @@ claims.
 - `experiments/EXPERIMENTS.md` - human-readable experiment index.
 - `experiments/ledger.jsonl` - append-only experiment ledger.
 
-### Current E3 / B42-B44 Surface
+### Active Code
 
-- `research/work_loop_batch42.md` - Eklavya CPU audit and E2 demotion.
-- `research/work_loop_batch43.md` - friendly E3 toy and comparator restoration.
-- `research/work_loop_batch44.md` - hostile E3 absorber test.
-- `research/question_loop_batch50.md` - direction challenge preceding E3.
-- `research/question_loop_batch51.md` - E3 sharpening and absorber roster.
-- `research/question_loop_batch52.md` - adversarial attack on E3 toy signal.
-- `research/dual_loop_supervisor_checkin_40.md` - E2 to E3 redirect.
-- `research/dual_loop_supervisor_checkin_41.md` - friendly E3 signal review.
-- `research/question_loop_batch53.md` - pre-emptive attack on inference gate design.
-- `research/dual_loop_supervisor_checkin_42.md` - hostile E3 kill and next gate.
-- `code/e3_teacher_tomography.py` - E3 toy/hostile absorber runner.
-- `code/compare_ablations.py` - restored E2/E3 comparator support module.
-- `experiments/e3_teacher_tomography_result.json` - B43 20-seed run.
-- `experiments/e3_teacher_tomography_result_50seed.json` - B43 50-seed run.
-- `experiments/e3_teacher_tomography_smoke.json` - B43 smoke run.
-- `experiments/e3_teacher_tomography_hostile_result.json` - B44 50-seed hostile absorber run.
-- `experiments/e3_teacher_tomography_hostile_smoke.json` - B44 hostile smoke run.
-
-### Reusable Code Kept
-
+- `code/experiment_e1.py` - multi-mode experiment runner (e1, e1.5, ship).
+- `code/experiment_e2.py` - scaled E2 with confound fixes.
+- `code/experiment_v1.py` - vision embedding experiment.
+- `code/experiment_a1.py` - audio embedding experiment.
+- `code/embed_tomography.py` - signature extraction, probes, loss functions.
+- `code/data_loader.py` - MS MARCO loader, hard negative mining.
+- `code/export_model.py` - sentence-transformers export.
+- `code/eval_mteb.py` - MTEB benchmark evaluation.
 - `code/check_opsec.py` - local secret/opsec scanner.
-- `code/compare_ablations.py` - E2/E3 comparator support module.
-- `code/e3_teacher_tomography.py` - E3 experiment runner.
-- `code/eklavya_cache.py` - E1 cache reader/builder utilities.
-- `code/eklavya_e2_cache.py` - E2 binary cache format.
-- `code/eklavya_e2_cache_builder.py` - E2 cache builder.
-- `code/eklavya_e2_losses.py` - E2 loss components.
-- `code/eklavya_e2_router.py` - E2 router components.
-- `code/eklavya_e2_training.py` - E2 training runner.
-- `code/eklavya_training.py` - E1 training runner.
-- `code/eval_e2.py` - E2 evaluator.
-- `code/export_log_csv.py` - log-to-CSV exporter.
-- `code/inspect_checkpoint.py` - checkpoint inspection helper.
-- `code/monitor.py` - training log monitor.
-- `code/preflight.py` - preflight checks.
-- `code/prepare_byte_shards.py` - shard preparation helper.
-- `code/s0_architecture.py` - S0 architecture definition.
-- `code/s0_configs.py` - S0 config registry.
-- `code/s0_eval.py` - S0 evaluation helpers.
-- `code/s0_mcq_capacity.py` - historical S0 capacity runner kept as a reference.
-- `code/s0_option_c_training.py` - historical Option-C training runner.
-- `code/s0_training.py` - S0 training runner.
-- `code/vram_profile.py` - VRAM profile helper.
+- `code/test_utilities.py` - opsec scanner tests.
 
-### Tests Kept
+### Historical E3 / B42-B44 Surface (code deleted, research docs preserved)
 
-- `code/test_eklavya.py` - E1/cache tests.
-- `code/test_eklavya_e2.py` - E2/E3 infrastructure tests.
-- `code/test_export_log_csv.py` - CSV exporter tests.
-- `code/test_monitor_inspect.py` - monitor/checkpoint tests.
-- `code/test_option_c.py` - Option-C tests.
-- `code/test_overfit.py` - overfit/smoke tests.
-- `code/test_utilities.py` - utility/opsec/preflight tests.
+- `research/work_loop_batch42.md` through `research/work_loop_batch44.md`
+- `research/question_loop_batch50.md` through `research/question_loop_batch53.md`
+- `research/dual_loop_supervisor_checkin_40.md` through `42.md`
+- `experiments/e3_teacher_tomography_*.json` - B43/B44 result artifacts.
+
+31 dead Python files (S0, old Eklavya, E3, old runner, old utilities, and
+their tests) deleted 2026-09-04. All formed a closed import cluster with no
+active code depending on them. Preserved in git history.
 
 ### Support Files Kept
 
