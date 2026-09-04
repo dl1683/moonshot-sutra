@@ -4,6 +4,28 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 — 2-hour re-contextualization: alternatives alive
+
+**Status:** E1.5 at 5/18 arms (seed_42 nearly complete, B4c_matched at step 150).
+Ship pipeline fully verified and ready.
+
+**Re-contextualization:** The dominant signal from seed_42 is that pure contrastive
+(B0, MRR 0.779) beats all KD variants (B2=0.753, E15=0.752, B3=0.724) with 32
+hard-mined negatives. This raises the question: is negative quality, not teacher
+knowledge, the binding constraint? If so, teacher tomography is irrelevant
+*regardless of implementation* — and the ship model should consider kd_weight=0.
+
+**Alternatives held open:**
+1. Pure contrastive ship model (no teacher at all)
+2. Iterative hard negative mining for v1 (BGE recipe)
+3. kd_weight as first ablation dimension if v0 underperforms
+4. Ship mode uses BM25 negatives (easier) where KD may add more value
+
+Not acting on these yet — waiting for full 3-seed E1.5 results + Codex evidence
+gate before changing the ship recipe.
+
+---
+
 ## 2026-09-04 — E1.5 corrected adjudication: dot fix, resume logic, running
 
 **Bug fix (commit c3004ea):** nn.ModuleDict rejects keys containing `.` but
