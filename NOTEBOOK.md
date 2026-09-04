@@ -4,6 +4,27 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-03 (late) — E1 partial results + all three modality pipelines ready
+
+E1 partial results (on 100 eval MS MARCO pairs):
+- B0 contrastive: MRR 0.343 -> 0.514 (+0.171)
+- B2 single-teacher KD: MRR 0.343 -> 0.540 (+0.196)
+- B3 multi-teacher avg: running (step 350/600)
+- E1 tomography: pending
+
+Key finding so far: teacher KD adds +0.025 MRR over contrastive alone. Real
+but modest. The decisive question is whether multi-teacher (B3) and tomography
+(E1) extend the gap or saturate.
+
+All three modality experiment pipelines built and ready:
+- experiment_v1.py — vision (CIFAR-100, DINOv2 student/teacher, CLIP teacher)
+- experiment_a1.py — audio (ESC-50/synthetic, CNN encoder, audio probes)
+- eval_mteb.py — MTEB evaluation for shipping readiness
+
+Next after E1: Codex evidence gate on results, then launch V1 on GPU.
+
+---
+
 ## 2026-09-03 — Strategic clarity: the artifact IS the model, not the method
 
 Key realization while E1 runs: Devansh's Eklavya philosophy is about the
