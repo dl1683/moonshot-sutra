@@ -38,6 +38,31 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+
+def gpu_thermal_guard(max_temp: int = 85, check_interval: float = 5.0):
+    """Block until GPU temperature drops below max_temp. No-op on CPU."""
+    if not torch.cuda.is_available():
+        return
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        temp = int(result.stdout.strip())
+        if temp >= max_temp:
+            print(f"  [thermal] GPU at {temp}°C (limit {max_temp}°C), cooling...")
+            while temp >= max_temp - 3:
+                time.sleep(check_interval)
+                result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                temp = int(result.stdout.strip())
+            print(f"  [thermal] GPU cooled to {temp}°C, resuming")
+    except Exception:
+        pass
+
 from embed_tomography import (
     generate_probes,
     Probe,
@@ -412,6 +437,7 @@ def run_arm(
     frozen: bool = False,
     warmup_frac: float = 0.0,
 ):
+    gpu_thermal_guard(max_temp=85)
     print(f"\n{'='*60}")
     print(f"ARM: {arm_name} ({arm_type}){' [FROZEN]' if frozen else ''}")
     print(f"{'='*60}")
@@ -515,6 +541,8 @@ def run_arm(
 
         running_loss += loss.item()
 
+        if step % 100 == 0:
+            gpu_thermal_guard(max_temp=85)
         if step % 50 == 0:
             avg = running_loss / 50
             entry = {"step": step, "loss": round(avg, 6), "elapsed_s": round(time.time()-t0, 1)}
@@ -770,6 +798,7 @@ def main_e15():
         train_raw = raw_pairs[:args.n_train]
         eval_raw = raw_pairs[args.n_train : args.n_train + args.n_eval]
 
+        gpu_thermal_guard(max_temp=85)
         print("\nMining hard negatives with raw student...")
         raw_student = ModernBERTEmbedder(
             args.student, dim=384, proj_seed=args.proj_seed,
@@ -1027,6 +1056,7 @@ def main_ship():
     with open(os.path.join(args.out_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
 
+    gpu_thermal_guard(max_temp=85)
     print(f"\nTraining ({args.steps} steps, sampling from {len(train_pairs)} pairs)...")
     for step in range(1, args.steps + 1):
         idx = stdlib_random.randint(0, len(train_pairs) - 1)
@@ -1084,6 +1114,7 @@ def main_ship():
             running_loss = 0.0
 
         if step % args.save_every == 0:
+            gpu_thermal_guard(max_temp=85)
             ckpt_dir = os.path.join(args.out_dir, f"checkpoint-{step}")
             Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
             student.encoder.save_pretrained(os.path.join(ckpt_dir, "encoder"))
