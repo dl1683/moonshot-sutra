@@ -1027,9 +1027,9 @@ def main_ship():
     with open(os.path.join(args.out_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
 
-    print(f"\nTraining ({args.steps} steps)...")
+    print(f"\nTraining ({args.steps} steps, sampling from {len(train_pairs)} pairs)...")
     for step in range(1, args.steps + 1):
-        idx = (step - 1) % len(train_pairs)
+        idx = stdlib_random.randint(0, len(train_pairs) - 1)
         pair = train_pairs[idx]
 
         optimizer.zero_grad()
