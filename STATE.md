@@ -1,16 +1,22 @@
 # State
 
 **Last updated:** 2026-09-04
-**Current state:** E1.5 RUNNING. Seed 42 partial: contrastive (0.779) > single KD (0.753) ≈ teacher-indexed (0.752) > avg KD (0.724). Teacher-indexed heads show NO signal above simple KD. Awaiting B4c + seeds 137/271 for final verdict.
+**Current state:** E1.5 RUNNING (2/3 seeds complete, seed_271 in progress). Teacher-indexed heads ABSORBED by B4c in both seeds. Kill shaping up clearly.
 **Blackboard:** `1d65d9fb`
 
 ## Direction
 
-**E1.5 corrected adjudication running. Ship pipeline prepared for immediate launch after verdict.**
+**E1.5 corrected adjudication: 2/3 seeds done, kill confirmed across both.**
 
-Seed 42 early signal: teacher-indexed heads (0.752) ≈ single-teacher KD (0.753).
-Per-teacher auxiliary heads do NOT beat simple single-teacher distillation.
-Contrastive learning dominates all KD variants with 32-doc hard negatives.
+Cross-seed E15 vs B4c deltas: seed_42 = -0.0006, seed_137 = -0.0095. Both negative.
+Teacher-indexed heads add noise, not signal. Identity-only probe outperforms
+full teacher-indexed in seed_137 (+0.017), confirming heads hurt.
+
+Seed 42: B0(0.779) >> B2=B4c(0.753) > E15(0.752) > E15_id(0.748) > B3(0.724)
+Seed 137: B0(0.761) > E15_id(0.754) > B2(0.752) > B4c(0.747) > B3(0.739) > E15(0.737)
+
+Contrastive learning dominates all KD variants in both seeds.
+Ship pipeline prepared for immediate launch after seed_271 completes.
 
 Codex V1 evidence gate (2026-09-04): V1 is an exploratory debugging run, not
 valid evidence. Both "tomography dead" and "standard KD wins" are overclaimed:
