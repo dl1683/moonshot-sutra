@@ -4,6 +4,46 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 00:31 — 2-hour audit #2: tunnel risk, negative-quality hypothesis
+
+**Status:** E1.5 at 10/18 arms. Seed_42 complete (clean absorber kill signal:
+E15=0.752 vs B4c=0.7526, delta=-0.0006). Seed_137 partial: B0=0.761, B2=0.752,
+B3=0.739, E15=0.737 — E15 now BELOW B3. Thermal guards added after 3 crashes.
+
+**Codex audit:** DEFERRED until summary.json exists. Full evidence gate prepared.
+
+**Tunnel vision:** YES. Entirely narrowed on text tomography adjudication +
+text ship model. Vision/audio/Sangam all dormant. The tomography question is
+settling (toward kill), but we haven't started building alternative ship recipes.
+
+**Strongest alternative explanation:** Hard negative quality, not teacher
+knowledge, is the binding constraint. B0 (pure contrastive, 32 student-mined
+hard negatives) beats every KD variant by 0.02+ across both seeds. This means:
+1. The ship model's kd_weight=0.7 may be wrong — pure contrastive (kd_weight=0)
+   could be better
+2. Iterative hard negative mining (train → re-mine → train, the BGE recipe)
+   might outperform any amount of teacher supervision
+3. The entire Eklavya program's premise (steal from teachers) may be unnecessary
+   for text embeddings — the student's own evolving geometry provides better
+   training signal than any teacher
+
+**What still holds:**
+- The artifact IS the deliverable (§2.7) — ship regardless of method question
+- Standard KD from BGE-large is a reasonable v0 baseline
+- E1.5 will cleanly settle the tomography question (positive or negative)
+
+**Alternative directions (not running, should consider after E1.5):**
+1. Ship v0a: pure contrastive (kd_weight=0) as comparison
+2. Ship v0b: iterative hard negative mining (2 rounds)
+3. kd_weight sweep: {0, 0.3, 0.5, 0.7, 1.0} on quick eval
+4. Cross-modal: audio embedding distillation (ESC-50, completely untested)
+
+**Decision:** Complete E1.5 (30 min), fire Codex evidence gate, ship v0 as
+planned (kd_weight=0.7), then immediately run v0a (kd_weight=0) as ablation.
+MTEB comparison of v0 vs v0a settles the KD-vs-contrastive question at scale.
+
+---
+
 ## 2026-09-04 — 2-hour re-contextualization: alternatives alive
 
 **Status:** E1.5 at 5/18 arms (seed_42 nearly complete, B4c_matched at step 150).
