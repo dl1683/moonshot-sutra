@@ -148,8 +148,8 @@ controlled toy, not that teacher tomography discovered geometry.
 
 Primary artifacts:
 
-- `code/e3_teacher_tomography.py`
-- `code/compare_ablations.py`
+- `code/e3_teacher_tomography.py` (deleted 2026-09-04, preserved in git history)
+- `code/compare_ablations.py` (deleted 2026-09-04, preserved in git history)
 - `experiments/e3_teacher_tomography_smoke.json`
 - `experiments/e3_teacher_tomography_result.json`
 - `experiments/e3_teacher_tomography_result_50seed.json`
@@ -164,7 +164,7 @@ E3 exactly across 50/50 seeds. E3 survives only as an inference-gate direction.
 
 Primary artifacts:
 
-- `code/e3_teacher_tomography.py`
+- `code/e3_teacher_tomography.py` (deleted 2026-09-04, preserved in git history)
 - `experiments/e3_teacher_tomography_hostile_smoke.json`
 - `experiments/e3_teacher_tomography_hostile_result.json`
 - `research/work_loop_batch44.md`

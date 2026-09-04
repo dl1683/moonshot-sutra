@@ -4,6 +4,21 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 01:20 — Seed_137 complete: absorber kill strengthens
+
+Seed_137 final: B0(0.761) > E15_id(0.754) > B2(0.752) > B4c(0.747) > B3(0.739) > E15(0.737)
+
+E15 vs B4c: -0.0095 (seed_42 was -0.0006). Kill signal STRONGER in second seed.
+Identity-only probe (0.754) beats full teacher-indexed (0.737) by +0.017 — the
+per-teacher heads actively hurt. More parameters, more noise, worse result.
+
+Cross-seed pattern: contrastive dominance holds (B0 top in both). KD variants
+cluster. Teacher-indexed heads show zero useful signal. Seed_271 running.
+
+Pipeline: analyze → Codex evidence gate → ship v0 (kd=0.7) → v0a (kd=0) → MTEB.
+
+---
+
 ## 2026-09-04 00:31 — 2-hour audit #2: tunnel risk, negative-quality hypothesis
 
 **Status:** E1.5 at 10/18 arms. Seed_42 complete (clean absorber kill signal:

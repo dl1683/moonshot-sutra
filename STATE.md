@@ -143,8 +143,9 @@ advantage over B4c. It does NOT show response deltas contain zero useful info.
 
 Each E1 arm creates a fresh ModernBERTEmbedder with a random nn.Linear(768, 384)
 projection, giving different baselines. Gains are more comparable than absolute
-MRR. Fixed in experiment_e2.py with `proj_seed` parameter ensuring identical
-initialization across arms.
+MRR. Fixed in E1.5 via `proj_seed` parameter ensuring identical initialization
+across arms. (The standalone `experiment_e2.py` was deleted 2026-09-04; ship
+mode is now `experiment_e1.py --mode ship`.)
 
 ## What survived the 14 kills
 
