@@ -118,16 +118,19 @@ advantage over B4c. It does NOT show response deltas contain zero useful info.
 
 ## Pipeline Code
 
-- `code/experiment_e1.py` — 4-arm text embedding experiment (running)
+- `code/experiment_e1.py` — multi-mode experiment runner:
+  - `--mode e1` (default): 4-arm text embedding experiment
+  - `--mode e1.5`: corrected 6-arm adjudication with teacher-indexed heads
+  - `--mode ship`: standard KD at scale for artifact production
 - `code/experiment_e2.py` — scaled E2 with confound fixes (proj_seed, warmup, 3 teachers)
 - `code/experiment_v1.py` — 4-arm vision embedding experiment (CIFAR-100)
 - `code/experiment_a1.py` — 4-arm audio embedding experiment (ESC-50/synthetic)
-- `code/eval_mteb.py` — MTEB evaluation pipeline for shipping
-- `code/export_model.py` — sentence-transformers export for HuggingFace
+- `code/eval_mteb.py` — MTEB evaluation (handles raw checkpoints + sentence-transformers)
+- `code/export_model.py` — sentence-transformers export (loads trained encoder + projection)
 - `code/embed_tomography.py` — signature extraction, probes, loss functions
-- `code/train_student.py` — student training loop
-- `code/data_loader.py` — hard toy data, MS MARCO loader
-- `code/run.py` — canonical single-command runner
+- `code/train_student.py` — student training loop (tomography-coupled)
+- `code/data_loader.py` — hard toy data, MS MARCO loader, hard negative mining
+- `code/run.py` — canonical single-command runner (original pipeline)
 
 ## Known confound
 
