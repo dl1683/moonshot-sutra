@@ -1,3 +1,4 @@
 torch>=2.1
 numpy>=1.24
 transformers>=4.40
+sentence-transformers>=3.0

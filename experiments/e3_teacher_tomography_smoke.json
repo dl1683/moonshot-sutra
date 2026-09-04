@@ -1,0 +1,215 @@
+{
+  "precommit": {
+    "direction": "E3 Functional Teacher Tomography toy v0",
+    "claim": "source-specific teacher measurements can be inverted into compact counterfactual ranking lessons that transfer to a hidden transform better than raw teacher outputs and ordinary absorbers",
+    "signal_token": "E3_TOY_SIGNAL_SOURCE_SPECIFIC_COUNTERFACTUAL_LESSON",
+    "kill_tokens": [
+      "E3_TOY_ABSORBED_BY_CE_ONLY",
+      "E3_TOY_ABSORBED_BY_SINGLE_TEACHER",
+      "E3_TOY_ABSORBED_BY_TEACHER_AVERAGE_OR_WEIGHTED_VOTE",
+      "E3_TOY_ABSORBED_BY_ACTIVE_LEARNING",
+      "E3_TOY_ABSORBED_BY_AUGMENTATION",
+      "E3_TOY_SHUFFLED_SENSORS_MATCH_REAL",
+      "E3_TOY_NEGATIVE"
+    ],
+    "void_tokens": [
+      "E3_TOY_VOID_NONFINITE",
+      "E3_TOY_VOID_EMPTY_SPLIT",
+      "E3_TOY_VOID_EXACT_TOOL_GRANTED"
+    ],
+    "continuation_gate": {
+      "beat_best_ordinary_by_pp": 5.0,
+      "beat_active_by_pp": 3.0,
+      "beat_best_single_by_pp": 3.0,
+      "beat_shuffled_by_pp": 6.0
+    }
+  },
+  "summary_metrics": {
+    "B0_CE_only_same_student": {
+      "mean_hidden_acc": 0.5625,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.5625,
+      "max_hidden_acc": 0.5625
+    },
+    "B10_counterfactual_augmentation_no_tomography": {
+      "mean_hidden_acc": 0.4375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.4375,
+      "max_hidden_acc": 0.4375
+    },
+    "B4_single_semantic_z0": {
+      "mean_hidden_acc": 0.46875,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.46875,
+      "max_hidden_acc": 0.46875
+    },
+    "B4_single_surface_lexical": {
+      "mean_hidden_acc": 0.53125,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.53125,
+      "max_hidden_acc": 0.53125
+    },
+    "B4_single_verifier_z1": {
+      "mean_hidden_acc": 0.4375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.4375,
+      "max_hidden_acc": 0.4375
+    },
+    "B5_naive_teacher_average": {
+      "mean_hidden_acc": 0.5625,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.5625,
+      "max_hidden_acc": 0.5625
+    },
+    "B6_weighted_vote_calibrated": {
+      "mean_hidden_acc": 0.375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.375,
+      "max_hidden_acc": 0.375
+    },
+    "B7_shuffled_teacher_measurements": {
+      "mean_hidden_acc": 0.625,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.625,
+      "max_hidden_acc": 0.625
+    },
+    "B8_shuffled_teacher_identity": {
+      "mean_hidden_acc": 0.46875,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.46875,
+      "max_hidden_acc": 0.46875
+    },
+    "B9_active_hard_examples_average_label": {
+      "mean_hidden_acc": 0.53125,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.53125,
+      "max_hidden_acc": 0.53125
+    },
+    "E3_source_specific_lesson_packets": {
+      "mean_hidden_acc": 0.59375,
+      "std_hidden_acc": 0.0,
+      "min_hidden_acc": 0.59375,
+      "max_hidden_acc": 0.59375
+    }
+  },
+  "margins": {
+    "e3_minus_best_ordinary_pp": -3.125,
+    "e3_minus_ce_pp": 3.125,
+    "e3_minus_best_single_pp": 6.25,
+    "e3_minus_avg_or_weighted_pp": 3.125,
+    "e3_minus_active_pp": 6.25,
+    "e3_minus_shuffled_pp": -3.125,
+    "e3_minus_augmentation_pp": 15.625
+  },
+  "packet_value_forecast": {
+    "mean_prior": 0.375,
+    "mean_realized_vs_best_baseline": -0.03125,
+    "forecast_ok": false
+  },
+  "terminal_token": "E3_TOY_ABSORBED_BY_TEACHER_AVERAGE_OR_WEIGHTED_VOTE",
+  "seeds": [
+    0
+  ],
+  "epochs": 80,
+  "packet_limit": 32,
+  "smoke": true,
+  "per_seed": [
+    {
+      "seed": 0,
+      "hidden_count": 32,
+      "calibration_count": 16,
+      "source_pool_count": 32,
+      "packet_rule": {
+        "role_map": {
+          "semantic": "semantic_z0",
+          "verifier": "verifier_z1"
+        },
+        "invert": false,
+        "calibration_packet_acc": 1.0,
+        "calibration_single_accs": {
+          "surface_lexical": 0.4375,
+          "semantic_z0": 0.625,
+          "verifier_z1": 0.5625
+        },
+        "calibration_avg_acc": 0.5,
+        "packet_value_prior": 0.375,
+        "predicted_lesson_type": "counterfactual_xor_ranking_packet",
+        "predicted_student_gap": "absent_counterfactual_readout"
+      },
+      "packet_meta": {
+        "n_packet_examples": 32,
+        "transforms": [
+          "irrelevant_slot_flip",
+          "nuisance_preserving_flip",
+          "single_latent_counterfactual_flip"
+        ],
+        "teacher_measurement_cost": 96,
+        "packet_value_prior": 0.375
+      },
+      "runs": {
+        "B0_CE_only_same_student": {
+          "hidden_acc": 0.5625,
+          "train_size": 16
+        },
+        "B4_single_surface_lexical": {
+          "hidden_acc": 0.53125,
+          "train_size": 48
+        },
+        "B4_single_semantic_z0": {
+          "hidden_acc": 0.46875,
+          "train_size": 48
+        },
+        "B4_single_verifier_z1": {
+          "hidden_acc": 0.4375,
+          "train_size": 48
+        },
+        "B5_naive_teacher_average": {
+          "hidden_acc": 0.5625,
+          "train_size": 48
+        },
+        "B6_weighted_vote_calibrated": {
+          "hidden_acc": 0.375,
+          "train_size": 48
+        },
+        "B9_active_hard_examples_average_label": {
+          "hidden_acc": 0.53125,
+          "train_size": 26
+        },
+        "B7_shuffled_teacher_measurements": {
+          "hidden_acc": 0.625,
+          "train_size": 48
+        },
+        "B8_shuffled_teacher_identity": {
+          "hidden_acc": 0.46875,
+          "train_size": 48
+        },
+        "B10_counterfactual_augmentation_no_tomography": {
+          "hidden_acc": 0.4375,
+          "train_size": 48
+        },
+        "E3_source_specific_lesson_packets": {
+          "hidden_acc": 0.59375,
+          "train_size": 48,
+          "n_packet_examples": 32,
+          "transforms": [
+            "irrelevant_slot_flip",
+            "nuisance_preserving_flip",
+            "single_latent_counterfactual_flip"
+          ],
+          "teacher_measurement_cost": 96,
+          "packet_value_prior": 0.375
+        }
+      },
+      "diagnostics": {
+        "exact_domain_tool_hidden_acc": 1.0,
+        "exact_domain_tool_label": "formal_oracle_not_admitted",
+        "active_query_count": 10,
+        "weighted_vote_weights": {
+          "surface_lexical": 0.005249343832020997,
+          "semantic_z0": 0.6614173228346457,
+          "verifier_z1": 0.3333333333333333
+        }
+      }
+    }
+  ]
+}

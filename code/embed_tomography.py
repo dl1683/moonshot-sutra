@@ -1060,7 +1060,363 @@ def run_routing_audit(
 
 
 # ---------------------------------------------------------------------------
-# End-to-end experiment
+# V2 Experiment: Codex R2 spec — frozen encoder, B4c absorber
+# ---------------------------------------------------------------------------
+
+class FrozenStudentHead(torch.nn.Module):
+    """Frozen encoder + trainable residual projection head (identical across arms)."""
+
+    def __init__(self, model_name: str, device: str = "cpu"):
+        super().__init__()
+        from sentence_transformers import SentenceTransformer
+        self.base = SentenceTransformer(model_name, device=device)
+        for p in self.base.parameters():
+            p.requires_grad = False
+        dim = self.base.get_sentence_embedding_dimension()
+        self.head = torch.nn.Sequential(
+            torch.nn.Linear(dim, dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(dim, dim),
+        ).to(device)
+        self.device = device
+        self._model_name = model_name
+        self._dim = dim
+
+    def encode_with_grad(self, texts: list[str]) -> torch.Tensor:
+        with torch.no_grad():
+            feats = self.base.tokenize(texts)
+            feats = {k: v.to(self.device) for k, v in feats.items()}
+            base_emb = self.base(feats)["sentence_embedding"]
+        out = base_emb + self.head(base_emb)
+        return F.normalize(out, p=2, dim=1)
+
+    @torch.no_grad()
+    def encode(self, texts: list[str], **kwargs) -> torch.Tensor:
+        feats = self.base.tokenize(texts)
+        feats = {k: v.to(self.device) for k, v in feats.items()}
+        base_emb = self.base(feats)["sentence_embedding"]
+        out = base_emb + self.head(base_emb)
+        return F.normalize(out, p=2, dim=1)
+
+    def trainable_parameters(self):
+        return self.head.parameters()
+
+    def train(self):
+        self.head.train()
+        return self
+
+    def eval(self):
+        self.head.eval()
+        return self
+
+    def save(self, path: str):
+        Path(path).mkdir(parents=True, exist_ok=True)
+        torch.save(self.head.state_dict(), os.path.join(path, "head.pt"))
+        with open(os.path.join(path, "meta.json"), "w") as f:
+            json.dump({"encoder": self._model_name, "dim": self._dim}, f)
+
+    def reset_head(self, seed: int = 42):
+        torch.manual_seed(seed)
+        for m in self.head:
+            if hasattr(m, "reset_parameters"):
+                m.reset_parameters()
+
+
+INTERVENTIONS = [
+    lambda q: f"Rephrase: {q}",
+    lambda q: " ".join(q.split()[:max(3, len(q.split()) // 2)]),
+]
+
+
+@torch.no_grad()
+def cache_teacher_deltas(
+    teacher_model,
+    pairs: list[dict],
+    interventions: list,
+) -> list[dict]:
+    """Compute teacher margin deltas under each intervention."""
+    results = []
+    for i, pair in enumerate(pairs):
+        q = pair["query"]
+        docs = pair["documents"]
+        gold = pair["gold_idx"]
+
+        d_embs = teacher_model.encode(docs, convert_to_tensor=True, normalize_embeddings=True)
+
+        q_emb = teacher_model.encode([q], convert_to_tensor=True, normalize_embeddings=True)
+        sims = (q_emb @ d_embs.T).squeeze(0)
+        neg_mask = torch.ones(len(docs), dtype=torch.bool)
+        neg_mask[gold] = False
+        m_base = sims[gold].item() - sims[neg_mask].max().item()
+
+        deltas = []
+        for intv_fn in interventions:
+            gq = intv_fn(q)
+            gq_emb = teacher_model.encode([gq], convert_to_tensor=True, normalize_embeddings=True)
+            g_sims = (gq_emb @ d_embs.T).squeeze(0)
+            m_intv = g_sims[gold].item() - g_sims[neg_mask].max().item()
+            delta = m_intv - m_base
+            deltas.append({"text": gq, "m_intv": m_intv, "delta": delta})
+
+        results.append({"m_base": m_base, "deltas": deltas})
+        if (i + 1) % 100 == 0:
+            print(f"  Teacher deltas: {i + 1}/{len(pairs)}")
+    return results
+
+
+def train_v2_arm(
+    student: FrozenStudentHead,
+    pairs: list[dict],
+    teacher_deltas: list[dict],
+    arm: str,
+    steps: int = 500,
+    lr: float = 1e-3,
+    tau: float = 0.05,
+    batch_size: int = 8,
+    seed: int = 42,
+) -> list[dict]:
+    """Train one arm. arm in {aug_contrastive, kd, b4c, eklavya}."""
+    optimizer = torch.optim.AdamW(student.trainable_parameters(), lr=lr)
+    rng = random.Random(seed)
+    log = []
+    student.train()
+
+    for step in range(steps):
+        idxs = rng.sample(range(len(pairs)), min(batch_size, len(pairs)))
+        total_loss = torch.tensor(0.0, device=student.device, requires_grad=True)
+        n_terms = 0
+
+        for idx in idxs:
+            pair = pairs[idx]
+            q = pair["query"]
+            docs = pair["documents"]
+            gold = pair["gold_idx"]
+            td = teacher_deltas[idx]
+
+            neg_mask = torch.ones(len(docs), dtype=torch.bool)
+            neg_mask[gold] = False
+
+            if arm == "aug_contrastive":
+                intv_fn = rng.choice(INTERVENTIONS)
+                aug_q = intv_fn(q)
+                all_texts = [aug_q] + docs
+                embs = student.encode_with_grad(all_texts)
+                sims = embs[0] @ embs[1:].T / tau
+                target = torch.tensor(gold, device=student.device)
+                total_loss = total_loss + F.cross_entropy(sims.unsqueeze(0), target.unsqueeze(0))
+                n_terms += 1
+
+            elif arm == "kd":
+                intv_texts = [d["text"] for d in td["deltas"]]
+                all_texts = [q] + intv_texts + docs
+                n_q = 1 + len(intv_texts)
+                embs = student.encode_with_grad(all_texts)
+                q_embs, d_embs = embs[:n_q], embs[n_q:]
+
+                for qi in range(n_q):
+                    s_sims = q_embs[qi] @ d_embs.T
+                    s_margin = s_sims[gold] - s_sims[neg_mask].max()
+                    t_margin = td["m_base"] if qi == 0 else td["deltas"][qi - 1]["m_intv"]
+                    total_loss = total_loss + (s_margin - t_margin) ** 2
+                    n_terms += 1
+
+            elif arm in ("b4c", "eklavya"):
+                intv_texts = [d["text"] for d in td["deltas"]]
+                all_texts = [q] + intv_texts + docs
+                n_q = 1 + len(intv_texts)
+                embs = student.encode_with_grad(all_texts)
+                q_embs, d_embs = embs[:n_q], embs[n_q:]
+
+                support_w = 1.0 + sum(abs(d["delta"]) for d in td["deltas"])
+
+                # Contrastive on base query
+                base_sims = q_embs[0] @ d_embs.T / tau
+                target = torch.tensor(gold, device=student.device)
+                total_loss = total_loss + F.cross_entropy(
+                    base_sims.unsqueeze(0), target.unsqueeze(0)) * support_w
+                n_terms += 1
+
+                s_base_all = q_embs[0] @ d_embs.T
+                s_base_m = s_base_all[gold] - s_base_all[neg_mask].max()
+
+                for j, d in enumerate(td["deltas"]):
+                    # Consistency
+                    cos = F.cosine_similarity(q_embs[0].unsqueeze(0), q_embs[j + 1].unsqueeze(0))
+                    total_loss = total_loss + (1.0 - cos.squeeze()) * 0.1
+                    n_terms += 1
+
+                    s_intv_all = q_embs[j + 1] @ d_embs.T
+                    s_intv_m = s_intv_all[gold] - s_intv_all[neg_mask].max()
+                    s_delta = s_intv_m - s_base_m
+
+                    if arm == "eklavya" and abs(d["delta"]) > 0.01:
+                        sign = 1.0 if d["delta"] > 0 else -1.0
+                        total_loss = total_loss + F.relu(0.01 - sign * s_delta) * support_w
+                        n_terms += 1
+
+        if n_terms > 0:
+            loss = total_loss / n_terms
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(student.trainable_parameters(), 1.0)
+            optimizer.step()
+
+            if (step + 1) % 50 == 0 or step == 0:
+                log.append({"step": step + 1, "loss": loss.item()})
+                print(f"    Step {step + 1}/{steps}: loss={loss.item():.6f}")
+
+    student.eval()
+    return log
+
+
+@torch.no_grad()
+def ndcg_at_k(model, pairs: list[dict], k: int = 10) -> float:
+    """Compute nDCG@k. Binary relevance: gold doc = 1, others = 0."""
+    ndcgs = []
+    for pair in pairs:
+        docs = pair["documents"]
+        gold = pair["gold_idx"]
+
+        q_emb = model.encode([pair["query"]], convert_to_tensor=True, normalize_embeddings=True)
+        d_embs = model.encode(docs, convert_to_tensor=True, normalize_embeddings=True)
+        sims = (q_emb @ d_embs.T).squeeze(0)
+        ranked = sims.argsort(descending=True).tolist()
+
+        dcg = 0.0
+        for i, doc_idx in enumerate(ranked[:k]):
+            rel = 1.0 if doc_idx == gold else 0.0
+            dcg += rel / math.log2(i + 2)
+        idcg = 1.0 / math.log2(2)
+        ndcgs.append(dcg / idcg if idcg > 0 else 0.0)
+    return sum(ndcgs) / len(ndcgs) if ndcgs else 0.0
+
+
+def run_experiment_v2(config: dict) -> dict:
+    """Codex R2 prescribed experiment: frozen encoder, B4c absorber."""
+    device = config.get("device", "cpu")
+    student_name = config.get("student", "sentence-transformers/all-MiniLM-L6-v2")
+    teacher_name = config.get("teacher", "sentence-transformers/all-MiniLM-L12-v2")
+    steps = config.get("steps", 500)
+    lr = config.get("lr", 1e-3)
+    tau = config.get("tau", 0.05)
+    seed = config.get("seed", 42)
+    n_pairs = config.get("n_pairs", 500)
+    n_docs = config.get("n_docs", 10)
+    out_dir = config.get("out_dir", "outputs/eklavya_v2")
+    batch_size = config.get("batch_size", 8)
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    print("=" * 60)
+    print("EKLAVYA V2 EXPERIMENT (Codex R2 spec)")
+    print("=" * 60)
+    print(f"Student: {student_name} (FROZEN + head)")
+    print(f"Teacher: {teacher_name}")
+    print(f"Steps: {steps}, LR: {lr}, Seed: {seed}")
+    print(f"Pairs: {n_pairs} ({n_docs} docs each)")
+
+    all_pairs = load_msmarco_pairs(n=n_pairs, n_docs=n_docs, seed=seed)
+    n_total = len(all_pairs)
+    n_train = int(0.7 * n_total)
+    n_val = int(0.15 * n_total)
+    train_pairs = all_pairs[:n_train]
+    val_pairs = all_pairs[n_train:n_train + n_val]
+    test_pairs = all_pairs[n_train + n_val:]
+    print(f"Split: {len(train_pairs)} train, {len(val_pairs)} val, {len(test_pairs)} test")
+
+    # Cache teacher deltas on training data
+    print(f"\n--- Caching teacher deltas ({teacher_name}) ---")
+    teacher = load_model(teacher_name, device)
+    teacher_deltas = cache_teacher_deltas(teacher, train_pairs, INTERVENTIONS)
+    del teacher
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Baseline: frozen student, no head training
+    print("\n--- Baseline (frozen, no training) ---")
+    base_student = FrozenStudentHead(student_name, device)
+    base_ndcg = ndcg_at_k(base_student, test_pairs)
+    base_mrr = eval_retrieval(base_student, test_pairs)["mrr"]
+    print(f"  nDCG@10={base_ndcg:.4f}  MRR={base_mrr:.4f}")
+    del base_student
+
+    # Overfit check: can the head fit a tiny subset?
+    print("\n--- Overfit positive control (10 pairs, 200 steps) ---")
+    overfit_student = FrozenStudentHead(student_name, device)
+    tiny_deltas = cache_teacher_deltas(
+        load_model(teacher_name, device), train_pairs[:10], INTERVENTIONS)
+    train_v2_arm(overfit_student, train_pairs[:10], tiny_deltas, "eklavya",
+                 steps=200, lr=1e-3, batch_size=10, seed=seed)
+    overfit_ndcg = ndcg_at_k(overfit_student, train_pairs[:10])
+    print(f"  Overfit nDCG@10={overfit_ndcg:.4f} (should be ~1.0 if head has capacity)")
+    if overfit_ndcg < 0.8:
+        print("  WARNING: Head cannot overfit tiny set — capacity may be insufficient")
+    del overfit_student
+
+    arms = ["aug_contrastive", "kd", "b4c", "eklavya"]
+    results = {"config": config, "baseline_ndcg": base_ndcg, "baseline_mrr": base_mrr}
+
+    for arm in arms:
+        print(f"\n--- Arm: {arm} ---")
+        student = FrozenStudentHead(student_name, device)
+        student.reset_head(seed=seed)
+        arm_log = train_v2_arm(
+            student, train_pairs, teacher_deltas, arm,
+            steps=steps, lr=lr, tau=tau, batch_size=batch_size, seed=seed,
+        )
+        arm_ndcg = ndcg_at_k(student, test_pairs)
+        arm_mrr = eval_retrieval(student, test_pairs)["mrr"]
+        student.save(os.path.join(out_dir, f"arm_{arm}"))
+        print(f"  nDCG@10={arm_ndcg:.4f}  MRR={arm_mrr:.4f}")
+
+        results[arm] = {
+            "ndcg10": arm_ndcg, "mrr": arm_mrr,
+            "gain_ndcg": arm_ndcg - base_ndcg,
+            "log": arm_log,
+        }
+
+    # Critical comparison: Eklavya vs B4c
+    ek = results["eklavya"]
+    b4c = results["b4c"]
+    delta = ek["ndcg10"] - b4c["ndcg10"]
+
+    print("\n" + "=" * 60)
+    print("V2 RESULTS")
+    print("=" * 60)
+    print(f"  Baseline nDCG@10:        {base_ndcg:.4f}")
+    for arm in arms:
+        r = results[arm]
+        print(f"  {arm:25s}: {r['ndcg10']:.4f}  (gain: {r['gain_ndcg']:+.4f})")
+    print()
+    print(f"  Eklavya vs B4c delta:    {delta:+.4f}")
+    print(f"  Threshold:               +0.005")
+
+    if delta >= 0.005:
+        verdict = "ALIVE"
+        print(f"\n  >>> ALIVE: Eklavya beats B4c by {delta:+.4f} >= +0.005")
+        print("      Response-delta matching adds value beyond equal-information baseline.")
+    elif delta > 0:
+        verdict = "WEAK"
+        print(f"\n  >>> WEAK: Eklavya beats B4c by {delta:+.4f} < +0.005")
+        print("      Positive but below precommit threshold. Need more seeds/data.")
+    else:
+        verdict = "DEAD"
+        print(f"\n  >>> DEAD: Eklavya does NOT beat B4c ({delta:+.4f})")
+        print("      Response-delta targets absorbed by equal-information baseline.")
+
+    results["eklavya_vs_b4c_delta"] = delta
+    results["verdict"] = verdict
+
+    results_path = os.path.join(out_dir, "results.json")
+    with open(results_path, "w") as f:
+        json.dump({k: v for k, v in results.items()
+                   if k != "config" or not callable(v)}, f, indent=2, default=str)
+    print(f"\n  Results saved to {results_path}")
+    return results
+
+
+# ---------------------------------------------------------------------------
+# End-to-end experiment (v1, pre-Codex-R2)
 # ---------------------------------------------------------------------------
 
 def run_experiment(config: dict) -> dict:
@@ -1413,6 +1769,23 @@ def cmd_routing_audit(args):
     print(f"\nResults saved to {out_path}")
 
 
+def cmd_experiment_v2(args):
+    config = {
+        "device": args.device,
+        "student": args.student,
+        "teacher": args.teacher,
+        "steps": args.steps,
+        "lr": args.lr,
+        "tau": args.tau,
+        "seed": args.seed,
+        "n_pairs": args.n_pairs,
+        "n_docs": args.n_docs,
+        "out_dir": args.out_dir,
+        "batch_size": args.batch_size,
+    }
+    run_experiment_v2(config)
+
+
 def cmd_experiment(args):
     config = {
         "device": args.device,
@@ -1490,7 +1863,20 @@ def main():
     p_route.add_argument("--folds", type=int, default=5)
     p_route.add_argument("--out", default=None)
 
-    p_exp = sub.add_parser("experiment", help="Run full 3-arm experiment")
+    p_v2 = sub.add_parser("experiment_v2", help="Codex R2: frozen encoder + B4c absorber")
+    p_v2.add_argument("--student", default="sentence-transformers/all-MiniLM-L6-v2")
+    p_v2.add_argument("--teacher", default="sentence-transformers/all-MiniLM-L12-v2")
+    p_v2.add_argument("--device", default="cpu")
+    p_v2.add_argument("--steps", type=int, default=500)
+    p_v2.add_argument("--lr", type=float, default=1e-3)
+    p_v2.add_argument("--tau", type=float, default=0.05)
+    p_v2.add_argument("--seed", type=int, default=42)
+    p_v2.add_argument("--n_pairs", type=int, default=500)
+    p_v2.add_argument("--n_docs", type=int, default=10)
+    p_v2.add_argument("--out_dir", default="outputs/eklavya_v2")
+    p_v2.add_argument("--batch_size", type=int, default=8)
+
+    p_exp = sub.add_parser("experiment", help="Run full 3-arm experiment (v1)")
     p_exp.add_argument("--student", default="sentence-transformers/all-MiniLM-L6-v2")
     p_exp.add_argument("--teachers", nargs="+", default=[
         "sentence-transformers/all-MiniLM-L12-v2",
@@ -1522,6 +1908,8 @@ def main():
         cmd_diagnostic(args)
     elif args.cmd == "routing_audit":
         cmd_routing_audit(args)
+    elif args.cmd == "experiment_v2":
+        cmd_experiment_v2(args)
     elif args.cmd == "experiment":
         cmd_experiment(args)
     else:

@@ -213,6 +213,6 @@ claims.
 ### Historical Record Kept
 
 - `research/DEEP_RETHINK.md` - historical kill log and pivot addendum.
-- All `research/work_loop_batchN.md` files - W-Loop iterations, protected audit trail.
-- All `research/question_loop_batchN.md` files - Q-Loop iterations, protected audit trail.
-- All `research/dual_loop_supervisor_checkin_N.md` files - supervisor assessments, protected audit trail.
+- All numbered W-Loop batch files in `research/` - protected audit trail.
+- All numbered Q-Loop batch files in `research/` - protected audit trail.
+- All numbered dual-loop supervisor check-ins in `research/` - protected audit trail.
