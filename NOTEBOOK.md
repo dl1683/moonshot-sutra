@@ -4,6 +4,78 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 ~11:00 -- Ship v0 Complete, B0 Control Running
+
+**Ship v0 results (unfrozen encoder, kd_weight=0.7, BGE-large teacher):**
+- Baseline (blank ModernBERT-base): MRR=0.335, Hit@1=0.134
+- Final (3000 steps): MRR=0.562, Hit@1=0.364, Hit@5=0.852
+- Gain: MRR +0.226, Hit@1 +0.230
+- Learning curve plateauing: per-500-step gains = +0.136, +0.034, +0.029, +0.014, +0.010, +0.002
+
+Config: 5K train pairs, 500 eval, 10 docs/query, seed 42, lr=2e-5, warmup 5%.
+
+**Critical next step:** matched B0 control (kd_weight=0, same unfrozen encoder, same data).
+Without this, can't determine if KD contributed anything beyond pure contrastive.
+E1.5 showed B0 wins all seeds on FROZEN encoder — need to know if pattern holds unfrozen.
+
+MTEB eval launched (fixed eval_mteb.py to export to ST format first — MTEB v2.7+ needs
+SentenceTransformer, not raw wrappers). Process cleanup: killed 3 duplicate B0 processes
+and 4 stale provenance processes that were contending on GPU.
+
+---
+
+## 2026-09-04 23:45 -- E16 Implementation Complete
+
+**E16 Boundary Inheritance fully implemented:**
+
+data_loader.py — 7 new functions:
+- `stable_int()`: SHA-256 deterministic seeding (no Python hash())
+- `build_passage_pool()`: deduplicated pool with stable IDs
+- `rank_embedding_model()`: rank pool with any embedding model
+- `build_candidate_support()`: top-128(student) ∪ top-128(BM25)
+- `build_e16_manifests()`: selective boundary inheritance (15 student replay + 16 teacher replacements on eligible queries only)
+- `build_hardness_shuffle()`: derangement-based placebo control (Arm 5)
+- `validate_e16_manifests()`: contamination + eligible fraction checks
+
+experiment_e1.py — `main_e16()` function:
+- `--mode e16 --stage prepare|train|all`
+- Default pilot: 400 train, 500 eval, A2/A4/A5, 800 steps
+- Prepare: loads data, builds pool, ranks with raw student + teacher, builds manifests, validates
+- Train: runs each arm with pure contrastive loss (except A3 = KD), reports deltas
+- Success threshold: LB95(A4-A2) > +0.010 AND LB95(A4-A5) > +0.010
+
+Import-verified, syntax-clean. Ready for pilot run after ship_v0 + B0 complete.
+
+Ship v0 at step ~2100/3000. B0 control launches next.
+
+---
+
+## 2026-09-04 22:00 -- E16 Preflight: Cross-Teacher Mining Turnover PASSES P5
+
+**E16 Boundary Inheritance preflight using existing provenance data (seed 42, 200 eval queries):**
+
+Cross-teacher hard-negative mining agreement:
+- Top-5 Jaccard (MiniLM vs BGE-large): 0.597 → **40% turnover**
+- Top-10 Jaccard: 0.570 → **43% turnover**
+- **P5 threshold (>= 20% turnover): PASSES decisively**
+
+Teacher retrieval quality:
+- Both teachers rank gold in top-1 for 70-73% of queries (mean rank 1.6)
+- Top-5 gold rate: 98%+ for both teachers
+
+**Combined preflight evidence for E16 admissibility:**
+1. P2 PASSES (17%): teachers have knowledge students lack
+2. P5 PASSES (43%): teachers select substantially different hard negatives
+3. KD interference characterized: 50% Q1 rescue but 15-23 Q2 corruption
+
+**Key finding:** the existing `mine_hard_negatives()` function accepts any model with
+sentence-transformers-compatible `encode()`. No new mining function needed for E16 —
+just pass the teacher model instead of the student.
+
+Codex E16 design gate fired (background). Ship mode v0 at step 1850/3000.
+
+---
+
 ## 2026-09-04 20:45 -- Codex R4: Strategic Pivot to Attribution + E16
 
 **Codex R4 strategic review (outputs/codex_strategic_r4.txt):**

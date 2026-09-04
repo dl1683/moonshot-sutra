@@ -30,6 +30,9 @@ commit messages; this public index uses generic descriptions.
 | `eklavya_embed_e1_200` | 2026-09-04 | Eklavya-Embedding | Contradicts 500-pair E1 | 200-pair replication: single-teacher KD wins (+0.241), tomography third (+0.176). Signal is seed/split-dependent. |
 | `eklavya_vision_v1` | 2026-09-04 | Eklavya-Vision | **Inconclusive** (Codex FAIL) | 5-arm CIFAR-100 with DINOv2-small. Codex evidence gate: exploratory debugging, not valid evidence. Catastrophic forgetting masks method differences. Probe-target misalignment. Neither "tomography dead" nor "standard KD wins" established. Method question OPEN. |
 | `e1_5_corrected_adjudication` | 2026-09-04 | Eklavya-Embedding | **INCONCLUSIVE** (Codex: narrow negative, not terminal kill) | 6-arm, 3-seed (42/137/271), frozen encoder, 400 train, 200 eval, 32 docs. B0 (contrastive) wins all seeds (mean 0.769). E15 vs B4c valid-seed delta = -0.005, but CI includes 0 and +0.005 (df=1). Same 200 queries across seeds = training-randomness replicates, not data replications. B4c catastrophic on seed_271 (0.22). Consistently unfavorable but not terminal. |
+| `provenance_p2_gate` | 2026-09-04 | Eklavya-Embedding | **GATE PASS** (P2=17%, threshold 5%) | Provenance quadrant analysis on seed 42. Teachers hold unique knowledge on 34/200 queries (Q1). B2 rescues 53% of donor-private queries but loses 0.021 MRR overall — real transfer channel but uniform KD delivers destructively. Codex R4: skip frozen fade, run unfrozen B2 fade. |
+| `ship_v0` | 2026-09-04 | Eklavya-Embedding | **COMPLETE** | Unfrozen encoder, standard KD (kd_weight=0.7), 5K train, 3K steps. Final MRR=0.562, hit@1=0.364 (baseline 0.335/0.134). Gain: MRR +0.226, hit@1 +0.230. |
+| `ship_v0_b0` | 2026-09-04 | Eklavya-Embedding | **IN PROGRESS** | Matched B0 control: kd_weight=0, all other config identical to ship_v0. Codex R4 KD attribution test. |
 
 ## Experiment Notes
 

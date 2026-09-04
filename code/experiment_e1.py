@@ -614,6 +614,11 @@ def run_arm(
     if frozen:
         for p in student.encoder.parameters():
             p.requires_grad = True
+    else:
+        final_enc_dir = os.path.join(arm_dir, "encoder")
+        Path(final_enc_dir).mkdir(parents=True, exist_ok=True)
+        student.encoder.save_pretrained(final_enc_dir)
+        torch.save(student.proj.state_dict(), os.path.join(arm_dir, "proj.pt"))
 
     with open(os.path.join(arm_dir, "result.json"), "w") as f:
         json.dump(result, f, indent=2)
@@ -1360,6 +1365,277 @@ def main_fade():
         }}, f, indent=2, default=str)
 
 
+def main_unfrozen_fade():
+    """Unfrozen fade — Codex R4 approved.
+
+    Tests whether teacher knowledge persists after removal in unfrozen mode.
+    Arms:
+    - U0: contrastive-only throughout (sham-switch control)
+    - U2_full: single-donor KD throughout
+    - U2_fade: KD steps 1-fade_step, contrastive steps fade_step+1-total (hard switch)
+    """
+    import random as stdlib_random
+    import numpy as np
+
+    parser = argparse.ArgumentParser(description="Unfrozen Fade — Codex R4")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--steps", type=int, default=3000)
+    parser.add_argument("--fade_step", type=int, default=1000)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--tau", type=float, default=0.05)
+    parser.add_argument("--n_train", type=int, default=2000)
+    parser.add_argument("--n_eval", type=int, default=200)
+    parser.add_argument("--n_docs", type=int, default=32)
+    parser.add_argument("--seeds", nargs="+", type=int, default=[42, 137, 271])
+    parser.add_argument("--proj_seed", type=int, default=9999)
+    parser.add_argument("--out_dir", default="outputs/E_unfrozen_fade")
+    parser.add_argument("--student", default="answerdotai/ModernBERT-base")
+    parser.add_argument("--teacher", default="BAAI/bge-large-en-v1.5")
+    parser.add_argument("--warmup_frac", type=float, default=0.1)
+    parser.add_argument("--eval_every", type=int, default=250)
+    args = parser.parse_args()
+
+    from data_loader import load_msmarco_pairs, mine_hard_negatives
+
+    UNFROZEN_ARMS = [
+        ("U0", "contrastive", None),
+        ("U2_full", "kd_single", None),
+        ("U2_fade", "kd_single", args.fade_step),
+    ]
+
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+
+    with open(os.path.join(args.out_dir, "config.json"), "w") as f:
+        json.dump({k: v for k, v in vars(args).items() if k != "device"}, f, indent=2)
+
+    all_seed_results = {}
+    manip_gate_passed = None
+
+    for seed_idx, data_seed in enumerate(args.seeds):
+        print(f"\n{'#'*60}")
+        print(f"UNFROZEN FADE SEED {seed_idx + 1}/{len(args.seeds)}: data_seed={data_seed}")
+        print(f"{'#'*60}")
+
+        stdlib_random.seed(data_seed)
+        np.random.seed(data_seed)
+        torch.manual_seed(data_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(data_seed)
+
+        seed_dir = os.path.join(args.out_dir, f"seed_{data_seed}")
+        Path(seed_dir).mkdir(parents=True, exist_ok=True)
+
+        all_done = all(
+            os.path.exists(os.path.join(seed_dir, arm_name, "result.json"))
+            for arm_name, _, _ in UNFROZEN_ARMS
+        )
+        if all_done:
+            print(f"\n--- Seed {data_seed}: all arms complete, loading ---")
+            seed_results = {}
+            for arm_name, _, _ in UNFROZEN_ARMS:
+                seed_results[arm_name] = json.load(
+                    open(os.path.join(seed_dir, arm_name, "result.json"))
+                )
+            all_seed_results[data_seed] = seed_results
+            continue
+
+        raw_pairs = load_msmarco_pairs(
+            n=args.n_train + args.n_eval, n_docs=10, seed=data_seed,
+        )
+        train_raw = raw_pairs[:args.n_train]
+        eval_raw = raw_pairs[args.n_train:args.n_train + args.n_eval]
+
+        gpu_thermal_guard(max_temp=85)
+        print("\nMining hard negatives with raw student...")
+        raw_student = ModernBERTEmbedder(
+            args.student, dim=384, proj_seed=args.proj_seed,
+        ).to(args.device)
+        raw_student.eval()
+
+        train_pairs = mine_hard_negatives(train_raw, raw_student, n_docs=args.n_docs)
+        eval_pairs = mine_hard_negatives(eval_raw, raw_student, n_docs=args.n_docs)
+        del raw_student
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        print(f"Data: {len(train_pairs)} train, {len(eval_pairs)} eval")
+
+        print(f"\nExtracting teacher scores ({args.teacher})...")
+        teacher_model = load_st_model(args.teacher, device=args.device)
+        teacher_data = {}
+        for i, pair in enumerate(train_pairs):
+            identity_probe = Probe(probe_id="identity", text=pair["query"])
+            scores = extract_teacher_scores(
+                teacher_model, pair["query"], pair["documents"], [identity_probe],
+            )
+            teacher_data[pair["id"]] = {args.teacher: scores}
+            if (i + 1) % 500 == 0:
+                print(f"  {i+1}/{len(train_pairs)} pairs extracted")
+        del teacher_model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print(f"  Extracted {len(teacher_data)} training pairs")
+
+        seed_results = {}
+        for arm_name, arm_type, fade in UNFROZEN_ARMS:
+            arm_result_path = os.path.join(seed_dir, arm_name, "result.json")
+            if os.path.exists(arm_result_path):
+                print(f"\n--- {arm_name}: exists, skip ---")
+                seed_results[arm_name] = json.load(open(arm_result_path))
+                continue
+
+            torch.manual_seed(data_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(data_seed)
+
+            student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+
+            td = teacher_data if arm_type == "kd_single" else None
+
+            result = run_arm(
+                arm_name, student, train_pairs, eval_pairs,
+                teacher_data=td, steps=args.steps, lr=args.lr,
+                tau=args.tau, out_dir=seed_dir, arm_type=arm_type,
+                frozen=False, warmup_frac=args.warmup_frac,
+                fade_step=fade, eval_every=args.eval_every,
+            )
+
+            seed_results[arm_name] = result
+            del student
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        all_seed_results[data_seed] = seed_results
+
+        if seed_idx == 0:
+            manip_gate_passed = _check_manipulation_gate(
+                seed_dir, UNFROZEN_ARMS, args.fade_step,
+            )
+            if not manip_gate_passed:
+                print("\n*** MANIPULATION GATE FAILED at first seed ***")
+                print("*** Aborting remaining seeds per Codex R4 protocol ***")
+                break
+
+    _report_unfrozen_fade(all_seed_results, args)
+
+
+def _check_manipulation_gate(seed_dir, arms, fade_step):
+    """Manipulation check at fade_step: U2 arms must outperform U0."""
+    print(f"\n{'='*70}")
+    print(f"MANIPULATION GATE CHECK at step {fade_step}")
+    print(f"{'='*70}")
+
+    metrics_at_fade = {}
+    for arm_name, _, _ in arms:
+        log_path = os.path.join(seed_dir, arm_name, "log.jsonl")
+        if not os.path.exists(log_path):
+            print(f"  {arm_name}: log missing")
+            return False
+        for line in open(log_path):
+            entry = json.loads(line)
+            if entry.get("step") == fade_step and "mrr" in entry:
+                metrics_at_fade[arm_name] = entry
+                break
+
+    if len(metrics_at_fade) < 3:
+        print(f"  Missing step-{fade_step} eval for some arms")
+        return False
+
+    u0_mrr = metrics_at_fade["U0"].get("mrr@10", metrics_at_fade["U0"]["mrr"])
+    u2f_mrr = metrics_at_fade["U2_full"].get("mrr@10", metrics_at_fade["U2_full"]["mrr"])
+    u2d_mrr = metrics_at_fade["U2_fade"].get("mrr@10", metrics_at_fade["U2_fade"]["mrr"])
+
+    print(f"  U0:      MRR@10={u0_mrr:.4f}")
+    print(f"  U2_full: MRR@10={u2f_mrr:.4f}")
+    print(f"  U2_fade: MRR@10={u2d_mrr:.4f}")
+
+    fade_full_match = abs(u2d_mrr - u2f_mrr) < 0.01
+    u2_beats_u0 = u2f_mrr > u0_mrr and u2d_mrr > u0_mrr
+
+    print(f"\n  Check 1 (U2_fade == U2_full within 0.01): "
+          f"delta={abs(u2d_mrr - u2f_mrr):.4f} {'PASS' if fade_full_match else 'FAIL'}")
+    print(f"  Check 2 (both U2 > U0): "
+          f"U2_full-U0={u2f_mrr - u0_mrr:+.4f}, U2_fade-U0={u2d_mrr - u0_mrr:+.4f} "
+          f"{'PASS' if u2_beats_u0 else 'FAIL'}")
+
+    gate_pass = fade_full_match and u2_beats_u0
+    print(f"\n  MANIPULATION GATE: {'PASS' if gate_pass else 'FAIL'}")
+    return gate_pass
+
+
+def _report_unfrozen_fade(all_seed_results, args):
+    """Cross-seed analysis of unfrozen fade results."""
+    import numpy as np
+
+    print(f"\n{'='*70}")
+    print(f"UNFROZEN FADE RESULTS")
+    print(f"{'='*70}")
+
+    arm_names = ["U0", "U2_full", "U2_fade"]
+    print(f"\n{'Arm':<15} {'Mean MRR':>10} {'MRR@10':>10} {'SD':>8} {'Mean Gain':>10}")
+    print("-" * 55)
+
+    arm_mrrs = {}
+    for arm_name in arm_names:
+        mrrs = []
+        mrr10s = []
+        gains = []
+        for seed, sr in all_seed_results.items():
+            if arm_name in sr:
+                r = sr[arm_name]
+                mrrs.append(r["final"]["mrr"])
+                mrr10s.append(r["final"].get("mrr@10", r["final"]["mrr"]))
+                gains.append(r["gain_mrr"])
+        arm_mrrs[arm_name] = mrr10s
+        if mrrs:
+            print(f"{arm_name:<15} {np.mean(mrrs):>10.4f} {np.mean(mrr10s):>10.4f} "
+                  f"{np.std(mrrs, ddof=1) if len(mrrs) > 1 else 0:>8.4f} "
+                  f"{np.mean(gains):>+10.4f}")
+
+    if "U0" in arm_mrrs and "U2_fade" in arm_mrrs and len(arm_mrrs["U0"]) > 0:
+        u0 = np.array(arm_mrrs["U0"])
+        u2f = np.array(arm_mrrs["U2_fade"])
+        if len(u0) == len(u2f):
+            delta = u2f - u0
+            print(f"\n--- Final success gate ---")
+            print(f"  U2_fade - U0: mean={delta.mean():+.4f}")
+            print(f"  All seeds positive: {all(d > 0 for d in delta)}")
+            print(f"  Threshold: >= +0.010")
+            gate = delta.mean() >= 0.010 and all(d > 0 for d in delta)
+            print(f"  FINAL GATE: {'PASS' if gate else 'FAIL'}")
+
+            if "U2_full" in arm_mrrs and len(arm_mrrs["U2_full"]) == len(u2f):
+                u2full = np.array(arm_mrrs["U2_full"])
+                retention = u2f - u2full
+                print(f"\n  Retention (U2_fade vs U2_full): mean={retention.mean():+.4f}")
+                print(f"  Within 0.005: {abs(retention.mean()) <= 0.005}")
+
+    ci = paired_bootstrap_ci(
+        [sr.get("U2_fade", {}).get("final", {}).get("mrr@10",
+         sr.get("U2_fade", {}).get("final", {}).get("mrr", 0)) -
+         sr.get("U0", {}).get("final", {}).get("mrr@10",
+         sr.get("U0", {}).get("final", {}).get("mrr", 0))
+         for sr in all_seed_results.values()
+         if "U2_fade" in sr and "U0" in sr]
+    ) if len(all_seed_results) >= 2 else None
+    if ci:
+        print(f"\n  Bootstrap 95% CI: [{ci['ci_lo']:+.4f}, {ci['ci_hi']:+.4f}]")
+        print(f"  LB > 0: {ci['ci_lo'] > 0}")
+
+    with open(os.path.join(args.out_dir, "summary.json"), "w") as f:
+        json.dump({
+            "seeds": args.seeds, "fade_step": args.fade_step,
+            "frozen": False,
+            "results": {
+                str(s): {a: {k: v for k, v in r.items() if k != "per_query"}
+                         for a, r in sr.items()}
+                for s, sr in all_seed_results.items()
+            }
+        }, f, indent=2, default=str)
+
+
 def main_ship():
     """Ship mode — train a single standard-KD model at scale for deployment.
 
@@ -1571,6 +1847,309 @@ def main_ship():
     print(f"To export: python code/export_model.py --checkpoint {final_dir}")
 
 
+def main_e16():
+    """E16 Boundary Inheritance — teacher-curated negative mining.
+
+    Tests whether teacher-selected hard negatives transfer knowledge
+    without the gradient interference of standard KD.
+
+    Arms:
+    - A2: student-mined contrastive (strongest no-teacher baseline)
+    - A4: E16 selective boundary inheritance (treatment)
+    - A5: hardness-matched shuffled teacher (placebo control)
+    - A3: standard KD on A2 documents (gradient-channel comparison)
+    - A1: BM25-only contrastive (cheapest baseline)
+    """
+    import random as stdlib_random
+    import numpy as np
+
+    parser = argparse.ArgumentParser(description="E16 Boundary Inheritance")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--stage", choices=["prepare", "train", "analyze", "all"],
+                        default="all")
+    parser.add_argument("--steps", type=int, default=800)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--tau", type=float, default=0.05)
+    parser.add_argument("--n_train", type=int, default=400)
+    parser.add_argument("--n_eval", type=int, default=500)
+    parser.add_argument("--n_docs", type=int, default=32)
+    parser.add_argument("--candidate_topk", type=int, default=128)
+    parser.add_argument("--teacher_slots", type=int, default=16)
+    parser.add_argument("--min_turnover", type=float, default=0.20)
+    parser.add_argument("--min_p2", type=float, default=0.05)
+    parser.add_argument("--min_eligible_frac", type=float, default=0.10)
+    parser.add_argument("--max_contamination", type=float, default=0.02)
+    parser.add_argument("--kd_weight", type=float, default=0.7)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--proj_seed", type=int, default=9999)
+    parser.add_argument("--selector_seed", type=int, default=16016)
+    parser.add_argument("--out_dir", default="outputs/E16")
+    parser.add_argument("--student", default="answerdotai/ModernBERT-base")
+    parser.add_argument("--teacher", default="BAAI/bge-large-en-v1.5")
+    parser.add_argument("--warmup_frac", type=float, default=0.1)
+    parser.add_argument("--eval_every", type=int, default=200)
+    parser.add_argument("--arms", nargs="+", default=["A2", "A4", "A5"])
+    args = parser.parse_args()
+
+    from data_loader import (
+        load_msmarco_pairs, build_passage_pool, rank_embedding_model,
+        build_candidate_support, build_e16_manifests,
+        build_hardness_shuffle, validate_e16_manifests,
+    )
+
+    stdlib_random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+    manifest_dir = os.path.join(args.out_dir, "manifests")
+    Path(manifest_dir).mkdir(parents=True, exist_ok=True)
+
+    with open(os.path.join(args.out_dir, "config.json"), "w") as f:
+        json.dump({k: v for k, v in vars(args).items() if k != "device"}, f, indent=2)
+
+    # ---- PREPARE stage: build all mining manifests ----
+    if args.stage in ("prepare", "all"):
+        print("=" * 60)
+        print("E16 BOUNDARY INHERITANCE — PREPARE")
+        print(f"Student: {args.student}")
+        print(f"Teacher: {args.teacher}")
+        print(f"Data: {args.n_train} train, {args.n_eval} eval")
+        print("=" * 60)
+
+        manifest_path = os.path.join(manifest_dir, "e16_manifest.json")
+        if os.path.exists(manifest_path):
+            print(f"\nManifest exists at {manifest_path}, loading...")
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+            a2_train = manifest["a2_train"]
+            a4_train = manifest["a4_train"]
+            a5_train = manifest["a5_train"]
+            a2_eval = manifest["a2_eval"]
+            preflight = manifest["preflight"]
+        else:
+            print("\nLoading MS MARCO data...")
+            all_pairs = load_msmarco_pairs(
+                n=args.n_train + args.n_eval, n_docs=10, seed=args.seed,
+            )
+            train_raw = all_pairs[:args.n_train]
+            eval_raw = all_pairs[args.n_train:args.n_train + args.n_eval]
+
+            print("\nBuilding passage pool...")
+            pool = build_passage_pool(all_pairs)
+
+            gpu_thermal_guard(max_temp=85)
+            print("\nRanking with raw student...")
+            raw_student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+            raw_student.eval()
+            student_ranks = rank_embedding_model(
+                train_raw, pool, raw_student, top_k=args.candidate_topk,
+            )
+            del raw_student
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            gpu_thermal_guard(max_temp=85)
+            print(f"\nRanking with teacher ({args.teacher})...")
+            teacher_model = load_st_model(args.teacher, device=args.device)
+            teacher_ranks = rank_embedding_model(
+                train_raw, pool, teacher_model, top_k=args.candidate_topk,
+            )
+            del teacher_model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print("\nBuilding candidate support...")
+            support = build_candidate_support(
+                train_raw, pool, student_ranks, top_k=args.candidate_topk,
+            )
+
+            print("\nBuilding E16 manifests...")
+            manifests = build_e16_manifests(
+                train_raw, pool, student_ranks, teacher_ranks, support,
+                n_negatives=args.n_docs - 1,
+                teacher_slots=args.teacher_slots,
+                min_turnover=args.min_turnover,
+            )
+            a2_train = manifests["arm_a2"]
+            a4_train = manifests["arm_a4"]
+
+            print("\nBuilding hardness shuffle (Arm 5)...")
+            a5_train = build_hardness_shuffle(
+                a4_train, a2_train, pool, student_ranks,
+                selector_seed=args.selector_seed,
+            )
+
+            print("\nBuilding eval pairs (student-mined)...")
+            from data_loader import mine_hard_negatives
+            raw_student_eval = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+            raw_student_eval.eval()
+            a2_eval = mine_hard_negatives(
+                eval_raw, raw_student_eval, n_docs=args.n_docs,
+            )
+            del raw_student_eval
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print("\nValidating manifests...")
+            preflight = validate_e16_manifests(
+                a2_train, a4_train, a5_train, pool,
+                min_eligible_frac=args.min_eligible_frac,
+                max_contamination=args.max_contamination,
+            )
+            preflight["eligible_count"] = manifests["eligible_count"]
+            preflight["ineligible_count"] = manifests["ineligible_count"]
+
+            manifest = {
+                "a2_train": a2_train,
+                "a4_train": a4_train,
+                "a5_train": a5_train,
+                "a2_eval": a2_eval,
+                "preflight": preflight,
+            }
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f, indent=2)
+            print(f"\nManifest saved to {manifest_path}")
+
+        print(f"\nPreflight: {json.dumps(preflight, indent=2)}")
+        if not preflight.get("all_pass", False):
+            print("\n*** PREFLIGHT FAILED — aborting training ***")
+            return
+
+    # ---- TRAIN stage: train all arms ----
+    if args.stage in ("train", "all"):
+        if args.stage == "train":
+            manifest_path = os.path.join(manifest_dir, "e16_manifest.json")
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+            a2_train = manifest["a2_train"]
+            a4_train = manifest["a4_train"]
+            a5_train = manifest["a5_train"]
+            a2_eval = manifest["a2_eval"]
+
+        print("\n" + "=" * 60)
+        print("E16 BOUNDARY INHERITANCE — TRAIN")
+        print(f"Arms: {args.arms}, Steps: {args.steps}")
+        print("=" * 60)
+
+        arm_configs = {
+            "A1": {"pairs": None, "kd": False, "label": "BM25 contrastive"},
+            "A2": {"pairs": a2_train, "kd": False, "label": "Student-mined contrastive"},
+            "A3": {"pairs": a2_train, "kd": True, "label": "Standard KD on A2 docs"},
+            "A4": {"pairs": a4_train, "kd": False, "label": "E16 selective"},
+            "A5": {"pairs": a5_train, "kd": False, "label": "Hardness shuffle"},
+        }
+
+        if "A1" in args.arms:
+            all_pairs = load_msmarco_pairs(
+                n=args.n_train + args.n_eval, n_docs=10, seed=args.seed,
+            )
+            arm_configs["A1"]["pairs"] = all_pairs[:args.n_train]
+
+        teacher_data = {}
+        if "A3" in args.arms:
+            print(f"\nExtracting teacher scores for A3 ({args.teacher})...")
+            teacher_model = load_st_model(args.teacher, device=args.device)
+            for i, pair in enumerate(a2_train):
+                identity_probe = Probe(probe_id="identity", text=pair["query"])
+                scores = extract_teacher_scores(
+                    teacher_model, pair["query"], pair["documents"], [identity_probe],
+                )
+                teacher_data[pair["id"]] = {args.teacher: scores}
+                if (i + 1) % 200 == 0:
+                    print(f"  {i+1}/{len(a2_train)} pairs")
+            del teacher_model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        results = {}
+        for arm_name in args.arms:
+            cfg = arm_configs[arm_name]
+            if cfg["pairs"] is None:
+                print(f"\n--- {arm_name}: no pairs, skipping ---")
+                continue
+
+            arm_dir = os.path.join(args.out_dir, arm_name)
+            result_path = os.path.join(arm_dir, "result.json")
+            if os.path.exists(result_path):
+                print(f"\n--- {arm_name}: exists, loading ---")
+                results[arm_name] = json.load(open(result_path))
+                continue
+
+            print(f"\n{'='*60}")
+            print(f"Training {arm_name}: {cfg['label']}")
+            print(f"{'='*60}")
+
+            torch.manual_seed(args.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(args.seed)
+
+            student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+
+            td = teacher_data if cfg["kd"] else None
+
+            arm_result = run_arm(
+                arm_name, student, cfg["pairs"], a2_eval,
+                teacher_data=td, steps=args.steps, lr=args.lr,
+                tau=args.tau, out_dir=args.out_dir,
+                arm_type="kd_single" if cfg["kd"] else "contrastive",
+                frozen=False, warmup_frac=args.warmup_frac,
+                eval_every=args.eval_every,
+            )
+            results[arm_name] = arm_result
+            del student
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # ---- Report ----
+        print(f"\n{'='*60}")
+        print("E16 RESULTS")
+        print(f"{'='*60}")
+        print(f"\n{'Arm':<8} {'Label':<30} {'MRR':>8} {'Hit@1':>8} {'Gain':>8}")
+        print("-" * 65)
+        for arm_name in args.arms:
+            if arm_name in results:
+                r = results[arm_name]
+                cfg = arm_configs[arm_name]
+                print(f"{arm_name:<8} {cfg['label']:<30} "
+                      f"{r['final']['mrr']:>8.4f} {r['final']['hit@1']:>8.4f} "
+                      f"{r['gain_mrr']:>+8.4f}")
+
+        if "A2" in results and "A4" in results:
+            delta_a4_a2 = results["A4"]["final"]["mrr"] - results["A2"]["final"]["mrr"]
+            print(f"\n  A4 - A2 (E16 vs student): {delta_a4_a2:+.4f}")
+            print(f"  Threshold: >= +0.010")
+            print(f"  Point estimate: {'PASS' if delta_a4_a2 >= 0.010 else 'FAIL'}")
+
+        if "A4" in results and "A5" in results:
+            delta_a4_a5 = results["A4"]["final"]["mrr"] - results["A5"]["final"]["mrr"]
+            print(f"\n  A4 - A5 (E16 vs shuffle): {delta_a4_a5:+.4f}")
+            print(f"  Threshold: >= +0.010")
+            print(f"  Point estimate: {'PASS' if delta_a4_a5 >= 0.010 else 'FAIL'}")
+
+        if "A4" in results and "A5" in results:
+            if abs(results["A4"]["final"]["mrr"] - results["A5"]["final"]["mrr"]) <= 0.005:
+                print("\n  WARNING: A4 ≈ A5 — generic hardness may explain the benefit")
+                print("  Teacher-specific boundary selection is NOT confirmed")
+
+        summary = {
+            "arms": args.arms,
+            "results": {k: {kk: vv for kk, vv in v.items() if kk != "per_query"}
+                       for k, v in results.items()},
+        }
+        with open(os.path.join(args.out_dir, "summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
+        print(f"\nSummary saved to {os.path.join(args.out_dir, 'summary.json')}")
+
+
 if __name__ == "__main__":
     import sys
     if "--mode" in sys.argv:
@@ -1582,8 +2161,12 @@ if __name__ == "__main__":
             main_e15()
         elif mode == "fade":
             main_fade()
+        elif mode == "unfrozen_fade":
+            main_unfrozen_fade()
         elif mode == "ship":
             main_ship()
+        elif mode == "e16":
+            main_e16()
         else:
             main()
     else:

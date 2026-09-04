@@ -12,7 +12,7 @@ heads) is expendable. The mission is not.
 ---
 
 **Last updated:** 2026-09-04
-**Current state:** E1.5 COMPLETE (3/3 seeds). Codex evidence gate: INCONCLUSIVE (narrow negative, not terminal kill). B0 wins all seeds. Ship mode next (unfrozen encoder).
+**Current state:** Ship v0 DONE (MRR 0.562, unfrozen KD). Matched B0 control running. MTEB eval pending (blocked on B0). E16 implementation ready.
 **Blackboard:** `1d65d9fb`
 
 ## Direction
@@ -284,7 +284,7 @@ Full verdict: `outputs/V1_cifar100/codex_evidence_gate.txt`
 1. ~~Fix E1.5 code defects~~ DONE
 2. ~~Run corrected E1.5 text experiment~~ DONE (3/3 seeds)
 3. ~~Codex evidence gate~~ DONE (INCONCLUSIVE — narrow negative, not terminal kill)
-4. ~~Launch ship mode~~ RUNNING (20K pairs, 5K steps, kd_weight=0.7, unfrozen encoder)
-5. Export to sentence-transformers format
-6. MTEB quick eval — competitive targets: floor ~56 (MiniLM-L6), realistic ~62
-7. Design and run E16 Boundary Inheritance (teacher-guided mining experiment)
+4. ~~Ship mode v0~~ DONE (5K pairs, 3K steps, kd_weight=0.7, unfrozen: MRR 0.335→0.562)
+5. Matched B0 control (kd_weight=0, same setup) — RUNNING. Determines if KD helped.
+6. MTEB quick eval — PENDING (blocked on B0). Competitive targets: floor ~56 (MiniLM-L6), realistic ~62
+7. ~~E16 Boundary Inheritance~~ IMPLEMENTED. Pilot blocked on B0 + MTEB completion.

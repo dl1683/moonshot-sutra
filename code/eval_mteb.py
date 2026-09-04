@@ -27,7 +27,7 @@ QUICK_TASKS = [
     ("STS", "SICK-R"),
     ("Classification", "AmazonCounterfactualClassification"),
     ("Classification", "TweetSentimentExtractionClassification"),
-    ("Clustering", "ArXivClusteringS2S"),
+    ("Clustering", "ArxivClusteringS2S"),
     ("PairClassification", "TwitterURLCorpus"),
     ("Reranking", "AskUbuntuDupQuestions"),
     ("Retrieval", "SciFact"),
@@ -44,7 +44,7 @@ CATEGORY_TASKS = {
         "ToxicConversationsClassification", "TweetSentimentExtractionClassification",
     ],
     "Clustering": [
-        "ArXivClusteringP2P", "ArXivClusteringS2S",
+        "ArxivClusteringP2P", "ArxivClusteringS2S",
         "RedditClustering", "RedditClusteringP2P",
         "StackExchangeClustering", "StackExchangeClusteringP2P",
         "TwentyNewsgroupsClustering",
@@ -66,12 +66,17 @@ CATEGORY_TASKS = {
 
 
 class ModernBERTWrapper:
-    """Wrap a ModernBERT checkpoint for MTEB evaluation."""
+    """Wrap a ModernBERT checkpoint for MTEB evaluation.
+
+    Implements the MTEB AbsEncoder interface (DataLoader-based encode).
+    """
 
     def __init__(self, model_dir: str, device: str = "cuda"):
         from transformers import AutoModel, AutoTokenizer
 
         self.device = device
+        self.mteb_model_meta = None
+        self.model_prompts = None
 
         config_path = os.path.join(model_dir, "config.json")
         if not os.path.exists(config_path):
@@ -110,17 +115,8 @@ class ModernBERTWrapper:
                     break
 
     @torch.no_grad()
-    def encode(
-        self,
-        sentences: list[str],
-        batch_size: int = 32,
-        show_progress_bar: bool = False,
-        convert_to_tensor: bool = False,
-        normalize_embeddings: bool = True,
-        **kwargs,
-    ):
-        import numpy as np
-
+    def _encode_sentences(self, sentences: list[str], batch_size: int = 32,
+                          normalize: bool = True):
         all_embs = []
         for i in range(0, len(sentences), batch_size):
             batch = sentences[i:i + batch_size]
@@ -133,14 +129,15 @@ class ModernBERTWrapper:
             mask = encoded["attention_mask"].unsqueeze(-1).float()
             pooled = (outputs.last_hidden_state * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
             projected = self.proj(pooled)
-            if normalize_embeddings:
+            if normalize:
                 projected = F.normalize(projected, p=2, dim=-1)
             all_embs.append(projected.cpu())
+        return torch.cat(all_embs, dim=0)
 
-        result = torch.cat(all_embs, dim=0)
-        if convert_to_tensor:
-            return result
-        return result.numpy()
+    def encode(self, inputs, *, task_metadata=None, hf_split=None,
+               hf_subset=None, prompt_type=None, **kwargs):
+        sentences = [text for batch in inputs for text in batch["text"]]
+        return self._encode_sentences(sentences).numpy()
 
 
 def run_mteb_eval(model, task_name: str, output_dir: str) -> dict:
@@ -172,12 +169,28 @@ def main():
         os.path.exists(os.path.join(args.model, f))
         for f in ("model.pt", "student.pt", "proj.pt")
     )
+
+    from sentence_transformers import SentenceTransformer
+
     if is_raw_checkpoint:
-        print(f"Loading raw checkpoint from {args.model}")
-        model = ModernBERTWrapper(args.model, device=args.device)
+        st_dir = os.path.join(args.out_dir, "_st_export")
+        print(f"Exporting raw checkpoint to sentence-transformers format: {st_dir}")
+        from export_model import build_sentence_transformer, load_checkpoint_weights
+        proj_weights, encoder_path = load_checkpoint_weights(args.model)
+        config_path = os.path.join(args.model, "config.json")
+        base_model = "answerdotai/ModernBERT-base"
+        dim = 384
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                cfg = json.load(f)
+            base_model = cfg.get("student", base_model)
+            dim = cfg.get("dim", dim)
+        st_model = build_sentence_transformer(base_model, dim, proj_weights, encoder_path)
+        st_model.save(st_dir)
+        print(f"Loading exported model for MTEB...")
+        model = SentenceTransformer(st_dir, device=args.device)
     else:
         try:
-            from sentence_transformers import SentenceTransformer
             print(f"Loading sentence-transformers model: {args.model}")
             model = SentenceTransformer(args.model, device=args.device)
         except Exception as e:
