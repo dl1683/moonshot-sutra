@@ -1,7 +1,7 @@
 ﻿# Project Status
 
 **Last updated:** 2026-09-04
-**Current state:** September 2026 embedding reboot. Text response-delta narrow negative (Kill #15, reclassified). Vision V1 inconclusive (Codex FAIL). E1.5 corrected adjudication running. Live state in `STATE.md` (root).
+**Current state:** September 2026 embedding reboot. Text response-delta narrow negative (Kill #15, reclassified). Vision V1 inconclusive (Codex FAIL). E1.5 corrected adjudication COMPLETE (INCONCLUSIVE — narrow negative, not terminal kill). Ship mode running. Live state in `STATE.md` (root).
 **Fixed points:** The five sacred outcomes in `research/VISION.md`.
 
 ## Current Verdict
@@ -96,9 +96,12 @@ See `STATE.md` (root) for the live state. Summary:
 2. Tomography loss algebraic flaw fixed: teacher-indexed auxiliary heads break
    the identity. Each teacher gets its own nn.Linear head.
 3. Vision V1 complete, Codex evidence gate FAIL (inconclusive).
-4. E1.5 corrected adjudication running on MS MARCO (teacher-indexed heads,
-   3 seeds, 32-doc hard negatives, paired bootstrap CI).
-5. Standard KD artifact track running in parallel (ship mode).
+4. E1.5 corrected adjudication COMPLETE: INCONCLUSIVE (narrow negative, not
+   terminal kill). B0 wins all 3 seeds; KD variants consistently unfavorable
+   under frozen encoder. Valid-seed CI includes both 0 and +0.005.
+5. Standard KD artifact track running (ship mode — unfrozen encoder).
+6. Strategic pivot: E16 Boundary Inheritance (teacher-guided negative mining)
+   is highest-leverage untested mechanism.
 
 Historical direction (July 2026): E3 inference gate — can the composition rule
 be inferred from teacher behavior rather than hand-authored?
