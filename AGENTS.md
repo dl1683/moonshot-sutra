@@ -5,14 +5,33 @@ Process only. Mission and state live in `README.md`, `research/VISION.md`,
 before any work. Authority: project memory → this file → global `CLAUDE.md` →
 repo state docs → code.
 
-## Mission (Devansh, 2026-09-03)
+## Mission (Devansh, 2026-09-04 — corrected framing)
 
-Eklavya is the method: extract owned invariants from existing models through
-teacher tomography — behavior signatures under controlled probes, not output
-mimicry. Sutra is the target artifact: small, efficient models across
-embedding, vision, and audio modalities that win through better geometry, not
-scale. Sangam already covers natively multimodal (video/audio/everything
-together); Sutra pushes the individual modality models.
+**Eklavya is not a technique. Eklavya is the idea.**
+
+There are billions of dollars of accumulated knowledge sitting in pretrained
+models — language understanding, visual reasoning, semantic structure — that
+gets thrown away every time someone builds a new system. Every new setup
+requires starting from scratch. Eklavya asks: can we unlock that accumulated
+knowledge and let new, smaller, cheaper models inherit it? Can AI development
+stop being "start from scratch every time" and start being "build on what
+already exists"?
+
+If this works, a person with one GPU can benefit from the knowledge inside
+models they could never afford to train. AI stops being something only the
+richest labs can build and starts being something anyone can build on top of.
+This is the "AI as electricity / AI as vaccines" thesis from the portfolio
+mission.
+
+**Eklavya = the framework for knowledge inheritance from pretrained models.**
+Teacher tomography was one mechanism we tried — it failed (15 kills). Standard
+KD is another — it works but is well-understood and incremental. The mission
+survives every mechanism kill. The question is always: what is the RIGHT way
+to transfer accumulated knowledge, not WHETHER it can be transferred.
+
+**Sutra** is the current exploration ground: compact text/vision/audio embedding
+models that inherit from larger teachers. Sangam covers natively multimodal;
+Sutra pushes individual modality models.
 
 The AGI Thesis ("The Intelligence Transition") is the theoretical foundation:
 accumulated capability that survives model replacement, governed transitions,
@@ -25,13 +44,19 @@ the failure to launch the next iteration. Never stop working. Every kill
 narrows the search and makes the next attempt sharper. The 14 kills in Sutra's
 history are the narrowing, not defeat.
 
-## The R^n trap adapted: the KD trap
+## The mechanism trap (formerly "KD trap")
 
-The recurring failure mode: every distillation approach so far stayed too
-close to ordinary KD (mimic outputs, average teachers, supplied geometry).
-Every Codex review, audit, and direction dialogue MUST ask: "Is the current
-work building owned invariants in the student, or disguising teacher
-dependence? If the latter, that IS the tunnel."
+The recurring failure mode: confusing *a specific transfer mechanism* with
+*the Eklavya mission*. Tomography, output mimicry, averaged distributions,
+per-teacher heads — these are mechanisms. They can and should be killed when
+they fail. But killing a mechanism is NOT killing the mission. The mission
+(unlock accumulated knowledge for inheritance) survives every mechanism kill.
+
+Every Codex review MUST ask two questions:
+1. "Is this mechanism genuinely transferring knowledge the student couldn't
+   get on its own?" (mechanism test)
+2. "If this mechanism is dead, what OTHER form of knowledge transfer should
+   we try next?" (mission continuity)
 
 ## Five Sacred Outcomes (from VISION.md — fixed points)
 
@@ -76,9 +101,14 @@ result, test the single simplest confound that could explain every row.
 ## Narrative gate (gossip-magazine test)
 
 Every direction needs a one-sentence "so what" a non-expert finds exciting.
-A small embedding model that matches models 10x its size through better-shaped
-lessons from many teachers — that's the David story. If the wow reduces to a
-known trick, it's fake.
+
+The Eklavya narrative: "There's billions of dollars of knowledge locked in AI
+models that nobody can reuse — every new model starts from scratch. We figured
+out how to let a small model inherit what the big ones already know, so anyone
+with a laptop can build on the world's best AI instead of starting over."
+
+If the current mechanism doesn't serve this narrative, kill the mechanism and
+find one that does. The narrative is the filter, not the technique.
 
 ## Codex discipline
 

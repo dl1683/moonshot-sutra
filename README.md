@@ -1,46 +1,45 @@
 ﻿# Moonshot Sutra
 
-Moonshot Sutra is a first-principles research lab for one question:
+> There are billions of dollars of accumulated knowledge locked in pretrained
+> models — language understanding, visual reasoning, semantic structure — that
+> gets thrown away every time someone builds a new system. What if new, smaller
+> models could *inherit* that knowledge instead of starting from scratch?
 
-> What structure makes intelligence cheap?
+**Eklavya** is the governing idea: a framework for knowledge inheritance from
+pretrained models. Not a specific technique — the thesis that accumulated
+knowledge in existing models can be unlocked, transferred, and reused so that
+AI development becomes *building on what exists* rather than *rebuilding from
+nothing*. If this works, a person with one GPU benefits from knowledge inside
+models they could never afford to train.
 
-The project is no longer defined by Sutra as a specific byte-native neural
-network, Eklavya as multi-teacher KD, coordinate inheritance, evidence-native
-retrieval, CTI, FrameSeed, WGD, E3, or any fixed build sequence. Those are
-historical approaches unless re-admitted through a fresh precommit gate. They
-remain useful as evidence, not doctrine.
+**Sutra** is the current exploration ground, testing Eklavya across text,
+vision, and audio embedding models.
 
-## Current Vision
+## Five Sacred Outcomes (fixed points)
 
-The active canon is `research/VISION.md`.
+1. **Genuine Intelligence** — actually capable, not merely large or benchmark-shaped
+2. **Improvability** — failures found, understood, repaired surgically
+3. **Democratized Development** — reproducible, modifiable, extendable by anyone
+4. **Data Efficiency** — learns more from less through better structure
+5. **Inference Efficiency** — cheap to run, deployable widely
 
-The five sacred outcomes are the only fixed points:
-
-1. **Genuine Intelligence** - the system is actually capable, not merely large
-   or benchmark-shaped.
-2. **Improvability** - failures can be found, understood, and repaired
-   surgically.
-3. **Democratized Development** - independent researchers and communities can
-   understand, reproduce, modify, and extend the system.
-4. **Data Efficiency** - the system learns more from less because it captures
-   the right structure.
-5. **Inference Efficiency** - the system is cheap to run and deploy widely.
-
-Everything else is replaceable.
+Everything else — including specific mechanisms — is replaceable.
 
 ## Current Status
 
 **Embedding reboot** (September 2026): Building compact text embedding models
-via knowledge distillation from larger teachers. A 149M-parameter student
-(384-dim) trains on real retrieval data with contrastive and KD losses.
+(149M student, 384-dim) that inherit from larger teachers (BGE-large, 335M).
+Training on real retrieval data with contrastive and KD losses.
 
-The open research question is whether teacher-indexed distillation (per-teacher
-auxiliary heads preserving teacher identity in the loss) adds signal beyond
-standard single-teacher KD. Corrected adjudication (E1.5) with paired bootstrap
-CI across multiple seeds is running. See `STATE.md` for live numbers and verdicts.
+The research question is not *whether* knowledge transfer works (it does —
+distillation is well-established) but *what form of transfer unlocks the most
+value*. Teacher tomography (15 mechanism kills) and per-teacher indexed heads
+have been ruled out. The open question is what mechanism best captures the
+knowledge that makes large models good — their output distributions, their
+sense of what's hard, their internal representations, or something else.
 
-A parallel shipping pipeline trains, exports, and evaluates standard KD models
-independent of the research question — the artifact outranks the measurement.
+A shipping pipeline trains, exports, and evaluates models independent of the
+mechanism research — the artifact outranks the measurement (§2.7).
 
 The durable methodology from the earlier 14-kill search remains: precommitted
 terminal tokens, equal-information baselines, absorption ladders, and strict

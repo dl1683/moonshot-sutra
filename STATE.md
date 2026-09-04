@@ -1,7 +1,18 @@
 # State
 
+## Eklavya Mission (anchor — read first)
+
+**Eklavya is not a technique. Eklavya is the idea:** billions of dollars of
+accumulated knowledge sit in pretrained models and get thrown away every time
+someone builds a new system. Can we unlock that knowledge and let new, smaller
+models inherit it — so AI development becomes "build on what exists" instead
+of "start from scratch"? Every mechanism we test (tomography, KD, indexed
+heads) is expendable. The mission is not.
+
+---
+
 **Last updated:** 2026-09-04
-**Current state:** E1.5 RUNNING (2/3 seeds complete, seed_271 in progress). Teacher-indexed heads ABSORBED by B4c in both seeds. Kill shaping up clearly.
+**Current state:** E1.5 RUNNING (2/3 seeds complete, seed_271 in progress). Teacher-indexed heads ABSORBED by B4c in both seeds. Kill #15 shaping up. The mechanism is dying; the mission survives.
 **Blackboard:** `1d65d9fb`
 
 ## Direction

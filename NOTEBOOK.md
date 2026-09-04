@@ -4,6 +4,30 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 03:30 — MISSION RE-ANCHORING: Eklavya is the idea, not the technique
+
+Devansh corrected a critical framing error. Eklavya is NOT teacher tomography,
+NOT per-teacher heads, NOT any specific KD mechanism. Eklavya is the thesis:
+billions of dollars of accumulated knowledge in pretrained models gets thrown
+away every time someone builds a new system. Can we unlock that knowledge and
+let new, smaller models inherit it?
+
+Every mechanism kill (15 and counting) kills a technique, not the mission. The
+mission is: "build on what exists instead of starting from scratch." This is
+the "AI as electricity" narrative — anyone with one GPU benefits from knowledge
+they could never afford to accumulate.
+
+Updated: README.md, AGENTS.md (mission, mechanism trap, narrative gate),
+STATE.md (anchor section), memory. All canonical surfaces now lead with this
+framing. Future sessions must read the mission anchor before any work.
+
+The open question after E1.5 closes: what form of knowledge transfer actually
+works? Candidates beyond KD: teacher-guided data curation, intermediate
+feature alignment, teacher-as-curriculum (what's worth learning), progressive
+compression. Fire a strategic Codex session on this.
+
+---
+
 ## 2026-09-04 01:20 — Seed_137 complete: absorber kill strengthens
 
 Seed_137 final: B0(0.761) > E15_id(0.754) > B2(0.752) > B4c(0.747) > B3(0.739) > E15(0.737)
