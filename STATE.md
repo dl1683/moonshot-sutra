@@ -1,12 +1,16 @@
 # State
 
 **Last updated:** 2026-09-04
-**Current state:** INCONCLUSIVE. Neither tomography kill nor standard-KD-wins is established. Codex evidence gates failed BOTH claims. Corrected E1.5 adjudication required.
-**Blackboard:** `539efcd4`
+**Current state:** E1.5 RUNNING. Seed 42 partial: contrastive (0.779) > single KD (0.753) ≈ teacher-indexed (0.752) > avg KD (0.724). Teacher-indexed heads show NO signal above simple KD. Awaiting B4c + seeds 137/271 for final verdict.
+**Blackboard:** `1d65d9fb`
 
 ## Direction
 
-**Corrected adjudication (E1.5) before any method verdict or shipping pivot.**
+**E1.5 corrected adjudication running. Ship pipeline prepared for immediate launch after verdict.**
+
+Seed 42 early signal: teacher-indexed heads (0.752) ≈ single-teacher KD (0.753).
+Per-teacher auxiliary heads do NOT beat simple single-teacher distillation.
+Contrastive learning dominates all KD variants with 32-doc hard negatives.
 
 Codex V1 evidence gate (2026-09-04): V1 is an exploratory debugging run, not
 valid evidence. Both "tomography dead" and "standard KD wins" are overclaimed:
@@ -253,7 +257,11 @@ Full verdict: `outputs/V1_cifar100/codex_evidence_gate.txt`
 
 ## Next
 
-1. Fix E1.5 code defects (seed, probe-target alignment, frozen encoder, CI)
-2. Run corrected E1.5 text experiment (3 seeds, 32-doc hard negs, paired CI)
-3. Process E1.5 verdict per precommitted interpretations
-4. In parallel: build standard KD training pipeline for text artifact
+1. ~~Fix E1.5 code defects~~ DONE (dot bug, eval mode, t-dist CI, resume logic)
+2. ~~Run corrected E1.5 text experiment~~ RUNNING (PID 33692, 4/18 arms done)
+3. Process E1.5 verdict per precommitted interpretations (CI on E15 vs B4c delta)
+4. Fire Codex evidence gate (prepared: scratchpad/codex_e15_cmd.sh)
+5. Update canonical surfaces with final verdict
+6. Launch ship mode: standard KD at scale (50K pairs, 10K steps, kd_weight=0.7)
+7. Export to sentence-transformers format
+8. MTEB quick eval — competitive targets: floor ~56 (MiniLM-L6), realistic ~62

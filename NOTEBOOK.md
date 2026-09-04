@@ -4,6 +4,34 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 — E1.5 corrected adjudication: dot fix, resume logic, running
+
+**Bug fix (commit c3004ea):** nn.ModuleDict rejects keys containing `.` but
+teacher name BAAI/bge-large-en-v1.5 produces `BAAI_bge_large_en_v1.5` after
+`/` and `-` replacement. Added `.replace(".", "_")` to both `make_teacher_heads`
+and `_head_key`. Crashed at E15_teacher_indexed arm start; B0/B2/B3 unaffected.
+
+**Resume logic:** Added per-seed and per-arm resume to skip completed arms on
+restart. seed_42 B0/B2/B3 skip correctly; teacher extraction still reruns
+(teacher data not persisted, only results).
+
+**E1.5 seed_42 partial results (32-doc hard negatives):**
+- B0_contrastive: MRR 0.7790 (best, contrastive beats all KD)
+- B2_kd_single: MRR 0.7526
+- B3_kd_avg_cal: MRR 0.7240 (multi-teacher averaging HURTS)
+- E15_teacher_indexed: step 200 MRR 0.7097 (training, loss converging 0.078→0.017)
+- E15_teacher_idx_id, B4c_matched: pending
+- All baselines identical at 0.1003 (proj_seed=9999 confirmed)
+
+Key observation: with 32-doc hard negatives, contrastive > single KD > avg KD.
+Reversal from E1 (10 docs) where KD won. Hard negatives make the contrastive
+signal stronger while making the KD soft-label signal noisier.
+
+Ship pipeline (train → export → eval_mteb) verified ready. Will launch
+regardless of E1.5 outcome per artifact precedence rule.
+
+---
+
 ## 2026-09-04 — Dead code cleanup: 31 files deleted, 24,871 lines removed
 
 Dependency analysis confirmed 31 of 41 Python files in code/ were dead. All
