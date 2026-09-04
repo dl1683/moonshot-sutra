@@ -4,6 +4,41 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 20:45 -- Codex R4: Strategic Pivot to Attribution + E16
+
+**Codex R4 strategic review (outputs/codex_strategic_r4.txt):**
+
+Key directives:
+1. **Unfrozen B0 baseline is NON-NEGOTIABLE.** Ship mode proves nothing about KD
+   without a matched kd_weight=0 comparison. Code fixed: teacher loading skipped
+   when kd_weight=0 (committed 03b09b3).
+2. **Fade demoted to appendix.** E16 Boundary Inheritance (teacher-curated negatives)
+   promoted to mainline: preserves winning contrastive objective, avoids KD interference.
+3. **P2 implementation gap:** provenance manifest compares vs trained B0, not raw
+   student. Current data is exploratory evidence, not the formal estimand.
+4. **Distance-3+ drift confirmed.** No more provenance dimensions until unfrozen
+   control and E16 preflight are complete.
+
+**Deeper provenance analysis (union across teachers):**
+- 40 donor-private queries (Q1): B2 rescues 20/40 (50%), B3 rescues 14/40 (35%)
+- 32 B0-only queries (Q2): B2 loses 15/32, B3 loses 23/32
+- **Net: B2 = +5 queries, B3 = -9 queries**
+- On shared-Q1 (28 queries): B0 RR=0.368, B2 RR=0.729, B3 RR=0.683
+- KD IS transferring knowledge but creating interference. Net effect barely positive
+  for single-teacher, net negative for multi-teacher.
+
+**Implication:** teacher knowledge should enter through DATA SELECTION (E16), not
+loss modification (KD). This avoids interference entirely while preserving the
+contrastive objective that already wins.
+
+**Revised priority sequence:**
+1. Finish ship v0 (step ~1350/3000)
+2. Run matched unfrozen B0 (kd_weight=0) → MTEB eval on both
+3. E16 preflight design with Codex
+4. Fade only as appendix experiment
+
+---
+
 ## 2026-09-04 19:30 -- P2 Gate PASS + Ship Mode Progress
 
 **P2 Gate Result: DECISIVE PASS (17%)**
