@@ -4,6 +4,25 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-03 20:29 — E1 COMPLETE: tomography passes kill criterion
+
+E1 final results (100 eval MS MARCO pairs, 600 steps per arm):
+- B0 contrastive: MRR 0.514 (gain +0.171)
+- B2 single-teacher KD: MRR 0.540 (gain +0.173)
+- B3 multi-teacher avg: MRR 0.548 (gain +0.236)
+- **E1 tomography: MRR 0.561 (gain +0.260)**
+
+Kill criterion: E1 > 0.558. Result: 0.561. **PASSES** by +0.003 absolute.
+Gain comparison (fairer): E1 +0.260 vs B3 +0.236 = +0.024 margin.
+
+Tomography led at every checkpoint: step 200 (0.497 vs B3 0.476), step 400
+(0.556 vs B3 0.504), step 600 (0.561 vs B3 0.548). Consistent trajectory.
+
+Caveats: 100 eval pairs → wide CI; random projection confound; thin margin.
+Next: Codex evidence gate, then V1 vision experiment on GPU, then E2 scaled.
+
+---
+
 ## 2026-09-03 (late) — E1 partial results + all three modality pipelines ready
 
 E1 partial results (on 100 eval MS MARCO pairs):

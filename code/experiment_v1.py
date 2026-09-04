@@ -1,7 +1,7 @@
 """Eklavya Experiment V1 — Vision embedding tomography vs standard KD.
 
-Student: DINOv2-ViT-S/14 (21M, pretrained but not tuned for retrieval)
-Teachers: DINOv2-ViT-B/14 (86M) + CLIP-ViT-B/32 (86M, heterogeneous objective)
+Student: DINOv2-small (21M, pretrained but not tuned for retrieval)
+Teachers: DINOv2-base (86M) + CLIP-ViT-B/32 (86M, heterogeneous objective)
 Data: CIFAR-100 image retrieval pairs (class membership = relevance)
 Probes: identity, hflip, crop, color_jitter, grayscale, rotate, blur
 
@@ -155,7 +155,7 @@ class VisionEncoder:
 class VisionStudent(nn.Module):
     """Small vision encoder with trainable projection for retrieval."""
 
-    def __init__(self, model_name: str = "facebook/dinov2-vits14", dim: int = 256):
+    def __init__(self, model_name: str = "facebook/dinov2-small", dim: int = 256):
         super().__init__()
         from transformers import AutoModel, AutoImageProcessor
 
@@ -458,9 +458,9 @@ def main():
     parser.add_argument("--n_train", type=int, default=300)
     parser.add_argument("--n_eval", type=int, default=100)
     parser.add_argument("--out_dir", default="outputs/V1_cifar100")
-    parser.add_argument("--student", default="facebook/dinov2-vits14")
+    parser.add_argument("--student", default="facebook/dinov2-small")
     parser.add_argument("--teachers", nargs="+",
-                        default=["facebook/dinov2-vitb14", "openai/clip-vit-base-patch32"])
+                        default=["facebook/dinov2-base", "openai/clip-vit-base-patch32"])
     args = parser.parse_args()
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)

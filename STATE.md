@@ -1,8 +1,8 @@
 # State
 
-**Last updated:** 2026-09-03 (session 3 — continued from context compaction)
-**Current state:** E1 experiment finishing — B0/B2 done, B3 finishing, E1 (tomography) next.
-**Blackboard:** `539efcd4` (Codex-created)
+**Last updated:** 2026-09-03 20:29 ET
+**Current state:** E1 COMPLETE — tomography passes kill criterion. V1 vision launching.
+**Blackboard:** `1d65d9fb`
 
 ## Direction
 
@@ -16,46 +16,61 @@ Key Codex design gate corrections adopted:
 - Avoid Kill #9 (routing) and Kill #14 (supplied geometry)
 - B4 stack-and-distill as decisive hostile absorber (deferred to E2)
 
-## E1 Partial Results
+## E1 Results (COMPLETE — tomography passes kill criterion)
 
-| Arm | Type | Final MRR | Gain MRR | Status |
-|-----|------|-----------|----------|--------|
-| B0  | contrastive | 0.514 | +0.171 | DONE |
-| B2  | single-teacher KD | 0.540 | +0.196 | DONE |
-| B3  | multi-teacher avg KD | 0.504* | — | Running (step 400) |
-| E1  | tomography | — | — | Pending |
+Student: ModernBERT-base (149M, untrained for embeddings)
+Teachers: all-MiniLM-L12-v2 (33M), bge-large-en-v1.5 (335M)
+Data: 500 MS MARCO pairs (400 train, 100 eval), 600 steps per arm
 
-*B3 intermediate result: averaging hurts vs single-teacher. Heterogeneous
-teachers create blurred signal. This is potentially good for tomography
-which preserves per-teacher/per-probe structure.
+| Arm | Type | Baseline | Final MRR | **Gain** |
+|-----|------|----------|-----------|----------|
+| B0  | contrastive | 0.343 | 0.514 | +0.171 |
+| B2  | single-teacher KD | 0.366 | 0.540 | +0.173 |
+| B3  | multi-teacher avg KD | 0.312 | 0.548 | +0.236 |
+| **E1** | **tomography** | 0.301 | **0.561** | **+0.260** |
 
-Baseline MRR (untrained ModernBERT-base): 0.343
+**Kill criterion:** E1 MRR > B3 MRR + 0.01 = 0.558. **PASSES** (0.561 > 0.558)
+**Gain comparison** (controls for random projection confound): E1 +0.260 vs B3 +0.236 = **+0.024 margin**
+**Hit@1:** E1 best (0.36), **Hit@5:** E1 best (0.87)
 
-## Active Experiment
+**Caveats:** 100 eval pairs → 95% CI ~±0.03 on MRR. Margin is thin.
+Random projection confound (different baselines per arm). Needs E2 confirmation.
 
-**E1 (running on GPU):**
-- Student: ModernBERT-base (149M, untrained for embeddings)
-- Teachers: all-MiniLM-L12-v2 (33M), bge-large-en-v1.5 (335M)
-- Data: 500 MS MARCO pairs with BM25 hard negatives (500 train, 100 eval)
-- 600 steps per arm, lr=2e-5, tau=0.05
-- Arms:
-  - B0: Contrastive only (InfoNCE, no teacher) — DONE MRR 0.514
-  - B2: Single-teacher KD (best teacher, identity probe only) — DONE MRR 0.540
-  - B3: Multi-teacher average KD (averaged scores, identity only) — running
-  - E1: Full tomography (multi-probe, multi-teacher KL) — pending
-- Kill: if E1 MRR <= best baseline MRR + 0.01, tomography didn't help
+## V2 Results (COMPLETED — already-trained student)
+
+MiniLM-L6-v2 (22M) student, BGE-large (335M) + MiniLM-L12 (33M) teachers,
+500 MSMARCO pairs, 10 docs/query, LR 5e-6, tau 0.02, 500 steps.
+
+| Arm | MRR | Gain |
+|-----|-----|------|
+| Baseline | 0.8450 | — |
+| A: Ranking KD | 0.8250 | -0.0200 |
+| B: Tomography | 0.8150 | -0.0300 |
+| C: Contrastive | 0.8350 | -0.0100 |
+| D: Aug Contrastive | 0.8450 | +0.0000 |
+
+**Verdict:** All teacher KD destructive for already-trained student.
+Confirms ModernBERT-base blank-slate is the correct approach.
 
 ## Pipeline Code
 
+- `code/experiment_e1.py` — 4-arm text embedding experiment (running)
+- `code/experiment_e2.py` — scaled E2 with confound fixes (proj_seed, warmup, 3 teachers)
+- `code/experiment_v1.py` — 4-arm vision embedding experiment (CIFAR-100)
+- `code/experiment_a1.py` — 4-arm audio embedding experiment (ESC-50/synthetic)
+- `code/eval_mteb.py` — MTEB evaluation pipeline for shipping
+- `code/export_model.py` — sentence-transformers export for HuggingFace
 - `code/embed_tomography.py` — signature extraction, probes, loss functions
 - `code/train_student.py` — student training loop
 - `code/data_loader.py` — hard toy data, MS MARCO loader
 - `code/run.py` — canonical single-command runner
-- `code/experiment_e1.py` — 4-arm text embedding experiment
-- `code/experiment_v1.py` — 4-arm vision embedding experiment (CIFAR-100)
-- `code/experiment_a1.py` — 4-arm audio embedding experiment (ESC-50/synthetic)
-- `code/eval_mteb.py` — MTEB evaluation pipeline for shipping
-- `code/vision_tomography.py` — vision probe transforms and signature extraction
+
+## Known confound
+
+Each E1 arm creates a fresh ModernBERTEmbedder with a random nn.Linear(768, 384)
+projection, giving different baselines. Gains are more comparable than absolute
+MRR. Fixed in experiment_e2.py with `proj_seed` parameter ensuring identical
+initialization across arms.
 
 ## What survived the 14 kills
 
@@ -71,18 +86,15 @@ See `research/STATUS.md` for the full 14-kill record.
 
 ## Live threads
 
-1. **Embedding E1** — 4-arm experiment finishing on GPU (B0/B2 done, B3 running, E1 next)
-2. **Vision V1** — experiment code ready, launches after E1 frees GPU
+1. **V1 vision** — launching on GPU now (DINOv2-small student, DINOv2-base+CLIP teachers, CIFAR-100)
+2. **E2 scaled** — experiment code ready, fixes projection confound, 5000 pairs, 3 teachers
 3. **Audio A1** — experiment code ready with synthetic data fallback
 4. **MTEB eval** — pipeline ready for model evaluation before shipping
-5. **AGI Thesis** — accumulation framework grounds persistence
-6. **Sangam** — findings integrated (Pareto council, relational principles)
+5. **Codex evidence gate** — reviewing E1 results for overclaims
 
 ## Next
 
-1. E1 finishes -> analyze results -> Codex evidence gate
-2. If tomography signal: scale up in E2 (more data, bigger teachers)
-3. If absorbed: ship best KD recipe, mechanism is secondary
-4. Launch V1 on GPU after E1 completes
-5. Prepare A1 with real audio data (ESC-50 download)
-6. First model that beats MiniLM-L6 on MTEB -> ship to HuggingFace
+1. V1 running on GPU → analyze results → cross-modality evidence
+2. E2 scaled text experiment to confirm E1 margin with fixed confound
+3. First model that beats MiniLM-L6 on MTEB → ship to HuggingFace
+4. If V1 shows tomography signal in vision too → strong cross-modality story
