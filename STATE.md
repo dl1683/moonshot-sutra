@@ -12,12 +12,12 @@ heads) is expendable. The mission is not.
 ---
 
 **Last updated:** 2026-09-04
-**Current state:** E1.5 COMPLETE (3/3 seeds). Teacher-indexed heads KILLED. B0 wins all seeds. Codex evidence gate running. Ship mode next.
+**Current state:** E1.5 COMPLETE (3/3 seeds). Codex evidence gate: INCONCLUSIVE (narrow negative, not terminal kill). B0 wins all seeds. Ship mode next (unfrozen encoder).
 **Blackboard:** `1d65d9fb`
 
 ## Direction
 
-**E1.5 corrected adjudication: 3/3 seeds complete. Mechanism KILLED.**
+**E1.5 corrected adjudication: 3/3 seeds complete. Codex verdict: INCONCLUSIVE.**
 
 Cross-seed E15 vs B4c deltas (valid seeds only — B4c catastrophic on seed_271):
 seed_42 = -0.0006, seed_137 = -0.0095. Both negative. Mean = -0.005.
@@ -33,9 +33,16 @@ but is itself informative: the B4c absorber is fragile.
 **Key finding: B0 (contrastive only, no teachers) WINS all 3 seeds.** Mean 0.769.
 All KD variants (B2, B3, E15) hurt vs pure contrastive on frozen encoder.
 
-This kills the teacher-indexed-heads mechanism. The Eklavya mission survives —
-the question is now WHAT FORM of knowledge transfer works, not WHETHER.
-Ship mode (standard KD at scale with unfrozen encoder) is the next artifact.
+Codex evidence gate verdict (2026-09-04): INCONCLUSIVE. E15 fails its positive
+threshold, but valid-seed CI (df=1) includes both 0 and +0.005, so the
+precommitted kill criterion is also unresolved. All 3 seeds share the same 200
+eval queries (training-randomness replicates, not data replications). B4c
+instability (seed_271) is genuine evidence of algorithmic fragility.
+
+Consistently unfavorable to tested mechanisms, but not a terminal kill. The
+frozen-encoder restriction may be WHY KD doesn't help — unfreezing could change
+the dynamics fundamentally. Ship mode (standard KD, unfrozen encoder) is the
+next artifact.
 
 Codex V1 evidence gate (2026-09-04): V1 is an exploratory debugging run, not
 valid evidence. Both "tomography dead" and "standard KD wins" are overclaimed:
@@ -44,10 +51,12 @@ valid evidence. Both "tomography dead" and "standard KD wins" are overclaimed:
 - Vision V1: catastrophic forgetting masks method differences, probe-target
   misalignment, no seed control, no CI
 
-The Eklavya philosophy ("steal from existing models") survives. The mechanism
-question (tomography vs standard KD) is OPEN. E1.5 with teacher-indexed heads,
-frozen encoder, proper controls, and 3+ seeds is the required next experiment.
-Standard KD artifact track can run in parallel as engineering baseline.
+The Eklavya philosophy ("steal from existing models") survives. Output-mimicry
+mechanisms (tomography, KD loss, teacher-indexed heads) are exhausted but not
+formally killed. Strategic pivot: teacher value lies in DATA CURATION, not loss
+modification. E16 Boundary Inheritance (teacher-guided negative mining) is the
+highest-leverage untested mechanism (Codex strategic recommendation 2026-09-04).
+Ship mode (unfrozen encoder, standard KD) is the engineering artifact baseline.
 
 ## E1 Results (COMPLETE — tomography passes kill criterion)
 
@@ -263,20 +272,19 @@ Full verdict: `outputs/V1_cifar100/codex_evidence_gate.txt`
 
 ## Live threads
 
-1. **E1.5 corrected adjudication** — HIGH PRIORITY. Teacher-indexed heads,
-   frozen encoder, proper seeds, bootstrap CI. Text first (MS MARCO). This
-   settles the tomography question before any shipping commitment.
-2. **Standard KD artifact** — parallel engineering track. Build a standard KD
-   text model (ModernBERT-base + BGE-large). Independent of method question.
-   Per artifact precedence, the model IS the deliverable.
+1. **Ship mode** — ARTIFACT TRACK. Standard KD at scale with unfrozen encoder
+   (ModernBERT-base + BGE-large, 50K pairs, 10K steps). The model IS the
+   deliverable. This tests KD in the unfrozen regime where it may actually work.
+2. **E16 Boundary Inheritance** — MECHANISM TRACK. Teacher-guided negative mining.
+   Teacher picks training comparisons; student trains with pure B0 contrastive.
+   Codex-recommended highest-leverage untested mechanism (2026-09-04).
 
 ## Next
 
-1. ~~Fix E1.5 code defects~~ DONE (dot bug, eval mode, t-dist CI, resume logic)
-2. ~~Run corrected E1.5 text experiment~~ RUNNING (PID 33692, 4/18 arms done)
-3. Process E1.5 verdict per precommitted interpretations (CI on E15 vs B4c delta)
-4. Fire Codex evidence gate (prepared: scratchpad/codex_e15_cmd.sh)
-5. Update canonical surfaces with final verdict
-6. Launch ship mode: standard KD at scale (50K pairs, 10K steps, kd_weight=0.7)
-7. Export to sentence-transformers format
-8. MTEB quick eval — competitive targets: floor ~56 (MiniLM-L6), realistic ~62
+1. ~~Fix E1.5 code defects~~ DONE
+2. ~~Run corrected E1.5 text experiment~~ DONE (3/3 seeds)
+3. ~~Codex evidence gate~~ DONE (INCONCLUSIVE — narrow negative, not terminal kill)
+4. Launch ship mode: standard KD at scale (50K pairs, 10K steps, kd_weight=0.7)
+5. Export to sentence-transformers format
+6. MTEB quick eval — competitive targets: floor ~56 (MiniLM-L6), realistic ~62
+7. Design and run E16 Boundary Inheritance (teacher-guided mining experiment)

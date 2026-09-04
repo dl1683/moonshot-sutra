@@ -4,7 +4,42 @@ Reverse-chronological running log. Newest first.
 
 ---
 
-## 2026-09-04 05:15 -- E1.5 COMPLETE: Teacher-indexed heads KILLED, B0 wins
+## 2026-09-04 06:00 -- E1.5 Codex Evidence Gate: INCONCLUSIVE
+
+Codex Research Integrity Auditor reviewed E1.5 results. Verdict: INCONCLUSIVE.
+
+Key corrections (adopted verbatim):
+- "KILL confirmed" overclaims the evidence. Valid-seed CI (df=1) includes both
+  0 and +0.005 threshold. Cannot resolve terminal kill.
+- All 3 seeds use the SAME 200 eval query IDs. These are training-randomness
+  replicates on one fixed split, not independent data replications.
+- B0 dominance is scoped to "frozen-encoder, fixed-split configuration."
+  The frozen-encoder restriction may prevent representation changes needed
+  for knowledge inheritance.
+- B4c instability (seed_271) is genuine evidence of algorithmic fragility.
+- Combined evidence is "consistently unfavorable" to tested mechanisms but
+  says nothing adverse about the axiomatic Eklavya mission.
+
+Claim ceiling: "On one fixed MS MARCO evaluation set under frozen-encoder
+training, direct contrastive supervision outperformed every tested KD arm
+across three training runs."
+
+Reclassified: KILL -> INCONCLUSIVE (narrow negative) in all canonical surfaces.
+Ship mode (unfrozen encoder, standard KD) remains the correct next artifact.
+
+Full verdict: outputs/E1_5_text/codex_evidence_gate.txt
+
+Strategic Codex recommendation (separate session): E16 Boundary Inheritance.
+Teacher-guided negative mining is the highest-leverage untested mechanism.
+The teacher picks training comparisons (positive-aware hard negatives, false
+negative relabeling); student trains with pure B0 contrastive loss. Teacher
+moves upstream from the loss into the training distribution. 5 ranked
+mechanisms: (1) teacher-guided mining, (2) teacher-generated data, (3) weight
+inheritance via pruning, (4) teacher-as-curriculum, (5) intermediate features.
+
+---
+
+## 2026-09-04 05:15 -- E1.5 COMPLETE: B0 wins all seeds (narrow negative)
 
 All 18 arms (6 arms x 3 seeds) complete. Summary.json regenerated with all seeds.
 
