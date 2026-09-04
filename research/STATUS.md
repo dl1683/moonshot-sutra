@@ -1,7 +1,7 @@
 ﻿# Project Status
 
 **Last updated:** 2026-09-04
-**Current state:** September 2026 embedding reboot. Text response-delta dead (Kill #15). Vision V1 running. Live state in `STATE.md` (root).
+**Current state:** September 2026 embedding reboot. Text response-delta narrow negative (Kill #15, reclassified). Vision V1 inconclusive (Codex FAIL). E1.5 corrected adjudication running. Live state in `STATE.md` (root).
 **Fixed points:** The five sacred outcomes in `research/VISION.md`.
 
 ## Current Verdict
@@ -11,9 +11,12 @@ and artifact index. For current experiment results, live threads, and next
 steps, read `STATE.md`.
 
 September 2026 reboot pivoted to Eklavya embedding/vision/audio distillation.
-Kill #15 closed text embedding response-delta. Vision V1 experiment is the
-active test. E1.5 corrected adjudication is the path to potentially revive
-text (identity-preserving loss required).
+Kill #15 (reclassified): V2-R2 was ceiling-saturated, narrow negative, not
+terminal kill. Vision V1 complete but Codex evidence gate FAIL — exploratory
+debugging, neither tomography kill nor standard KD win established. E1.5
+corrected adjudication (teacher-indexed heads, 3 seeds, paired CI) is running
+on MS MARCO to settle the method question. Standard KD artifact track runs
+in parallel per artifact precedence.
 
 Pre-reboot verdict (July 2026): B44/B52 killed the supplied-geometry E3 toy
 claim. Token: `B44_E3_HOSTILE_NUISANCE_ORACLE_ABSORBS_REQUIRES_INFERENCE_GATE`.
@@ -89,11 +92,13 @@ Side demotions not counted as numbered kills:
 
 See `STATE.md` (root) for the live state. Summary:
 
-1. Text embedding response-delta is dead (Kill #15, two Codex evidence gates).
-2. Tomography loss has an algebraic flaw: avg(KL(P_t||Q)) = KL(avg(P_t)||Q) + C.
-3. Vision V1 experiment (CIFAR-100, DINOv2 + CLIP teachers) is running.
-4. E1.5 corrected adjudication (identity-preserving loss, 32-doc, 2 domains,
-   3 seeds) is the path to revive text if vision shows signal.
+1. Kill #15 reclassified: V2-R2 was ceiling-saturated narrow negative.
+2. Tomography loss algebraic flaw fixed: teacher-indexed auxiliary heads break
+   the identity. Each teacher gets its own nn.Linear head.
+3. Vision V1 complete, Codex evidence gate FAIL (inconclusive).
+4. E1.5 corrected adjudication running on MS MARCO (teacher-indexed heads,
+   3 seeds, 32-doc hard negatives, paired bootstrap CI).
+5. Standard KD artifact track running in parallel (ship mode).
 
 Historical direction (July 2026): E3 inference gate — can the composition rule
 be inferred from teacher behavior rather than hand-authored?
