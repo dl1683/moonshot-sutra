@@ -4,6 +4,464 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 15:00 -- SANGAM-E0-TDPA Protocol Frozen + Status Check
+
+**SANGAM-E0-TDPA protocol written** (outputs/sangam_e0_tdpa_protocol.json):
+Full typed donor-private provenance assay protocol for Sangam. Frozen per Codex
+Round 3 §9. Key design elements:
+- Fail-closed cache validator (103/103 shards required, all terminal status checks)
+- 3 media-identity-disjoint folds (seed 42, ±10% balance)
+- 3 typed candidate pools: image↔text, video↔text, temporal-video (32 candidates each)
+- 3 scorers: Qwen teacher (from cache), Sangam recipient (live), OOF label-only baseline
+- Q1-Q4 quadrant analysis per type and difficulty stratum
+- 4 admission gates: G1 (Q1≥5%), G2 (turnover≥20%), G3 (teacher advantage CI>0), G4 (contamination≤2%)
+- Cluster bootstrap (10K draws) by media_identity
+- Contamination ledger: alternate-positive, duplicate-identity, cross-fold leakage
+- Execution: ONCE on fit-only evidence after 103/103 cache validated and hash-frozen
+- No execution until cache complete (currently 40/103)
+
+**Parallel compute status:**
+- Ship mode v0 (GPU, PID 29400): step 250/3000, loss 0.641, ~4h remaining
+- Second ship mode (GPU, PID 13316): n_train=20000, steps=5000, competing for GPU
+- Provenance manifest (CPU, PID 36628): running, 10K+ CPU seconds consumed
+- Two Sangam semantic descent processes also running (CPU)
+- GPU at 99%/88°C
+
+**Gate question:** Provenance manifest will answer whether teachers actually rank
+eval queries correctly. If P2 (donor-private prevalence) ≈ 0, fade experiment
+is pointless regardless of infrastructure quality.
+
+---
+
+## 2026-09-04 14:30 -- Codex Round 3: Convergence Spec Delivered
+
+Codex Round 3 (session 01a06bed, outputs/codex_round3_convergence.txt).
+Three rounds complete. Key convergence points:
+
+**IMPORTANT CORRECTION: E1.5 was FROZEN (confirmed).** Summary.json records
+`"frozen": true` from args. The `[FROZEN]` banner prints to stdout, not log.jsonl
+— its absence from logs doesn't prove unfrozen. All fade arms must also be frozen.
+
+**Manifest spec (outputs/E_provenance_v1/candidate_manifest.json):**
+- Inputs only — never teacher or student outputs in the manifest
+- Same 200 eval query identities and 32-candidate recipe as E1.5
+- New canonical realization with full texts, hashes, SHA-256
+- Each query: id, texts, candidates[32] with document_text_sha256
+- Label correction: record ALL selected passages (not just first)
+- All 9 fade arms consume this manifest; legacy E1.5 = descriptive only
+
+**Predeclared estimands (frozen, per Codex Round 3 §4):**
+- P1: paired mean RR10_donor - RR10_raw (per teacher)
+- P2: donor-private prevalence Pr(C_d=1, C_raw=0) — KEY GATE
+- P3: B0-resistant donor-private (held-out seed, both other B0s wrong)
+- P4: recipient-private/corruption prevalence
+- P5: donor-recipient top-10 turnover (1 - Jaccard)
+- P6: MiniLM-only / BGE-only / shared / B3-rescue decomposition
+- P7: unresolved-top, duplicate-positive, contamination rates
+- F1 (primary): mean paired RR10_B3fade - RR10_B0sched at step 600
+- F2 (secondary): B2 fade delta
+- F3: retained gain on strict carrier-private cases
+- F4: recipient preservation on recipient-correct/donor-wrong
+- F5: paired curve at steps 100,200,300,400,500,600
+- F6: legacy LOSO treatment strata (secondary, separate from provenance)
+
+**Success criteria:** F1 lower 95% bound > +0.005 MRR@10. Plus carrier
+provenance, F3 positive, F4 no worse than -0.005.
+
+**Manipulation check:** B3 fade must beat B0 at step 200 in NEW runs.
+If early advantage doesn't reproduce, pilot fails its premise.
+
+**Sangam TDPA prework (buildable now):**
+Protocol, fail-closed cache validator, 3 identity-disjoint folds,
+typed candidate pools, baseline interfaces, ranking adapter, Q1-Q4 analyzer.
+No execution until 103/103 cache.
+
+---
+
+## 2026-09-04 14:00 -- Provenance Manifest + Evaluator Improvements
+
+**Provenance manifest script (code/provenance_manifest.py):** Running on CPU while
+ship mode uses GPU. For each of 3 seeds: reconstructs E1.5 eval candidate pools
+(deterministic), scores each 32-candidate pool with MiniLM-L12 and BGE-large,
+produces per-query teacher rankings. Includes baseline verification (MRR match
+with saved E1.5 values) and SHA-256 hash. Output: outputs/provenance_manifest.json.
+
+**MRR@10 added to evaluator:** `evaluate()` now computes MRR@{cutoff} (default 10)
+alongside existing MRR. Per-query records include `rr@10`. Backward compatible.
+
+**Paired bootstrap CIs added to fade analysis:** `paired_bootstrap_ci()` computes
+95% CI on per-query RR differences (fade vs B0) pooled across all seeds. 10K
+bootstrap samples. Reports significance (CI excludes zero).
+
+**Ship mode v0:** Step 100/3000, loss 0.728→0.707, kd_weight=0.7, BGE-large teacher.
+GPU at 89C/99%. First eval at step 500.
+
+**Codex Round 3:** Running in background. Convergence round — concrete buildable spec
+for provenance manifest, predeclared estimands, fade pilot approval.
+
+---
+
+## 2026-09-04 12:45 -- Codex Round 2: Sharp Corrections Accepted
+
+Codex Round 2 (session 01a06bde, 180 lines, outputs/codex_round2_response.txt).
+Most impactful round yet — changed my mind on 4 points:
+
+**CORRECTION 1: My "provenance" quadrants are MISLABELED.**
+No teacher was scored on eval queries. Q1-Q4 compare B2-student vs B0-student
+outcomes, not teacher-correct vs student-wrong. Correct labels: "KD-recipient
+rank 1, B0-recipient not rank 1" — TREATMENT EFFECTS, not provenance.
+Calling Q1 "inheritance" presupposes the conclusion.
+
+**CORRECTION 2: B2 is NOT the best fade candidate.**
+B2 trails B0 at step 200 in E1.5 (confirmed by learning curves). B3
+(calibrated average) leads: B3=0.705 vs B0=0.672 mean at step 200. B3->B0
+tests the observed early advantage; B2->B0 tests a non-advantage. Changed
+primary fade arm to B3_fade_200.
+
+**CORRECTION 3: Fade and provenance answer DIFFERENT questions.**
+Fade: "Does transient teacher supervision improve trajectory?"
+Provenance: "Did teacher possess correct information student lacked?"
+Without provenance, positive fade = maybe optimization, not inheritance.
+Without fade, positive provenance = knowledge exists, carrier untested.
+They're COMPLEMENTARY — run concurrently, interpret jointly.
+
+**CORRECTION 4: "Judgments vs representations" is false dichotomy.**
+Deeper framing (accepted): "Eklavya is an inheritance assay and compiler.
+It locates donor-private capability, compiles it into the cheapest viable
+carrier — data, ordering, weights, modules, or persistent artifacts — removes
+the donor, and verifies retained capability."
+
+**Codex's corrected plan:**
+1. Ship mode finish (artifact only)
+2. Materialize immutable candidate manifest + separate teacher rankings
+3. Predeclare joint estimands (MRR@10, donor-correct/B0-wrong gain, etc.)
+4. Provenance scoring (CPU) + fade pilot (GPU) concurrently
+5. Use B3->B0 for observed early-advantage test; B2->B0 as secondary
+6. SANGAM-E0-TDPA after Qwen cache is 103/103 (currently 40/103)
+
+**Codex's critique of fade code (partially valid):**
+- ~~frozen/unfrozen mismatch~~ — WRONG: E1.5 also ran unfrozen (verified)
+- Circular subgroup selection — VALID, fixed with leave-one-seed-out
+- Should use B3 not B2 — VALID, changed
+- Lacks MRR@10 and paired CIs — VALID, will add
+- "Helped" set selection inflation on 8 queries — VALID caveat
+
+**Jaccard reinterpretation:** 0.773/0.414 is a "strong routing hypothesis,"
+not proof that data selection will preserve help and eliminate harm. The
+0.414 hurt Jaccard is NOT noise — it's highly structured (12/29 overlap vs
+~2 expected by chance). "Selecting only Q1 examples does not localize the
+parameter update — Q1 gradients can spill into Q2 behavior."
+
+Full output: outputs/codex_round2_response.txt
+
+---
+
+## 2026-09-04 12:15 -- Codex Round 1 + Sangam Bridge: Convergence Synthesis
+
+**ROUND 1 OUTPUT** (outputs/codex_round1_assay_debate.txt, 127 lines):
+Codex revised conservation field to "ANISOTROPIC conservation field" — local
+donation and global conservation coexist. Key changes from Round 0:
+- Jaccard result IS real: teacher imposes repeatable, query-specific bias
+- BUT B2 and E15 share MiniLM-L12 — Jaccard may be MiniLM-shaped, not BGE-shaped
+- Causal cassettes WITHDRAWN as near-term recommendation
+- Developmental inheritance: testable but probably can't beat BGE-base (109M)
+- Central claim must NARROW: "compact descendant may retain donor-held
+  capability from sealed packet at lower lifecycle cost"
+- DO NOT launch full E16 — run donor-provenance gate first, then teacher fade
+
+**SANGAM BRIDGE** (outputs/codex_sutra_sangam_bridge.txt, 147 lines):
+Codex read Sangam's full codebase. CRITICAL FINDING: **Sangam already observed
+the identical conservation-field pattern independently.**
+- Teacher atlas: helped 4,059 identities, hurt 3,795
+- Helped hardest 4 deciles, regressed all 6 easier deciles
+- None of 57 global maps transferred Qwen's advantage
+- 384-D deficit is UPSTREAM (feature formation), not final-vector capacity
+
+**Strategic conclusion: "Treat Qwen as a frozen cartographer, not a force field."**
+- Qwen cache (103 shards) should change WHICH EXAMPLES student studies
+- NOT what representation student is forced to imitate
+- Student trains with ordinary supervised/contrastive objective, Qwen-free
+- Proposed SANGAM-E0-TDPA: Typed Donor-Private Provenance Assay (no training)
+- Inheritance must be DOMAIN-TYPED: Qwen admitted for visual-semantic, explicitly
+  unsupported for acoustic/synchronized-AV/physical-time/evidence-revision
+- Kill criteria: 5% stable Q1, 20% top-k turnover, 2% max false-negative rate
+
+**CONVERGENCE across Sutra + Sangam:**
+The same pattern — net negative aggregate, positive on hard queries, negative
+on easy — operates across:
+- Text-only: BGE→ModernBERT (Sutra E1.5)
+- Multimodal: Qwen→384-dim (Sangam teacher atlas)
+This suggests a UNIVERSAL pattern in KD, not a setup artifact. The conservation
+field is real; the question is whether selective inheritance can extract the
+hard-query benefit without the easy-query corruption.
+
+**Eklavya reframed:** Not a new loss function. A METHODOLOGY for teacher-guided
+data curation. Teacher's most valuable output = its JUDGMENTS about training
+data, not its REPRESENTATIONS. This is a DEEPENING, not a narrowing — it
+resolves why all 15 loss-based mechanisms failed while data-selection survived.
+
+**NEW: Teacher decomposition analysis (B2=MiniLM-only vs E15=MiniLM+BGE):**
+Codex Round 1 flagged that B2 and E15 share MiniLM-L12. Decomposition confirms:
+- ~85% of E15's help is MiniLM-shared (33/39 queries per seed)
+- Only ~15% is BGE-specific (5-7 queries, NOT stable across seeds: 0 in all 3)
+- BGE adds more corruption than help (13-16 hurt vs 5-7 help per seed)
+- BGE interferes with MiniLM help on 5-9 queries per seed
+- MiniLM-only hurt (B2 hurts, E15 doesn't): 12-17 queries — BGE rescues from MiniLM
+- The Jaccard of 0.773 IS predominantly MiniLM-shaped, NOT BGE-shaped
+
+**Design implication:** Teacher fade should use B2 (MiniLM-only), not E15.
+MiniLM is the stable help channel. BGE is net-negative and unstable.
+For E16 data selection: MiniLM-L12 may be better teacher than BGE-large.
+
+**CAUTION: Fade prediction analysis (using E1.5 learning curves):**
+B2 does NOT lead B0 at step 200 in E1.5:
+- Seed 42: B0=0.657, B2=0.649 (B0 leads)
+- Seed 137: B0=0.667, B2=0.657 (B0 leads)
+- Seed 271: B0=0.692, B2=0.694 (essentially tied)
+This differs from E1 (where B2 led B0 dramatically at step 200). The harder
+32-candidate negatives in E1.5 provide enough gradient signal that the teacher's
+soft distribution doesn't accelerate early learning. Fade may converge to B0
+in aggregate. The signal, if it exists, will be in per-query decomposition:
+does fade preserve B2's help on ~38-43 teacher-helped queries?
+
+Round 2 Codex dialogue in progress. Key questions:
+- Should teacher fade come BEFORE or AFTER donor-provenance gate?
+- Does the cross-project convergence strengthen or weaken the case?
+- Is "methodology for data curation" a deepening or a retreat?
+- Should E16 use MiniLM-L12 instead of BGE-large as data curator?
+- B2 doesn't lead at step 200 in E1.5 — does this change the fade design?
+
+---
+
+## 2026-09-04 11:30 -- 4-Quadrant Provenance + Codex Cross-Seed Synthesis
+
+**NEW ANALYSIS: 4-Quadrant Provenance (Codex-recommended, now computed).**
+Using B2 (teacher-assisted) vs B0 (student-only), "correct" = rank 1:
+
+| Quadrant | Seed 42 | Seed 137 | Seed 271 | Meaning |
+|----------|---------|----------|----------|---------|
+| Q1 (teacher helps, student fails) | 22 | 24 | 23 | INHERITANCE |
+| Q2 (student wins, teacher hurts) | 32 | 27 | 32 | CORRUPTION |
+| Q3 (both correct) | 100 | 100 | 97 | REDUNDANT |
+| Q4 (neither correct) | 46 | 49 | 48 | BOTH FAIL |
+| Net Q1-Q2 | **-10** | **-3** | **-9** | NET NEGATIVE |
+
+**Net inheritance is NEGATIVE in all 3 seeds.** Teacher corrupts more queries
+than it helps. 50% of queries are redundant (Q3). Only 8 queries are in Q1
+across all 3 seeds (4%): msmarco_404, 444, 474, 492, 501, 519, 536, 579. On
+these 8, teacher improvement is massive (+0.6 MRR), but drowned by corruption.
+
+**Codex cross-seed session (01a06bc8, completed) key findings:**
+1. E15-B2 help Jaccard = **0.773**; hurt Jaccard = only **0.414**. The
+   beneficial knowledge channel is MECHANISM-STABLE; corruption is
+   mechanism-dependent. Strongest argument for E16 — change the mechanism
+   entirely to inherit stable help without unstable harm.
+2. Among 23 hard queries: 12 consistently helped, 1 consistently hurt, 10
+   inconsistent. Among 8 always-hard: 5 helped, 0 hurt. Teacher knowledge
+   genuine for hard queries.
+3. Net E15 effect decomposed: consistently helped +0.0374, consistently hurt
+   -0.0431, inconsistent -0.0182. Most net harm from INCONSISTENT bucket.
+4. Sign agreement 59% vs 20.3% expected under independence. Structural signal.
+5. E16 needs positive-aware exclusion — current loader can surface unlabeled
+   positives as "negatives." More knowledgeable teacher → worse contamination.
+6. **Conditional GO for E16 as selective boundary inheritance** (not blanket
+   teacher top-k). 6-arm selector comparison with BM25 control, preflight
+   without training, then 3 data replicates x 2 seeds. T-consistent must beat
+   best no-teacher selector with lower 95% CI above +0.010 MRR@10.
+
+**Synthesis: Conservation field interpretation is INCOMPLETE.** The help
+channel is structural (Jaccard 0.773); the harm channel is mechanism-dependent
+(0.414). E16 doesn't change the loss — it changes the DATA. If harm is
+mechanism-dependent and E16 uses a fundamentally different mechanism
+(data-selection not loss-modification), it may inherit help without harm. But
+the 4-quadrant analysis shows only 4% consistent inheritance — the corridor
+is narrow.
+
+---
+
+## 2026-09-04 11:00 -- Codex Deep-Think: Program-Level Reframe
+
+Codex deep-think session (01a06bbd, 6 questions, xhigh effort). The most
+important Codex output this program has received. Key synthesis:
+
+**"The teacher behaves like a conservation field, not a knowledge donor."**
+Teacher accelerates early learning and preserves existing geometry but restricts
+later plasticity. B0 wins because it's FREE to reorganize. The experiment doesn't
+ask "can student acquire donor-only knowledge" — it asks "which supervision
+best adapts an ALREADY-KNOWLEDGEABLE representation." ModernBERT already has
+substantial pretrained knowledge; our ranking task exposes it, not creates it.
+
+**The deepest methodological problem: "optimized the transfer mechanism before
+building an inheritance assay."** A proper assay requires:
+1. Donor possesses capability C
+2. Recipient demonstrably LACKS C
+3. Ordinary training under matched budget cannot reveal C
+4. Bounded, sealed donor packet transferred
+5. Donor removed
+6. Recipient exhibits C on hidden compositional tests
+7. Repeats across recipient architectures
+8. Recipient-only capabilities retained
+9. Lifecycle cost beats direct reacquisition
+
+**Per-query teacher effects are METHOD-INVARIANT (Pearson 0.86-0.90).**
+B2, B3, E15, E15_id help/hurt the SAME queries. Not mechanism-specific; shared
+teacher-supervision bias profile. Suggests evaluating in 4 provenance quadrants:
+(1) donor-correct/recipient-wrong, (2) recipient-correct/donor-wrong,
+(3) both correct, (4) neither correct. Inheritance = quadrant 1 wins.
+
+**Ship mode sampling inefficiency:** With replacement sampling at 5000 steps from
+20K pool, only ~4,424 distinct queries consumed (22.1%). No kd_weight=0 control.
+Cannot attribute results to KD; cannot kill unfrozen KD from failure either.
+
+**Three novel mechanisms proposed:**
+1. Developmental inheritance (prune/contract the donor, not independent student)
+2. Causal capability cassettes (transplant specific donor-only computations)
+3. Executable textbook (teacher compiles persistent teaching artifact)
+
+**Meta-pattern from 15 kills (4 recurring failure modes):**
+1. Proxy improvement without functional transfer
+2. Conditional redundancy (B0 gets first refusal)
+3. Human-supplied structure masquerading as inheritance
+4. Information in wrong carrier
+
+**E15_id mean advantage: +0.005, SD 0.0036 vs E15 SD 0.0073.** Identity-only
+is MORE STABLE. Extra probes add no reliable teacher-private information.
+
+**Codex's call:**
+- Let ship mode finish (artifact), but note it's not a KD adjudication
+- Run cheap E16 channel-admission tests BEFORE 24 runs
+- Begin designing donor-private capability assay NOW
+- Move program center from output imitation to parameter/module inheritance
+
+Full output: outputs/codex_deep_think.txt. Entries on blackboard 539efcd4.
+
+---
+
+## 2026-09-04 10:45 -- Codex: Selective E16 + Statistical Correction
+
+Codex heterogeneous treatment follow-up (session 01a06bc1). Processed the
+per-query + learning curve evidence. Key outputs:
+
+**Statistical correction on heterogeneous treatment effect:**
+My "E15 wins zero easy queries" was partly artifact: rank-1 can't improve by
+definition. B0-vs-B0 across seeds shows similar ceiling pattern. But leave-one-
+seed-out analysis (difficulty defined by other two seeds) STILL shows the effect:
+- Easy: -0.056/-0.072/-0.067 (E15 hurts)
+- Medium: -0.005/+0.024/+0.032 (E15 mixed)
+- Hard: +0.106/+0.131/+0.094 (E15 helps, only 12-14 queries)
+
+Evidence predicts TARGETED E16 benefit only if teacher selects boundaries that
+differ materially from student mining. Indiscriminate teacher top-k not predicted
+to work.
+
+**Three distinct mechanisms (Codex taxonomy):**
+| Mechanism | What teacher changes | Hypothesis |
+|-----------|---------------------|------------|
+| E16       | Negative identities | Teacher knows which boundaries matter |
+| Weighted B0 | Gradient magnitude | Teacher knows where capacity should go |
+| Curriculum | Timing/order | Teacher knows when to introduce examples |
+
+Codex: don't run curriculum before E16 (schedule-dependent, not predicted by
+evidence). Weighted B0 is a cheap diagnostic but not prerequisite.
+
+**KEY: Revised E16 design = "Selective Boundary Inheritance"**
+Replace all-query teacher top-k with ROUTED teacher arm:
+1. Start from student-mined negatives
+2. Substitute teacher negatives ONLY where teacher-student disagree
+3. Teacher must rank positives safely above proposed negatives
+4. Semi-hard band (not just hardest)
+5. Retain uniform/self-mined replay floor for all queries
+
+Add pre-training manifest gate (before spending 24 runs):
+- Teacher/student top-k turnover by difficulty stratum
+- Teacher-corrects-student vs student-corrects-teacher counts
+- Eligible-query rate, negative hardness distribution
+- False-negative and duplicate-positive rates
+If these show low turnover or no teacher advantage, don't run.
+
+Add predeclared secondary outcomes: easy-query regression rate, hard-query rescue
+rate, rank-bucket transition matrix, matched learning curves.
+
+Entries e90-e97 on blackboard 539efcd4.
+
+---
+
+## 2026-09-04 10:15 -- Cross-Seed Consistency: Teacher Boundary Knowledge is Real
+
+Follow-up analysis on the heterogeneous treatment data. KEY QUESTION: does the
+teacher help the SAME queries across training seeds, or is it noise?
+
+**Result: 18 queries consistently helped, 20 consistently hurt, 80 neutral, 82
+inconsistent across all 3 seeds.** Teacher's net effect is ~zero because help and
+hurt cancel. But 41% of queries have inconsistent fates — help vs hurt depends
+on training seed, suggesting significant noise in teacher knowledge transfer.
+
+**Hard queries: teacher helps CONSISTENTLY.** Of 23 queries that are hard (B0
+rank 6+) in at least one seed: msmarco_404 (rank 4-6 to rank 1 ALL seeds),
+msmarco_421 (rank 3-7 to rank 1 ALL seeds), msmarco_536 (rank 3-9 to rank 1
+ALL seeds), msmarco_559 (rank 3-6 to rank 1 ALL seeds). Genuine, reproducible
+boundary knowledge.
+
+**B0 difficulty is 71.5% stable across seeds.** Query hardness is structural,
+not noise. Training randomness changes outcomes for 28.5% of queries.
+
+**E15 and B2 help the SAME queries (Jaccard 0.68-0.75).** Different KD mechanisms
+(teacher-indexed heads vs standard KD) access the same underlying teacher
+knowledge. The mechanism doesn't matter for WHICH queries benefit.
+
+**Implication for E16:** Teacher boundary knowledge is genuine and consistent for
+hard queries. The problem is uniform application — it helps hard queries but
+damages easy ones. E16's data-selection approach naturally concentrates teacher
+knowledge where it helps (harder training examples) without gradient interference
+on easy queries. The high E15-B2 Jaccard suggests the knowledge channel is
+robust — any mechanism that targets the right queries should work.
+
+**Risk for E16:** 82 inconsistent queries (41%) suggest much of teacher's apparent
+knowledge is training-noise interaction, not deep structure. If teacher-mined
+negatives are mostly from the "inconsistent" band rather than the "consistently
+hard" band, E16 may not help.
+
+---
+
+## 2026-09-04 09:30 -- Deep Per-Query Analysis: Heterogeneous Treatment Effect
+
+CPU analysis while ship mode runs on GPU. Mined overlooked signal in E1.5 data.
+
+**Finding 1: KD helps hard queries, CORRUPTS easy queries.**
+Across all 3 seeds, consistently:
+- EASY (B0 rank-1, ~130/200): E15 wins 0, loses ~30. Mean delta -0.135.
+- MEDIUM (B0 rank 2-5, ~55/200): E15 wins ~30, loses ~13. Mean delta +0.195.
+- HARD (B0 rank 6+, ~15/200): E15 wins ~11, loses ~3. Mean delta +0.135.
+Net negative because easy queries dominate (66%). The teacher genuinely helps
+on hard queries but KD loss pulls representation uniformly, corrupting already-
+correct answers.
+
+**Finding 2: KD arms learn fast then stall/regress. B0 keeps learning.**
+B3 has HIGHEST MRR at step 200 (0.713) but STALLS to 0.724 at step 600.
+B0 has LOWEST MRR at step 200 (0.657) but CLIMBS to 0.779 (highest final).
+E15 regresses from 0.754 to 0.737 in seed 137 after step 400.
+Teacher gradient helps early (head start) but becomes conflicting later.
+
+**Finding 3: B4c catastrophe = near-uniform rank distribution.**
+Seed 271: 19 rank-1, 18 rank-32, everything between. Complete training
+collapse into a local minimum. Seeds 42/137: 128/123 rank-1.
+
+**Finding 4: Identity probe beats full teacher-indexed heads (seed 137).**
+E15_id wins 30 vs E15 18 per-query. Extra parameters add noise.
+
+**Implication for E16:** These findings directly validate E16's mechanism.
+The teacher's value is in difficulty assessment (which queries/negatives are
+hard), not in its output distributions (loss modification). E16 uses the
+teacher ONCE for data selection, then removes it — avoiding gradient
+interference. Two simpler alternatives also motivated: teacher-weighted
+contrastive loss (per-query weighting by teacher-student agreement) and
+teacher-guided curriculum (sort by difficulty).
+
+Codex E16 design gate: CONDITIONAL GO (separate session, just completed).
+Codex follow-up sessions fired with this new evidence.
+
+---
+
 ## 2026-09-04 06:00 -- E1.5 Codex Evidence Gate: INCONCLUSIVE
 
 Codex Research Integrity Auditor reviewed E1.5 results. Verdict: INCONCLUSIVE.

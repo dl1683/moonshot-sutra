@@ -402,11 +402,12 @@ def compute_contrastive_loss(
 
 
 @torch.no_grad()
-def evaluate(student: ModernBERTEmbedder, pairs: list[dict]) -> dict:
+def evaluate(student: ModernBERTEmbedder, pairs: list[dict], mrr_cutoff: int = 10) -> dict:
     was_training = student.training
     student.eval()
     hits1 = hits5 = 0
     mrr_sum = 0.0
+    mrr_cut_sum = 0.0
     per_query = []
     for pair in pairs:
         q_emb = student.forward([pair["query"]])
@@ -419,12 +420,18 @@ def evaluate(student: ModernBERTEmbedder, pairs: list[dict]) -> dict:
         if gold in ranked[:5]:
             hits5 += 1
         rank = ranked.index(gold) + 1
-        mrr_sum += 1.0 / rank
-        per_query.append({"id": pair["id"], "gold_rank": rank, "rr": 1.0 / rank})
+        rr = 1.0 / rank
+        rr_cut = rr if rank <= mrr_cutoff else 0.0
+        mrr_sum += rr
+        mrr_cut_sum += rr_cut
+        per_query.append({"id": pair["id"], "gold_rank": rank, "rr": rr, f"rr@{mrr_cutoff}": rr_cut})
     if was_training:
         student.train()
     n = len(pairs)
-    return {"hit@1": hits1/n, "hit@5": hits5/n, "mrr": mrr_sum/n, "n": n, "per_query": per_query}
+    return {
+        "hit@1": hits1/n, "hit@5": hits5/n, "mrr": mrr_sum/n,
+        f"mrr@{mrr_cutoff}": mrr_cut_sum/n, "n": n, "per_query": per_query,
+    }
 
 
 def run_arm(
@@ -442,10 +449,13 @@ def run_arm(
     teacher_names: list[str] | None = None,
     frozen: bool = False,
     warmup_frac: float = 0.0,
+    fade_step: int | None = None,
+    eval_every: int = 200,
 ):
     gpu_thermal_guard(max_temp=85)
+    fade_info = f" [FADE->contrastive@{fade_step}]" if fade_step else ""
     print(f"\n{'='*60}")
-    print(f"ARM: {arm_name} ({arm_type}){' [FROZEN]' if frozen else ''}")
+    print(f"ARM: {arm_name} ({arm_type}){' [FROZEN]' if frozen else ''}{fade_info}")
     print(f"{'='*60}")
 
     if frozen:
@@ -475,6 +485,20 @@ def run_arm(
     Path(arm_dir).mkdir(parents=True, exist_ok=True)
     log_f = open(os.path.join(arm_dir, "log.jsonl"), "w")
 
+    n_trainable = sum(p.numel() for p in params if p.requires_grad)
+    meta_entry = {
+        "event": "arm_meta", "arm": arm_name, "type": arm_type,
+        "frozen": frozen, "trainable_params": n_trainable,
+        "fade_step": fade_step, "eval_every": eval_every, "steps": steps,
+    }
+    log_f.write(json.dumps(meta_entry) + "\n")
+    log_f.flush()
+
+    checkpoint_steps = set()
+    if fade_step:
+        checkpoint_steps.add(fade_step)
+    checkpoint_steps.add(steps)
+
     t0 = time.time()
     running_loss = 0.0
 
@@ -484,37 +508,41 @@ def run_arm(
 
         optimizer.zero_grad()
 
-        if arm_type == "tomography":
+        effective_type = arm_type
+        if fade_step and step > fade_step:
+            effective_type = "contrastive"
+
+        if effective_type == "tomography":
             probes = generate_probes(pair["query"], seed=idx)
             loss = compute_tomography_loss(
                 student, probes, pair["documents"],
                 teacher_data[pair["id"]], tau=tau,
             )
-        elif arm_type == "teacher_indexed":
+        elif effective_type == "teacher_indexed":
             probes = filter_safe_probes(generate_probes(pair["query"], seed=idx))
             loss, _diag = compute_teacher_indexed_kl_loss(
                 student, teacher_heads, probes, pair["documents"],
                 teacher_data[pair["id"]], tau=tau,
             )
-        elif arm_type == "teacher_indexed_id_only":
+        elif effective_type == "teacher_indexed_id_only":
             probes = [Probe(probe_id="identity", text=pair["query"])]
             loss, _diag = compute_teacher_indexed_kl_loss(
                 student, teacher_heads, probes, pair["documents"],
                 teacher_data[pair["id"]], tau=tau,
             )
-        elif arm_type == "b4c_matched":
+        elif effective_type == "b4c_matched":
             probes = filter_safe_probes(generate_probes(pair["query"], seed=idx))
             loss = compute_b4c_matched_kl_loss(
                 student, teacher_heads, probes, pair["documents"],
                 pair["gold_idx"], teacher_names, tau=tau,
             )
-        elif arm_type == "kd_single":
+        elif effective_type == "kd_single":
             tid = list(teacher_data[pair["id"]].keys())[0]
             loss = compute_kd_loss(
                 student, pair["query"], pair["documents"],
                 teacher_data[pair["id"]][tid]["identity"], tau=tau,
             )
-        elif arm_type == "kd_avg":
+        elif effective_type == "kd_avg":
             scores_lists = [t["identity"] for t in teacher_data[pair["id"]].values()]
             device = next(student.parameters()).device
             calibrated = []
@@ -527,13 +555,13 @@ def run_arm(
                 student, pair["query"], pair["documents"],
                 avg_scores, tau=tau,
             )
-        elif arm_type == "contrastive":
+        elif effective_type == "contrastive":
             loss = compute_contrastive_loss(
                 student, pair["query"], pair["documents"],
                 pair["gold_idx"], tau=tau,
             )
         else:
-            raise ValueError(f"Unknown arm type: {arm_type}")
+            raise ValueError(f"Unknown arm type: {effective_type}")
 
         if not loss.requires_grad:
             continue
@@ -551,16 +579,23 @@ def run_arm(
             gpu_thermal_guard(max_temp=85)
         if step % 50 == 0:
             avg = running_loss / 50
-            entry = {"step": step, "loss": round(avg, 6), "elapsed_s": round(time.time()-t0, 1)}
-            if step % 200 == 0:
+            current_lr = scheduler.get_last_lr()[0]
+            phase = "contrastive" if (fade_step and step > fade_step) else arm_type
+            entry = {"step": step, "loss": round(avg, 6), "elapsed_s": round(time.time()-t0, 1),
+                     "lr": current_lr, "phase": phase}
+            if step % eval_every == 0:
                 m = evaluate(student, eval_pairs)
                 entry.update(m)
-                print(f"  step {step:>5d}  loss={avg:.4f}  hit@1={m['hit@1']:.4f}  mrr={m['mrr']:.4f}")
+                print(f"  step {step:>5d}  loss={avg:.4f}  hit@1={m['hit@1']:.4f}  mrr={m['mrr']:.4f}  mrr@10={m.get('mrr@10', 0):.4f}  [{phase}]")
             else:
-                print(f"  step {step:>5d}  loss={avg:.4f}")
+                print(f"  step {step:>5d}  loss={avg:.4f}  [{phase}]")
             log_f.write(json.dumps(entry) + "\n")
             log_f.flush()
             running_loss = 0.0
+
+        if step in checkpoint_steps:
+            ckpt_path = os.path.join(arm_dir, f"proj_step{step}.pt")
+            torch.save(student.proj.state_dict(), ckpt_path)
 
     # Final eval
     final = evaluate(student, eval_pairs)
@@ -964,6 +999,367 @@ def main_e15():
         json.dump(final_summary, f, indent=2)
 
 
+def paired_bootstrap_ci(diffs: list[float], n_boot: int = 10000, alpha: float = 0.05) -> dict:
+    """Bootstrap CI for mean of paired differences."""
+    arr = np.array(diffs)
+    n = len(arr)
+    rng = np.random.RandomState(42)
+    boot_means = np.array([rng.choice(arr, size=n, replace=True).mean() for _ in range(n_boot)])
+    lo = np.percentile(boot_means, 100 * alpha / 2)
+    hi = np.percentile(boot_means, 100 * (1 - alpha / 2))
+    return {"mean": float(arr.mean()), "ci_lo": float(lo), "ci_hi": float(hi),
+            "n": n, "significant": (lo > 0) or (hi < 0)}
+
+
+def main_fade():
+    """Teacher fade experiment — stability-plasticity discriminator.
+
+    Tests whether early teacher scaffolding transmits real information that
+    survives removal. Uses the same data pipeline as E1.5.
+
+    Arms (2 new, 2 reused from E1.5):
+    - B0_contrastive: reuse from E1.5 (pure contrastive baseline)
+    - B2_kd_single: reuse from E1.5 (full KD reference)
+    - B2_fade_200: KD for 200 steps, then contrastive for 400 (NEW)
+    - B0_sched_match: contrastive with matched schedule control (NEW)
+    """
+    import random as stdlib_random
+    import numpy as np
+
+    parser = argparse.ArgumentParser(description="Eklavya Fade — Stability-Plasticity Test")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--steps", type=int, default=600)
+    parser.add_argument("--fade_step", type=int, default=200)
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--tau", type=float, default=0.05)
+    parser.add_argument("--n_train", type=int, default=400)
+    parser.add_argument("--n_eval", type=int, default=200)
+    parser.add_argument("--n_docs", type=int, default=32)
+    parser.add_argument("--seeds", nargs="+", type=int, default=[42, 137, 271])
+    parser.add_argument("--proj_seed", type=int, default=9999)
+    parser.add_argument("--out_dir", default="outputs/E_fade")
+    parser.add_argument("--e15_dir", default="outputs/E1_5_text")
+    parser.add_argument("--student", default="answerdotai/ModernBERT-base")
+    parser.add_argument("--teachers", nargs="+",
+                        default=["sentence-transformers/all-MiniLM-L12-v2", "BAAI/bge-large-en-v1.5"])
+    parser.add_argument("--frozen", action="store_true")
+    parser.add_argument("--warmup_frac", type=float, default=0.1)
+    parser.add_argument("--manifest", default=None,
+                        help="Path to frozen manifest JSON. If provided, load pairs from it.")
+    args = parser.parse_args()
+
+    from data_loader import load_msmarco_pairs, mine_hard_negatives
+    import hashlib
+
+    FADE_ARMS = [
+        ("B3_fade_200", "kd_avg"),
+        ("B2_fade_200", "kd_single"),
+        ("B0_sched_match", "contrastive"),
+    ]
+
+    Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+
+    manifest_data = None
+    if args.manifest:
+        print(f"Loading frozen manifest from {args.manifest}")
+        manifest_data = json.load(open(args.manifest))
+        stored_hash = manifest_data.get("_sha256", "")
+        print(f"  Manifest SHA-256: {stored_hash[:16]}...")
+        print(f"  Seeds in manifest: {list(manifest_data.get('seeds', {}).keys())}")
+
+    all_seed_results = {}
+
+    for seed_idx, data_seed in enumerate(args.seeds):
+        print(f"\n{'#'*60}")
+        print(f"FADE SEED {seed_idx + 1}/{len(args.seeds)}: data_seed={data_seed}")
+        print(f"{'#'*60}")
+
+        stdlib_random.seed(data_seed)
+        np.random.seed(data_seed)
+        torch.manual_seed(data_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(data_seed)
+
+        seed_dir = os.path.join(args.out_dir, f"seed_{data_seed}")
+        Path(seed_dir).mkdir(parents=True, exist_ok=True)
+
+        all_done = all(
+            os.path.exists(os.path.join(seed_dir, arm_name, "result.json"))
+            for arm_name, _ in FADE_ARMS
+        )
+        if all_done:
+            print(f"\n--- Seed {data_seed}: all fade arms complete, loading ---")
+            seed_results = {}
+            for arm_name, _ in FADE_ARMS:
+                seed_results[arm_name] = json.load(
+                    open(os.path.join(seed_dir, arm_name, "result.json"))
+                )
+            all_seed_results[data_seed] = seed_results
+            continue
+
+        if manifest_data and str(data_seed) in manifest_data.get("seeds", {}):
+            print("Loading pairs from frozen manifest...")
+            seed_manifest = manifest_data["seeds"][str(data_seed)]
+            eval_pairs_from_manifest = []
+            for qdata in seed_manifest["queries"]:
+                eval_pairs_from_manifest.append({
+                    "id": qdata["id"],
+                    "query": qdata["query"],
+                    "documents": qdata.get("documents", []),
+                    "gold_idx": qdata["gold_idx"],
+                })
+            if eval_pairs_from_manifest and eval_pairs_from_manifest[0].get("documents"):
+                print(f"  Loaded {len(eval_pairs_from_manifest)} eval pairs from manifest")
+            else:
+                print("  WARNING: Manifest lacks document texts. Falling back to mining.")
+                manifest_data = None
+
+        if not manifest_data or str(data_seed) not in manifest_data.get("seeds", {}):
+            raw_pairs = load_msmarco_pairs(
+                n=args.n_train + args.n_eval, n_docs=10, seed=data_seed,
+            )
+            if len(raw_pairs) < args.n_train + args.n_eval:
+                print(f"Warning: only got {len(raw_pairs)} pairs")
+
+            train_raw = raw_pairs[:args.n_train]
+            eval_raw = raw_pairs[args.n_train : args.n_train + args.n_eval]
+
+            gpu_thermal_guard(max_temp=85)
+            print("\nMining hard negatives with raw student...")
+            raw_student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+            raw_student.eval()
+
+            train_pairs = mine_hard_negatives(
+                train_raw, raw_student, n_docs=args.n_docs,
+            )
+            eval_pairs = mine_hard_negatives(
+                eval_raw, raw_student, n_docs=args.n_docs,
+            )
+            del raw_student
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        else:
+            raw_pairs = load_msmarco_pairs(
+                n=args.n_train + args.n_eval, n_docs=10, seed=data_seed,
+            )
+            train_raw = raw_pairs[:args.n_train]
+            raw_student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+            raw_student.eval()
+            train_pairs = mine_hard_negatives(
+                train_raw, raw_student, n_docs=args.n_docs,
+            )
+            eval_pairs = eval_pairs_from_manifest
+            del raw_student
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        print(f"Data: {len(train_pairs)} train, {len(eval_pairs)} eval")
+
+        print("\nExtracting teacher signatures for fade arms...")
+        teachers = {}
+        for tname in args.teachers:
+            print(f"  Loading {tname}")
+            teachers[tname] = load_st_model(tname, device=args.device)
+
+        teacher_data = {}
+        for pair in train_pairs:
+            probes = generate_probes(pair["query"], seed=train_pairs.index(pair))
+            td = {}
+            for tname, tmodel in teachers.items():
+                td[tname] = extract_teacher_scores(
+                    tmodel, pair["query"], pair["documents"], probes,
+                )
+            teacher_data[pair["id"]] = td
+
+        del teachers
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        seed_results = {}
+        for arm_name, arm_type in FADE_ARMS:
+            arm_result_path = os.path.join(seed_dir, arm_name, "result.json")
+            if os.path.exists(arm_result_path):
+                print(f"\n--- {arm_name}: exists, skip ---")
+                seed_results[arm_name] = json.load(open(arm_result_path))
+                continue
+
+            torch.manual_seed(data_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(data_seed)
+
+            student = ModernBERTEmbedder(
+                args.student, dim=384, proj_seed=args.proj_seed,
+            ).to(args.device)
+
+            fade = args.fade_step if "fade" in arm_name else None
+
+            result = run_arm(
+                arm_name, student, train_pairs, eval_pairs,
+                teacher_data=teacher_data, steps=args.steps, lr=args.lr,
+                tau=args.tau, out_dir=seed_dir, arm_type=arm_type,
+                frozen=args.frozen, warmup_frac=args.warmup_frac,
+                fade_step=fade, eval_every=100,
+            )
+
+            seed_results[arm_name] = result
+            del student
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        all_seed_results[data_seed] = seed_results
+
+    # Cross-seed comparison with E1.5 baselines
+    print(f"\n{'='*70}")
+    print(f"FADE EXPERIMENT RESULTS (vs E1.5 baselines)")
+    print(f"{'='*70}")
+
+    e15_arms = ["B0_contrastive", "B2_kd_single"]
+    fade_arms_names = [a for a, _ in FADE_ARMS]
+    all_arm_names = e15_arms + fade_arms_names
+
+    print(f"\n{'Arm':<25} {'Mean MRR':>10} {'MRR@10':>10} {'SD':>8} {'Mean Gain':>10}")
+    print("-" * 65)
+
+    arm_pq = {}
+    for arm_name in all_arm_names:
+        mrrs = []
+        mrr10s = []
+        gains = []
+        pqs = []
+        for data_seed in args.seeds:
+            if arm_name in e15_arms:
+                fpath = os.path.join(args.e15_dir, f"seed_{data_seed}", arm_name, "result.json")
+            else:
+                fpath = os.path.join(args.out_dir, f"seed_{data_seed}", arm_name, "result.json")
+            if os.path.exists(fpath):
+                r = json.load(open(fpath))
+                mrrs.append(r["final"]["mrr"])
+                mrr10s.append(r["final"].get("mrr@10", r["final"]["mrr"]))
+                gains.append(r.get("gain_mrr", r["final"]["mrr"] - r["baseline"]["mrr"]))
+                pqs.append({q["id"]: q for q in r["final"]["per_query"]})
+
+        if mrrs:
+            mean_mrr = np.mean(mrrs)
+            mean_mrr10 = np.mean(mrr10s)
+            std_mrr = np.std(mrrs, ddof=1) if len(mrrs) > 1 else 0.0
+            mean_gain = np.mean(gains)
+            print(f"{arm_name:<25} {mean_mrr:>10.4f} {mean_mrr10:>10.4f} {std_mrr:>8.4f} {mean_gain:>+10.4f}")
+            arm_pq[arm_name] = pqs
+
+    print(f"\n--- Paired Bootstrap CI (fade vs B0, per-query RR differences) ---")
+    b0_pqs = arm_pq.get("B0_contrastive", [])
+    for fade_arm in fade_arms_names:
+        fade_pqs = arm_pq.get(fade_arm, [])
+        if not fade_pqs or not b0_pqs or len(fade_pqs) != len(b0_pqs):
+            continue
+        all_diffs = []
+        for si in range(len(fade_pqs)):
+            for qid in fade_pqs[si]:
+                if qid in b0_pqs[si]:
+                    all_diffs.append(fade_pqs[si][qid]["rr"] - b0_pqs[si][qid]["rr"])
+        if all_diffs:
+            ci = paired_bootstrap_ci(all_diffs)
+            sig = "***" if ci["significant"] else "n.s."
+            print(f"  {fade_arm} - B0: mean={ci['mean']:+.4f} "
+                  f"95% CI [{ci['ci_lo']:+.4f}, {ci['ci_hi']:+.4f}] "
+                  f"n={ci['n']} {sig}")
+
+    # Per-query analysis using LEAVE-ONE-SEED-OUT subgroup definition
+    # (avoids circular selection: define helped/hurt from OTHER seeds)
+    print(f"\n{'='*70}")
+    print("PER-QUERY FADE ANALYSIS (leave-one-seed-out subgroups)")
+    print(f"{'='*70}")
+
+    for fade_arm in ["B3_fade_200", "B2_fade_200"]:
+        ref_arm = "B3_kd_avg_cal" if "B3" in fade_arm else "B2_kd_single"
+        print(f"\n  --- {fade_arm} vs B0 (ref: {ref_arm}) ---")
+
+        for data_seed in args.seeds:
+            other_seeds = [s for s in args.seeds if s != data_seed]
+            fade_path = os.path.join(args.out_dir, f"seed_{data_seed}", fade_arm, "result.json")
+            b0_path = os.path.join(args.e15_dir, f"seed_{data_seed}", "B0_contrastive", "result.json")
+
+            if not all(os.path.exists(p) for p in [fade_path, b0_path]):
+                continue
+
+            b0 = {q["id"]: q for q in json.load(open(b0_path))["final"]["per_query"]}
+            fade_r = {q["id"]: q for q in json.load(open(fade_path))["final"]["per_query"]}
+
+            helped_votes = {}
+            hurt_votes = {}
+            for qid in b0:
+                h_count = 0
+                r_count = 0
+                for os_seed in other_seeds:
+                    os_b0 = os.path.join(args.e15_dir, f"seed_{os_seed}", "B0_contrastive", "result.json")
+                    os_ref = os.path.join(args.e15_dir, f"seed_{os_seed}", ref_arm, "result.json")
+                    if not all(os.path.exists(p) for p in [os_b0, os_ref]):
+                        continue
+                    os_b0_pq = {q["id"]: q for q in json.load(open(os_b0))["final"]["per_query"]}
+                    os_ref_pq = {q["id"]: q for q in json.load(open(os_ref))["final"]["per_query"]}
+                    if os_ref_pq[qid]["rr"] - os_b0_pq[qid]["rr"] > 0.001:
+                        h_count += 1
+                    elif os_b0_pq[qid]["rr"] - os_ref_pq[qid]["rr"] > 0.001:
+                        r_count += 1
+                helped_votes[qid] = h_count
+                hurt_votes[qid] = r_count
+
+            helped = [q for q in b0 if helped_votes[q] >= 2]
+            hurt = [q for q in b0 if hurt_votes[q] >= 2]
+
+            if helped:
+                fade_help_delta = np.mean([fade_r[q]["rr"] - b0[q]["rr"] for q in helped])
+                print(f"  Seed {data_seed}: {len(helped)} cross-validated helped queries")
+                print(f"    Fade delta vs B0: {fade_help_delta:+.4f}")
+
+            if hurt:
+                fade_hurt_delta = np.mean([fade_r[q]["rr"] - b0[q]["rr"] for q in hurt])
+                print(f"    {len(hurt)} cross-validated hurt queries")
+                print(f"    Fade delta vs B0: {fade_hurt_delta:+.4f}")
+
+    # Manipulation check: B3_fade must beat B0 at step 200 (before switch)
+    print(f"\n{'='*70}")
+    print("MANIPULATION CHECK: B3_fade_200 vs B0_sched_match at step 200")
+    print(f"{'='*70}")
+    manip_pass = True
+    for data_seed in args.seeds:
+        b3_log = os.path.join(args.out_dir, f"seed_{data_seed}", "B3_fade_200", "log.jsonl")
+        b0_log = os.path.join(args.out_dir, f"seed_{data_seed}", "B0_sched_match", "log.jsonl")
+        b3_mrr200 = b0_mrr200 = None
+        for logpath, label in [(b3_log, "B3"), (b0_log, "B0")]:
+            if os.path.exists(logpath):
+                for line in open(logpath):
+                    entry = json.loads(line)
+                    if entry.get("step") == args.fade_step and "mrr" in entry:
+                        if label == "B3":
+                            b3_mrr200 = entry.get("mrr@10", entry["mrr"])
+                        else:
+                            b0_mrr200 = entry.get("mrr@10", entry["mrr"])
+        if b3_mrr200 is not None and b0_mrr200 is not None:
+            delta = b3_mrr200 - b0_mrr200
+            status = "PASS" if delta > 0 else "FAIL"
+            if delta <= 0:
+                manip_pass = False
+            print(f"  Seed {data_seed}: B3={b3_mrr200:.4f}, B0={b0_mrr200:.4f}, delta={delta:+.4f} [{status}]")
+        else:
+            print(f"  Seed {data_seed}: missing step-200 eval data")
+            manip_pass = False
+    if not manip_pass:
+        print("\n  *** MANIPULATION CHECK FAILED — fade pilot has not instantiated its premise ***")
+        print("  *** Final result is NOT evidence against fading generally ***")
+
+    with open(os.path.join(args.out_dir, "summary.json"), "w") as f:
+        json.dump({"seeds": args.seeds, "fade_step": args.fade_step,
+                   "frozen": args.frozen, "manipulation_check": manip_pass,
+                   "results": {
+            str(s): {a: r for a, r in sr.items()} for s, sr in all_seed_results.items()
+        }}, f, indent=2, default=str)
+
+
 def main_ship():
     """Ship mode — train a single standard-KD model at scale for deployment.
 
@@ -1178,6 +1574,8 @@ if __name__ == "__main__":
         sys.argv.pop(idx)
         if mode == "e1.5":
             main_e15()
+        elif mode == "fade":
+            main_fade()
         elif mode == "ship":
             main_ship()
         else:
