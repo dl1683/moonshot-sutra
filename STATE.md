@@ -12,22 +12,30 @@ heads) is expendable. The mission is not.
 ---
 
 **Last updated:** 2026-09-04
-**Current state:** E1.5 RUNNING (2/3 seeds complete, seed_271 in progress). Teacher-indexed heads ABSORBED by B4c in both seeds. Kill #15 shaping up. The mechanism is dying; the mission survives.
+**Current state:** E1.5 COMPLETE (3/3 seeds). Teacher-indexed heads KILLED. B0 wins all seeds. Codex evidence gate running. Ship mode next.
 **Blackboard:** `1d65d9fb`
 
 ## Direction
 
-**E1.5 corrected adjudication: 2/3 seeds done, kill confirmed across both.**
+**E1.5 corrected adjudication: 3/3 seeds complete. Mechanism KILLED.**
 
-Cross-seed E15 vs B4c deltas: seed_42 = -0.0006, seed_137 = -0.0095. Both negative.
-Teacher-indexed heads add noise, not signal. Identity-only probe outperforms
-full teacher-indexed in seed_137 (+0.017), confirming heads hurt.
+Cross-seed E15 vs B4c deltas (valid seeds only — B4c catastrophic on seed_271):
+seed_42 = -0.0006, seed_137 = -0.0095. Both negative. Mean = -0.005.
 
 Seed 42: B0(0.779) >> B2=B4c(0.753) > E15(0.752) > E15_id(0.748) > B3(0.724)
 Seed 137: B0(0.761) > E15_id(0.754) > B2(0.752) > B4c(0.747) > B3(0.739) > E15(0.737)
+Seed 271: B0(0.767) > E15_id(0.748) > E15(0.746) > B3(0.742) > B2(0.740) > B4c(0.220) [BROKEN]
 
-Contrastive learning dominates all KD variants in both seeds.
-Ship pipeline prepared for immediate launch after seed_271 completes.
+B4c seed_271 catastrophically broken (MRR=0.22 vs 0.75 on other seeds) — genuine
+training instability, reproducible. This invalidates seed_271 for the paired test
+but is itself informative: the B4c absorber is fragile.
+
+**Key finding: B0 (contrastive only, no teachers) WINS all 3 seeds.** Mean 0.769.
+All KD variants (B2, B3, E15) hurt vs pure contrastive on frozen encoder.
+
+This kills the teacher-indexed-heads mechanism. The Eklavya mission survives —
+the question is now WHAT FORM of knowledge transfer works, not WHETHER.
+Ship mode (standard KD at scale with unfrozen encoder) is the next artifact.
 
 Codex V1 evidence gate (2026-09-04): V1 is an exploratory debugging run, not
 valid evidence. Both "tomography dead" and "standard KD wins" are overclaimed:

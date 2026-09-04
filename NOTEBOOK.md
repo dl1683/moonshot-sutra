@@ -4,6 +4,28 @@ Reverse-chronological running log. Newest first.
 
 ---
 
+## 2026-09-04 05:15 -- E1.5 COMPLETE: Teacher-indexed heads KILLED, B0 wins
+
+All 18 arms (6 arms x 3 seeds) complete. Summary.json regenerated with all seeds.
+
+Cross-seed results (MRR, mean across 3 seeds):
+1. B0_contrastive: 0.769 (no teachers, pure contrastive)
+2. E15_teacher_idx_id: 0.750 (identity probe only)
+3. B2_kd_single: 0.748 (single teacher KD)
+4. E15_teacher_indexed: 0.745 (per-teacher heads + teacher distributions)
+5. B3_kd_avg_cal: 0.735 (calibrated multi-teacher avg)
+6. B4c_matched: 0.573 (same heads, gold targets -- broken on seed_271)
+
+E15 vs B4c (valid seeds 42, 137): deltas = -0.001, -0.010. Mean = -0.005.
+Teacher-indexed heads add NOTHING vs matched architecture with gold targets.
+
+B4c seed_271 catastrophic failure (MRR=0.22 vs 0.75 on other seeds) is genuine.
+B0 winning all seeds is the strongest signal -- pure contrastive beats all KD.
+
+Codex evidence gate fired (b0xctj7kg). Thermal guard fix committed (a346a3f).
+
+---
+
 ## 2026-09-04 03:30 — MISSION RE-ANCHORING: Eklavya is the idea, not the technique
 
 Devansh corrected a critical framing error. Eklavya is NOT teacher tomography,
